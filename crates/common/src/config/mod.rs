@@ -1,4 +1,7 @@
-use figment::{Figment, providers::{Env, Format, Toml}};
+use figment::{
+    providers::{Env, Format, Toml},
+    Figment,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,7 +33,10 @@ pub struct TelemetryConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            server: ServerConfig { host: "0.0.0.0".into(), port: 8080 },
+            server: ServerConfig {
+                host: "0.0.0.0".into(),
+                port: 8080,
+            },
             qdrant: QdrantConfig {
                 url: "http://localhost:6334".into(),
                 collection: "capabilities".into(),

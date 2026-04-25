@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use super::card::CapabilityCard;
+use std::collections::HashMap;
 use tracing::{info, warn};
 
 #[derive(Default)]
@@ -22,7 +22,8 @@ impl CapabilityRegistry {
     }
 
     pub fn search_by_tag(&self, tag: &str) -> Vec<&CapabilityCard> {
-        self.cards.values()
+        self.cards
+            .values()
             .filter(|c| c.manifest.tags.iter().any(|t| t == tag))
             .collect()
     }
@@ -51,7 +52,8 @@ impl CapabilityRegistry {
         for entry in std::fs::read_dir(dir)
             .map_err(|e| common::error::ConusAiError::Capability(e.to_string()))?
         {
-            let entry = entry.map_err(|e| common::error::ConusAiError::Capability(e.to_string()))?;
+            let entry =
+                entry.map_err(|e| common::error::ConusAiError::Capability(e.to_string()))?;
             let cap_dir = entry.path();
             if !cap_dir.is_dir() {
                 continue;
@@ -76,7 +78,7 @@ impl CapabilityRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capabilities::manifest::{CapabilityManifest, CapabilityKind};
+    use crate::capabilities::manifest::{CapabilityKind, CapabilityManifest};
 
     fn make_card(name: &str, tags: Vec<String>) -> CapabilityCard {
         let manifest = CapabilityManifest {

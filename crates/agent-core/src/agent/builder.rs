@@ -1,7 +1,7 @@
-use rig::providers::anthropic;
-use rig::completion::Prompt;
-use tracing::{info, instrument};
 use crate::context::tenant::TenantContext;
+use rig::completion::Prompt;
+use rig::providers::anthropic;
+use tracing::{info, instrument};
 
 pub struct GeneralAgentBuilder {
     model: String,
@@ -37,7 +37,8 @@ impl GeneralAgentBuilder {
 
     pub fn build(self) -> GeneralAgent {
         let client = anthropic::Client::from_env();
-        let max_tokens = self.tenant
+        let max_tokens = self
+            .tenant
             .as_ref()
             .map(|t| t.plan.max_tokens().min(self.max_tokens))
             .unwrap_or(self.max_tokens);
@@ -48,7 +49,10 @@ impl GeneralAgentBuilder {
             .max_tokens(max_tokens)
             .build();
 
-        GeneralAgent { inner, tenant: self.tenant }
+        GeneralAgent {
+            inner,
+            tenant: self.tenant,
+        }
     }
 
     /// Convenience constructor that wires tenant limits automatically.
@@ -73,7 +77,9 @@ impl GeneralAgent {
     #[instrument(skip(self), fields(tenant_id = self.tenant.as_ref().map(|t| t.tenant_id.as_str()).unwrap_or("none")))]
     pub async fn prompt(&self, text: &str) -> common::error::Result<String> {
         info!("agent prompt");
-        self.inner.prompt(text).await
+        self.inner
+            .prompt(text)
+            .await
             .map_err(|e| common::error::ConusAiError::Other(e.into()))
     }
 }

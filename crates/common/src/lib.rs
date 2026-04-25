@@ -1,12 +1,12 @@
 pub mod config;
 pub mod error;
-pub mod telemetry;
-pub mod http_client;
-pub mod mcp;
-pub mod wasm;
 pub mod eval;
+pub mod http_client;
 pub mod limits;
+pub mod mcp;
 pub mod path_safety;
+pub mod telemetry;
+pub mod wasm;
 
 pub mod prelude {
     pub use crate::error::{ConusAiError, Result};
@@ -22,7 +22,10 @@ mod tests {
         let base = std::path::Path::new("/tmp/capabilities");
         let result = path_safety::safe_join(base, "invoice-processing");
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), std::path::PathBuf::from("/tmp/capabilities/invoice-processing"));
+        assert_eq!(
+            result.unwrap(),
+            std::path::PathBuf::from("/tmp/capabilities/invoice-processing")
+        );
     }
 
     #[test]

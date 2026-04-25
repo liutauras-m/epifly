@@ -12,8 +12,8 @@ pub enum PlanTier {
 impl PlanTier {
     pub fn max_tokens(&self) -> u64 {
         match self {
-            PlanTier::Free       => 4_096,
-            PlanTier::Pro        => 16_384,
+            PlanTier::Free => 4_096,
+            PlanTier::Pro => 16_384,
             PlanTier::Enterprise => 128_000,
         }
     }
@@ -21,8 +21,8 @@ impl PlanTier {
     /// Requests per minute
     pub fn rate_limit_rpm(&self) -> u32 {
         match self {
-            PlanTier::Free       => 10,
-            PlanTier::Pro        => 60,
+            PlanTier::Free => 10,
+            PlanTier::Pro => 60,
             PlanTier::Enterprise => 600,
         }
     }
@@ -35,8 +35,8 @@ impl PlanTier {
 impl std::fmt::Display for PlanTier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PlanTier::Free       => write!(f, "free"),
-            PlanTier::Pro        => write!(f, "pro"),
+            PlanTier::Free => write!(f, "free"),
+            PlanTier::Pro => write!(f, "pro"),
             PlanTier::Enterprise => write!(f, "enterprise"),
         }
     }
@@ -100,7 +100,7 @@ impl TenantContext {
 /// JWT claims issued by the gateway.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TenantClaims {
-    pub sub: String,          // user_id
+    pub sub: String, // user_id
     pub tenant_id: String,
     pub plan: PlanTier,
     pub exp: u64,

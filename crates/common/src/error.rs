@@ -34,6 +34,9 @@ pub struct ApiError {
 
 impl ApiError {
     pub fn new(code: u16, message: impl Into<String>) -> Self {
-        Self { code, message: message.into() }
+        Self {
+            code,
+            message: message.into(),
+        }
     }
 }

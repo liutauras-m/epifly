@@ -18,7 +18,11 @@ pub fn print_report(results: &[ScorerResult]) {
     println!("  Avg score: {:.1}%", avg_score * 100.0);
     println!(
         "  Result:    {}",
-        if passed == total { "✅ ALL PASS" } else { "❌ SOME FAILED" }
+        if passed == total {
+            "✅ ALL PASS"
+        } else {
+            "❌ SOME FAILED"
+        }
     );
     println!("══════════════════════════════════════════════");
 }

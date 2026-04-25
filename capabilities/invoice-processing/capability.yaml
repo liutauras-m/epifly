@@ -24,7 +24,7 @@ tools:
           description: Absolute path to the invoice image file (PNG, JPEG)
         model:
           type: string
-          description: Claude model ID to use (default: claude-opus-4-7)
+          description: "Claude model ID to use (default: claude-opus-4-7)"
           default: "claude-opus-4-7"
 
   - name: validate_invoice

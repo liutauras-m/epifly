@@ -17,7 +17,8 @@ impl McpAdapter {
 
     pub async fn call(&self, method: &str, params: Option<Value>) -> common::error::Result<Value> {
         let req = JsonRpcRequest::new(method, params);
-        let resp: JsonRpcResponse = self.client
+        let resp: JsonRpcResponse = self
+            .client
             .post(&self.endpoint)
             .json(&req)
             .send()
@@ -28,9 +29,10 @@ impl McpAdapter {
             .map_err(|e| common::error::ConusAiError::Mcp(e.to_string()))?;
 
         if let Some(err) = resp.error {
-            return Err(common::error::ConusAiError::Mcp(
-                format!("MCP error {}: {}", err.code, err.message)
-            ));
+            return Err(common::error::ConusAiError::Mcp(format!(
+                "MCP error {}: {}",
+                err.code, err.message
+            )));
         }
 
         Ok(resp.result.unwrap_or(Value::Null))
@@ -42,6 +44,7 @@ impl McpAdapter {
 
     pub async fn call_tool(&self, name: &str, args: Value) -> common::error::Result<Value> {
         use serde_json::json;
-        self.call("tools/call", Some(json!({"name": name, "arguments": args}))).await
+        self.call("tools/call", Some(json!({"name": name, "arguments": args})))
+            .await
     }
 }

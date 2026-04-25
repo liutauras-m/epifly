@@ -1,6 +1,6 @@
+use super::builder::{GeneralAgent, GeneralAgentBuilder};
 use crate::capabilities::registry::CapabilityRegistry;
 use crate::context::tenant::TenantContext;
-use super::builder::{GeneralAgent, GeneralAgentBuilder};
 use tracing::{info, instrument};
 
 pub struct AgentRuntime {

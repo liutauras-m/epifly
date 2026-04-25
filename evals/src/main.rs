@@ -2,9 +2,9 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod config;
+mod report;
 mod runners;
 mod scorers;
-mod report;
 
 #[derive(Parser)]
 #[command(name = "evals", about = "ConusAI evaluation framework")]
@@ -35,14 +35,17 @@ enum Commands {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
     let cli = Cli::parse();
     match cli.cmd {
-        Commands::Run { suite, dataset, model } => {
+        Commands::Run {
+            suite,
+            dataset,
+            model,
+        } => {
             runners::run_suite(&suite, dataset, &model).await?;
         }
         Commands::List => {

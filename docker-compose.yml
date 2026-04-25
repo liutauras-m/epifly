@@ -11,7 +11,7 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:6333/health"]
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/6333"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -49,7 +49,11 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-    env_file: .env
+    env_file:
+      - path: .env.local
+        required: false
+      - path: .env
+        required: false
     ports:
       - "8080:8080"
     volumes:
@@ -66,7 +70,7 @@ services:
     ports:
       - "4317:4317"   # gRPC
       - "4318:4318"   # HTTP
-    profiles: ["observability", "full"]
+    profiles: ["observability"]
 
 volumes:
   qdrant_data:

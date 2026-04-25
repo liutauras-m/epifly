@@ -1,10 +1,10 @@
-use anyhow::Result;
 use agent_core::pipelines::invoice::InvoicePipeline;
+use anyhow::Result;
 use std::path::PathBuf;
 use tracing::info;
 
-use crate::scorers::{InvoiceScorer, ScorerResult};
 use crate::report::print_report;
+use crate::scorers::{InvoiceScorer, ScorerResult};
 
 #[derive(serde::Deserialize)]
 struct EvalSample {
@@ -28,7 +28,11 @@ pub async fn run(dataset: Option<PathBuf>, model: &str) -> Result<()> {
         .map(|l| serde_json::from_str(l).map_err(anyhow::Error::from))
         .collect::<Result<_>>()?;
 
-    println!("Running invoice eval suite — {} samples, model: {}", samples.len(), model);
+    println!(
+        "Running invoice eval suite — {} samples, model: {}",
+        samples.len(),
+        model
+    );
 
     let pipeline = InvoicePipeline::with_model(model);
     let scorer = InvoiceScorer::new();
@@ -48,7 +52,11 @@ pub async fn run(dataset: Option<PathBuf>, model: &str) -> Result<()> {
             }
             Err(e) => {
                 println!("❌ ERROR: {e}");
-                results.push(ScorerResult { score: 0.0, passed: false, details: format!("error: {e}") });
+                results.push(ScorerResult {
+                    score: 0.0,
+                    passed: false,
+                    details: format!("error: {e}"),
+                });
             }
         }
     }

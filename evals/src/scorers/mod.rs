@@ -4,6 +4,7 @@ use serde_json::Value;
 pub struct ScorerResult {
     pub score: f64,
     pub passed: bool,
+    #[allow(dead_code)]
     pub details: String,
 }
 
@@ -13,14 +14,21 @@ pub struct InvoiceScorer {
 
 impl InvoiceScorer {
     pub fn new() -> Self {
-        Self { pass_threshold: 0.8 }
+        Self {
+            pass_threshold: 0.8,
+        }
     }
 
     pub fn score(&self, extracted: &InvoiceData, expected: &Value) -> ScorerResult {
         let extracted_val = serde_json::to_value(extracted).unwrap_or(Value::Null);
         let fields = [
-            "invoice_number", "invoice_date", "issuer_name",
-            "billed_to_name", "currency", "total_amount", "status",
+            "invoice_number",
+            "invoice_date",
+            "issuer_name",
+            "billed_to_name",
+            "currency",
+            "total_amount",
+            "status",
         ];
 
         let mut hits = 0usize;
@@ -44,15 +52,17 @@ impl InvoiceScorer {
             format!("mismatches: {}", misses.join(", "))
         };
 
-        ScorerResult { score, passed, details }
+        ScorerResult {
+            score,
+            passed,
+            details,
+        }
     }
 }
 
 fn values_match(expected: &Value, got: &Value) -> bool {
     match (expected, got) {
-        (Value::String(e), Value::String(g)) => {
-            e.to_lowercase().trim() == g.to_lowercase().trim()
-        }
+        (Value::String(e), Value::String(g)) => e.to_lowercase().trim() == g.to_lowercase().trim(),
         (Value::Number(e), Value::Number(g)) => {
             let ef = e.as_f64().unwrap_or(0.0);
             let gf = g.as_f64().unwrap_or(0.0);

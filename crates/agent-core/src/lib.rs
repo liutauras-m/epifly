@@ -1,10 +1,10 @@
-pub mod capabilities;
 pub mod agent;
-pub mod pipelines;
+pub mod capabilities;
 pub mod context;
+pub mod pipelines;
 
 pub use agent::builder::{GeneralAgent, GeneralAgentBuilder};
-pub use capabilities::registry::CapabilityRegistry;
 pub use capabilities::discovery::CapabilityDiscovery;
-pub use pipelines::invoice::{InvoicePipeline, InvoiceData, InvoiceLineItem};
-pub use context::tenant::{TenantContext, TenantClaims, PlanTier};
+pub use capabilities::registry::CapabilityRegistry;
+pub use context::tenant::{PlanTier, TenantClaims, TenantContext};
+pub use pipelines::invoice::{InvoiceData, InvoiceLineItem, InvoicePipeline};

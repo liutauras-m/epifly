@@ -1,6 +1,6 @@
 pub mod tenant;
 
-pub use tenant::{TenantContext, TenantClaims, PlanTier};
+pub use tenant::{PlanTier, TenantClaims, TenantContext};
 
 use rig::completion::message::Message;
 use serde::{Deserialize, Serialize};
@@ -29,20 +29,29 @@ impl ConversationContext {
     }
 
     pub fn push_user(&mut self, content: impl Into<String>) {
-        self.history.push(HistoryEntry { role: "user".into(), content: content.into() });
+        self.history.push(HistoryEntry {
+            role: "user".into(),
+            content: content.into(),
+        });
     }
 
     pub fn push_assistant(&mut self, content: impl Into<String>) {
-        self.history.push(HistoryEntry { role: "assistant".into(), content: content.into() });
+        self.history.push(HistoryEntry {
+            role: "assistant".into(),
+            content: content.into(),
+        });
     }
 
     pub fn to_rig_messages(&self) -> Vec<Message> {
-        self.history.iter().map(|h| {
-            if h.role == "user" {
-                Message::user(&h.content)
-            } else {
-                Message::assistant(&h.content)
-            }
-        }).collect()
+        self.history
+            .iter()
+            .map(|h| {
+                if h.role == "user" {
+                    Message::user(&h.content)
+                } else {
+                    Message::assistant(&h.content)
+                }
+            })
+            .collect()
     }
 }

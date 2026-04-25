@@ -1,6 +1,6 @@
+use crate::mw::RateLimiter;
 use agent_core::{CapabilityDiscovery, CapabilityRegistry};
 use std::sync::Mutex;
-use crate::mw::RateLimiter;
 
 pub struct AppState {
     pub registry: Mutex<CapabilityRegistry>,

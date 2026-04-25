@@ -1,12 +1,12 @@
-use base64::{Engine as _, engine::general_purpose};
+use crate::context::tenant::TenantContext;
+use base64::{engine::general_purpose, Engine as _};
 use rig::completion::CompletionModel;
-use rig::message::{Message, UserContent, ContentFormat, ImageMediaType};
+use rig::message::{ContentFormat, ImageMediaType, Message, UserContent};
 use rig::providers::anthropic;
 use rig::OneOrMany;
-use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use tracing::{info, instrument};
-use crate::context::tenant::TenantContext;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct InvoiceLineItem {
@@ -47,12 +47,18 @@ pub struct InvoicePipeline {
 impl InvoicePipeline {
     pub fn new() -> Self {
         let client = anthropic::Client::from_env();
-        Self { model: client.completion_model("claude-opus-4-7"), tenant: None }
+        Self {
+            model: client.completion_model("claude-opus-4-7"),
+            tenant: None,
+        }
     }
 
     pub fn with_model(model_id: &str) -> Self {
         let client = anthropic::Client::from_env();
-        Self { model: client.completion_model(model_id), tenant: None }
+        Self {
+            model: client.completion_model(model_id),
+            tenant: None,
+        }
     }
 
     pub fn with_tenant(mut self, tenant: TenantContext) -> Self {
@@ -85,10 +91,12 @@ impl InvoicePipeline {
     ) -> common::error::Result<InvoiceData> {
         let resolved = self.resolve_path(path)?;
         info!(resolved = %resolved.display(), "reading invoice image");
-        let bytes = std::fs::read(&resolved)
-            .map_err(|e| common::error::ConusAiError::Capability(
-                format!("cannot read image {:?}: {e}", resolved)
-            ))?;
+        let bytes = std::fs::read(&resolved).map_err(|e| {
+            common::error::ConusAiError::Capability(format!(
+                "cannot read image {:?}: {e}",
+                resolved
+            ))
+        })?;
         self.extract_from_bytes(&bytes).await
     }
 
@@ -128,18 +136,27 @@ impl InvoicePipeline {
 
         let msg = Message::User { content };
 
-        let request = self.model
+        let request = self
+            .model
             .completion_request(msg)
-            .preamble("You are an invoice data extraction specialist. \
+            .preamble(
+                "You are an invoice data extraction specialist. \
                 Extract structured data from invoice images with high accuracy. \
-                Always respond with valid JSON only.".to_string())
+                Always respond with valid JSON only."
+                    .to_string(),
+            )
             .max_tokens(2048)
             .build();
 
-        let response = self.model.completion(request).await
+        let response = self
+            .model
+            .completion(request)
+            .await
             .map_err(|e| common::error::ConusAiError::Capability(e.to_string()))?;
 
-        let text = response.choice.iter()
+        let text = response
+            .choice
+            .iter()
             .filter_map(|c| {
                 if let rig::completion::message::AssistantContent::Text(t) = c {
                     Some(t.text.clone())
@@ -151,10 +168,11 @@ impl InvoicePipeline {
             .join("");
 
         let json_text = strip_markdown_fences(&text);
-        serde_json::from_str::<InvoiceData>(json_text)
-            .map_err(|e| common::error::ConusAiError::Capability(
-                format!("failed to parse invoice JSON: {e}\nRaw response:\n{text}")
+        serde_json::from_str::<InvoiceData>(json_text).map_err(|e| {
+            common::error::ConusAiError::Capability(format!(
+                "failed to parse invoice JSON: {e}\nRaw response:\n{text}"
             ))
+        })
     }
 }
 

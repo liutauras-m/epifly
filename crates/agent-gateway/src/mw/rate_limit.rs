@@ -26,10 +26,12 @@ impl RateLimiter {
         let mut buckets = self.buckets.lock().unwrap();
         let now = Instant::now();
 
-        let bucket = buckets.entry(tenant_id.to_string()).or_insert(TenantBucket {
-            count: 0,
-            window_start: now,
-        });
+        let bucket = buckets
+            .entry(tenant_id.to_string())
+            .or_insert(TenantBucket {
+                count: 0,
+                window_start: now,
+            });
 
         if now.duration_since(bucket.window_start) >= self.window {
             bucket.count = 0;

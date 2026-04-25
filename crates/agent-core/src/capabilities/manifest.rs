@@ -31,20 +31,20 @@ pub struct ToolDef {
 
 impl CapabilityManifest {
     pub fn from_yaml(s: &str) -> common::error::Result<Self> {
-        serde_yaml::from_str(s)
-            .map_err(|e| common::error::ConusAiError::Capability(e.to_string()))
+        serde_yaml::from_str(s).map_err(|e| common::error::ConusAiError::Capability(e.to_string()))
     }
 
     pub fn from_file(path: &std::path::Path) -> common::error::Result<Self> {
-        let s = std::fs::read_to_string(path)
-            .map_err(|e| common::error::ConusAiError::Capability(
-                format!("cannot read {:?}: {e}", path)
-            ))?;
+        let s = std::fs::read_to_string(path).map_err(|e| {
+            common::error::ConusAiError::Capability(format!("cannot read {:?}: {e}", path))
+        })?;
         Self::from_yaml(&s)
     }
 
     pub fn embedding_text(&self) -> String {
-        let tools = self.tools.iter()
+        let tools = self
+            .tools
+            .iter()
             .map(|t| format!("  - {}: {}", t.name, t.description))
             .collect::<Vec<_>>()
             .join("\n");

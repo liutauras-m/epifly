@@ -1,6 +1,6 @@
+use super::registry::CapabilityRegistry;
 use std::path::PathBuf;
 use tracing::info;
-use super::registry::CapabilityRegistry;
 
 pub struct CapabilityDiscovery {
     dirs: Vec<PathBuf>,

@@ -7,7 +7,6 @@ use tracing::info;
 
 mod mw;
 mod routes;
-mod auth;
 mod state;
 
 use state::AppState;
@@ -21,11 +20,13 @@ async fn main() -> Result<()> {
     info!(capabilities = loaded, "capability registry loaded");
 
     let app = Router::new()
-        .merge(routes::router())
-        .layer(axum::middleware::from_fn_with_state(
-            Arc::clone(&state),
-            mw::tenant::extract_tenant,
-        ))
+        .merge(routes::public_router())
+        .merge(
+            routes::protected_router().layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&state),
+                mw::tenant::extract_tenant,
+            )),
+        )
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(Arc::clone(&state));

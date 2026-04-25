@@ -1,5 +1,5 @@
-use wasmtime::{Engine, Module};
 use super::card::CapabilityCard;
+use wasmtime::{Engine, Module};
 
 pub struct WasmCapabilityLoader {
     engine: Engine,
@@ -7,7 +7,9 @@ pub struct WasmCapabilityLoader {
 
 impl WasmCapabilityLoader {
     pub fn new() -> common::error::Result<Self> {
-        Ok(Self { engine: Engine::default() })
+        Ok(Self {
+            engine: Engine::default(),
+        })
     }
 
     pub fn load(&self, card: &CapabilityCard) -> common::error::Result<Module> {
