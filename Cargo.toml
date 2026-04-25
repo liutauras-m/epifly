@@ -1,0 +1,92 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/common",
+    "crates/agent-core",
+    "crates/agent-gateway",
+    "crates/invoice-demo",
+    "evals",
+]
+
+[workspace.package]
+version      = "0.1.0"
+edition      = "2021"
+rust-version = "1.88"
+authors      = ["Liutauras Medziunas <info@conusai.com>"]
+license      = "MIT"
+repository   = "https://github.com/conusai/conusai-platform"
+
+[workspace.dependencies]
+# Async runtime
+tokio        = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1" }
+
+# AI / Rig
+rig-core     = { version = "0.9" }
+
+# Vector DB
+qdrant-client = { version = "1" }
+
+# HTTP
+axum         = { version = "0.8", features = ["ws"] }
+reqwest      = { version = "0.12", features = ["json", "stream"] }
+tower        = { version = "0.5" }
+tower-http   = { version = "0.6", features = ["cors", "trace", "compression-br"] }
+
+# Serialization
+serde        = { version = "1", features = ["derive"] }
+serde_json   = { version = "1" }
+serde_yaml   = { version = "0.9" }
+
+# Config
+figment      = { version = "0.10", features = ["env", "toml", "yaml"] }
+
+# Error handling
+thiserror    = { version = "2" }
+anyhow       = { version = "1" }
+
+# Tracing / Observability
+tracing                    = { version = "0.1" }
+tracing-subscriber         = { version = "0.3", features = ["env-filter", "json"] }
+opentelemetry              = { version = "0.27" }
+opentelemetry_sdk          = { version = "0.27", features = ["rt-tokio"] }
+opentelemetry-otlp         = { version = "0.27", features = ["tonic"] }
+tracing-opentelemetry      = { version = "0.28" }
+
+# WASM
+wasmtime     = { version = "29", features = ["component-model"] }
+wasmtime-wasi = { version = "29" }
+
+# Auth / Crypto
+jsonwebtoken = { version = "9" }
+sha2         = { version = "0.10" }
+
+# Schema / validation
+schemars     = { version = "0.8", features = ["derive"] }
+
+# Base64
+base64       = { version = "0.22" }
+
+# Utilities
+uuid         = { version = "1", features = ["v4", "serde"] }
+chrono       = { version = "0.4", features = ["serde"] }
+bytes        = { version = "1" }
+futures      = { version = "0.3" }
+async-trait  = { version = "0.1" }
+bon          = { version = "3" }
+
+# CLI args
+clap         = { version = "4", features = ["derive"] }
+
+# Colored output
+colored      = { version = "2" }
+
+[profile.release]
+opt-level     = 3
+lto           = "thin"
+codegen-units = 1
+strip         = "symbols"
+
+[profile.dev]
+opt-level = 0
+debug     = true

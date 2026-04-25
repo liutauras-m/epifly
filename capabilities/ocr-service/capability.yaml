@@ -1,0 +1,23 @@
+name: ocr-service
+version: "0.1.0"
+description: >
+  Optical character recognition using Claude vision.
+  Extracts text from images, PDFs, and scanned documents.
+kind: pipeline
+tags:
+  - ocr
+  - vision
+  - text-extraction
+
+tools:
+  - name: extract_text
+    description: Extract all text from an image or document.
+    input_schema:
+      type: object
+      required: [image_path]
+      properties:
+        image_path: { type: string }
+        preserve_layout: { type: boolean, default: false }
+
+config:
+  default_model: "claude-sonnet-4-6"

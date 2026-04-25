@@ -1,0 +1,29 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Environment
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# WASM build artifacts
+/wasm/*.wasm
+
+# Docker volumes
+/data/
+
+# Coverage
+/lcov.info
+/tarpaulin-report.html

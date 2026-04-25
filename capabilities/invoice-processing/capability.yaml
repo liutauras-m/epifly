@@ -1,0 +1,43 @@
+name: invoice-processing
+version: "0.1.0"
+description: >
+  Extracts structured data from invoice images (PNG, JPEG, PDF)
+  using Claude vision + structured extraction pipeline.
+kind: pipeline
+tags:
+  - finance
+  - ocr
+  - extraction
+  - vision
+
+tools:
+  - name: extract_invoice
+    description: >
+      Extract all structured fields from an invoice image.
+      Returns invoice number, date, issuer, billed_to, line items, totals, and status.
+    input_schema:
+      type: object
+      required: [image_path]
+      properties:
+        image_path:
+          type: string
+          description: Absolute path to the invoice image file (PNG, JPEG)
+        model:
+          type: string
+          description: Claude model ID to use (default: claude-opus-4-7)
+          default: "claude-opus-4-7"
+
+  - name: validate_invoice
+    description: Validate extracted invoice data for completeness and consistency.
+    input_schema:
+      type: object
+      required: [invoice_data]
+      properties:
+        invoice_data:
+          type: object
+          description: Previously extracted InvoiceData JSON
+
+config:
+  default_model: "claude-opus-4-7"
+  max_image_size_mb: 20
+  supported_formats: ["png", "jpeg", "jpg", "pdf"]

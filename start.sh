@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROFILE="${1:-infra}"   # infra | full | observability
+
+echo "🚀 ConusAI Platform — starting profile: $PROFILE"
+
+# ── Environment ───────────────────────────────────────────────────────────────
+if [ ! -f .env ]; then
+  echo "⚠️  No .env found — copying from .env.example"
+  cp .env.example .env
+fi
+
+# ── Infrastructure ────────────────────────────────────────────────────────────
+echo "▶ Starting infrastructure services..."
+docker compose --profile "$PROFILE" up -d --wait
+
+# ── Wait for Qdrant ───────────────────────────────────────────────────────────
+echo "⏳ Waiting for Qdrant..."
+until curl -sf http://localhost:6333/health > /dev/null 2>&1; do sleep 1; done
+echo "✅ Qdrant ready"
+
+# ── Build agent-gateway (if running full profile) ─────────────────────────────
+if [ "$PROFILE" = "full" ]; then
+  echo "▶ Building agent-gateway..."
+  cargo build --release --bin agent-gateway
+  echo "✅ Build complete — gateway running in Docker"
+fi
+
+# ── Capability discovery info ─────────────────────────────────────────────────
+CAP_COUNT=$(find capabilities -maxdepth 2 -name "capability.yaml" 2>/dev/null | wc -l | tr -d ' ')
+echo "📦 Capabilities discovered: $CAP_COUNT"
+
+echo ""
+echo "ConusAI Platform is ready."
+echo "  Gateway:  http://localhost:8080"
+echo "  Qdrant:   http://localhost:6333"
+echo "  MinIO:    http://localhost:9001"
