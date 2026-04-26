@@ -2,6 +2,22 @@
 **Target:** Merge the best of both architectures into a **Rig-first, capability-extensible, self-hosted Ollama powerhouse** while keeping independent deployability.  
 **Deadline mindset:** Ship production-grade in < 3 weeks. Every step has verification. No shortcuts. SRP enforced at every layer. Follow Rig 0.26+ patterns strictly.
 
+---
+
+### ✅ COMPLETED: Capability Description Quality Pass (2026-04-26)
+
+**Problem:** `ocr-service` and `invoice-processing` had ambiguous descriptions that could lead the LLM to make redundant tool calls (e.g. running ocr-service before invoice-processing).
+
+**Solution applied:** Rewrote `description` and per-tool `description` fields in both `capability.yaml` files to be explicitly directive:
+- `invoice-processing/capability.yaml` — now explicitly states it handles the vision step internally; tells the LLM to use it for any invoice/bill/facture document; explicitly says "Do NOT chain ocr-service before this".
+- `ocr-service/capability.yaml` — now explicitly scopes itself to generic/raw-text needs only; tells the LLM to prefer `invoice-processing__extract_invoice` for any structured document.
+
+**Why this works:** `CapabilityManifest` descriptions are loaded verbatim into Anthropic tool definitions at startup via `tool_definitions()` in `tool_executor.rs`. Rich natural-language tool descriptions are the gold-standard mechanism for deterministic tool routing in Rig 0.9+ / Anthropic tool-calling — no code-level classifier needed.
+
+**Verified:** Live test with `invoice.png` confirmed the agent correctly chose `invoice-processing__extract_invoice` directly (514ms download → 359ms extract → 998ms presigned URL) without redundant `ocr-service` call.
+
+---
+
 **Prerequisites (Run Once)**
 ```bash
 cd /path/to/conusai-platform

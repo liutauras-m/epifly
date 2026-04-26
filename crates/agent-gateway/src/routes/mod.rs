@@ -5,9 +5,9 @@ use axum::{
 };
 use std::sync::Arc;
 
-mod agent;
+pub mod agent;
 mod capabilities;
-mod chat;
+pub mod chat;
 mod files;
 mod health;
 mod mcp;

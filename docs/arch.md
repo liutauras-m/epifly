@@ -43,14 +43,15 @@ A production-grade multitenant AI agent platform built on **Rust + Rig**, with *
 
 ## 2. Top-Level Files
 
-### [Dockerfile](../Dockerfile) — multi-stage build
+### [Dockerfile](../Dockerfile) — 4-stage cargo-chef build
 
-**Stage 1 — Builder** (`rust:1.95-slim`)
-- Installs `pkg-config`, `libssl-dev`, `cmake`, `clang` (for `ring`, `native-tls`, `wasmtime`)
-- Caches dependencies by copying only `Cargo.toml` manifests, then stubs source and pre-builds
-- Copies real source and runs `cargo build --release --bin agent-gateway`
+**Stage 1 — Planner** (`rust:1.88-slim`) — `cargo chef prepare` generates `recipe.json` from the workspace manifests.
 
-**Stage 2 — Runtime** (`debian:bookworm-slim`)
+**Stage 2 — Cacher** — `cargo chef cook --release` builds all dependencies into a layer; cached by Docker unless `Cargo.toml`/`Cargo.lock` change (10× faster incremental rebuilds).
+
+**Stage 3 — Builder** — copies pre-built deps from cacher, compiles real source with `cargo build --release --bin agent-gateway`.
+
+**Stage 4 — Runtime** (`debian:bookworm-slim`)
 - Installs `libssl3`, `ca-certificates`, `curl`
 - Copies `/build/target/release/agent-gateway` → `/app/agent-gateway`
 - Copies `/capabilities` (read-only)
@@ -136,12 +137,12 @@ components = ["rustfmt", "clippy", "rust-src"]
 |---|---|
 | [mod.rs](../crates/agent-core/src/capabilities/mod.rs) | Re-exports `card`, `discovery`, `embedding`, `manifest`, `mcp_adapter`, `provider`, `registry`, `tool_executor`, `wasm_loader`. |
 | [provider.rs](../crates/agent-core/src/capabilities/provider.rs) | `AgentCapability` async trait — `name()`, `description()`, `tool_names()`, `invoke(tool, input) -> Value`. |
-| [manifest.rs](../crates/agent-core/src/capabilities/manifest.rs) | `CapabilityManifest { name, version, description, kind, tools, config, tags }`; `CapabilityKind { Mcp, Wasm, Pipeline, Docker }`; `ToolDef { name, description, input_schema }`. `from_yaml`, `from_file`, `embedding_text`. |
+| [manifest.rs](../crates/agent-core/src/capabilities/manifest.rs) | `CapabilityManifest { name, version, description, kind, tools, config, tags }`; `CapabilityKind { Mcp, Wasm, Pipeline, Docker, Native }`; `ToolDef { name, description, input_schema }`. `from_yaml`, `from_file`, `embedding_text`. |
 | [card.rs](../crates/agent-core/src/capabilities/card.rs) | `CapabilityCard { id (UUID), manifest, source_path, embedding_id }`. |
 | [registry.rs](../crates/agent-core/src/capabilities/registry.rs) | `CapabilityRegistry`: in-memory `HashMap<String, CapabilityCard>`. `register`, `get`, `search_by_tag`, `all`, `len`, `is_empty`, `load_from_dir(dir)` — auto-discovers any subdir containing `capability.yaml`. |
 | [discovery.rs](../crates/agent-core/src/capabilities/discovery.rs) | `CapabilityDiscovery` — `from_env()` reads `CONUSAI_CAPABILITIES_DIR` (default `./capabilities`); `discover()` returns a populated `CapabilityRegistry`. |
 | [embedding.rs](../crates/agent-core/src/capabilities/embedding.rs) | `ToolEmbedding::describe(card)` — returns text used for semantic search (delegates to `manifest.embedding_text()`). |
-| [tool_executor.rs](../crates/agent-core/src/capabilities/tool_executor.rs) | `CapabilityExecutor::invoke(card, tool, input, tenant)` dispatcher: routes `invoice-processing` / `ocr-service` to `InvoicePipeline`, WASM caps to `WasmCapabilityLoader`. Builds Anthropic tool definitions in `capability__tool` form via `tool_definitions(card)`. Downloads URL images to temp files when needed. |
+| [tool_executor.rs](../crates/agent-core/src/capabilities/tool_executor.rs) | `CapabilityExecutor::invoke(card, tool, input, tenant)` dispatcher: routes `invoice-processing` / `ocr-service` to `InvoicePipeline`, `native-tools` to `crate::tools`, WASM caps to `WasmCapabilityLoader`. Builds Anthropic tool definitions in `capability__tool` form via `tool_definitions(card)`. Downloads URL images to temp files when needed. |
 | [mcp_adapter.rs](../crates/agent-core/src/capabilities/mcp_adapter.rs) | `McpAdapter` — JSON-RPC 2.0 HTTP client (`call`, `list_tools`, `call_tool`) for external MCP servers. |
 | [wasm_loader.rs](../crates/agent-core/src/capabilities/wasm_loader.rs) | `WasmCapabilityLoader` (wraps `wasmtime::Engine`). `load(card)` reads `card.source_path/capability.wasm`; `invoke_i32`, `invoke_tool(card, tool, input)` (currently dispatches `ping`). |
 
@@ -169,9 +170,17 @@ components = ["rustfmt", "clippy", "rust-src"]
 
 | File | Purpose |
 |---|---|
-| [qdrant_store.rs](../crates/agent-core/src/memory/qdrant_store.rs) | `QdrantThreadStore` — implements `ThreadStore` using Qdrant REST as a document store (not vector search). Uses 4-dim zero vectors; SHA-256 → u64 point IDs; collection per tenant (`threads_{tenant_id}`); payload indices on `type`, `thread_id`, `tenant_id`. `scroll_filter()` for all queries. Background `tokio::spawn` for auto-summarisation when `message_count % MAX_MESSAGES_BEFORE_SUMMARY == 0`, calling Claude Haiku via Anthropic API. |
+| [qdrant_store.rs](../crates/agent-core/src/memory/qdrant_store.rs) | `QdrantThreadStore` — implements `ThreadStore` using Qdrant REST as a document store (not vector search). Uses 4-dim zero vectors; SHA-256 → u64 point IDs; collection per tenant (`threads_{tenant_id}`); payload indices on `type`, `thread_id`, `tenant_id`. `scroll_filter()` for all queries. Background `tokio::spawn` for auto-summarisation when `message_count % MAX_MESSAGES_BEFORE_SUMMARY == 0`, calling Claude Haiku via Anthropic API. All 7 trait methods instrumented with `#[instrument]` (OTel spans). |
 
-**Public re-exports** (via [`lib.rs`](../crates/agent-core/src/lib.rs)): `GeneralAgent`, `GeneralAgentBuilder`, `CapabilityDiscovery`, `CapabilityRegistry`, `PlanTier`, `TenantClaims`, `TenantContext`, `InvoiceData`, `InvoiceLineItem`, `InvoicePipeline`.
+#### Native tools subsystem ([src/tools/](../crates/agent-core/src/tools))
+
+| File | Purpose |
+|---|---|
+| [fs_tools.rs](../crates/agent-core/src/tools/fs_tools.rs) | `read_file(workspace_root, input)` / `write_file(workspace_root, input)` — tenant-scoped filesystem access via `safe_join` (rejects `..`). Uses `tokio::fs`. |
+| [cargo_tool.rs](../crates/agent-core/src/tools/cargo_tool.rs) | `run_cargo(workspace_root, input)` — runs `cargo {check,test,build,clippy,fmt}` via `tokio::process::Command`; returns stdout/stderr/exit_code as JSON. Allowlisted subcommands only. |
+| [native_capability.rs](../crates/agent-core/src/tools/native_capability.rs) | `native_capability_card()` — builds a `CapabilityCard` with `kind: Native` exposing `read_file`, `write_file`, `run_cargo` with full JSON schemas. Auto-registered at gateway startup. |
+
+**Public re-exports** (via [`lib.rs`](../crates/agent-core/src/lib.rs)): `GeneralAgent`, `GeneralAgentBuilder`, `CapabilityDiscovery`, `CapabilityRegistry`, `PlanTier`, `TenantClaims`, `TenantContext`, `InvoiceData`, `InvoiceLineItem`, `InvoicePipeline`, `native_capability_card`.
 
 ---
 
@@ -182,7 +191,7 @@ components = ["rustfmt", "clippy", "rust-src"]
 | File | Purpose |
 |---|---|
 | [src/main.rs](../crates/agent-gateway/src/main.rs) | Tokio entrypoint. Initializes telemetry, builds `AppState`, mounts public + protected routers, applies `CorsLayer` + `TraceLayer` + tenant + trace middleware, binds `0.0.0.0:8080`. |
-| [src/state.rs](../crates/agent-gateway/src/state.rs) | `AppState { registry: Mutex<CapabilityRegistry>, rate_limiter, file_store: Option<Arc<dyn ObjectStore>>, thread_store: Arc<dyn ThreadStore>, qdrant_url, presigned_tokens: Mutex<HashMap> }`. `from_env()` runs capability discovery, initializes MinIO if `MINIO_ENDPOINT` is set, and initializes `QdrantThreadStore`. |
+| [src/state.rs](../crates/agent-gateway/src/state.rs) | `AppState { registry: Mutex<CapabilityRegistry>, rate_limiter, file_store: Option<Arc<dyn ObjectStore>>, thread_store: Arc<dyn ThreadStore>, qdrant_url, presigned_tokens: Mutex<HashMap> }`. `from_env()` runs capability discovery, registers `native_capability_card()`, initializes MinIO if `MINIO_ENDPOINT` is set, and initializes `QdrantThreadStore`. |
 
 #### Middleware ([src/mw/](../crates/agent-gateway/src/mw))
 
@@ -198,7 +207,7 @@ components = ["rustfmt", "clippy", "rust-src"]
 |---|---|---|
 | [health.rs](../crates/agent-gateway/src/routes/health.rs) | `GET /health` | Status, version, capability count. |
 | [chat.rs](../crates/agent-gateway/src/routes/chat.rs) | `POST /v1/chat/completions` | OpenAI-compatible chat (streaming via SSE or blocking). Builds Rig Anthropic agent with system preamble + `max_tokens`, enforces per-tenant rate limits. |
-| [agent.rs](../crates/agent-gateway/src/routes/agent.rs) | `POST /v1/agent/completions` | Thread-aware tool-calling agent loop. Accepts optional `thread_id`; loads history + injects thread summary as system context; persists user message before loop and assistant reply after; auto-sets thread title from first reply. Up to 5 tool-use rounds. Accumulates `gen_ai.*` span attributes (model, input/output tokens). Returns `thread_id` in response. |
+| [agent.rs](../crates/agent-gateway/src/routes/agent.rs) | `POST /v1/agent/completions` | Thread-aware tool-calling agent loop with blocking and streaming (`"stream": true`) modes. Accepts optional `thread_id`; loads history + injects thread summary as system context; persists user message before loop and assistant reply after; auto-sets thread title from first reply. Up to 5 tool-use rounds. Streaming path emits OpenAI SSE chunks + `tool_call_start` / `tool_call_result` events so clients can follow tool execution in real-time. Accumulates `gen_ai.*` span attributes (model, input/output tokens). Returns `thread_id` in response. |
 | [threads.rs](../crates/agent-gateway/src/routes/threads.rs) | Thread CRUD | `create_thread`, `list_threads`, `get_thread`, `get_messages`, `append_message`. Delegates to `AppState::thread_store` (`QdrantThreadStore`). |
 | [capabilities.rs](../crates/agent-gateway/src/routes/capabilities.rs) | `GET /v1/capabilities` | Lists capabilities (name, version, description, kind, tags, tools) with tenant + plan. |
 | [search.rs](../crates/agent-gateway/src/routes/search.rs) | `GET /v1/capabilities/search?q=…&limit=…` | Semantic search via Qdrant (64-dim deterministic hash embeddings). On first call per tenant, creates collection `capabilities_{tenant_id}` and upserts capability vectors. Falls back to local substring match if Qdrant is unreachable. |
@@ -225,10 +234,14 @@ components = ["rustfmt", "clippy", "rust-src"]
 | [src/main.rs](../evals/src/main.rs) | `clap` CLI with `run --suite … --dataset … --model …` and `list`. |
 | [src/runners/mod.rs](../evals/src/runners/mod.rs) | `run_suite(suite, dataset, model)` dispatcher. |
 | [src/runners/invoice.rs](../evals/src/runners/invoice.rs) | Loads JSONL `EvalSample { image_path, expected }`; runs `InvoicePipeline`; scores with `InvoiceScorer`; prints report. |
+| [src/runners/threads.rs](../evals/src/runners/threads.rs) | Multi-turn thread recall eval: creates thread, runs conversation turns via gateway, asks a recall question, scores keyword presence. Requires `GATEWAY_URL` env. |
+| [src/runners/ocr_quality.rs](../evals/src/runners/ocr_quality.rs) | OCR quality eval: sends image through `ocr-service` capability via gateway, scores against expected text snippets. |
 | [src/scorers/mod.rs](../evals/src/scorers/mod.rs) | `ScorerResult { score, passed, details }`. `InvoiceScorer { pass_threshold = 0.8 }` — case-insensitive string match + `abs(diff) < 0.01` for numbers; compares `invoice_number`, `invoice_date`, `issuer_name`, `billed_to_name`, `currency`, `total_amount`, `status`. |
 | [src/report.rs](../evals/src/report.rs) | Prints a summary table (totals, pass count, average, ALL PASS / SOME FAILED). |
 | [src/config.rs](../evals/src/config.rs) | `EvalConfig { suite, model, dataset_path }`. |
 | [datasets/invoice.jsonl](../evals/datasets/invoice.jsonl) | Invoice extraction test samples. |
+| [datasets/threads.jsonl](../evals/datasets/threads.jsonl) | Thread recall test samples (`turns`, `recall_question`, `expected_keywords`). |
+| [datasets/ocr_quality.jsonl](../evals/datasets/ocr_quality.jsonl) | OCR quality test samples (`image_path`, `expected_snippets`). |
 
 ---
 
@@ -244,6 +257,7 @@ Drop a folder with a `capability.yaml` (and optionally an implementation) into `
 | `wasm` | Wasmtime | `wasm32-wasip1` module | Exported WASM functions |
 | `pipeline` | In-process Rig | Claude vision + structured extraction | Rig agent + tool defs |
 | `docker` | Container | (reserved / future) | TBD |
+| `native` | In-process Rust | `crate::tools` (fs, cargo) | Built-in — no YAML manifest |
 
 ### Discovered capabilities
 
@@ -255,6 +269,17 @@ Drop a folder with a `capability.yaml` (and optionally an implementation) into `
 | [ocr-service](../capabilities/ocr-service/capability.yaml) | pipeline | `extract_text` | Reuses `InvoicePipeline` for vision OCR; default model `claude-sonnet-4-6`. |
 | [template-wasm](../capabilities/template-wasm/capability.yaml) | wasm | `ping` | Loads `capability.wasm` exporting `ping() -> i32 = 42`. |
 | [template](../capabilities/template) | — | — | Boilerplate for new capabilities. |
+
+### Capability selection: `invoice-processing` vs `ocr-service`
+
+These two capabilities are intentionally **non-overlapping** — the LLM (Claude) selects the right one via tool description quality and Qdrant semantic embeddings:
+
+| Need | Correct capability |
+|---|---|
+| Invoice, bill, purchase order, accounts-payable document → **structured fields** | `invoice-processing__extract_invoice` |
+| Contract, letter, handwritten note, generic document → **raw text** | `ocr-service__extract_text` |
+
+`invoice-processing__extract_invoice` handles the vision step internally (Claude vision + strict JSON schema in one call). Calling `ocr-service` before it is redundant and adds unnecessary latency. The rich `description` fields in both `capability.yaml` files — loaded verbatim into tool definitions at startup — make this routing deterministic without any code-level classifier.
 
 ---
 
@@ -436,8 +461,10 @@ curl http://localhost:9000/minio/health/live
 
 - **Multitenant-first:** JWT auth, tenant-prefixed paths/keys, Qdrant collection per tenant, plan-based rate limits, tenant-tagged spans.
 - **Zero-code extension:** YAML manifests in `capabilities/`; `CapabilityKind` enum allows pluggable execution; tool defs in stable `capability__tool` form.
-- **Agent loop:** Anthropic `tool_use` with bounded rounds (≤5), accumulating usage on the request span. Thread-aware: loads history, injects summary, persists turns.
+- **Precise tool descriptions drive correct capability selection:** Rich `description` fields in `capability.yaml` — loaded verbatim into Anthropic tool definitions — are the primary mechanism for deterministic routing between specialized and generic capabilities (e.g. `invoice-processing` vs `ocr-service`). No code-level classifier needed.
+- **Agent loop:** Anthropic `tool_use` with bounded rounds (≤5), accumulating usage on the request span. Thread-aware: loads history, injects summary, persists turns. Supports both blocking JSON and SSE streaming with live `tool_call_start` / `tool_call_result` events.
 - **Persistent memory:** `ThreadStore` trait + `QdrantThreadStore` (Qdrant as doc store); one collection per tenant; auto-summarisation via background task when message count crosses threshold.
+- **Native tools:** `CapabilityKind::Native` + `tools/` module — filesystem (read/write) and cargo runner available to any agent turn; path-safety enforced via `safe_join`.
 - **Observability by default:** structured JSON logs, OTel spans with W3C context propagation, healthchecks at every layer.
 
 ---
@@ -458,7 +485,7 @@ curl http://localhost:9000/minio/health/live
 - **Version:** 0.1.0
 - **State:** operational, ~95 % verified end-to-end (per [verify.md](../verify.md)).
 
-**Implemented:** multitenancy, invoice pipeline, YAML capability discovery, OpenAI-compatible chat, SSE streaming, tool-calling agent loop, MCP JSON-RPC, Qdrant semantic search, MinIO file storage, WASM execution, Google Workspace manifest, evals framework, Jaeger/OTLP tracing, per-tenant rate limiting, persistent thread memory (Qdrant-backed), thread REST API (5 endpoints), thread-aware agent loop with auto-summarisation, `gen_ai.*` OTel span attributes, W3C traceparent propagation.
+**Implemented:** multitenancy, invoice pipeline, YAML capability discovery, OpenAI-compatible chat, SSE streaming, tool-calling agent loop (blocking + streaming), MCP JSON-RPC, Qdrant semantic search, MinIO file storage, WASM execution, Google Workspace manifest, evals framework (invoice + OCR + threads), Jaeger/OTLP tracing, per-tenant rate limiting, persistent thread memory (Qdrant-backed), thread REST API (5 endpoints), thread-aware agent loop with auto-summarisation, `gen_ai.*` OTel span attributes, W3C traceparent propagation, native filesystem + cargo tools, cargo-chef Docker caching.
 
 **Reserved / future:** `Docker` capability kind, external MCP server federation, multi-instance deployment, persistent audit log, billing/quota enforcement, admin dashboard.
 
@@ -484,6 +511,7 @@ conusai-platform/
 │   │                                     embedding,tool_executor,mcp_adapter,wasm_loader},
 │   │                       context/{mod,tenant},
 │   │                       memory/{mod,qdrant_store},
+│   │                       tools/{mod,fs_tools,cargo_tool,native_capability},
 │   │                       pipelines/{mod,invoice}}.rs
 │   ├── agent-gateway/ src/{main,state,
 │   │                       mw/{mod,tenant,trace,rate_limit},
@@ -500,9 +528,9 @@ conusai-platform/
 │
 ├── evals/
 │   ├── src/{main,config,report,
-│   │        runners/{mod,invoice},
+│   │        runners/{mod,invoice,threads,ocr_quality},
 │   │        scorers/mod}.rs
-│   └── datasets/invoice.jsonl
+│   └── datasets/{invoice,threads,ocr_quality}.jsonl
 │
 ├── wasm/                            # WASM capability sources (reserved)
 ├── scripts/

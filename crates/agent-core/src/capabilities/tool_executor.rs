@@ -2,6 +2,7 @@ use super::card::CapabilityCard;
 use super::wasm_loader::WasmCapabilityLoader;
 use crate::context::tenant::TenantContext;
 use crate::pipelines::invoice::InvoicePipeline;
+use crate::tools::{cargo_tool, fs_tools};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -84,6 +85,37 @@ impl CapabilityExecutor {
                         data.status.as_deref().unwrap_or("unknown"),
                     )
                 }))
+            }
+
+            // ── Native (built-in) tools ──────────────────────────────────────
+            ("native-tools", "read_file") => {
+                let workspace_root = tenant
+                    .map(|t| t.workspace_root.to_string_lossy().to_string())
+                    .unwrap_or_else(|| {
+                        std::env::var("CONUSAI_WORKSPACE_ROOT")
+                            .unwrap_or_else(|_| "/tmp/conusai/workspaces".into())
+                    });
+                fs_tools::read_file(&workspace_root, input).await
+            }
+
+            ("native-tools", "write_file") => {
+                let workspace_root = tenant
+                    .map(|t| t.workspace_root.to_string_lossy().to_string())
+                    .unwrap_or_else(|| {
+                        std::env::var("CONUSAI_WORKSPACE_ROOT")
+                            .unwrap_or_else(|_| "/tmp/conusai/workspaces".into())
+                    });
+                fs_tools::write_file(&workspace_root, input).await
+            }
+
+            ("native-tools", "run_cargo") => {
+                let workspace_root = tenant
+                    .map(|t| t.workspace_root.to_string_lossy().to_string())
+                    .unwrap_or_else(|| {
+                        std::env::var("CONUSAI_WORKSPACE_ROOT")
+                            .unwrap_or_else(|_| ".".into())
+                    });
+                cargo_tool::run_cargo(&workspace_root, input).await
             }
 
             // ── WASM capabilities ────────────────────────────────────────────

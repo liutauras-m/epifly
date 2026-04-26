@@ -14,7 +14,7 @@ use common::memory::thread::{Message, Thread};
 use reqwest::Client;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use tracing::{info, warn};
+use tracing::{info, instrument, warn};
 use ulid::Ulid;
 
 const VECTOR_DIM: usize = 4;
@@ -274,6 +274,7 @@ async fn summarise_thread(
 
 #[async_trait]
 impl ThreadStore for QdrantThreadStore {
+    #[instrument(skip(self, initial_messages), fields(tenant_id, thread_id = tracing::field::Empty))]
     async fn create(
         &self,
         tenant_id: &str,
@@ -282,6 +283,7 @@ impl ThreadStore for QdrantThreadStore {
         self.ensure_collection(tenant_id).await?;
 
         let thread_id = Ulid::new().to_string();
+        tracing::Span::current().record("thread_id", thread_id.as_str());
         let now = Utc::now();
 
         let thread = Thread {
@@ -323,6 +325,7 @@ impl ThreadStore for QdrantThreadStore {
             .unwrap_or(thread))
     }
 
+    #[instrument(skip(self), fields(tenant_id, thread_id))]
     async fn get(&self, tenant_id: &str, thread_id: &str) -> anyhow::Result<Option<Thread>> {
         self.ensure_collection(tenant_id).await?;
 
@@ -344,6 +347,7 @@ impl ThreadStore for QdrantThreadStore {
             .and_then(|p| Self::thread_from_payload(&p["payload"])))
     }
 
+    #[instrument(skip(self), fields(tenant_id, thread_id))]
     async fn messages(&self, tenant_id: &str, thread_id: &str) -> anyhow::Result<Vec<Message>> {
         self.ensure_collection(tenant_id).await?;
 
@@ -369,6 +373,7 @@ impl ThreadStore for QdrantThreadStore {
             .collect())
     }
 
+    #[instrument(skip(self, message), fields(tenant_id, thread_id, role = message.role.as_str()))]
     async fn append(
         &self,
         tenant_id: &str,
@@ -430,6 +435,7 @@ impl ThreadStore for QdrantThreadStore {
         Ok(())
     }
 
+    #[instrument(skip(self), fields(tenant_id, limit))]
     async fn list(&self, tenant_id: &str, limit: usize) -> anyhow::Result<Vec<Thread>> {
         self.ensure_collection(tenant_id).await?;
 
@@ -456,6 +462,7 @@ impl ThreadStore for QdrantThreadStore {
         Ok(threads)
     }
 
+    #[instrument(skip(self, summary), fields(tenant_id, thread_id))]
     async fn set_summary(
         &self,
         tenant_id: &str,
@@ -484,6 +491,7 @@ impl ThreadStore for QdrantThreadStore {
         self.upsert_point(tenant_id, point).await
     }
 
+    #[instrument(skip(self, title), fields(tenant_id, thread_id))]
     async fn set_title(
         &self,
         tenant_id: &str,

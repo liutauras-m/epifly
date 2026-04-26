@@ -1,41 +1,50 @@
 name: invoice-processing
-version: "0.1.0"
-description: >
-  Extracts structured data from invoice images (PNG, JPEG, PDF)
-  using Claude vision + structured extraction pipeline.
+version: "1.0.0"
+description: |
+  Specialized end-to-end pipeline for structured extraction from invoice documents (PNG, JPEG, JPG, PDF).
+  Returns fully structured InvoiceData: invoice_number, date, issuer, billed_to, line items, totals, currency, payment terms, and status.
+  Internally uses Claude vision + strict JSON schema — the vision step is already handled here.
+  Use this capability whenever the user mentions "invoice", "bill", "facture", "purchase order", or any accounts-payable document.
+  Do NOT chain ocr-service before this — extract_invoice already performs the vision step optimally in a single call.
 kind: pipeline
 tags:
+  - invoice
   - finance
+  - structured-extraction
   - ocr
-  - extraction
   - vision
+  - document
 
 tools:
   - name: extract_invoice
-    description: >
-      Extract all structured fields from an invoice image.
-      Returns invoice number, date, issuer, billed_to, line items, totals, and status.
+    description: |
+      Extract complete structured fields from an invoice image or PDF in a single call.
+      Handles the vision step internally — do not pre-process with ocr-service.
+      Input: image_path — absolute local path OR http/https URL (PNG, JPEG, JPG, PDF).
+      Output: full InvoiceData JSON with invoice_number, date, issuer, billed_to, line_items, subtotal, tax, total, currency, status.
     input_schema:
       type: object
       required: [image_path]
       properties:
         image_path:
           type: string
-          description: "Absolute local path OR http/https URL to the invoice image file (PNG, JPEG, PDF)"
+          description: "Absolute local path OR http/https URL to the invoice image or PDF"
         model:
           type: string
           description: "Claude model ID to use (default: claude-opus-4-7)"
           default: "claude-opus-4-7"
 
   - name: validate_invoice
-    description: Validate extracted invoice data for completeness and consistency.
+    description: |
+      Validate previously extracted InvoiceData for completeness and mathematical consistency.
+      Run this after extract_invoice to catch missing fields, mismatched totals, or invalid dates.
     input_schema:
       type: object
       required: [invoice_data]
       properties:
         invoice_data:
           type: object
-          description: Previously extracted InvoiceData JSON
+          description: InvoiceData JSON previously returned by extract_invoice
 
 config:
   default_model: "claude-opus-4-7"

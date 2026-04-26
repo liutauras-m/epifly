@@ -1,5 +1,5 @@
 use crate::mw::RateLimiter;
-use agent_core::{CapabilityDiscovery, CapabilityRegistry, QdrantThreadStore};
+use agent_core::{CapabilityDiscovery, CapabilityRegistry, QdrantThreadStore, native_capability_card};
 use common::memory::ThreadStore;
 use object_store::{aws::AmazonS3Builder, ObjectStore};
 use std::collections::HashMap;
@@ -22,7 +22,8 @@ pub struct AppState {
 impl AppState {
     pub fn from_env() -> common::error::Result<Self> {
         let discovery = CapabilityDiscovery::from_env();
-        let registry = discovery.discover()?;
+        let mut registry = discovery.discover()?;
+        registry.register(native_capability_card());
 
         let qdrant_url =
             std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".into());

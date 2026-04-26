@@ -18,6 +18,7 @@ tokio.workspace      = true
 rig-core.workspace   = true
 serde.workspace      = true
 serde_json.workspace = true
+reqwest.workspace    = true
 thiserror.workspace  = true
 anyhow.workspace     = true
 tracing.workspace    = true

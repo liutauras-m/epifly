@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+{% include "shared/head.html" %}
+</head>
+<body>
+<div class="login-page">
+  <aside class="login-poster">
+    <div class="poster-brand">
+      <svg class="sigil" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">
+        <path d="M16 3 L16 13"/><path d="M16 19 L16 29"/>
+        <path d="M3 16 L13 16"/><path d="M19 16 L29 16"/>
+        <path d="M7 7 L13 13"/><path d="M19 19 L25 25"/>
+        <path d="M25 7 L19 13"/><path d="M13 19 L7 25"/>
+        <circle cx="16" cy="16" r="2.5" fill="currentColor" stroke="none"/>
+      </svg>
+      <span>ConusAI</span>
+    </div>
+    <h1 class="poster-tagline">An <em>agent workshop</em> for operators who build with intent.</h1>
+    <div class="poster-meta">
+      <div>v0.3 · {{ year }}</div>
+      <div>Forge · stream · inspect</div>
+    </div>
+  </aside>
+
+  <section class="login-form-wrap">
+    <form class="login-form" method="POST" action="/login">
+      <div class="login-eyebrow">{{ greeting_eyebrow }}</div>
+      <h2 class="login-h1">Enter the workshop.</h2>
+
+      <div class="field">
+        <label for="name">Operator name</label>
+        <input id="name" name="name" type="text" required maxlength="60"
+               value="{{ default_name }}" autocomplete="off" autofocus>
+      </div>
+
+      <div class="field">
+        <label>Plan tier</label>
+        <div class="plan-row">
+          <input type="radio" id="p-free" name="plan" value="free">
+          <label for="p-free">Free</label>
+          <input type="radio" id="p-pro" name="plan" value="pro">
+          <label for="p-pro">Pro</label>
+          <input type="radio" id="p-ent" name="plan" value="enterprise" checked>
+          <label for="p-ent">Enterprise</label>
+        </div>
+      </div>
+
+      {% if let Some(err) = error %}
+      <div class="empty-hint" style="color: var(--rust); margin-bottom: var(--s-3);">{{ err }}</div>
+      {% endif %}
+
+      <button class="submit" type="submit">
+        Begin
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="square"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      </button>
+    </form>
+  </section>
+</div>
+</body>
+</html>

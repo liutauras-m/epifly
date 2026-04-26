@@ -50,7 +50,10 @@ async fn main() -> Result<()> {
         }
         Commands::List => {
             println!("Available suites:");
-            println!("  invoice   - Invoice extraction accuracy evaluation");
+            println!("  invoice     - Invoice extraction accuracy evaluation");
+            println!("  ocr         - OCR text extraction quality evaluation");
+            println!("  threads     - Multi-turn thread memory recall evaluation");
+            println!("  all         - Run all suites sequentially");
         }
     }
     Ok(())

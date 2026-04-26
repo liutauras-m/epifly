@@ -1,0 +1,2 @@
+{"turns": ["My name is Alice and I am working on Project Phoenix.", "The project deadline is December 31st 2025."], "recall_question": "What project am I working on and when is it due?", "expected_keywords": ["phoenix", "december"]}
+{"turns": ["I prefer concise answers.", "My tech stack is Rust, PostgreSQL, and React."], "recall_question": "What is my preferred tech stack?", "expected_keywords": ["rust", "postgresql"]}

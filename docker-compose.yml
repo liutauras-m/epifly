@@ -79,10 +79,12 @@ services:
       MINIO_SECRET_KEY: "minioadmin"
       CONUSAI_WORKSPACE_ROOT: "/tmp/conusai/workspaces"
       OTLP_ENDPOINT: "http://conusai-otel:4317"
+      UI_SESSION_KEY: "${UI_SESSION_KEY:-conusai-foundry-dev-secret-change-me-32b}"
     ports:
       - "8080:8080"
     volumes:
       - ./capabilities:/app/capabilities:ro
+      - ./crates/agent-gateway/assets:/app/ui-assets:ro
     restart: unless-stopped
     profiles: ["full"]
 

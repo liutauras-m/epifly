@@ -20,6 +20,8 @@ pub enum CapabilityKind {
     Wasm,
     Pipeline,
     Docker,
+    /// Built-in in-process tools (filesystem, cargo runner). Not loaded from YAML.
+    Native,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
