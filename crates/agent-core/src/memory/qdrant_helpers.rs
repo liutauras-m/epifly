@@ -166,7 +166,6 @@ impl QdrantClient {
     }
 
     /// POST a targeted payload SET — merges fields into an existing point without replacing it.
-    #[allow(dead_code)]
     #[instrument(skip(self, fields), fields(db.system = "qdrant", db.operation = "patch_payload", db.collection = collection, error.type = tracing::field::Empty))]
     pub async fn patch_payload(
         &self,
@@ -200,7 +199,6 @@ impl QdrantClient {
     }
 
     /// Delete a single point by its numeric ID.
-    #[allow(dead_code)]
     #[instrument(skip(self), fields(db.system = "qdrant", db.operation = "delete", db.collection = collection, error.type = tracing::field::Empty))]
     pub async fn delete_point(&self, collection: &str, pid: u64) -> anyhow::Result<()> {
         let labels = [
@@ -225,8 +223,33 @@ impl QdrantClient {
         Ok(())
     }
 
+    /// Idempotently create text indexes on an already-existing collection.
+    ///
+    /// Used by `QdrantWorkspaceStore::ensure_text_indexes` to lazily backfill indexes on
+    /// collections that pre-date the full-text search feature.  Qdrant treats duplicate
+    /// index creation as a no-op (returns 200), so this is safe to call repeatedly.
+    pub async fn add_text_indexes(&self, collection: &str, text_fields: &[&str]) {
+        let idx_url = format!("{}/collections/{}/index", self.base_url, collection);
+        for &field in text_fields {
+            let _ = self
+                .http
+                .put(&idx_url)
+                .json(&json!({
+                    "field_name": field,
+                    "field_schema": {
+                        "type": "text",
+                        "tokenizer": "word",
+                        "min_token_len": 2,
+                        "max_token_len": 128,
+                        "lowercase": true
+                    }
+                }))
+                .send()
+                .await;
+        }
+    }
+
     /// GET a single point by numeric ID.  Returns `None` on 404.
-    #[allow(dead_code)]
     pub async fn get_point(&self, collection: &str, pid: u64) -> anyhow::Result<Option<Value>> {
         let url = format!(
             "{}/collections/{}/points/{}",

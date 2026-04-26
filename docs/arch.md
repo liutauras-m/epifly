@@ -11,7 +11,7 @@ A production-grade multitenant AI agent platform built on **Rust + Rig**, with *
 - [crates/common](../crates/common) — Shared utilities and foundational types
 - [crates/agent-core](../crates/agent-core) — Agent runtime, tool registry, Rig integration
 - [crates/agent-gateway](../crates/agent-gateway) — OpenAI-compatible HTTP gateway
-- [crates/invoice-demo](../crates/invoice-demo) — Standalone invoice extraction CLI
+- [examples/invoice-cli](../examples/invoice-cli) — Standalone invoice extraction CLI
 - [evals](../evals) — Evaluation framework (runners + scorers)
 
 ### Key Workspace Dependencies
@@ -98,7 +98,7 @@ components = ["rustfmt", "clippy", "rust-src"]
 |---|---|
 | [docs/plan.md](plan.md) | Hierarchical workspace implementation plan (per-phase status: 0–6 shipped; 7–9 planned). |
 | [docs/tenant.md](tenant.md) | Multitenancy design — `TenantContext`, `TenantClaims`, `extract_tenant`, dev-mode/JWT mode, isolation surfaces. |
-| [docs/verify.md](verify.md) | End-to-end Docker verification plan, JWT helpers, curl recipes (Phases 0–13 incl. workspace, audit, UI). |
+| [docs/verify.md](verify.md) | End-to-end Docker verification plan, JWT helpers, curl recipes (Phases 0–14 incl. workspace, audit, UI, ToolProvider regression). |
 | [docs/frontend.md](frontend.md) | Frontend implementation plan + current sidebar redesign (workspace-first layout). |
 | [docs/ui-design.md](ui-design.md) | Design tokens (colour, type, spacing, motion) and component recipes. |
 | [docs/improvements.md](improvements.md) | Historical v0.3 roadmap; superseded — kept for context only. |
@@ -127,6 +127,7 @@ components = ["rustfmt", "clippy", "rust-src"]
 | [src/memory/thread.rs](../crates/common/src/memory/thread.rs) | `Thread { id (ULID), tenant_id, title, created_at, last_active, message_count, summary, metadata }`. `Message { role, content, tool_calls, timestamp, seq }`. `ToolCall { id, name, input, output }`. |
 | [src/memory/workspace.rs](../crates/common/src/memory/workspace.rs) | `NodeKind { Folder, Conversation, File }`, `WorkspaceNode { id, tenant_id, owner_id, parent_id, kind, name, virtual_path, last_modified, shared_with, metadata }`. Helpers: `new_folder`, `new_conversation`, `validate_name` (rejects empty / >255 / `/` / `\` / `..` / leading `.` and enforces `.md` for conversations), `join_virtual_path`, `effective_user_id` (maps `None` → `"__dev__"`). |
 | [src/memory/store.rs](../crates/common/src/memory/store.rs) | Three async traits — `ThreadStore` (`create`, `get`, `messages`, `append`, `list`, `set_summary`, `set_title`); `WorkspaceStore` (`create_folder`, `create_conversation`, `list_accessible_children`, `get_accessible_node`, `get_ancestors`, `move_node`, `delete_node`, `share_node`, `unshare_node`, `bump_last_modified`, `search_nodes`, `index_content`, `bind_thread`); `WorkspaceContentStore` (`read`, `write`, `delete`). All methods take `tenant_id: &str` and (where access matters) a `user_id: &str`, avoiding any circular dep with agent-core. |
+| [src/memory/inmem.rs](../crates/common/src/memory/inmem.rs) | In-memory implementations of all four store traits for test/CI use. `InMemoryThreadStore` (`Mutex<HashMap<(tenant,id), Thread>>` + messages map), `InMemoryWorkspaceStore` (`Mutex<HashMap<Ulid, WorkspaceNode>>` + `content_text` map; full ACL, recursive delete, substring search), `InMemoryWorkspaceContent` (`Mutex<HashMap<(tenant,path), String>>`; `read` returns `""` on miss), `InMemoryAuditStore` (`Mutex<Vec<AuditEvent>>`; newest-first sort). Zero external dependencies — no Qdrant or MinIO required. Activated via `CONUSAI_TEST_MODE=1`. |
 | [src/audit.rs](../crates/common/src/audit.rs) | `AuditEvent { id (ULID), tenant_id, timestamp, action, tool?, status, duration_ms?, metadata }` with builder helpers (`with_tool`, `with_status`, `with_duration_ms`, `with_metadata`). `AuditStore` async trait: `append`, `list(tenant, limit)`. |
 | [src/metrics.rs](../crates/common/src/metrics.rs) | OpenTelemetry meter helpers (`qdrant_duration_ms`, `qdrant_errors`, `llm_requests`, `llm_input_tokens`, `llm_output_tokens`) plus `kv(key, value)` for label construction. |
 
@@ -185,6 +186,7 @@ components = ["rustfmt", "clippy", "rust-src"]
 
 | File | Purpose |
 |---|---|
+| [qdrant_helpers.rs](../crates/agent-core/src/memory/qdrant_helpers.rs) | Shared Qdrant REST helpers used by all three stores. `point_id(key) -> u64` (SHA-256 → first 8 bytes), `zero_vec() -> Vec<f32>` (4-dim placeholder). `QdrantClient` struct with `ensure_collection(col, keyword_fields, text_fields)`, `upsert_point`, `scroll_filter`, `patch_payload`, `delete_point`, `get_point` — all with OTel duration + error metrics. Eliminates ~150 lines of boilerplate that were duplicated across the three Qdrant stores. |
 | [qdrant_store.rs](../crates/agent-core/src/memory/qdrant_store.rs) | `QdrantThreadStore` — implements `ThreadStore` using Qdrant REST as a document store (not vector search). Uses 4-dim zero vectors; SHA-256 → u64 point IDs; collection per tenant (`threads_{tenant_id}`); payload indices on `type`, `thread_id`, `tenant_id`. `scroll_filter()` for all queries. Background `tokio::spawn` for auto-summarisation when `message_count % MAX_MESSAGES_BEFORE_SUMMARY == 0`, calling Claude Haiku via Anthropic API. All 7 trait methods instrumented with `#[instrument]` (OTel spans). |
 | [qdrant_workspace_store.rs](../crates/agent-core/src/memory/qdrant_workspace_store.rs) | `QdrantWorkspaceStore` — implements `WorkspaceStore`. Mirrors the thread store pattern (REST, 4-dim zero vectors, SHA-256→u64 point IDs) but as a hierarchical metadata store. Per-tenant collection `workspaces_{tenant_id}`. Payload schema: `id`, `tenant_id`, `owner_id`, `parent_id` (string, `""` for root), `kind` (`folder`/`conversation`/`file`), `name`, `virtual_path`, `last_modified` (RFC 3339), `shared_with: [user_id]`, `metadata: object`, `content_text` (truncated body for full-text search). On collection creation: keyword indexes on `tenant_id`/`owner_id`/`parent_id`/`kind`/`shared_with` and **text** indexes on `name`/`content_text` (`tokenizer: word, lowercase: true, min_token_len: 2, max_token_len: 128`). `node_to_point` seeds `content_text: ""` so new nodes are searchable by name immediately. `patch_payload(...)` is a targeted Qdrant payload SET via `POST /collections/{col}/points/payload` — used for `move_node`, `share_node`, `unshare_node`, `bind_thread`, `bump_last_modified`, and `index_content`, so `content_text` and other untouched keys are preserved across metadata updates. Access filter `tenant_id == X AND (owner_id == U OR shared_with ∋ U)` is built by `access_filter()` using the **struct form** of `min_should` (`{conditions, min_count}`) — Qdrant rejects the integer shorthand. `get_accessible_node` returns `NotFound` (never `Forbidden`) for non-owners to avoid leaking existence. `delete_node` walks children via worklist (avoids deep async recursion). `search_nodes` issues per-token `text_match` over `name` ∪ `content_text`, falling back to a substring scan when the index is missing or returns nothing. `index_content` truncates to 32 KB at a UTF-8 boundary and SETs `content_text` + `last_modified` in one targeted call. `ensure_text_indexes` lazily backfills text indexes on collections that pre-date this feature. |
 | [minio_workspace_content.rs](../crates/agent-core/src/memory/minio_workspace_content.rs) | `MinioWorkspaceContent` — implements `WorkspaceContentStore` against an `Arc<dyn ObjectStore>` (the same MinIO client wired into `AppState.file_store`). Object keys are built as `tenants/{tenant_id}/workspaces/{virtual_path}` via `OsPath::from(...)`. `read` returns `""` on `NotFound` so newly-created conversations work without a write-first; `write` puts UTF-8 bytes; `delete` is best-effort (silently OK on missing). |
@@ -210,7 +212,7 @@ components = ["rustfmt", "clippy", "rust-src"]
 | File | Purpose |
 |---|---|
 | [src/main.rs](../crates/agent-gateway/src/main.rs) | Tokio entrypoint. Initializes telemetry, builds `AppState`, mounts public + protected routers, applies `CorsLayer` + `TraceLayer` + tenant + trace middleware, binds `0.0.0.0:8080`. |
-| [src/state.rs](../crates/agent-gateway/src/state.rs) | `AppState { registry: Mutex<ToolRegistry>, rate_limiter, file_store: Option<Arc<dyn ObjectStore>>, qdrant_url, presigned_tokens: Mutex<HashMap>, thread_store: Arc<dyn ThreadStore>, audit_store: Arc<dyn AuditStore>, workspace_store: Arc<dyn WorkspaceStore>, workspace_content: Arc<dyn WorkspaceContentStore> }`. `from_env()` runs tool discovery, registers `builtin_tool_card()` provider, initializes MinIO if `MINIO_ENDPOINT`/`S3_ENDPOINT` is set, instantiates `QdrantThreadStore`, `QdrantAuditStore`, `QdrantWorkspaceStore`, and either `MinioWorkspaceContent` (when MinIO is up) or `NoopWorkspaceContent` (warns at startup; errors on use rather than panicking). |
+| [src/state.rs](../crates/agent-gateway/src/state.rs) | `AppState { registry: Mutex<ToolRegistry>, rate_limiter, file_store: Option<Arc<dyn ObjectStore>>, qdrant_url, presigned_tokens: Mutex<HashMap>, thread_store: Arc<dyn ThreadStore>, audit_store: Arc<dyn AuditStore>, workspace_store: Arc<dyn WorkspaceStore>, workspace_content: Arc<dyn WorkspaceContentStore> }`. `from_env()` first checks `CONUSAI_TEST_MODE=1` and delegates to `with_in_memory_stores()` when set; otherwise runs tool discovery, registers `builtin_tool_card()` provider, initializes MinIO if `MINIO_ENDPOINT`/`S3_ENDPOINT` is set, instantiates `QdrantThreadStore`, `QdrantAuditStore`, `QdrantWorkspaceStore`, and either `MinioWorkspaceContent` (when MinIO is up) or `NoopWorkspaceContent` (warns at startup; errors on use rather than panicking). `with_in_memory_stores()` wires the four `InMemory*` stores — no Qdrant or MinIO required; all data lost on process exit. |
 
 #### Middleware ([src/mw/](../crates/agent-gateway/src/mw))
 
@@ -230,7 +232,7 @@ components = ["rustfmt", "clippy", "rust-src"]
 | [threads.rs](../crates/agent-gateway/src/routes/threads.rs) | Thread CRUD | `create_thread`, `list_threads`, `get_thread`, `get_messages`, `append_message`. Delegates to `AppState::thread_store` (`QdrantThreadStore`). |
 | [capabilities.rs](../crates/agent-gateway/src/routes/capabilities.rs) | `GET /v1/capabilities` | Lists capabilities (name, version, description, kind, tags, tools) with tenant + plan. |
 | [search.rs](../crates/agent-gateway/src/routes/search.rs) | `GET /v1/capabilities/search?q=…&limit=…` | Semantic search via Qdrant (64-dim deterministic hash embeddings). On first call per tenant, creates collection `capabilities_{tenant_id}` and upserts capability vectors. Falls back to local substring match if Qdrant is unreachable. |
-| [mcp.rs](../crates/agent-gateway/src/routes/mcp.rs) | `POST /mcp` | JSON-RPC 2.0 dispatcher. Methods: `initialize` (server info), `tools/list` (all tool defs), `tools/call` (`capability__tool`, splits name, dispatches to `CapabilityExecutor`). |
+| [mcp.rs](../crates/agent-gateway/src/routes/mcp.rs) | `POST /mcp` | JSON-RPC 2.0 dispatcher. Methods: `initialize` (server info), `tools/list` (all tool defs), `tools/call` (`capability__tool`, splits name, looks up provider via `registry.get_provider()`, dispatches via `provider.invoke()`). |
 | [files.rs](../crates/agent-gateway/src/routes/files.rs) | `POST /v1/files`, `GET /v1/files/{token}` | Multipart upload to MinIO under `tenants/{tenant_id}/{uuid}/{filename}`; returns 1-h TTL download token. Download endpoint is public (token-gated) and streams back the object. |
 | [audit.rs](../crates/agent-gateway/src/routes/audit.rs) | `GET /v1/audit?limit=` | Lists recent `AuditEvent`s for the calling tenant from `audit_{tenant_id}`, ordered by `timestamp desc`. `limit` defaults to 50, capped at 500. Returns `{events, count}`. |
 | [workspaces.rs](../crates/agent-gateway/src/routes/workspaces.rs) | `POST /v1/workspaces`, `GET /v1/workspaces/tree`, `GET /v1/workspaces/search`, `GET /v1/workspaces/{id}`, `GET/PATCH /v1/workspaces/{id}/content`, `POST /v1/workspaces/{id}/move`, `POST /v1/workspaces/{id}/share`, `POST /v1/workspaces/{id}/unshare`, `DELETE /v1/workspaces/{id}` | Hierarchical workspace CRUD over `WorkspaceStore` + `WorkspaceContentStore`. `create` validates the name eagerly (returns 400) and, for conversations, writes an empty `.md` to MinIO after Qdrant upsert. `patch_content` writes MinIO first, then `index_content` updates `content_text`. `tree` lists immediate children via `list_accessible_children`. `search` runs token-based text_match across `name` ∪ `content_text` (limit defaults to 40, capped at 200). `delete` is recursive in Qdrant; for conversation leaves it best-effort deletes the MinIO object first. All mutating routes rate-limit; `Validation`/`NotFound`/other → `400`/`404`/`500`. |
@@ -251,9 +253,9 @@ components = ["rustfmt", "clippy", "rust-src"]
 
 ---
 
-### 3.4 [`crates/invoice-demo`](../crates/invoice-demo) — Standalone CLI
+### 3.4 [`examples/invoice-cli`](../examples/invoice-cli) — Standalone CLI
 
-[`main.rs`](../crates/invoice-demo/src/main.rs):
+[`main.rs`](../examples/invoice-cli/src/main.rs):
 
 - `clap` `Args { image, --model (default claude-opus-4-7), --tenant-id (default conusai-demo), --plan (default enterprise), --json }`.
 - Builds a `TenantContext` and `InvoicePipeline::with_model().with_tenant()`.
@@ -283,7 +285,7 @@ components = ["rustfmt", "clippy", "rust-src"]
 
 Drop a folder with a `capability.yaml` (and optionally an implementation) into `capabilities/`; the registry auto-discovers it on startup.
 
-### Capability kinds (`CapabilityKind`)
+### Capability kinds (`ToolKind`)
 
 | Kind | Runtime | Implementation | Tool format |
 |---|---|---|---|
@@ -336,7 +338,7 @@ Reserved for WASM capability source crates targeting `wasm32-wasip1`.
 ### Startup (gateway)
 
 1. `tokio::main` → `common::telemetry::init("agent-gateway", "info")` (JSON logs + optional OTLP).
-2. `AppState::from_env()` → `CapabilityDiscovery::from_env().discover()` populates `CapabilityRegistry`; MinIO client initialized if `MINIO_ENDPOINT` is set.
+2. `AppState::from_env()` → `ToolDiscovery::from_env().discover()` populates `ToolRegistry`; `BuiltinProvider` registered immediately after; MinIO client initialized if `MINIO_ENDPOINT` is set.
 3. Router assembled: public (`/health`, `/v1/files/{token}`) + protected (everything else behind tenant middleware).
 4. Layers applied: CORS → `TraceLayer` → tenant extraction → trace propagation.
 5. `axum::serve` on `CONUSAI_SERVER__HOST:CONUSAI_SERVER__PORT`.
@@ -355,10 +357,10 @@ HTTP request
               │     │     └─ ContextBuilder::build_for_node → system preamble suffix
               │     └─ Anthropic /v1/messages
               │           ├─ on stop_reason=tool_use:
-              │           │     CapabilityExecutor::invoke(card, tool, input, tenant)
-              │           │       ├─ pipeline → InvoicePipeline
-              │           │       ├─ wasm     → WasmCapabilityLoader
-              │           │       └─ mcp      → McpAdapter
+              │           │     registry.get_provider(cap_name)?.invoke(tool, input, tenant)
+              │           │       ├─ pipeline → InvoiceProvider / ContractProvider / OcrProvider
+              │           │       ├─ wasm     → WasmProvider (WasmToolLoader)
+              │           │       └─ mcp      → McpProvider (McpAdapter)
               │           └─ on stop_reason=end_turn:
               │                 ├─ ThreadStore::append(assistant)
               │                 └─ if workspace_node_id:
@@ -384,7 +386,7 @@ HTTP request
 ### Tenant propagation
 
 - Middleware decodes JWT (or reads `X-Tenant-ID` in dev), constructs `TenantContext`, inserts as Axum extension.
-- Handlers receive it via `Extension(ResolvedTenant)` and pass it through to `CapabilityExecutor`, `InvoicePipeline`, etc.
+- Handlers receive it via `Extension(ResolvedTenant)` and pass it through to provider `invoke()` calls, `InvoicePipeline`, etc.
 - All filesystem paths via `TenantContext::safe_path`; all object keys prefixed `tenants/{tenant_id}/`; Qdrant collections named `{kind}_{tenant_id}`; spans tagged with tenant fields.
 
 ### Rate limiting
@@ -478,6 +480,7 @@ Per-tenant 60-second sliding window; plan-based limits (Free 10 / Pro 60 / Enter
 | `JWT_SECRET` | — | If set: HS256 enforced; if unset: dev mode (`X-Tenant-ID`) |
 | `OTLP_ENDPOINT` | — | OTel collector (e.g. `http://localhost:4317`) |
 | `RUST_LOG` | — | tracing filter |
+| `CONUSAI_TEST_MODE` | — | Set to `1` to replace all Qdrant + MinIO stores with `InMemory*` implementations; no external services required. All data is lost on process exit. |
 
 ---
 
@@ -488,7 +491,7 @@ Per-tenant 60-second sliding window; plan-based limits (Free 10 / Pro 60 / Enter
 ```bash
 cargo build --release --workspace
 cargo build --release --bin agent-gateway
-cargo build --release --bin invoice-demo
+cargo build --release --bin invoice-cli
 cargo build --release --bin evals
 cargo build --release --target wasm32-wasip1 -p capability-example
 ```
@@ -524,11 +527,12 @@ curl http://localhost:9000/minio/health/live
 ## 11. Design Patterns
 
 - **Multitenant-first:** JWT auth, tenant-prefixed paths/keys, Qdrant collection per tenant, plan-based rate limits, tenant-tagged spans.
-- **Zero-code extension:** YAML manifests in `capabilities/`; `CapabilityKind` enum allows pluggable execution; tool defs in stable `capability__tool` form.
+- **Zero-code extension:** YAML manifests in `capabilities/`; `ToolKind` enum + `ToolProvider` trait allow pluggable execution without touching the registry or agent loop; tool defs in stable `capability__tool` form.
 - **Precise tool descriptions drive correct capability selection:** Rich `description` fields in `capability.yaml` — loaded verbatim into Anthropic tool definitions — are the primary mechanism for deterministic routing between specialized and generic capabilities (e.g. `invoice-processing` vs `ocr-service`). No code-level classifier needed.
 - **Agent loop:** Anthropic `tool_use` with bounded rounds (≤5), accumulating usage on the request span. Thread-aware: loads history, injects summary, persists turns. Supports both blocking JSON and SSE streaming with live `tool_call_start` / `tool_call_result` events.
 - **Persistent memory:** `ThreadStore` trait + `QdrantThreadStore` (Qdrant as doc store); one collection per tenant; auto-summarisation via background task when message count crosses threshold.
-- **Native tools:** `CapabilityKind::Native` + `tools/` module — filesystem (read/write) and cargo runner available to any agent turn; path-safety enforced via `safe_join`.
+- **ToolProvider trait:** `async_trait` trait (`manifest()`, `invoke()`, `tool_definitions()`) implemented by `BuiltinProvider`, `McpProvider`, `WasmProvider`, `InvoiceProvider`, `ContractProvider`, `OcrProvider`. `provider_for(card)` factory in `tools/providers/mod.rs` routes by `ToolKind`. Adding a new capability kind requires one new provider file and one match arm — no changes to the registry or agent loop.
+- **Native tools:** `ToolKind::Native` + `tools/builtin/` module (`BuiltinProvider`) — filesystem (read/write) and cargo runner available to any agent turn; path-safety enforced via `safe_join`.
 - **Observability by default:** structured JSON logs, OTel spans with W3C context propagation, healthchecks at every layer.
 
 ---
@@ -549,7 +553,7 @@ curl http://localhost:9000/minio/health/live
 - **Version:** 0.1.0
 - **State:** operational, ~95 % verified end-to-end (per [verify.md](../verify.md)).
 
-**Implemented:** multitenancy, invoice + contract pipelines, YAML capability discovery, OpenAI-compatible chat, SSE streaming, tool-calling agent loop (blocking + streaming), MCP JSON-RPC, Qdrant semantic capability search, MinIO file storage, WASM execution, Google Workspace manifest, evals framework (invoice + OCR + threads), Jaeger/OTLP tracing, per-tenant rate limiting, persistent thread memory (Qdrant-backed) with auto-summarisation, thread REST API (5 endpoints), `gen_ai.*` OTel span attributes, W3C traceparent propagation, native filesystem + cargo tools, cargo-chef Docker caching, **hierarchical workspace** (folders + conversations as `.md` in MinIO; per-tenant Qdrant index with text indexes on `name` + `content_text`; private-by-default per-user ACL with explicit per-node sharing — see [ADR 005](adr/005-workspace-access-control.md)), **per-node thread binding** (lazy `bind_thread` from agent route), **chat-content indexing** (last 30 messages re-indexed into `content_text` after every turn), **workspace context injection** (`ContextBuilder` walks ancestor `CONTEXT.md` / `README.md`), **append-only audit log** (`audit_{tenant_id}` Qdrant collection + `GET /v1/audit`), **workspace-first sidebar redesign** (Workspace + search + tree, Recents, Capabilities, user chip), `metrics` module with OTel meters for Qdrant + LLM operations.
+**Implemented:** multitenancy, invoice + contract pipelines, YAML capability discovery, OpenAI-compatible chat, SSE streaming, tool-calling agent loop (blocking + streaming), MCP JSON-RPC, Qdrant semantic capability search, MinIO file storage, WASM execution, Google Workspace manifest, evals framework (invoice + OCR + threads), Jaeger/OTLP tracing, per-tenant rate limiting, persistent thread memory (Qdrant-backed) with auto-summarisation, thread REST API (5 endpoints), `gen_ai.*` OTel span attributes, W3C traceparent propagation, native filesystem + cargo tools, cargo-chef Docker caching, **hierarchical workspace** (folders + conversations as `.md` in MinIO; per-tenant Qdrant index with text indexes on `name` + `content_text`; private-by-default per-user ACL with explicit per-node sharing — see [ADR 005](adr/005-workspace-access-control.md)), **per-node thread binding** (lazy `bind_thread` from agent route), **chat-content indexing** (last 30 messages re-indexed into `content_text` after every turn), **workspace context injection** (`ContextBuilder` walks ancestor `CONTEXT.md` / `README.md`), **append-only audit log** (`audit_{tenant_id}` Qdrant collection + `GET /v1/audit`), **workspace-first sidebar redesign** (Workspace + search + tree, Recents, Capabilities, user chip), `metrics` module with OTel meters for Qdrant + LLM operations, **`Capability*` → `Tool*` refactor** (`ToolProvider` trait replaces the 8-arm `match` in `tool_executor.rs`; provider-based registry; `BuiltinProvider`/`McpProvider`/`WasmProvider`/`InvoiceProvider`/`ContractProvider`/`OcrProvider`; shared `QdrantClient` helper eliminates ~150 lines of duplicated Qdrant boilerplate; `invoice-demo` → `examples/invoice-cli`; `ExtractionPipeline` trait).
 
 **Reserved / future:** `Docker` capability kind, external MCP server federation, multi-instance deployment, audit retention/compaction, billing/quota enforcement, admin dashboard, multi-layer context budgeting (plan §7), live document mode (plan §8), agent-callable workspace toolkit (plan §9), real workspace embeddings (vectors are still 4-dim placeholders — see plan §9 / future ADR 006).
 
@@ -572,13 +576,14 @@ conusai-platform/
 │   │                       memory/{mod,thread,store,workspace,tests}}.rs
 │   ├── agent-core/    src/{lib,
 │   │                       agent/{mod,builder,runtime},
-│   │                       capabilities/{mod,provider,manifest,card,registry,discovery,
-│   │                                     embedding,tool_executor,mcp_adapter,wasm_loader},
 │   │                       context/{mod,tenant},
-│   │                       memory/{mod,qdrant_store,qdrant_workspace_store,
+│   │                       memory/{mod,qdrant_helpers,qdrant_store,qdrant_workspace_store,
 │   │                               minio_workspace_content,context_builder,qdrant_audit},
-│   │                       tools/{mod,fs_tools,cargo_tool,native_capability},
-│   │                       pipelines/{mod,invoice,contract}}.rs
+│   │                       tools/{mod,provider,manifest,card,registry,discovery,
+│   │                              embedding,executor,mcp_adapter,wasm_loader,
+│   │                              providers/{mod,builtin,mcp,wasm,pipeline},
+│   │                              builtin/{mod,fs,cargo,card}},
+│   │                       pipelines/{mod,extraction,invoice,contract}}.rs
 │   ├── agent-gateway/ src/{main,state,
 │   │                       mw/{mod,tenant,trace,rate_limit},
 │   │                       routes/{mod,health,chat,agent,capabilities,search,mcp,files,
@@ -594,7 +599,9 @@ conusai-platform/
 │   │                   templates/{app,login}.html
 │   │                       partials/composer.html
 │   │                       shared/head.html
-│   └── invoice-demo/  src/main.rs
+│
+├── examples/
+│   └── invoice-cli/   src/main.rs
 │
 ├── capabilities/
 │   ├── file-storage/        capability.yaml         (mcp)

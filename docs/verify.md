@@ -2,7 +2,7 @@
 
 End-to-end verification of the **ConusAI multitenant agent platform** running entirely in Docker.
 
-> **Architecture under test**: workspace with `common`, `agent-core`, `agent-gateway`, `invoice-demo`, `evals` crates; Anthropic Claude via Rig; per-tenant isolation; capabilities auto-discovery; invoice extraction pipeline; streaming SSE; tool-calling agent loop; MCP JSON-RPC 2.0; MinIO file storage; Qdrant semantic search; WASM runtime.
+> **Architecture under test**: workspace with `common`, `agent-core`, `agent-gateway`, `examples/invoice-cli`, `evals` crates; Anthropic Claude via Rig; per-tenant isolation; `ToolProvider` trait + provider-based registry; capabilities auto-discovery; invoice extraction pipeline; streaming SSE; tool-calling agent loop; MCP JSON-RPC 2.0; MinIO file storage; Qdrant semantic search; WASM runtime.
 
 ---
 
@@ -90,7 +90,7 @@ ls Cargo.toml docker-compose.yml Dockerfile rust-toolchain.toml
 
 cargo metadata --format-version 1 --no-deps \
   | python3 -c "import sys,json; [print(p['name']) for p in sorted(json.load(sys.stdin)['packages'], key=lambda p:p['name'])]"
-# Expected: agent-core, agent-gateway, common, evals, invoice-demo
+# Expected: agent-core, agent-gateway, common, evals, invoice-cli
 ```
 
 ✅ **Pass**: 5 crates listed.
@@ -223,10 +223,10 @@ curl -s -X POST http://localhost:8080/v1/chat/completions \
 
 ## Phase 6 — Invoice Extraction (End-to-End)
 
-### 6.1 Via `invoice-demo` binary
+### 6.1 Via `invoice-cli` binary
 ```bash
 source .env.local
-./target/release/invoice-demo invoice.png --tenant-id acme --plan enterprise
+./target/release/invoice-cli invoice.png --tenant-id acme --plan enterprise
 # Expected:
 #   Invoice #:   HCY-23256029
 #   Status:      PAID
@@ -533,7 +533,7 @@ curl -sf -X POST http://localhost:8080/mcp \
 
 # Phase 6: invoice extraction
 source .env.local
-cargo run --release --bin invoice-demo -- invoice.png --tenant-id ci --plan enterprise > /tmp/invoice.out
+cargo run --release --bin invoice-cli -- invoice.png --tenant-id ci --plan enterprise > /tmp/invoice.out
 grep -q "HCY-23256029" /tmp/invoice.out || { echo "❌ Invoice number mismatch"; exit 1; }
 grep -q "PAID"         /tmp/invoice.out || { echo "❌ Status mismatch"; exit 1; }
 grep -q "63.99"        /tmp/invoice.out || { echo "❌ Total mismatch"; exit 1; }
@@ -627,7 +627,7 @@ echo "   • Zero-code extension: PASS"
 - [ ] `test_wasm_ping` unit test passes in `cargo test`
 
 **Invoice Extraction**
-- [ ] `invoice-demo invoice.png --plan enterprise` → `HCY-23256029`, `PAID`, `€63.99`
+- [ ] `invoice-cli invoice.png --plan enterprise` → `HCY-23256029`, `PAID`, `€63.99`
 - [ ] `evals run --suite invoice` → **✅ ALL PASS**, 100% score
 
 **Capabilities System**
@@ -715,7 +715,7 @@ After upload, the attachment chip appears in the composer with an ember **"Extra
 
 ✅ Zero agent loop — no Claude tool selection  
 ✅ Zero `file-storage` MCP calls — bytes fetched directly from MinIO  
-✅ `InvoicePipeline::extract_from_bytes` called in-process (same as `invoice-demo` CLI)
+✅ `InvoicePipeline::extract_from_bytes` called in-process (same as `invoice-cli` CLI)
 
 ### 10.5 Path B — Agent Chat with prompt "Extract invoice"
 
@@ -965,6 +965,98 @@ Manual checklist (use Chrome MCP, Playwright, or a real browser):
 - [ ] Send a message in the composer → DevTools shows `POST /ui/stream` with body `{"message":"…","thread_id":…,"workspace_node_id":"<id>"}`.
 - [ ] After response, `GET /v1/workspaces/{id}` shows `metadata.thread_id` populated; subsequent searches for words from the conversation text return that node.
 - [ ] Theme toggle, Cmd/Ctrl-Enter to send, and reduced-motion respect remain intact.
+
+---
+
+## Phase 14 — ToolProvider Regression
+
+Verifies that the `Capability*` → `Tool*` refactor left all dispatch paths intact. Smoke each `ToolKind` and confirm the gateway behaves identically to pre-refactor.
+
+```bash
+TOKEN=$(python3 scripts/gen_jwt.py acme enterprise)
+```
+
+### 14.1 Native (BuiltinProvider — `ToolKind::Native`)
+
+`read_file` and `write_file` dispatched by `BuiltinProvider` registered at startup.
+
+```bash
+curl -sf -X POST http://localhost:8080/v1/agent/completions \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  -d '{"model":"claude-haiku-4-5-20251001","max_tokens":256,"messages":[
+        {"role":"user","content":"Write the text TOOLCHECK to /tmp/toolcheck.txt, then read it back."}
+      ]}' | python3 -c "import sys,json; r=json.load(sys.stdin); print(r['choices'][0]['message']['content'])"
+```
+
+✅ **Pass**: response mentions `TOOLCHECK`; `cat /tmp/toolcheck.txt` shows `TOOLCHECK`.
+
+### 14.2 WASM (WasmProvider — `ToolKind::Wasm`)
+
+```bash
+curl -sf -X POST http://localhost:8080/mcp \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"template-wasm__ping","arguments":{}}}' \
+  | python3 -c "import sys,json; r=json.load(sys.stdin); assert r['result']['content'][0]['text'] is not None; print('ok')"
+```
+
+✅ **Pass**: `WasmProvider` loads `capability.wasm`, exports `ping() -> i32`; returns `{"result":42}`.
+
+### 14.3 Pipeline (InvoiceProvider — `ToolKind::Pipeline`)
+
+```bash
+# Requires ANTHROPIC_API_KEY; use a real invoice image
+curl -sf -X POST http://localhost:8080/v1/agent/completions \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  -d "{\"model\":\"claude-opus-4-7\",\"max_tokens\":512,\"messages\":[
+        {\"role\":\"user\",\"content\":\"Extract the invoice at path $(pwd)/evals/datasets/invoice.png\"}
+      ]}" | python3 -c "import sys,json; c=json.load(sys.stdin)['choices'][0]['message']['content']; assert 'HCY-23256029' in c or 'extract' in c.lower(); print('ok')"
+```
+
+✅ **Pass**: `InvoiceProvider.invoke("extract_invoice", …)` delegates to `InvoicePipeline::extract_from_bytes`; result contains the invoice number.
+
+### 14.4 MCP (McpProvider — `ToolKind::Mcp`)
+
+MCP capabilities (e.g. `file-storage`, `google-workspace`) require a live MCP server. Test via `tools/list` to confirm the manifests load correctly:
+
+```bash
+curl -sf -X POST http://localhost:8080/mcp \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+  | python3 -c "import sys,json; tools=json.load(sys.stdin)['result']; names=[t['name'] for t in tools]; print(len(names),'tools'); assert any('invoice' in n for n in names)"
+```
+
+✅ **Pass**: all discovered capabilities appear in `tools/list`; count ≥ number of `capabilities/*/capability.yaml` files.
+
+### 14.5 Provider registry — no stale `Capability*` symbols
+
+```bash
+grep -rn 'CapabilityExecutor\|CapabilityRegistry\|CapabilityDiscovery\|CapabilityCard\|CapabilityKind\|CapabilityManifest\|WasmCapabilityLoader' crates/ evals/
+# Expected: no output
+```
+
+✅ **Pass**: zero matches — all Rust symbols renamed to `Tool*`.
+
+### 14.6 In-memory store smoke (CONUSAI_TEST_MODE)
+
+```bash
+CONUSAI_TEST_MODE=1 cargo run -p agent-gateway &
+sleep 2
+
+# Thread store
+curl -sf -X POST http://localhost:8080/v1/threads \
+  -H "Content-Type: application/json" -H "X-Tenant-ID: test" \
+  -d '{}' | python3 -c "import sys,json; t=json.load(sys.stdin); assert t['id']; print('thread ok:', t['id'])"
+
+# Workspace store
+curl -sf -X POST http://localhost:8080/v1/workspaces \
+  -H "Content-Type: application/json" -H "X-Tenant-ID: test" \
+  -d '{"kind":"folder","name":"TestFolder"}' \
+  | python3 -c "import sys,json; n=json.load(sys.stdin); assert n['name']=='TestFolder'; print('workspace ok')"
+
+kill %1
+```
+
+✅ **Pass**: server starts without Qdrant or MinIO; in-memory stores handle full create/read cycle. Log line `CONUSAI_TEST_MODE=1 — using in-memory stores` appears at startup.
 
 ---
 

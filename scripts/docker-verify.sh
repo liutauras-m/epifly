@@ -18,7 +18,7 @@ curl -sf -H "X-Tenant-ID: ci" http://localhost:8080/v1/capabilities > /dev/null
 
 # Phase 6: invoice extraction
 source .env.local
-cargo run --release --bin invoice-demo -- invoice.png --tenant-id ci --plan enterprise > /tmp/invoice.out
+cargo run --release --bin invoice-cli -- invoice.png --tenant-id ci --plan enterprise > /tmp/invoice.out
 grep -q "HCY-23256029" /tmp/invoice.out || { echo "❌ Invoice number mismatch"; exit 1; }
 grep -q "PAID"         /tmp/invoice.out || { echo "❌ Status mismatch"; exit 1; }
 grep -q "63.99"        /tmp/invoice.out || { echo "❌ Total mismatch"; exit 1; }

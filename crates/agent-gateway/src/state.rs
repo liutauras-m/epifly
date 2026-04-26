@@ -5,7 +5,10 @@ use agent_core::{
     ToolDiscovery, ToolRegistry,
 };
 use common::audit::AuditStore;
-use common::memory::{ThreadStore, WorkspaceContentStore, WorkspaceStore};
+use common::memory::{
+    InMemoryAuditStore, InMemoryThreadStore, InMemoryWorkspaceContent, InMemoryWorkspaceStore,
+    ThreadStore, WorkspaceContentStore, WorkspaceStore,
+};
 use object_store::{ObjectStore, aws::AmazonS3Builder};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -21,30 +24,34 @@ pub struct AppState {
     pub qdrant_url: String,
     /// In-memory map of download tokens → (object_key, issued_at, ttl)
     pub presigned_tokens: Mutex<HashMap<String, (String, std::time::Instant, std::time::Duration)>>,
-    /// Persistent conversation memory backed by Qdrant
+    /// Persistent conversation memory backed by Qdrant (or in-memory in test mode)
     pub thread_store: Arc<dyn ThreadStore>,
-    /// Append-only audit log backed by Qdrant
+    /// Append-only audit log backed by Qdrant (or in-memory in test mode)
     pub audit_store: Arc<dyn AuditStore>,
-    /// Workspace node index (Qdrant)
+    /// Workspace node index — Qdrant (or in-memory in test mode)
     pub workspace_store: Arc<dyn WorkspaceStore>,
-    /// Workspace markdown body store (MinIO)
+    /// Workspace markdown body store — MinIO (or in-memory in test mode)
     pub workspace_content: Arc<dyn WorkspaceContentStore>,
 }
 
 impl AppState {
     pub fn from_env() -> common::error::Result<Self> {
+        if std::env::var("CONUSAI_TEST_MODE").as_deref() == Ok("1") {
+            return Self::with_in_memory_stores();
+        }
+
         let discovery = ToolDiscovery::from_env();
         let mut registry = discovery.discover()?;
-        // Register the built-in native-tools provider
         registry.register_provider(Arc::new(BuiltinProvider::new()));
 
         let qdrant_url =
             std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".into());
 
         let file_store = init_file_store();
-        let thread_store = Arc::new(QdrantThreadStore::new(&qdrant_url));
-        let audit_store = Arc::new(QdrantAuditStore::new(&qdrant_url));
-        let workspace_store = Arc::new(QdrantWorkspaceStore::new(&qdrant_url));
+        let thread_store: Arc<dyn ThreadStore> = Arc::new(QdrantThreadStore::new(&qdrant_url));
+        let audit_store: Arc<dyn AuditStore> = Arc::new(QdrantAuditStore::new(&qdrant_url));
+        let workspace_store: Arc<dyn WorkspaceStore> =
+            Arc::new(QdrantWorkspaceStore::new(&qdrant_url));
 
         let workspace_content: Arc<dyn WorkspaceContentStore> = match &file_store {
             Some(fs) => Arc::new(MinioWorkspaceContent::new(Arc::clone(fs))),
@@ -64,6 +71,30 @@ impl AppState {
             audit_store,
             workspace_store,
             workspace_content,
+        })
+    }
+
+    /// Build an `AppState` backed entirely by in-memory stores — no Qdrant or MinIO required.
+    ///
+    /// Activated when `CONUSAI_TEST_MODE=1` is set in the environment.  All data is lost on
+    /// process exit.  Intended for integration tests and CI pipelines without Docker.
+    pub fn with_in_memory_stores() -> common::error::Result<Self> {
+        info!("CONUSAI_TEST_MODE=1 — using in-memory stores (no Qdrant / MinIO)");
+
+        let discovery = ToolDiscovery::from_env();
+        let mut registry = discovery.discover()?;
+        registry.register_provider(Arc::new(BuiltinProvider::new()));
+
+        Ok(Self {
+            registry: Mutex::new(registry),
+            rate_limiter: RateLimiter::new(),
+            file_store: None,
+            qdrant_url: String::new(),
+            presigned_tokens: Mutex::new(HashMap::new()),
+            thread_store: Arc::new(InMemoryThreadStore::new()),
+            audit_store: Arc::new(InMemoryAuditStore::new()),
+            workspace_store: Arc::new(InMemoryWorkspaceStore::new()),
+            workspace_content: Arc::new(InMemoryWorkspaceContent::new()),
         })
     }
 }

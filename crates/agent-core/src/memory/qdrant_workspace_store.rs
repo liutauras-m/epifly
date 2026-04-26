@@ -5,42 +5,26 @@
 ///
 /// Access control: every read filters on `tenant_id` AND (owner_id == U OR shared_with ∋ U).
 /// Non-owners receive NotFound — existence is never leaked.
+use super::qdrant_helpers::{QdrantClient, point_id, zero_vec};
 use async_trait::async_trait;
 use chrono::Utc;
 use common::error::ConusAiError;
 use common::memory::store::WorkspaceStore;
 use common::memory::workspace::{NodeKind, WorkspaceNode, join_virtual_path, validate_name};
 use common::metrics;
-use reqwest::Client;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::time::Instant;
 use tracing::{Span, info, instrument, warn};
 use ulid::Ulid;
 
-const VECTOR_DIM: usize = 4;
-
-fn zero_vec() -> Vec<f32> {
-    vec![0.0; VECTOR_DIM]
-}
-
-fn point_id(key: &str) -> u64 {
-    let mut h = Sha256::new();
-    h.update(key.as_bytes());
-    let digest = h.finalize();
-    u64::from_le_bytes(digest[..8].try_into().unwrap())
-}
-
 pub struct QdrantWorkspaceStore {
-    http: Client,
-    base_url: String,
+    qdrant: QdrantClient,
 }
 
 impl QdrantWorkspaceStore {
     pub fn new(qdrant_url: impl Into<String>) -> Self {
         Self {
-            http: Client::new(),
-            base_url: qdrant_url.into(),
+            qdrant: QdrantClient::new(qdrant_url),
         }
     }
 
@@ -50,149 +34,51 @@ impl QdrantWorkspaceStore {
 
     async fn ensure_collection(&self, tenant_id: &str) -> anyhow::Result<()> {
         let col = self.collection(tenant_id);
-        let url = format!("{}/collections/{}", self.base_url, col);
-
-        if self.http.get(&url).send().await?.status().is_success() {
-            return Ok(());
-        }
-
-        let res = self
-            .http
-            .put(&url)
-            .json(&json!({
-                "vectors": { "size": VECTOR_DIM, "distance": "Cosine" }
-            }))
-            .send()
-            .await?;
-
-        if !res.status().is_success() {
-            let body = res.text().await.unwrap_or_default();
-            anyhow::bail!("failed to create workspace collection {col}: {body}");
-        }
-
-        for field in ["tenant_id", "owner_id", "parent_id", "kind", "shared_with"] {
-            let idx_url = format!("{}/collections/{}/index", self.base_url, col);
-            let _ = self
-                .http
-                .put(&idx_url)
-                .json(&json!({
-                    "field_name": field,
-                    "field_schema": "keyword"
-                }))
-                .send()
-                .await;
-        }
-
-        // Full-text indexes on name + content_text for search_nodes()
-        for text_field in ["name", "content_text"] {
-            let idx_url = format!("{}/collections/{}/index", self.base_url, col);
-            let _ = self
-                .http
-                .put(&idx_url)
-                .json(&json!({
-                    "field_name": text_field,
-                    "field_schema": {
-                        "type": "text",
-                        "tokenizer": "word",
-                        "min_token_len": 2,
-                        "max_token_len": 128,
-                        "lowercase": true
-                    }
-                }))
-                .send()
-                .await;
-        }
-
-        info!(collection = col, "created Qdrant workspace collection");
-        Ok(())
+        self.qdrant
+            .ensure_collection(
+                &col,
+                &["tenant_id", "owner_id", "parent_id", "kind", "shared_with"],
+                &["name", "content_text"],
+            )
+            .await
     }
 
-    #[instrument(skip(self, point), fields(db.system = "qdrant", db.operation = "upsert", db.collection = tracing::field::Empty, error.type = tracing::field::Empty))]
     async fn upsert_point(&self, tenant_id: &str, point: Value) -> anyhow::Result<()> {
-        let col = self.collection(tenant_id);
-        Span::current().record("db.collection", col.as_str());
-        let labels = [
-            metrics::kv("operation", "upsert"),
-            metrics::kv("collection", col.as_str()),
-        ];
-        let t0 = Instant::now();
-        let url = format!("{}/collections/{}/points", self.base_url, col);
-        let res = self
-            .http
-            .put(&url)
-            .json(&json!({ "points": [point] }))
-            .send()
-            .await?;
-        metrics::qdrant_duration_ms().record(t0.elapsed().as_secs_f64() * 1000.0, &labels);
-        if !res.status().is_success() {
-            let body = res.text().await.unwrap_or_default();
-            metrics::qdrant_errors().add(1, &labels);
-            Span::current().record("error.type", body.as_str());
-            anyhow::bail!("workspace upsert failed: {body}");
-        }
-        Ok(())
+        self.qdrant
+            .upsert_point(&self.collection(tenant_id), point)
+            .await
     }
 
-    #[instrument(skip(self, filter), fields(db.system = "qdrant", db.operation = "scroll", db.collection = tracing::field::Empty, error.type = tracing::field::Empty))]
     async fn scroll_filter(
         &self,
         tenant_id: &str,
         filter: Value,
         limit: usize,
     ) -> anyhow::Result<Vec<Value>> {
-        let col = self.collection(tenant_id);
-        Span::current().record("db.collection", col.as_str());
-        let labels = [
-            metrics::kv("operation", "scroll"),
-            metrics::kv("collection", col.as_str()),
-        ];
-        let t0 = Instant::now();
-        let url = format!("{}/collections/{}/points/scroll", self.base_url, col);
-        let res = self
-            .http
-            .post(&url)
-            .json(&json!({ "filter": filter, "limit": limit, "with_payload": true, "with_vector": false }))
-            .send()
-            .await?;
-        metrics::qdrant_duration_ms().record(t0.elapsed().as_secs_f64() * 1000.0, &labels);
-        if !res.status().is_success() {
-            let body = res.text().await.unwrap_or_default();
-            metrics::qdrant_errors().add(1, &labels);
-            Span::current().record("error.type", body.as_str());
-            anyhow::bail!("workspace scroll failed: {body}");
-        }
-        let body: Value = res.json().await?;
-        Ok(body["result"]["points"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default())
+        self.qdrant
+            .scroll_filter(&self.collection(tenant_id), filter, limit)
+            .await
     }
 
-    #[instrument(skip(self), fields(db.system = "qdrant", db.operation = "delete", db.collection = tracing::field::Empty, error.type = tracing::field::Empty))]
-    async fn delete_point(&self, tenant_id: &str, node_id: Ulid) -> anyhow::Result<()> {
-        let col = self.collection(tenant_id);
-        Span::current().record("db.collection", col.as_str());
-        let labels = [
-            metrics::kv("operation", "delete"),
-            metrics::kv("collection", col.as_str()),
-        ];
-        let t0 = Instant::now();
-        let url = format!("{}/collections/{}/points/delete", self.base_url, col);
-        let pid = point_id(&node_id.to_string());
-        let res = self
-            .http
-            .post(&url)
-            .json(&json!({ "points": [pid] }))
-            .send()
-            .await?;
-        metrics::qdrant_duration_ms().record(t0.elapsed().as_secs_f64() * 1000.0, &labels);
-        if !res.status().is_success() {
-            let body = res.text().await.unwrap_or_default();
-            metrics::qdrant_errors().add(1, &labels);
-            Span::current().record("error.type", body.as_str());
-            anyhow::bail!("workspace delete failed: {body}");
-        }
-        Ok(())
+    async fn delete_point_by_ulid(&self, tenant_id: &str, node_id: Ulid) -> anyhow::Result<()> {
+        self.qdrant
+            .delete_point(&self.collection(tenant_id), point_id(&node_id.to_string()))
+            .await
+    }
+
+    async fn patch_payload(
+        &self,
+        tenant_id: &str,
+        node_id: Ulid,
+        fields: Value,
+    ) -> anyhow::Result<()> {
+        self.qdrant
+            .patch_payload(
+                &self.collection(tenant_id),
+                point_id(&node_id.to_string()),
+                fields,
+            )
+            .await
     }
 
     fn node_from_payload(p: &Value) -> Option<WorkspaceNode> {
@@ -258,42 +144,9 @@ impl QdrantWorkspaceStore {
                 "metadata": node.metadata,
                 // Seed content_text so new nodes are immediately searchable by name.
                 // index_content() will overwrite this with real body content later.
-                // Only used on initial creation — updates use patch_payload() instead.
                 "content_text": "",
             }
         })
-    }
-
-    /// Targeted payload merge: sets only the given fields, never touches other keys
-    /// (including content_text). Use this for all post-creation updates so indexed
-    /// content is never clobbered by metadata operations.
-    async fn patch_payload(
-        &self,
-        tenant_id: &str,
-        node_id: Ulid,
-        fields: Value,
-    ) -> anyhow::Result<()> {
-        let col = self.collection(tenant_id);
-        let pid = point_id(&node_id.to_string());
-        let url = format!("{}/collections/{}/points/payload", self.base_url, col);
-        let labels = [
-            metrics::kv("operation", "patch_payload"),
-            metrics::kv("collection", col.as_str()),
-        ];
-        let t0 = Instant::now();
-        let res = self
-            .http
-            .post(&url)
-            .json(&json!({ "payload": fields, "points": [pid] }))
-            .send()
-            .await?;
-        metrics::qdrant_duration_ms().record(t0.elapsed().as_secs_f64() * 1000.0, &labels);
-        if !res.status().is_success() {
-            let body = res.text().await.unwrap_or_default();
-            metrics::qdrant_errors().add(1, &labels);
-            anyhow::bail!("workspace patch_payload failed: {body}");
-        }
-        Ok(())
     }
 
     fn access_filter(tenant_id: &str, user_id: &str, extra: Vec<Value>) -> Value {
@@ -314,24 +167,9 @@ impl QdrantWorkspaceStore {
     /// Lazily ensure text indexes exist on collections that pre-date this feature.
     async fn ensure_text_indexes(&self, tenant_id: &str) {
         let col = self.collection(tenant_id);
-        for text_field in ["name", "content_text"] {
-            let idx_url = format!("{}/collections/{}/index", self.base_url, col);
-            let _ = self
-                .http
-                .put(&idx_url)
-                .json(&json!({
-                    "field_name": text_field,
-                    "field_schema": {
-                        "type": "text",
-                        "tokenizer": "word",
-                        "min_token_len": 2,
-                        "max_token_len": 128,
-                        "lowercase": true
-                    }
-                }))
-                .send()
-                .await;
-        }
+        self.qdrant
+            .add_text_indexes(&col, &["name", "content_text"])
+            .await;
     }
 
     /// Fetch a node directly by point_id (no access check — internal use only).
@@ -343,19 +181,8 @@ impl QdrantWorkspaceStore {
         self.ensure_collection(tenant_id).await?;
         let col = self.collection(tenant_id);
         let pid = point_id(&node_id.to_string());
-        let url = format!("{}/collections/{}/points/{}", self.base_url, col, pid);
-        let res = self.http.get(&url).send().await?;
-        if res.status().as_u16() == 404 {
-            return Ok(None);
-        }
-        if !res.status().is_success() {
-            anyhow::bail!(
-                "workspace get failed: {}",
-                res.text().await.unwrap_or_default()
-            );
-        }
-        let body: Value = res.json().await?;
-        Ok(Self::node_from_payload(&body["result"]))
+        let raw = self.qdrant.get_point(&col, pid).await?;
+        Ok(raw.as_ref().and_then(Self::node_from_payload))
     }
 }
 
@@ -479,11 +306,10 @@ impl WorkspaceStore for QdrantWorkspaceStore {
                 Some(n) => n,
                 None => break,
             };
-            // Access-check the ancestor too
             let is_owner = node.owner_id == user_id;
             let is_shared = node.shared_with.iter().any(|u| u == user_id);
             if !is_owner && !is_shared {
-                break; // stop climbing at first inaccessible ancestor
+                break;
             }
             match node.parent_id {
                 Some(pid) => {
@@ -517,7 +343,6 @@ impl WorkspaceStore for QdrantWorkspaceStore {
         node.virtual_path = new_virtual_path.clone();
         node.last_modified = Utc::now();
 
-        // Use patch_payload so content_text is not clobbered.
         self.patch_payload(
             tenant_id,
             node_id,
@@ -538,47 +363,35 @@ impl WorkspaceStore for QdrantWorkspaceStore {
         user_id: &str,
         node_id: Ulid,
     ) -> anyhow::Result<()> {
-        // Verify access before doing anything destructive
         self.get_accessible_node(tenant_id, user_id, node_id)
             .await?;
 
         // Worklist-based recursive delete (avoids deep async recursion)
         let mut worklist: Vec<Ulid> = vec![node_id];
         while let Some(current_id) = worklist.pop() {
-            // Collect children (no access filter — delete all children of owned root)
             let col = self.collection(tenant_id);
-            let url = format!("{}/collections/{}/points/scroll", self.base_url, col);
-            let res = self
-                .http
-                .post(&url)
-                .json(&json!({
-                    "filter": {
+            let children = self
+                .qdrant
+                .scroll_filter(
+                    &col,
+                    json!({
                         "must": [
                             {"key": "tenant_id", "match": {"value": tenant_id}},
                             {"key": "parent_id", "match": {"value": current_id.to_string()}}
                         ]
-                    },
-                    "limit": 500,
-                    "with_payload": true,
-                    "with_vector": false
-                }))
-                .send()
-                .await?;
+                    }),
+                    500,
+                )
+                .await
+                .unwrap_or_default();
 
-            if res.status().is_success() {
-                let body: Value = res.json().await?;
-                for child in body["result"]["points"]
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default()
-                {
-                    if let Some(child_node) = Self::node_from_payload(&child) {
-                        worklist.push(child_node.id);
-                    }
+            for child in children {
+                if let Some(child_node) = Self::node_from_payload(&child) {
+                    worklist.push(child_node.id);
                 }
             }
 
-            self.delete_point(tenant_id, current_id).await?;
+            self.delete_point_by_ulid(tenant_id, current_id).await?;
         }
         Ok(())
     }
@@ -603,7 +416,6 @@ impl WorkspaceStore for QdrantWorkspaceStore {
             node.shared_with.push(with_user_id.to_string());
         }
         node.last_modified = Utc::now();
-        // Use patch_payload so content_text is not clobbered.
         self.patch_payload(
             tenant_id,
             node_id,
@@ -634,7 +446,6 @@ impl WorkspaceStore for QdrantWorkspaceStore {
         }
         node.shared_with.retain(|u| u != with_user_id);
         node.last_modified = Utc::now();
-        // Use patch_payload so content_text is not clobbered.
         self.patch_payload(
             tenant_id,
             node_id,
@@ -659,7 +470,6 @@ impl WorkspaceStore for QdrantWorkspaceStore {
             .await?
             .ok_or_else(|| anyhow::anyhow!(ConusAiError::NotFound(format!("node {node_id}"))))?;
 
-        // Merge into existing metadata object (preserve other keys).
         let mut meta = match node.metadata.take() {
             Value::Object(map) => map,
             _ => serde_json::Map::new(),
@@ -668,7 +478,6 @@ impl WorkspaceStore for QdrantWorkspaceStore {
         node.metadata = Value::Object(meta);
         node.last_modified = Utc::now();
 
-        // Use patch_payload so content_text is not clobbered.
         self.patch_payload(
             tenant_id,
             node_id,
@@ -687,9 +496,7 @@ impl WorkspaceStore for QdrantWorkspaceStore {
             self.patch_payload(
                 tenant_id,
                 node_id,
-                json!({
-                    "last_modified": Utc::now().to_rfc3339(),
-                }),
+                json!({ "last_modified": Utc::now().to_rfc3339() }),
             )
             .await?;
         } else {
@@ -707,19 +514,12 @@ impl WorkspaceStore for QdrantWorkspaceStore {
         limit: usize,
     ) -> anyhow::Result<Vec<WorkspaceNode>> {
         self.ensure_collection(tenant_id).await?;
-        // Ensure text indexes exist on collections that pre-date this feature.
         self.ensure_text_indexes(tenant_id).await;
 
         let col = self.collection(tenant_id);
-        let url = format!("{}/collections/{}/points/scroll", self.base_url, col);
-
-        // Build a filter: access control AND (name OR content_text) text_match on each token.
-        // Qdrant text_match is per-token; we use min_should so ANY token match in name OR content
-        // bubbles up the node, and we require all tokens to appear somewhere (name or content).
         let query_lower = query.to_lowercase();
         let tokens: Vec<&str> = query_lower.split_whitespace().collect();
 
-        // For each query token, the node must match it in name OR content_text.
         let token_conditions: Vec<Value> = tokens
             .iter()
             .map(|token| {
@@ -751,45 +551,31 @@ impl WorkspaceStore for QdrantWorkspaceStore {
             metrics::kv("collection", col.as_str()),
         ];
         let t0 = Instant::now();
+        // Use the shared reqwest client via qdrant.scroll_filter — but we need the raw response
+        // to detect failures and fall back gracefully, so we call it and handle the error.
         let res = self
-            .http
-            .post(&url)
-            .json(&json!({
-                "filter": filter,
-                "limit": limit,
-                "with_payload": true,
-                "with_vector": false
-            }))
-            .send()
-            .await?;
+            .qdrant
+            .scroll_filter(&col, filter, limit)
+            .await;
         metrics::qdrant_duration_ms().record(t0.elapsed().as_secs_f64() * 1000.0, &labels);
 
-        if !res.status().is_success() {
-            let body = res.text().await.unwrap_or_default();
-            metrics::qdrant_errors().add(1, &labels);
-            // If the text index isn't ready yet, fall back to fetching all and filtering locally.
-            warn!(error = %body, "Qdrant text search failed; falling back to substring scan");
-            return self
-                .search_nodes_fallback(tenant_id, user_id, query, limit)
-                .await;
+        match res {
+            Err(e) => {
+                metrics::qdrant_errors().add(1, &labels);
+                warn!(error = %e, "Qdrant text search failed; falling back to substring scan");
+                self.search_nodes_fallback(tenant_id, user_id, query, limit).await
+            }
+            Ok(points) => {
+                let nodes: Vec<WorkspaceNode> =
+                    points.iter().filter_map(Self::node_from_payload).collect();
+                if nodes.is_empty() && !query.is_empty() {
+                    return self
+                        .search_nodes_fallback(tenant_id, user_id, query, limit)
+                        .await;
+                }
+                Ok(nodes)
+            }
         }
-
-        let body: Value = res.json().await?;
-        let nodes: Vec<WorkspaceNode> = body["result"]["points"]
-            .as_array()
-            .unwrap_or(&vec![])
-            .iter()
-            .filter_map(Self::node_from_payload)
-            .collect();
-
-        // If Qdrant returns nothing (e.g. index not yet built), fall back.
-        if nodes.is_empty() && !query.is_empty() {
-            return self
-                .search_nodes_fallback(tenant_id, user_id, query, limit)
-                .await;
-        }
-
-        Ok(nodes)
     }
 
     #[instrument(skip(self, content), fields(tenant_id, node_id))]
@@ -799,10 +585,8 @@ impl WorkspaceStore for QdrantWorkspaceStore {
         node_id: Ulid,
         content: &str,
     ) -> anyhow::Result<()> {
-        // Truncate to ~32 KB to avoid oversized Qdrant payloads.
         const MAX_BYTES: usize = 32 * 1024;
         let snippet: &str = if content.len() > MAX_BYTES {
-            // Trim to a clean UTF-8 boundary.
             let boundary = content
                 .char_indices()
                 .take_while(|(i, _)| *i < MAX_BYTES)
@@ -814,18 +598,12 @@ impl WorkspaceStore for QdrantWorkspaceStore {
             content
         };
 
-        // Verify node exists (no-op if already deleted).
         if self.get_raw(tenant_id, node_id).await?.is_none() {
             return Ok(());
         }
 
-        // Use a targeted payload SET — this merges fields rather than replacing the whole
-        // point, so we preserve all existing payload keys (name, kind, owner_id, etc.).
-        // We set both content_text and last_modified in one call so there's no race
-        // between a partial set and a full upsert.
         let col = self.collection(tenant_id);
         let pid = point_id(&node_id.to_string());
-        let url = format!("{}/collections/{}/points/payload", self.base_url, col);
 
         let labels = [
             metrics::kv("operation", "payload"),
@@ -833,32 +611,29 @@ impl WorkspaceStore for QdrantWorkspaceStore {
         ];
         let t0 = Instant::now();
         let res = self
-            .http
-            .post(&url)
-            .json(&json!({
-                "payload": {
+            .qdrant
+            .patch_payload(
+                &col,
+                pid,
+                json!({
                     "content_text": snippet,
                     "last_modified": Utc::now().to_rfc3339()
-                },
-                "points": [pid]
-            }))
-            .send()
-            .await?;
+                }),
+            )
+            .await;
         metrics::qdrant_duration_ms().record(t0.elapsed().as_secs_f64() * 1000.0, &labels);
 
-        if !res.status().is_success() {
-            let body = res.text().await.unwrap_or_default();
+        if let Err(e) = res {
             metrics::qdrant_errors().add(1, &labels);
-            anyhow::bail!("content index update failed: {body}");
+            Span::current().record("error.type", e.to_string().as_str());
+            anyhow::bail!("content index update failed: {e}");
         }
-
         Ok(())
     }
 }
 
 impl QdrantWorkspaceStore {
     /// Substring fallback: scroll all nodes the user can see and filter in Rust.
-    /// Matches on both `name` and `content_text` payload fields.
     async fn search_nodes_fallback(
         &self,
         tenant_id: &str,

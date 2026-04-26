@@ -4,7 +4,7 @@
 
 **Why:** Rig 0.9+ and the MCP ecosystem call these "tools". The current name "capability" is from an earlier draft and is now inconsistent with both the public-facing tool definitions (`ToolDef`, `tool_definitions()`, the UI's `appendToolCard`/`finalizeToolCard`) and the surrounding ecosystem.
 
-**Status:** **Not started.** This document is the implementation contract; no code has moved yet.
+**Status:** **Complete.** All phases (1–5) implemented. Phase 4 §2 (Qdrant boilerplate → `QdrantClient` in `memory/qdrant_helpers.rs`) and Phase 4 §3 (in-memory test stores + `CONUSAI_TEST_MODE`) were the last items delivered.
 
 **Scope guardrails — these MUST NOT regress:**
 
