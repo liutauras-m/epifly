@@ -1,10 +1,11 @@
 use crate::context::tenant::TenantContext;
 use crate::tools::card::ToolCard;
-use crate::tools::manifest::ToolManifest;
-use crate::tools::provider::ToolProvider;
+use crate::tools::manifest::{ToolKind, ToolManifest};
+use crate::tools::provider::{ToolProvider, ToolProviderFactory};
 use crate::tools::wasm_loader::WasmToolLoader;
 use async_trait::async_trait;
 use serde_json::Value;
+use std::sync::Arc;
 
 pub struct WasmProvider {
     card: ToolCard,
@@ -34,5 +35,18 @@ impl ToolProvider for WasmProvider {
         loader
             .invoke_tool(&self.card, tool_name, input)
             .map_err(|e| anyhow::anyhow!("{e}"))
+    }
+}
+
+/// Factory for `ToolKind::Wasm`.
+pub struct WasmFactory;
+
+impl ToolProviderFactory for WasmFactory {
+    fn supports(&self, kind: &ToolKind, _name: &str) -> bool {
+        matches!(kind, ToolKind::Wasm)
+    }
+
+    fn create(&self, card: ToolCard) -> anyhow::Result<Arc<dyn ToolProvider>> {
+        Ok(Arc::new(WasmProvider::new(card)))
     }
 }

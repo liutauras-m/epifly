@@ -65,10 +65,7 @@ impl AuditStore for QdrantAuditStore {
         self.ensure_collection(tenant_id).await?;
 
         let col = self.collection(tenant_id);
-        let url = format!(
-            "{}/collections/{}/points/scroll",
-            self.qdrant.base_url, col
-        );
+        let url = format!("{}/collections/{}/points/scroll", self.qdrant.base_url, col);
 
         // Audit list uses `order_by` which isn't part of the generic scroll_filter helper,
         // so we call the REST endpoint directly here.

@@ -1,12 +1,17 @@
+//! Chain-kind tool providers — thin adapters that bridge `ToolProvider::invoke`
+//! to the concrete extraction pipelines (`InvoicePipeline`, `ContractPipeline`).
+
+use crate::chains::contract::ContractPipeline;
+use crate::chains::invoice::InvoicePipeline;
 use crate::context::tenant::TenantContext;
-use crate::pipelines::contract::ContractPipeline;
-use crate::pipelines::invoice::InvoicePipeline;
 use crate::tools::card::ToolCard;
 use crate::tools::executor::resolve_image_path;
-use crate::tools::manifest::ToolManifest;
-use crate::tools::provider::ToolProvider;
+use crate::tools::manifest::{ToolKind, ToolManifest};
+use crate::tools::provider::{ToolProvider, ToolProviderFactory};
 use async_trait::async_trait;
 use serde_json::{Value, json};
+use std::sync::Arc;
+use tracing::error;
 
 // ── Invoice ──────────────────────────────────────────────────────────────────
 
@@ -41,15 +46,25 @@ impl ToolProvider for InvoiceProvider {
                     .ok_or_else(|| anyhow::anyhow!("missing image_path"))?;
                 let model = input["model"].as_str().unwrap_or("claude-opus-4-7");
                 let (temp_path, effective_path) = resolve_image_path(image_path).await?;
-                let mut pipeline = InvoicePipeline::with_model(model);
+                let mut chain = InvoicePipeline::with_model(model);
                 if let Some(t) = tenant {
-                    pipeline = pipeline.with_tenant(t.clone());
+                    chain = chain.with_tenant(t.clone());
                 }
-                let result = pipeline.extract_from_image_path(&effective_path).await;
+                let result = chain.extract_from_image_path(&effective_path).await;
                 if let Some(ref tmp) = temp_path {
                     let _ = std::fs::remove_file(tmp);
                 }
-                Ok(serde_json::to_value(result?)?)
+                result
+                    .map(|d| serde_json::to_value(d).unwrap_or_default())
+                    .map_err(|e| {
+                        error!(
+                            tenant_id = tenant.map(|t| t.tenant_id.as_str()).unwrap_or("none"),
+                            tool = tool_name,
+                            error = %e,
+                            "invoice chain invocation failed"
+                        );
+                        anyhow::anyhow!("invoice extraction failed: {e}")
+                    })
             }
             "validate_invoice" => {
                 let invoice = &input["invoice_data"];
@@ -98,15 +113,25 @@ impl ToolProvider for ContractProvider {
                     .ok_or_else(|| anyhow::anyhow!("missing document_path"))?;
                 let model = input["model"].as_str().unwrap_or("claude-opus-4-7");
                 let (temp_path, effective_path) = resolve_image_path(doc_path).await?;
-                let mut pipeline = ContractPipeline::with_model(model);
+                let mut chain = ContractPipeline::with_model(model);
                 if let Some(t) = tenant {
-                    pipeline = pipeline.with_tenant(t.clone());
+                    chain = chain.with_tenant(t.clone());
                 }
-                let result = pipeline.extract_from_document_path(&effective_path).await;
+                let result = chain.extract_from_document_path(&effective_path).await;
                 if let Some(ref tmp) = temp_path {
                     let _ = std::fs::remove_file(tmp);
                 }
-                Ok(serde_json::to_value(result?)?)
+                result
+                    .map(|d| serde_json::to_value(d).unwrap_or_default())
+                    .map_err(|e| {
+                        error!(
+                            tenant_id = tenant.map(|t| t.tenant_id.as_str()).unwrap_or("none"),
+                            tool = tool_name,
+                            error = %e,
+                            "contract chain invocation failed"
+                        );
+                        anyhow::anyhow!("contract extraction failed: {e}")
+                    })
             }
             "summarise_contract" => {
                 let contract = &input["contract_data"];
@@ -184,7 +209,7 @@ impl ToolProvider for OcrProvider {
         &self,
         tool_name: &str,
         input: &Value,
-        _tenant: Option<&TenantContext>,
+        tenant: Option<&TenantContext>,
     ) -> anyhow::Result<Value> {
         match tool_name {
             "extract_text" => {
@@ -193,25 +218,54 @@ impl ToolProvider for OcrProvider {
                     .ok_or_else(|| anyhow::anyhow!("missing image_path"))?;
                 let model = input["model"].as_str().unwrap_or("claude-opus-4-7");
                 let (temp_path, effective_path) = resolve_image_path(image_path).await?;
-                let pipeline = InvoicePipeline::with_model(model);
-                let result = pipeline.extract_from_image_path(&effective_path).await;
+                let chain = InvoicePipeline::with_model(model);
+                let result = chain.extract_from_image_path(&effective_path).await;
                 if let Some(ref tmp) = temp_path {
                     let _ = std::fs::remove_file(tmp);
                 }
-                let data = result?;
-                Ok(json!({
-                    "text": format!(
-                        "Invoice #{} | {} → {} | {} {:.2} | Status: {}",
-                        data.invoice_number.as_deref().unwrap_or("?"),
-                        data.issuer_name.as_deref().unwrap_or("?"),
-                        data.billed_to_name.as_deref().unwrap_or("?"),
-                        data.currency.as_deref().unwrap_or(""),
-                        data.total_amount.unwrap_or(0.0),
-                        data.status.as_deref().unwrap_or("unknown"),
-                    )
-                }))
+                result
+                    .map(|data| {
+                        json!({
+                            "text": format!(
+                                "Invoice #{} | {} → {} | {} {:.2} | Status: {}",
+                                data.invoice_number.as_deref().unwrap_or("?"),
+                                data.issuer_name.as_deref().unwrap_or("?"),
+                                data.billed_to_name.as_deref().unwrap_or("?"),
+                                data.currency.as_deref().unwrap_or(""),
+                                data.total_amount.unwrap_or(0.0),
+                                data.status.as_deref().unwrap_or("unknown"),
+                            )
+                        })
+                    })
+                    .map_err(|e| {
+                        error!(
+                            tenant_id = tenant.map(|t| t.tenant_id.as_str()).unwrap_or("none"),
+                            tool = tool_name,
+                            error = %e,
+                            "ocr chain invocation failed"
+                        );
+                        anyhow::anyhow!("ocr extraction failed: {e}")
+                    })
             }
             other => anyhow::bail!("unknown ocr tool: {other}"),
+        }
+    }
+}
+
+/// Factory for `ToolKind::Chain` — routes by manifest name to the right provider.
+pub struct ChainFactory;
+
+impl ToolProviderFactory for ChainFactory {
+    fn supports(&self, kind: &ToolKind, _name: &str) -> bool {
+        matches!(kind, ToolKind::Chain)
+    }
+
+    fn create(&self, card: ToolCard) -> anyhow::Result<Arc<dyn ToolProvider>> {
+        match card.manifest.name.as_str() {
+            "invoice-processing" => Ok(Arc::new(InvoiceProvider::new(card))),
+            "contract-processing" => Ok(Arc::new(ContractProvider::new(card))),
+            "ocr-service" => Ok(Arc::new(OcrProvider::new(card))),
+            other => anyhow::bail!("unknown chain tool: {other}"),
         }
     }
 }

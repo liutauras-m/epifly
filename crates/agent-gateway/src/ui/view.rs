@@ -43,7 +43,7 @@ pub fn glyph_for(kind: &str) -> &'static str {
         "mcp" | "Mcp" => "M",
         "wasm" | "Wasm" => "W",
         "docker" | "Docker" => "D",
-        "pipeline" | "Pipeline" => "P",
+        "chain" | "Chain" => "C",
         "native" | "Native" => "N",
         _ => "·",
     }

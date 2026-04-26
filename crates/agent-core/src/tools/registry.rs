@@ -1,5 +1,5 @@
 use super::card::ToolCard;
-use super::provider::ToolProvider;
+use super::provider::{ToolProvider, ToolProviderFactory};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -10,11 +10,44 @@ pub struct ToolRegistry {
     cards: HashMap<String, ToolCard>,
     /// Executable providers — one per registered tool set.
     providers: HashMap<String, Arc<dyn ToolProvider>>,
+    /// Provider factories — consulted when loading capabilities from disk.
+    factories: Vec<Box<dyn ToolProviderFactory>>,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Build a registry pre-seeded with the four built-in factories
+    /// (`Mcp`, `Wasm`, `Chain`, `Native`).  Use this as the starting point
+    /// whenever you're about to call `load_from_dir`.
+    pub fn with_default_factories() -> Self {
+        use super::providers::{
+            builtin::BuiltinFactory, chain::ChainFactory, mcp::McpFactory, wasm::WasmFactory,
+        };
+        let mut r = Self::new();
+        r.register_factory(McpFactory);
+        r.register_factory(WasmFactory);
+        r.register_factory(ChainFactory);
+        r.register_factory(BuiltinFactory);
+        r
+    }
+
+    /// Convenience: `with_default_factories()` + pre-register the builtin tool card
+    /// so native tools (`read_file`, `write_file`, etc.) are immediately available
+    /// without a YAML capability file.
+    pub fn with_builtin() -> Self {
+        let mut r = Self::with_default_factories();
+        let card = crate::tools::builtin_tool_card();
+        r.register_card(card);
+        r
+    }
+
+    /// Register a factory.  Factories are consulted in registration order;
+    /// the first match wins.
+    pub fn register_factory(&mut self, factory: impl ToolProviderFactory) {
+        self.factories.push(Box::new(factory));
     }
 
     /// Register a provider; the card is derived from its manifest.
@@ -27,8 +60,7 @@ impl ToolRegistry {
         self.providers.insert(name, provider);
     }
 
-    /// Register a raw card without a provider (legacy path used by `load_from_dir`
-    /// when no provider factory is available).
+    /// Register a raw card without a provider (fallback when no factory matches).
     pub fn register_card(&mut self, card: ToolCard) {
         info!(name = %card.manifest.name, kind = ?card.manifest.kind, "registering tool card");
         self.cards.insert(card.manifest.name.clone(), card);
@@ -61,10 +93,18 @@ impl ToolRegistry {
         self.cards.is_empty()
     }
 
-    /// Load cards from a capability directory; uses the provider factory to
-    /// instantiate providers when available.
+    /// Find the first factory that supports this card's kind + name.
+    fn factory_for(&self, card: &ToolCard) -> Option<&dyn ToolProviderFactory> {
+        self.factories
+            .iter()
+            .find(|f| f.supports(&card.manifest.kind, &card.manifest.name))
+            .map(|f| f.as_ref())
+    }
+
+    /// Load cards from a capability directory.  Uses the registered factories to
+    /// instantiate providers; falls back to card-only for unrecognised kinds.
     pub fn load_from_dir(&mut self, dir: &std::path::Path) -> common::error::Result<usize> {
-        use super::{card::ToolCard, manifest::ToolManifest};
+        use super::manifest::ToolManifest;
 
         if !dir.exists() {
             warn!(path = ?dir, "capabilities directory does not exist");
@@ -87,10 +127,20 @@ impl ToolRegistry {
             match ToolManifest::from_file(&manifest_path) {
                 Ok(manifest) => {
                     let card = ToolCard::new(manifest, cap_dir);
-                    // Try to create a provider; fall back to card-only if unsupported.
-                    match super::providers::provider_for(card.clone()) {
-                        Ok(provider) => self.register_provider(provider),
-                        Err(_) => self.register_card(card),
+                    // Try factory first, then legacy provider_for, then card-only.
+                    if let Some(factory) = self.factory_for(&card) {
+                        match factory.create(card.clone()) {
+                            Ok(provider) => self.register_provider(provider),
+                            Err(e) => {
+                                warn!(name = %card.manifest.name, error = %e, "factory failed; registering card only");
+                                self.register_card(card);
+                            }
+                        }
+                    } else {
+                        match super::providers::provider_for(card.clone()) {
+                            Ok(provider) => self.register_provider(provider),
+                            Err(_) => self.register_card(card),
+                        }
                     }
                     count += 1;
                 }
@@ -111,7 +161,7 @@ mod tests {
             name: name.into(),
             version: "0.1.0".into(),
             description: "test".into(),
-            kind: ToolKind::Pipeline,
+            kind: ToolKind::Chain,
             tools: vec![],
             config: serde_json::Value::Null,
             tags,

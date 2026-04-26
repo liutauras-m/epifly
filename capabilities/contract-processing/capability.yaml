@@ -7,7 +7,7 @@ description: |
   Use this capability whenever the user mentions "contract", "agreement", "NDA", "SLA", "MSA",
   "service agreement", "legal document", "terms", or any document requiring clause extraction.
   Do NOT use invoice-processing for contracts — they return incompatible schemas.
-kind: pipeline
+kind: chain
 tags:
   - contract
   - legal

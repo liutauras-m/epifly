@@ -6,7 +6,7 @@ description: |
   Internally uses Claude vision + strict JSON schema — the vision step is already handled here.
   Use this capability whenever the user mentions "invoice", "bill", "facture", "purchase order", or any accounts-payable document.
   Do NOT chain ocr-service before this — extract_invoice already performs the vision step optimally in a single call.
-kind: pipeline
+kind: chain
 tags:
   - invoice
   - finance

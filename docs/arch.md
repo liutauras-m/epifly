@@ -96,7 +96,7 @@ components = ["rustfmt", "clippy", "rust-src"]
 
 | File | Purpose |
 |---|---|
-| [docs/plan.md](plan.md) | Hierarchical workspace implementation plan (per-phase status: 0–6 shipped; 7–9 planned). |
+| [docs/plan.md](plan.md) | Rig.rs alignment refactor plan v0.2.0 (Steps 1–6 complete). |
 | [docs/tenant.md](tenant.md) | Multitenancy design — `TenantContext`, `TenantClaims`, `extract_tenant`, dev-mode/JWT mode, isolation surfaces. |
 | [docs/verify.md](verify.md) | End-to-end Docker verification plan, JWT helpers, curl recipes (Phases 0–14 incl. workspace, audit, UI, ToolProvider regression). |
 | [docs/frontend.md](frontend.md) | Frontend implementation plan + current sidebar redesign (workspace-first layout). |
@@ -115,9 +115,9 @@ components = ["rustfmt", "clippy", "rust-src"]
 | File | Purpose |
 |---|---|
 | [src/lib.rs](../crates/common/src/lib.rs) | Re-exports modules; defines `prelude` (`Result`, `ConusAiError`). |
-| [src/error.rs](../crates/common/src/error.rs) | `ConusAiError` enum (Config / Tool / Wasm / Mcp / Api / Io / Other). `ApiError { code, message }`. |
+| [src/error.rs](../crates/common/src/error.rs) | `ConusAiError` enum (Config / Tool / Wasm / WasmRuntime / Mcp / Rig / Qdrant / Storage / Validation / NotFound / Api / Io / Other). `WasmRuntime`, `Rig`, `Qdrant` are string-wrapped variants (rig's error types are not `'static + Send` across all 0.9.x releases; wasmtime's `Error` is in `agent-core`). `ApiError { code, message }`. |
 | [src/config/mod.rs](../crates/common/src/config/mod.rs) | `AppConfig`, `ServerConfig`, `QdrantConfig`, `TelemetryConfig`. Layered loading via `figment` (TOML + env + YAML). |
-| [src/telemetry.rs](../crates/common/src/telemetry.rs) | `TelemetryGuard` (RAII). `init(name, level)` — JSON `tracing-subscriber` + optional OTLP/Jaeger span exporter. |
+| [src/telemetry.rs](../crates/common/src/telemetry.rs) | `TelemetryGuard` (RAII). `init(name, level)` — JSON `tracing-subscriber` + optional OTLP trace + metrics export. When `OTLP_ENDPOINT` is set, builds a single `SdkMeterProvider` with both a Prometheus reader and an OTLP `PeriodicReader` — `opentelemetry_prometheus::exporter().build()` is called exactly once (a second call on the same `Registry` would panic with "Duplicate metrics collector registration attempted"). |
 | [src/http_client.rs](../crates/common/src/http_client.rs) | `build_client()` → `reqwest::Client` (60 s timeout, UA `conusai-platform/0.1`). |
 | [src/mcp.rs](../crates/common/src/mcp.rs) | `JsonRpcRequest` / `JsonRpcResponse` / `JsonRpcError` (jsonrpc 2.0). |
 | [src/wasm.rs](../crates/common/src/wasm.rs) | `WasmLoader` wrapping `wasmtime::Engine`: `load_bytes`, `load_file`, `new_store`. |
@@ -144,20 +144,20 @@ components = ["rustfmt", "clippy", "rust-src"]
 | File | Purpose |
 |---|---|
 | [mod.rs](../crates/agent-core/src/tools/mod.rs) | Re-exports `card`, `discovery`, `embedding`, `executor`, `manifest`, `mcp_adapter`, `provider`, `registry`, `wasm_loader`, `providers/*`, `builtin/*`. |
-| [provider.rs](../crates/agent-core/src/tools/provider.rs) | `ToolProvider` async trait — `manifest()`, `invoke(tool, input, tenant) -> Value`, `tool_definitions()` (default impl). Backed by `Arc<dyn ToolProvider>` in the registry. |
-| [manifest.rs](../crates/agent-core/src/tools/manifest.rs) | `ToolManifest { name, version, description, kind, tools, config, tags }`; `ToolKind { Mcp, Wasm, Pipeline, Docker, Native }`; `ToolDef { name, description, input_schema }`. `from_yaml`, `from_file`, `embedding_text`. |
+| [provider.rs](../crates/agent-core/src/tools/provider.rs) | `ToolProvider` async trait — `manifest()`, `invoke(tool, input, tenant) -> Value`, `tool_definitions()` (default impl), `invoke_typed<I,O>` (default impl, `where Self: Sized` — serializes typed input, calls `invoke`, deserializes result). Free function `invoke_typed_dyn` for `&dyn ToolProvider` callers. `ToolProviderFactory` trait — `supports(kind, name) -> bool`, `create(card) -> Arc<dyn ToolProvider>` — pluggable factory registered in `ToolRegistry`. |
+| [manifest.rs](../crates/agent-core/src/tools/manifest.rs) | `ToolManifest { name, version, description, kind, tools, config, tags }`; `ToolKind { Mcp, Wasm, Chain, Docker, Native }` (`#[serde(rename_all = "lowercase")]` — wire value is `chain`); `ToolDef { name, description, input_schema }`. `from_yaml`, `from_file`, `embedding_text`. |
 | [card.rs](../crates/agent-core/src/tools/card.rs) | `ToolCard { id (UUID), manifest, source_path, embedding_id }`. |
-| [registry.rs](../crates/agent-core/src/tools/registry.rs) | `ToolRegistry`: in-memory `HashMap<String, ToolCard>` (metadata) + `HashMap<String, Arc<dyn ToolProvider>>` (executors). `register_provider`, `register_card`, `get_provider`, `get`, `search_by_tag`, `all`, `len`, `is_empty`, `load_from_dir(dir)` — auto-discovers any subdir containing `capability.yaml` and instantiates the right provider. |
-| [discovery.rs](../crates/agent-core/src/tools/discovery.rs) | `ToolDiscovery` — `from_env()` reads `CONUSAI_CAPABILITIES_DIR` (default `./capabilities`); `discover()` returns a populated `ToolRegistry`. |
+| [registry.rs](../crates/agent-core/src/tools/registry.rs) | `ToolRegistry` — `cards: HashMap<String, ToolCard>` (metadata) + `providers: HashMap<String, Arc<dyn ToolProvider>>` (executors) + `factories: Vec<Box<dyn ToolProviderFactory>>` (pluggable factories). `with_default_factories()` pre-registers `McpFactory`, `WasmFactory`, `ChainFactory`, `BuiltinFactory`. `with_builtin()` = `with_default_factories()` + pre-register the builtin tool card. `register_factory()`, `register_provider`, `register_card`, `get_provider`, `get`, `search_by_tag`, `all`, `len`, `is_empty`, `load_from_dir(dir)` — consults factory list first, falls back to legacy `provider_for()` match, then card-only. |
+| [discovery.rs](../crates/agent-core/src/tools/discovery.rs) | `ToolDiscovery` — `from_env()` reads `CONUSAI_CAPABILITIES_DIR` (default `./capabilities`); `discover()` creates a new `ToolRegistry` and calls `discover_into`; `discover_into(&mut registry)` loads capabilities into a pre-seeded registry (preserving existing factories). Use `ToolRegistry::with_default_factories()` before `discover_into` to ensure all YAML-loaded capabilities find a factory. |
 | [embedding.rs](../crates/agent-core/src/tools/embedding.rs) | `ToolEmbedding::describe(card)` — returns text used for semantic search (delegates to `manifest.embedding_text()`). |
-| [executor.rs](../crates/agent-core/src/tools/executor.rs) | `ToolExecutor::invoke(registry, cap_name, tool, input, tenant)` — dispatches via `registry.get_provider(cap_name)?.invoke(...)`. Metrics: `tool_invocations`, `tool_duration_ms`, `tool_errors`. `tool_definitions_from_manifest` helper for Anthropic format. |
+| [executor.rs](../crates/agent-core/src/tools/executor.rs) | `ToolExecutor::invoke(registry, cap_name, tool, input, tenant)` — dispatches via `registry.get_provider(cap_name)?.invoke(...)`. `#[instrument]` span carries `tool.cap`, `tool.name`, `tenant_id`. Metrics: `tool_invocations`, `tool_duration_ms`, `tool_errors` (incremented on every error path). `tool_definitions_from_manifest` helper for Anthropic format. |
 | [mcp_adapter.rs](../crates/agent-core/src/tools/mcp_adapter.rs) | `McpAdapter` — JSON-RPC 2.0 HTTP client (`call`, `list_tools`, `call_tool`) for external MCP servers. |
 | [wasm_loader.rs](../crates/agent-core/src/tools/wasm_loader.rs) | `WasmToolLoader` (wraps `wasmtime::Engine`). `load(card)` reads `card.source_path/capability.wasm`; `invoke_i32`, `invoke_tool(card, tool, input)`. |
-| [providers/mod.rs](../crates/agent-core/src/tools/providers/mod.rs) | `provider_for(card)` factory: routes `ToolKind::Mcp` → `McpProvider`, `Wasm` → `WasmProvider`, `Pipeline` → per-name (`InvoiceProvider`/`ContractProvider`/`OcrProvider`), `Native` → `BuiltinProvider`. |
-| [providers/pipeline.rs](../crates/agent-core/src/tools/providers/pipeline.rs) | `InvoiceProvider`, `ContractProvider`, `OcrProvider` — each implements `ToolProvider`. Keeps `(name, tool_name)` dispatch inside the provider. |
-| [providers/mcp.rs](../crates/agent-core/src/tools/providers/mcp.rs) | `McpProvider` wrapping `McpAdapter`. |
-| [providers/wasm.rs](../crates/agent-core/src/tools/providers/wasm.rs) | `WasmProvider` wrapping `WasmToolLoader`. |
-| [providers/builtin.rs](../crates/agent-core/src/tools/providers/builtin.rs) | `BuiltinProvider` — hard-coded manifest for `native-tools` (`read_file`, `write_file`, `run_cargo`). |
+| [providers/mod.rs](../crates/agent-core/src/tools/providers/mod.rs) | Re-exports `chain`, `mcp`, `wasm`, `builtin` sub-modules. Legacy `provider_for(card)` match retained as fallback inside `load_from_dir`; superseded by the factory list for all new code. |
+| [providers/chain.rs](../crates/agent-core/src/tools/providers/chain.rs) | `InvoiceProvider`, `ContractProvider`, `OcrProvider` — each implements `ToolProvider`; wraps the corresponding `*Pipeline` struct. `ChainFactory` implements `ToolProviderFactory` (`supports` matches `ToolKind::Chain`; `create` routes by `manifest.name`). All error paths emit `tracing::error!` with `tenant_id`, `tool`, and `error` fields. |
+| [providers/mcp.rs](../crates/agent-core/src/tools/providers/mcp.rs) | `McpProvider` wrapping `McpAdapter`. `McpFactory` implements `ToolProviderFactory`. |
+| [providers/wasm.rs](../crates/agent-core/src/tools/providers/wasm.rs) | `WasmProvider` wrapping `WasmToolLoader`. `WasmFactory` implements `ToolProviderFactory`. |
+| [providers/builtin.rs](../crates/agent-core/src/tools/providers/builtin.rs) | `BuiltinProvider` — hard-coded manifest for `native-tools` (`read_file`, `write_file`, `run_cargo`). `BuiltinFactory` implements `ToolProviderFactory` (`supports` matches `ToolKind::Native`). |
 | [builtin/fs.rs](../crates/agent-core/src/tools/builtin/fs.rs) | `read_file` / `write_file` — tenant-scoped filesystem access via `safe_join`. |
 | [builtin/cargo.rs](../crates/agent-core/src/tools/builtin/cargo.rs) | `run_cargo` — allowlisted subcommands via `tokio::process::Command`. |
 | [builtin/card.rs](../crates/agent-core/src/tools/builtin/card.rs) | `builtin_tool_card()` — builds a `ToolCard` with `kind: Native`. |
@@ -176,11 +176,13 @@ components = ["rustfmt", "clippy", "rust-src"]
 | [tenant.rs](../crates/agent-core/src/context/tenant.rs) | `PlanTier { Free, Pro, Enterprise }` with `max_tokens()` (4k/16k/128k) and `rate_limit_rpm()` (10/60/600). `TenantContext { tenant_id, user_id, plan, workspace_root }` with `tenant_root()`, `safe_path(rel)`, `storage_prefix()` (`tenants/{id}/`), `qdrant_collection(kind)` (`{kind}_{tenant_id}`), `span_fields()`. `TenantClaims { sub, tenant_id, plan, exp }` for JWT. |
 | [mod.rs](../crates/agent-core/src/context/mod.rs) | Also exposes `ConversationContext` for chat history. |
 
-#### Pipelines ([src/pipelines/](../crates/agent-core/src/pipelines))
+#### Chains ([src/chains/](../crates/agent-core/src/chains))
 
 | File | Purpose |
 |---|---|
-| [invoice.rs](../crates/agent-core/src/pipelines/invoice.rs) | `InvoiceLineItem`, `InvoiceData` (~20 fields). `InvoicePipeline::new()` (default `claude-opus-4-7`), `with_model`, `with_tenant`, `extract_from_image_path`, `extract_from_bytes` — base64-encodes image, sends to Claude vision with strict JSON schema prompt, parses to `InvoiceData`. |
+| [extraction.rs](../crates/agent-core/src/chains/extraction.rs) | `ExtractionPipeline` async trait — `model_id()`, `system_prompt()`, `run(bytes: Vec<u8>, tenant: Option<&TenantContext>) -> Result<Output>` (primary entry point, mirrors `rig::pipeline::Op::call` signature). Default impls: `extract_from_bytes` (delegates to `run`), `extract_as_value` (delegates to `extract_from_bytes`, serializes to `serde_json::Value`). `where Self: Sized` not required — `run` is dyn-compatible. |
+| [invoice.rs](../crates/agent-core/src/chains/invoice.rs) | `InvoiceLineItem`, `InvoiceData` (~20 fields, `JsonSchema`). `InvoicePipeline::new()` (default `claude-opus-4-7`), `with_model`, `with_tenant`. Inherent methods: `extract_from_image_path`, `extract_from_bytes` (public, called from CLI + UI handler). Private `run_extraction(&[u8])` holds core vision logic — base64-encodes bytes, sends to Claude vision with strict JSON schema prompt, strips markdown fences, parses to `InvoiceData`. Implements `ExtractionPipeline` (delegates `run()` to `run_extraction`). |
+| [contract.rs](../crates/agent-core/src/chains/contract.rs) | `ContractParty`, `ContractData`. `ContractPipeline` — same structure as `InvoicePipeline`. `extract_from_document_path`, `extract_from_bytes`, private `run_extraction`. Implements `ExtractionPipeline`. |
 
 #### Memory subsystem ([src/memory/](../crates/agent-core/src/memory))
 
@@ -201,7 +203,7 @@ components = ["rustfmt", "clippy", "rust-src"]
 | [builtin/cargo.rs](../crates/agent-core/src/tools/builtin/cargo.rs) | `run_cargo(workspace_root, input)` — runs `cargo {check,test,build,clippy,fmt}` via `tokio::process::Command`; returns stdout/stderr/exit_code as JSON. Allowlisted subcommands only. |
 | [builtin/card.rs](../crates/agent-core/src/tools/builtin/card.rs) | `builtin_tool_card()` — builds a `ToolCard` with `kind: Native` exposing `read_file`, `write_file`, `run_cargo` with full JSON schemas. Auto-registered at gateway startup. |
 
-**Public re-exports** (via [`lib.rs`](../crates/agent-core/src/lib.rs)): `GeneralAgent`, `GeneralAgentBuilder`, `ToolDiscovery`, `ToolRegistry`, `PlanTier`, `TenantClaims`, `TenantContext`, `ContextBuilder`, `MinioWorkspaceContent`, `QdrantAuditStore`, `QdrantThreadStore`, `QdrantWorkspaceStore`, `ContractData`, `ContractParty`, `ContractPipeline`, `InvoiceData`, `InvoiceLineItem`, `InvoicePipeline`, `builtin_tool_card`.
+**Public re-exports** (via [`lib.rs`](../crates/agent-core/src/lib.rs)): `GeneralAgent`, `GeneralAgentBuilder`, `ToolDiscovery`, `ToolRegistry`, `ToolProviderFactory`, `PlanTier`, `TenantClaims`, `TenantContext`, `ContextBuilder`, `MinioWorkspaceContent`, `QdrantAuditStore`, `QdrantThreadStore`, `QdrantWorkspaceStore`, `ContractData`, `ContractParty`, `ContractPipeline`, `ExtractionPipeline`, `InvoiceData`, `InvoiceLineItem`, `InvoicePipeline`, `builtin_tool_card`.
 
 ---
 
@@ -212,7 +214,7 @@ components = ["rustfmt", "clippy", "rust-src"]
 | File | Purpose |
 |---|---|
 | [src/main.rs](../crates/agent-gateway/src/main.rs) | Tokio entrypoint. Initializes telemetry, builds `AppState`, mounts public + protected routers, applies `CorsLayer` + `TraceLayer` + tenant + trace middleware, binds `0.0.0.0:8080`. |
-| [src/state.rs](../crates/agent-gateway/src/state.rs) | `AppState { registry: Mutex<ToolRegistry>, rate_limiter, file_store: Option<Arc<dyn ObjectStore>>, qdrant_url, presigned_tokens: Mutex<HashMap>, thread_store: Arc<dyn ThreadStore>, audit_store: Arc<dyn AuditStore>, workspace_store: Arc<dyn WorkspaceStore>, workspace_content: Arc<dyn WorkspaceContentStore> }`. `from_env()` first checks `CONUSAI_TEST_MODE=1` and delegates to `with_in_memory_stores()` when set; otherwise runs tool discovery, registers `builtin_tool_card()` provider, initializes MinIO if `MINIO_ENDPOINT`/`S3_ENDPOINT` is set, instantiates `QdrantThreadStore`, `QdrantAuditStore`, `QdrantWorkspaceStore`, and either `MinioWorkspaceContent` (when MinIO is up) or `NoopWorkspaceContent` (warns at startup; errors on use rather than panicking). `with_in_memory_stores()` wires the four `InMemory*` stores — no Qdrant or MinIO required; all data lost on process exit. |
+| [src/state.rs](../crates/agent-gateway/src/state.rs) | `AppState { registry: Mutex<ToolRegistry>, rate_limiter, file_store: Option<Arc<dyn ObjectStore>>, qdrant_url, presigned_tokens: Mutex<HashMap>, thread_store: Arc<dyn ThreadStore>, audit_store: Arc<dyn AuditStore>, workspace_store: Arc<dyn WorkspaceStore>, workspace_content: Arc<dyn WorkspaceContentStore> }`. `from_env()` first checks `CONUSAI_TEST_MODE=1` and delegates to `with_in_memory_stores()` when set; otherwise calls `ToolRegistry::with_default_factories()` + `ToolDiscovery::from_env().discover_into(&mut registry)` (factories registered before YAML load so every discovered capability finds a factory), initializes MinIO if `MINIO_ENDPOINT`/`S3_ENDPOINT` is set, instantiates `QdrantThreadStore`, `QdrantAuditStore`, `QdrantWorkspaceStore`, and either `MinioWorkspaceContent` or `NoopWorkspaceContent`. `with_in_memory_stores()` uses the same factory-first pattern; wires the four `InMemory*` stores — no Qdrant or MinIO required; all data lost on process exit. |
 
 #### Middleware ([src/mw/](../crates/agent-gateway/src/mw))
 
@@ -291,7 +293,7 @@ Drop a folder with a `capability.yaml` (and optionally an implementation) into `
 |---|---|---|---|
 | `mcp` | External process | JSON-RPC 2.0 over HTTP / stdio | MCP standard |
 | `wasm` | Wasmtime | `wasm32-wasip1` module | Exported WASM functions |
-| `pipeline` | In-process Rig | Claude vision + structured extraction | Rig agent + tool defs |
+| `chain` | In-process Rig | Claude vision + structured extraction (`ExtractionPipeline`) | Rig agent + tool defs |
 | `docker` | Container | (reserved / future) | TBD |
 | `native` | In-process Rust | `crate::tools` (fs, cargo) | Built-in — no YAML manifest |
 
@@ -301,8 +303,9 @@ Drop a folder with a `capability.yaml` (and optionally an implementation) into `
 |---|---|---|---|
 | [file-storage](../capabilities/file-storage/capability.yaml) | mcp | `upload_file`, `download_file`, `presigned_url` | Manifest only — actual storage handled directly by [`routes/files.rs`](../crates/agent-gateway/src/routes/files.rs) using `object_store`. |
 | [google-workspace](../capabilities/google-workspace/capability.yaml) | mcp | `list_files`, `read_document`, `append_to_sheet`, `send_email` | OAuth2 scopes: `drive.readonly`, `documents.readonly`, `spreadsheets`, `gmail.send`. |
-| [invoice-processing](../capabilities/invoice-processing/capability.yaml) | pipeline | `extract_invoice`, `validate_invoice` | Backed by [`InvoicePipeline`](../crates/agent-core/src/pipelines/invoice.rs); default model `claude-opus-4-7`, max image 20 MB, formats `png/jpeg/jpg/pdf`. |
-| [ocr-service](../capabilities/ocr-service/capability.yaml) | pipeline | `extract_text` | Reuses `InvoicePipeline` for vision OCR; default model `claude-sonnet-4-6`. |
+| [invoice-processing](../capabilities/invoice-processing/capability.yaml) | chain | `extract_invoice`, `validate_invoice` | Backed by [`InvoicePipeline`](../crates/agent-core/src/chains/invoice.rs) via `InvoiceProvider`; default model `claude-opus-4-7`, max image 20 MB, formats `png/jpeg/jpg/pdf`. |
+| [contract-processing](../capabilities/contract-processing/capability.yaml) | chain | `extract_contract`, `summarise_contract` | Backed by [`ContractPipeline`](../crates/agent-core/src/chains/contract.rs) via `ContractProvider`. |
+| [ocr-service](../capabilities/ocr-service/capability.yaml) | chain | `extract_text` | Reuses `InvoicePipeline` for vision OCR via `OcrProvider`; default model `claude-sonnet-4-6`. |
 | [template-wasm](../capabilities/template-wasm/capability.yaml) | wasm | `ping` | Loads `capability.wasm` exporting `ping() -> i32 = 42`. |
 | [template](../capabilities/template) | — | — | Boilerplate for new capabilities. |
 
@@ -338,7 +341,7 @@ Reserved for WASM capability source crates targeting `wasm32-wasip1`.
 ### Startup (gateway)
 
 1. `tokio::main` → `common::telemetry::init("agent-gateway", "info")` (JSON logs + optional OTLP).
-2. `AppState::from_env()` → `ToolDiscovery::from_env().discover()` populates `ToolRegistry`; `BuiltinProvider` registered immediately after; MinIO client initialized if `MINIO_ENDPOINT` is set.
+2. `AppState::from_env()` → `ToolRegistry::with_default_factories()` pre-seeds all four factories; `ToolDiscovery::from_env().discover_into(&mut registry)` loads YAML capabilities; MinIO client initialized if `MINIO_ENDPOINT` is set.
 3. Router assembled: public (`/health`, `/v1/files/{token}`) + protected (everything else behind tenant middleware).
 4. Layers applied: CORS → `TraceLayer` → tenant extraction → trace propagation.
 5. `axum::serve` on `CONUSAI_SERVER__HOST:CONUSAI_SERVER__PORT`.
@@ -358,9 +361,10 @@ HTTP request
               │     └─ Anthropic /v1/messages
               │           ├─ on stop_reason=tool_use:
               │           │     registry.get_provider(cap_name)?.invoke(tool, input, tenant)
-              │           │       ├─ pipeline → InvoiceProvider / ContractProvider / OcrProvider
-              │           │       ├─ wasm     → WasmProvider (WasmToolLoader)
-              │           │       └─ mcp      → McpProvider (McpAdapter)
+              │           │       ├─ chain  → InvoiceProvider / ContractProvider / OcrProvider
+              │           │       ├─ wasm   → WasmProvider (WasmToolLoader)
+              │           │       ├─ mcp    → McpProvider (McpAdapter)
+              │           │       └─ native → BuiltinProvider (fs, cargo)
               │           └─ on stop_reason=end_turn:
               │                 ├─ ThreadStore::append(assistant)
               │                 └─ if workspace_node_id:
@@ -531,7 +535,7 @@ curl http://localhost:9000/minio/health/live
 - **Precise tool descriptions drive correct capability selection:** Rich `description` fields in `capability.yaml` — loaded verbatim into Anthropic tool definitions — are the primary mechanism for deterministic routing between specialized and generic capabilities (e.g. `invoice-processing` vs `ocr-service`). No code-level classifier needed.
 - **Agent loop:** Anthropic `tool_use` with bounded rounds (≤5), accumulating usage on the request span. Thread-aware: loads history, injects summary, persists turns. Supports both blocking JSON and SSE streaming with live `tool_call_start` / `tool_call_result` events.
 - **Persistent memory:** `ThreadStore` trait + `QdrantThreadStore` (Qdrant as doc store); one collection per tenant; auto-summarisation via background task when message count crosses threshold.
-- **ToolProvider trait:** `async_trait` trait (`manifest()`, `invoke()`, `tool_definitions()`) implemented by `BuiltinProvider`, `McpProvider`, `WasmProvider`, `InvoiceProvider`, `ContractProvider`, `OcrProvider`. `provider_for(card)` factory in `tools/providers/mod.rs` routes by `ToolKind`. Adding a new capability kind requires one new provider file and one match arm — no changes to the registry or agent loop.
+- **ToolProvider + ToolProviderFactory traits:** `ToolProvider` (`manifest()`, `invoke()`, `invoke_typed<I,O>`, `tool_definitions()`) implemented by `BuiltinProvider`, `McpProvider`, `WasmProvider`, `InvoiceProvider`, `ContractProvider`, `OcrProvider`. `ToolProviderFactory` (`supports(kind, name)`, `create(card)`) implemented by `BuiltinFactory`, `McpFactory`, `WasmFactory`, `ChainFactory`. `ToolRegistry::with_default_factories()` pre-registers all four. Adding a new capability kind requires one new provider file + one factory struct — zero changes to the registry, executor, or agent loop.
 - **Native tools:** `ToolKind::Native` + `tools/builtin/` module (`BuiltinProvider`) — filesystem (read/write) and cargo runner available to any agent turn; path-safety enforced via `safe_join`.
 - **Observability by default:** structured JSON logs, OTel spans with W3C context propagation, healthchecks at every layer.
 
@@ -553,7 +557,7 @@ curl http://localhost:9000/minio/health/live
 - **Version:** 0.1.0
 - **State:** operational, ~95 % verified end-to-end (per [verify.md](../verify.md)).
 
-**Implemented:** multitenancy, invoice + contract pipelines, YAML capability discovery, OpenAI-compatible chat, SSE streaming, tool-calling agent loop (blocking + streaming), MCP JSON-RPC, Qdrant semantic capability search, MinIO file storage, WASM execution, Google Workspace manifest, evals framework (invoice + OCR + threads), Jaeger/OTLP tracing, per-tenant rate limiting, persistent thread memory (Qdrant-backed) with auto-summarisation, thread REST API (5 endpoints), `gen_ai.*` OTel span attributes, W3C traceparent propagation, native filesystem + cargo tools, cargo-chef Docker caching, **hierarchical workspace** (folders + conversations as `.md` in MinIO; per-tenant Qdrant index with text indexes on `name` + `content_text`; private-by-default per-user ACL with explicit per-node sharing — see [ADR 005](adr/005-workspace-access-control.md)), **per-node thread binding** (lazy `bind_thread` from agent route), **chat-content indexing** (last 30 messages re-indexed into `content_text` after every turn), **workspace context injection** (`ContextBuilder` walks ancestor `CONTEXT.md` / `README.md`), **append-only audit log** (`audit_{tenant_id}` Qdrant collection + `GET /v1/audit`), **workspace-first sidebar redesign** (Workspace + search + tree, Recents, Capabilities, user chip), `metrics` module with OTel meters for Qdrant + LLM operations, **`Capability*` → `Tool*` refactor** (`ToolProvider` trait replaces the 8-arm `match` in `tool_executor.rs`; provider-based registry; `BuiltinProvider`/`McpProvider`/`WasmProvider`/`InvoiceProvider`/`ContractProvider`/`OcrProvider`; shared `QdrantClient` helper eliminates ~150 lines of duplicated Qdrant boilerplate; `invoice-demo` → `examples/invoice-cli`; `ExtractionPipeline` trait).
+**Implemented:** multitenancy, invoice + contract pipelines, YAML capability discovery, OpenAI-compatible chat, SSE streaming, tool-calling agent loop (blocking + streaming), MCP JSON-RPC, Qdrant semantic capability search, MinIO file storage, WASM execution, Google Workspace manifest, evals framework (invoice + OCR + threads), Jaeger/OTLP tracing, per-tenant rate limiting, persistent thread memory (Qdrant-backed) with auto-summarisation, thread REST API (5 endpoints), `gen_ai.*` OTel span attributes, W3C traceparent propagation, native filesystem + cargo tools, cargo-chef Docker caching, **hierarchical workspace** (folders + conversations as `.md` in MinIO; per-tenant Qdrant index with text indexes on `name` + `content_text`; private-by-default per-user ACL with explicit per-node sharing — see [ADR 005](adr/005-workspace-access-control.md)), **per-node thread binding** (lazy `bind_thread` from agent route), **chat-content indexing** (last 30 messages re-indexed into `content_text` after every turn), **workspace context injection** (`ContextBuilder` walks ancestor `CONTEXT.md` / `README.md`), **append-only audit log** (`audit_{tenant_id}` Qdrant collection + `GET /v1/audit`), **workspace-first sidebar redesign** (Workspace + search + tree, Recents, Capabilities, user chip), `metrics` module with OTel meters for Qdrant + LLM operations, **`Capability*` → `Tool*` refactor** (`ToolProvider` trait; provider-based registry; `BuiltinProvider`/`McpProvider`/`WasmProvider`/`InvoiceProvider`/`ContractProvider`/`OcrProvider`; shared `QdrantClient` helper; `ExtractionPipeline` trait), **`Pipeline` → `Chain` refactor (plan.md v0.2.0)** (`ToolKind::Chain` / `kind: chain` wire format; `src/pipelines/` → `src/chains/`; `ExtractionPipeline::run(bytes, tenant)` primary method; `ToolProviderFactory` trait + four factory structs (`McpFactory`, `WasmFactory`, `ChainFactory`, `BuiltinFactory`); `ToolRegistry::with_default_factories()` / `with_builtin()`; `ToolDiscovery::discover_into()`; `invoke_typed<I,O>` + `invoke_typed_dyn`; `error.rs` `Rig`/`WasmRuntime`/`Qdrant` variants; `executor.rs` span carries `tenant_id`; telemetry fix — single `SdkMeterProvider` for Prometheus + OTLP, no duplicate-registry panic).
 
 **Reserved / future:** `Docker` capability kind, external MCP server federation, multi-instance deployment, audit retention/compaction, billing/quota enforcement, admin dashboard, multi-layer context budgeting (plan §7), live document mode (plan §8), agent-callable workspace toolkit (plan §9), real workspace embeddings (vectors are still 4-dim placeholders — see plan §9 / future ADR 006).
 
@@ -581,9 +585,9 @@ conusai-platform/
 │   │                               minio_workspace_content,context_builder,qdrant_audit},
 │   │                       tools/{mod,provider,manifest,card,registry,discovery,
 │   │                              embedding,executor,mcp_adapter,wasm_loader,
-│   │                              providers/{mod,builtin,mcp,wasm,pipeline},
+│   │                              providers/{mod,builtin,mcp,wasm,chain},
 │   │                              builtin/{mod,fs,cargo,card}},
-│   │                       pipelines/{mod,extraction,invoice,contract}}.rs
+│   │                       chains/{mod,extraction,invoice,contract}}.rs
 │   ├── agent-gateway/ src/{main,state,
 │   │                       mw/{mod,tenant,trace,rate_limit},
 │   │                       routes/{mod,health,chat,agent,capabilities,search,mcp,files,
@@ -606,8 +610,9 @@ conusai-platform/
 ├── capabilities/
 │   ├── file-storage/        capability.yaml         (mcp)
 │   ├── google-workspace/    capability.yaml         (mcp)
-│   ├── invoice-processing/  capability.yaml         (pipeline)
-│   ├── ocr-service/         capability.yaml         (pipeline)
+│   ├── contract-processing/ capability.yaml         (chain)
+│   ├── invoice-processing/  capability.yaml         (chain)
+│   ├── ocr-service/         capability.yaml         (chain)
 │   ├── template-wasm/       capability.yaml + .wasm (wasm)
 │   └── template/                                    (boilerplate)
 │

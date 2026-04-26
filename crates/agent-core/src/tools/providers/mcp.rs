@@ -1,10 +1,11 @@
 use crate::context::tenant::TenantContext;
 use crate::tools::card::ToolCard;
-use crate::tools::manifest::ToolManifest;
+use crate::tools::manifest::{ToolKind, ToolManifest};
 use crate::tools::mcp_adapter::McpAdapter;
-use crate::tools::provider::ToolProvider;
+use crate::tools::provider::{ToolProvider, ToolProviderFactory};
 use async_trait::async_trait;
 use serde_json::Value;
+use std::sync::Arc;
 
 pub struct McpProvider {
     manifest: ToolManifest,
@@ -47,5 +48,18 @@ impl ToolProvider for McpProvider {
             .call_tool(tool_name, input.clone())
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))
+    }
+}
+
+/// Factory for `ToolKind::Mcp`.
+pub struct McpFactory;
+
+impl ToolProviderFactory for McpFactory {
+    fn supports(&self, kind: &ToolKind, _name: &str) -> bool {
+        matches!(kind, ToolKind::Mcp)
+    }
+
+    fn create(&self, card: ToolCard) -> anyhow::Result<Arc<dyn ToolProvider>> {
+        Ok(Arc::new(McpProvider::new(card)?))
     }
 }

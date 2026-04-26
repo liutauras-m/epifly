@@ -1,5 +1,4 @@
 use crate::mw::RateLimiter;
-use agent_core::tools::providers::builtin::BuiltinProvider;
 use agent_core::{
     MinioWorkspaceContent, QdrantAuditStore, QdrantThreadStore, QdrantWorkspaceStore,
     ToolDiscovery, ToolRegistry,
@@ -40,9 +39,8 @@ impl AppState {
             return Self::with_in_memory_stores();
         }
 
-        let discovery = ToolDiscovery::from_env();
-        let mut registry = discovery.discover()?;
-        registry.register_provider(Arc::new(BuiltinProvider::new()));
+        let mut registry = ToolRegistry::with_default_factories();
+        ToolDiscovery::from_env().discover_into(&mut registry)?;
 
         let qdrant_url =
             std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".into());
@@ -81,9 +79,8 @@ impl AppState {
     pub fn with_in_memory_stores() -> common::error::Result<Self> {
         info!("CONUSAI_TEST_MODE=1 — using in-memory stores (no Qdrant / MinIO)");
 
-        let discovery = ToolDiscovery::from_env();
-        let mut registry = discovery.discover()?;
-        registry.register_provider(Arc::new(BuiltinProvider::new()));
+        let mut registry = ToolRegistry::with_default_factories();
+        ToolDiscovery::from_env().discover_into(&mut registry)?;
 
         Ok(Self {
             registry: Mutex::new(registry),

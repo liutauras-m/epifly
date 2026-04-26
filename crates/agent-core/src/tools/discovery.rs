@@ -19,6 +19,14 @@ impl ToolDiscovery {
 
     pub fn discover(&self) -> common::error::Result<ToolRegistry> {
         let mut registry = ToolRegistry::new();
+        self.discover_into(&mut registry)?;
+        Ok(registry)
+    }
+
+    /// Discover capabilities into an existing registry (preserves pre-registered factories
+    /// and providers).  Use with `ToolRegistry::with_default_factories()` so YAML-loaded
+    /// capabilities receive the correct provider factories.
+    pub fn discover_into(&self, registry: &mut ToolRegistry) -> common::error::Result<()> {
         let mut total = 0;
         for dir in &self.dirs {
             let count = registry.load_from_dir(dir)?;
@@ -26,6 +34,6 @@ impl ToolDiscovery {
             total += count;
         }
         info!(total, "tool discovery complete");
-        Ok(registry)
+        Ok(())
     }
 }

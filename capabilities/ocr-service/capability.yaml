@@ -7,7 +7,7 @@ description: |
   For invoices, bills, purchase orders, or any document requiring structured field extraction,
   use invoice-processing__extract_invoice instead — it is faster, more accurate, and returns
   typed structured data rather than raw text.
-kind: pipeline
+kind: chain
 tags:
   - ocr
   - vision

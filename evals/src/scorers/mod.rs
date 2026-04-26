@@ -1,4 +1,4 @@
-use agent_core::pipelines::invoice::InvoiceData;
+use agent_core::chains::invoice::InvoiceData;
 use serde_json::Value;
 
 pub struct ScorerResult {

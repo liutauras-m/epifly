@@ -32,6 +32,7 @@ All previously identified gaps are now implemented and verified.
 | **Foundry UI — generic attachments** | ✅ Fixed | Non-invoice filenames show no "Extract invoice" button; detection requires extension + name match |
 | `file-storage` MCP executor | ⚠️ Mitigated | No MCP server; agent given download URL directly instead of token |
 | **`Capability*` → `Tool*` refactor** | ✅ Complete | Phase 1 (mechanical rename) + Phase 2 (`ToolProvider` trait + registry) done; 0 `Capability*` symbols remain in non-comment Rust code; all 30 tests pass; WASM + native paths verified in browser (2026-04-26) |
+| **`Pipeline` → `Chain` refactor (plan.md v0.2.0)** | ✅ Complete | Steps 1–5 implemented; Step 6 Docker verified 2026-04-27. `ToolKind::Chain`, `chains::*` module, `ExtractionPipeline::run()`, `ToolProviderFactory`, `with_default_factories()`, `invoke_typed`. Telemetry fix: Prometheus exporter now built once (no duplicate-registry panic when `OTLP_ENDPOINT` is set). |
 
 ### Verdict
 
@@ -251,7 +252,7 @@ cat > capabilities/test-capability/capability.yaml << 'EOF'
 name: test-capability
 version: "0.1.0"
 description: Smoke-test capability.
-kind: pipeline
+kind: chain
 tags: [test]
 tools:
   - name: ping
@@ -547,7 +548,7 @@ cat > capabilities/test-capability/capability.yaml << 'CAPEOF'
 name: test-capability
 version: "0.1.0"
 description: Smoke test.
-kind: pipeline
+kind: chain
 tags: [test]
 tools:
   - name: ping
@@ -1001,7 +1002,7 @@ curl -sf -X POST http://localhost:8080/mcp \
 
 ✅ **Pass**: `WasmProvider` loads `capability.wasm`, exports `ping() -> i32`; returns `{"result":42}`.
 
-### 14.3 Pipeline (InvoiceProvider — `ToolKind::Pipeline`)
+### 14.3 Chain (InvoiceProvider — `ToolKind::Chain`)
 
 ```bash
 # Requires ANTHROPIC_API_KEY; use a real invoice image

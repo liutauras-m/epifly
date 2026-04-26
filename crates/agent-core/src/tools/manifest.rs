@@ -18,7 +18,7 @@ pub struct ToolManifest {
 pub enum ToolKind {
     Mcp,
     Wasm,
-    Pipeline,
+    Chain,
     Docker,
     /// Built-in in-process tools (filesystem, cargo runner). Not loaded from YAML.
     Native,

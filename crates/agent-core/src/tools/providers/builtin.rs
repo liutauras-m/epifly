@@ -1,9 +1,11 @@
 use crate::context::tenant::TenantContext;
 use crate::tools::builtin::{cargo, fs};
-use crate::tools::manifest::ToolManifest;
-use crate::tools::provider::ToolProvider;
+use crate::tools::card::ToolCard;
+use crate::tools::manifest::{ToolKind, ToolManifest};
+use crate::tools::provider::{ToolProvider, ToolProviderFactory};
 use async_trait::async_trait;
 use serde_json::Value;
+use std::sync::Arc;
 
 /// Provider for built-in native tools (filesystem + cargo).
 pub struct BuiltinProvider {
@@ -57,5 +59,18 @@ impl ToolProvider for BuiltinProvider {
             }
             other => anyhow::bail!("unknown builtin tool: {other}"),
         }
+    }
+}
+
+/// Factory for `ToolKind::Native` — creates a `BuiltinProvider`.
+pub struct BuiltinFactory;
+
+impl ToolProviderFactory for BuiltinFactory {
+    fn supports(&self, kind: &ToolKind, _name: &str) -> bool {
+        matches!(kind, ToolKind::Native)
+    }
+
+    fn create(&self, _card: ToolCard) -> anyhow::Result<Arc<dyn ToolProvider>> {
+        Ok(Arc::new(BuiltinProvider::new()))
     }
 }

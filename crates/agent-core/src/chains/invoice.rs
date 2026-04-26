@@ -66,11 +66,8 @@ impl InvoicePipeline {
         self
     }
 
-    /// For tenant runs, resolves `rel_path` under the tenant workspace.
-    /// Falls back to treating it as a plain path for non-tenant usage.
     fn resolve_path(&self, path: &std::path::Path) -> common::error::Result<std::path::PathBuf> {
         if let Some(tenant) = &self.tenant {
-            // If path is already absolute, use it directly (dev/test convenience)
             if path.is_absolute() {
                 return Ok(path.to_path_buf());
             }
@@ -94,10 +91,16 @@ impl InvoicePipeline {
         let bytes = std::fs::read(&resolved).map_err(|e| {
             common::error::ConusAiError::Tool(format!("cannot read image {:?}: {e}", resolved))
         })?;
-        self.extract_from_bytes(&bytes).await
+        self.run_extraction(&bytes).await
     }
 
+    /// Convenience: extract from a byte slice without tenant context.
     pub async fn extract_from_bytes(&self, bytes: &[u8]) -> common::error::Result<InvoiceData> {
+        self.run_extraction(bytes).await
+    }
+
+    /// Core extraction — base64-encodes bytes and sends to Claude vision.
+    async fn run_extraction(&self, bytes: &[u8]) -> common::error::Result<InvoiceData> {
         let b64 = general_purpose::STANDARD.encode(bytes);
 
         let content = OneOrMany::many(vec![
@@ -129,7 +132,8 @@ impl InvoicePipeline {
                 }\n\
                 Respond ONLY with the JSON object, no markdown fences, no explanation.",
             ),
-        ]).map_err(|e| common::error::ConusAiError::Tool(e.to_string()))?;
+        ])
+        .map_err(|e| common::error::ConusAiError::Tool(e.to_string()))?;
 
         let msg = Message::User { content };
 
@@ -192,7 +196,6 @@ impl super::extraction::ExtractionPipeline for InvoicePipeline {
     type Output = InvoiceData;
 
     fn model_id(&self) -> &str {
-        // The model is opaque in the rig CompletionModel; return the default.
         "claude-opus-4-7"
     }
 
@@ -202,11 +205,11 @@ impl super::extraction::ExtractionPipeline for InvoicePipeline {
         Always respond with valid JSON only."
     }
 
-    async fn extract_from_bytes(
+    async fn run(
         &self,
-        bytes: &[u8],
-        _tenant: Option<&crate::context::tenant::TenantContext>,
+        bytes: Vec<u8>,
+        _tenant: Option<&TenantContext>,
     ) -> common::error::Result<Self::Output> {
-        self.extract_from_bytes(bytes).await
+        self.run_extraction(&bytes).await
     }
 }

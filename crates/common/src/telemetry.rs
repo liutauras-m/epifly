@@ -122,18 +122,16 @@ pub fn init(service_name: &str, log_level: &str) -> (TelemetryGuard, Registry) {
         .with_line_number(true);
 
     // ── Prometheus registry (always active, even without OTLP) ───────────────
+    //
+    // Build `prom_exporter` exactly once.  A second call to
+    // `opentelemetry_prometheus::exporter().build()` on the same `Registry`
+    // fails with "Duplicate metrics collector registration attempted" because
+    // the prometheus crate registers a `Collector` object per `build()` call.
     let prom_registry = Registry::new();
     let prom_exporter = opentelemetry_prometheus::exporter()
         .with_registry(prom_registry.clone())
         .build()
         .expect("build Prometheus exporter");
-
-    let meter_provider = SdkMeterProvider::builder()
-        .with_reader(prom_exporter)
-        .with_resource(build_resource(service_name))
-        .build();
-
-    opentelemetry::global::set_meter_provider(meter_provider.clone());
 
     if let Some(endpoint) = otlp_endpoint() {
         // ── Traces ────────────────────────────────────────────────────────────
@@ -157,30 +155,25 @@ pub fn init(service_name: &str, log_level: &str) -> (TelemetryGuard, Registry) {
             .with_tracer(tracer_provider.tracer(service_name.to_owned()))
             .with_error_fields_to_exceptions(true);
 
-        // ── Metrics over OTLP too (in addition to Prometheus) ─────────────────
-        let metric_exporter = opentelemetry_otlp::MetricExporter::builder()
+        // ── Metrics: Prometheus + OTLP in a single provider ──────────────────
+        //
+        // Add the OTLP periodic reader alongside the Prometheus reader.
+        // Both share the same SdkMeterProvider so every metric is exported
+        // to both sinks without double-registration.
+        let mut builder = SdkMeterProvider::builder()
+            .with_reader(prom_exporter)
+            .with_resource(build_resource(service_name));
+
+        if let Ok(mx) = opentelemetry_otlp::MetricExporter::builder()
             .with_tonic()
             .with_endpoint(&endpoint)
             .build()
-            .ok();
+        {
+            builder = builder.with_reader(PeriodicReader::builder(mx, runtime::Tokio).build());
+        }
 
-        let full_meter_provider = if let Some(mx) = metric_exporter {
-            let reader = PeriodicReader::builder(mx, runtime::Tokio).build();
-            SdkMeterProvider::builder()
-                .with_reader(reader)
-                .with_reader(
-                    opentelemetry_prometheus::exporter()
-                        .with_registry(prom_registry.clone())
-                        .build()
-                        .expect("rebuild Prometheus exporter"),
-                )
-                .with_resource(build_resource(service_name))
-                .build()
-        } else {
-            meter_provider.clone()
-        };
-
-        opentelemetry::global::set_meter_provider(full_meter_provider.clone());
+        let meter_provider = builder.build();
+        opentelemetry::global::set_meter_provider(meter_provider.clone());
 
         tracing_subscriber::registry()
             .with(filter)
@@ -191,12 +184,19 @@ pub fn init(service_name: &str, log_level: &str) -> (TelemetryGuard, Registry) {
         (
             TelemetryGuard {
                 tracer_provider: Some(tracer_provider),
-                meter_provider: Some(full_meter_provider),
+                meter_provider: Some(meter_provider),
             },
             prom_registry,
         )
     } else {
         // No OTLP: JSON logs + Prometheus only.
+        let meter_provider = SdkMeterProvider::builder()
+            .with_reader(prom_exporter)
+            .with_resource(build_resource(service_name))
+            .build();
+
+        opentelemetry::global::set_meter_provider(meter_provider.clone());
+
         tracing_subscriber::registry()
             .with(filter)
             .with(fmt_layer)

@@ -1,4 +1,4 @@
-use agent_core::pipelines::invoice::InvoicePipeline;
+use agent_core::chains::invoice::InvoicePipeline;
 use anyhow::Result;
 use std::path::PathBuf;
 use tracing::info;

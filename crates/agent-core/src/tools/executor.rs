@@ -18,6 +18,7 @@ impl ToolExecutor {
         fields(
             tool.cap    = cap_name,
             tool.name   = tool_name,
+            tenant_id   = tenant.map(|t| t.tenant_id.as_str()).unwrap_or("none"),
             error.type  = tracing::field::Empty,
         )
     )]

@@ -5,7 +5,7 @@ use rig::completion::CompletionModel;
 use rig::message::{ContentFormat, ImageMediaType, Message, UserContent};
 use rig::providers::anthropic;
 use serde::{Deserialize, Serialize};
-use tracing::{info, instrument};
+use tracing::{error, info, instrument};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContractParty {
@@ -81,10 +81,16 @@ impl ContractPipeline {
         let bytes = std::fs::read(&resolved).map_err(|e| {
             common::error::ConusAiError::Tool(format!("cannot read document {:?}: {e}", resolved))
         })?;
-        self.extract_from_bytes(&bytes).await
+        self.run_extraction(&bytes).await
     }
 
+    /// Convenience: extract from a byte slice without tenant context.
     pub async fn extract_from_bytes(&self, bytes: &[u8]) -> common::error::Result<ContractData> {
+        self.run_extraction(bytes).await
+    }
+
+    /// Core extraction — base64-encodes bytes and sends to Claude vision.
+    async fn run_extraction(&self, bytes: &[u8]) -> common::error::Result<ContractData> {
         let b64 = general_purpose::STANDARD.encode(bytes);
 
         let content = OneOrMany::many(vec![
@@ -126,11 +132,10 @@ impl ContractPipeline {
             .max_tokens(2048)
             .build();
 
-        let response = self
-            .model
-            .completion(request)
-            .await
-            .map_err(|e| common::error::ConusAiError::Tool(e.to_string()))?;
+        let response = self.model.completion(request).await.map_err(|e| {
+            error!(error = %e, "Claude completion failed for contract extraction");
+            common::error::ConusAiError::Tool(e.to_string())
+        })?;
 
         let text = response
             .choice
@@ -147,6 +152,7 @@ impl ContractPipeline {
 
         let json_text = strip_markdown_fences(&text);
         serde_json::from_str::<ContractData>(json_text).map_err(|e| {
+            error!(error = %e, raw = %text, "failed to parse contract JSON response");
             common::error::ConusAiError::Tool(format!(
                 "failed to parse contract JSON: {e}\nRaw response:\n{text}"
             ))
@@ -174,12 +180,12 @@ impl super::extraction::ExtractionPipeline for ContractPipeline {
         Always respond with valid JSON only."
     }
 
-    async fn extract_from_bytes(
+    async fn run(
         &self,
-        bytes: &[u8],
-        _tenant: Option<&crate::context::tenant::TenantContext>,
+        bytes: Vec<u8>,
+        _tenant: Option<&TenantContext>,
     ) -> common::error::Result<Self::Output> {
-        self.extract_from_bytes(bytes).await
+        self.run_extraction(&bytes).await
     }
 }
 

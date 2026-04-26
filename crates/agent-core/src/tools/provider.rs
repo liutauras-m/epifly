@@ -1,7 +1,10 @@
 use crate::context::tenant::TenantContext;
-use crate::tools::manifest::ToolManifest;
+use crate::tools::card::ToolCard;
+use crate::tools::manifest::{ToolKind, ToolManifest};
 use async_trait::async_trait;
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
+use std::sync::Arc;
 
 /// Anything that can execute one or more named tools given a JSON input.
 ///
@@ -21,8 +24,64 @@ pub trait ToolProvider: Send + Sync + 'static {
         tenant: Option<&TenantContext>,
     ) -> anyhow::Result<Value>;
 
+    /// Typed convenience: serializes `input` to JSON, calls `invoke`, deserializes result.
+    /// Default impl — no provider needs to override.
+    ///
+    /// `where Self: Sized` keeps the trait dyn-compatible; call the free function
+    /// `invoke_typed_dyn` when you only have `&dyn ToolProvider`.
+    async fn invoke_typed<I, O>(
+        &self,
+        tool_name: &str,
+        input: I,
+        tenant: Option<&TenantContext>,
+    ) -> anyhow::Result<O>
+    where
+        Self: Sized,
+        I: Serialize + Send,
+        O: DeserializeOwned + Send,
+    {
+        let v = self
+            .invoke(tool_name, &serde_json::to_value(input)?, tenant)
+            .await?;
+        Ok(serde_json::from_value(v)?)
+    }
+
     /// Anthropic-format tool definitions; default implementation derives from the manifest.
     fn tool_definitions(&self) -> Vec<Value> {
         crate::tools::executor::tool_definitions_from_manifest(self.manifest())
     }
+}
+
+/// Free-function equivalent of `invoke_typed` for use with `&dyn ToolProvider`.
+///
+/// Prefer calling `.invoke_typed()` directly on a concrete provider.  Use this
+/// when you only have an `Arc<dyn ToolProvider>` or `&dyn ToolProvider`.
+pub async fn invoke_typed_dyn<I, O>(
+    provider: &dyn ToolProvider,
+    tool_name: &str,
+    input: I,
+    tenant: Option<&TenantContext>,
+) -> anyhow::Result<O>
+where
+    I: Serialize + Send,
+    O: DeserializeOwned + Send,
+{
+    let v = provider
+        .invoke(tool_name, &serde_json::to_value(input)?, tenant)
+        .await?;
+    Ok(serde_json::from_value(v)?)
+}
+
+/// Factory trait for creating providers from tool cards.
+///
+/// Implement this for each `ToolKind` so the registry can instantiate providers
+/// dynamically.  Adding a new capability kind = one new file + one
+/// `registry.register_factory(MyFactory)` call — the registry, executor, and
+/// agent loop never need to change.
+pub trait ToolProviderFactory: Send + Sync + 'static {
+    /// Returns true when this factory can handle the given kind + name combination.
+    fn supports(&self, kind: &ToolKind, name: &str) -> bool;
+
+    /// Create a provider from the card.  Called once per discovered capability.
+    fn create(&self, card: ToolCard) -> anyhow::Result<Arc<dyn ToolProvider>>;
 }

@@ -3,7 +3,7 @@
 
 use crate::state::AppState;
 use crate::ui::session::SessionUser;
-use agent_core::pipelines::invoice::InvoicePipeline;
+use agent_core::chains::invoice::InvoicePipeline;
 use axum::{
     Json,
     extract::State,
@@ -84,9 +84,9 @@ pub async fn ui_extract_invoice(
         "running InvoicePipeline::extract_from_bytes"
     );
 
-    // Run the pipeline directly — no agent, no tool-calling
-    let pipeline = InvoicePipeline::new();
-    match pipeline.extract_from_bytes(&bytes).await {
+    // Run the chain directly — no agent, no tool-calling
+    let chain = InvoicePipeline::new();
+    match chain.extract_from_bytes(&bytes).await {
         Ok(data) => (StatusCode::OK, Json(data)).into_response(),
         Err(e) => err(
             StatusCode::INTERNAL_SERVER_ERROR,

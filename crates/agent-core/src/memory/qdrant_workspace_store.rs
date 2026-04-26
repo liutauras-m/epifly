@@ -553,17 +553,15 @@ impl WorkspaceStore for QdrantWorkspaceStore {
         let t0 = Instant::now();
         // Use the shared reqwest client via qdrant.scroll_filter — but we need the raw response
         // to detect failures and fall back gracefully, so we call it and handle the error.
-        let res = self
-            .qdrant
-            .scroll_filter(&col, filter, limit)
-            .await;
+        let res = self.qdrant.scroll_filter(&col, filter, limit).await;
         metrics::qdrant_duration_ms().record(t0.elapsed().as_secs_f64() * 1000.0, &labels);
 
         match res {
             Err(e) => {
                 metrics::qdrant_errors().add(1, &labels);
                 warn!(error = %e, "Qdrant text search failed; falling back to substring scan");
-                self.search_nodes_fallback(tenant_id, user_id, query, limit).await
+                self.search_nodes_fallback(tenant_id, user_id, query, limit)
+                    .await
             }
             Ok(points) => {
                 let nodes: Vec<WorkspaceNode> =

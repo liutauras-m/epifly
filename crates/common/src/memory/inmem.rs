@@ -232,7 +232,9 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         let node = self
             .get_node(id)
             .filter(|n| n.tenant_id == tenant_id)
-            .ok_or_else(|| anyhow::anyhow!(crate::error::ConusAiError::NotFound(format!("node {id}"))))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(crate::error::ConusAiError::NotFound(format!("node {id}")))
+            })?;
         if !Self::check_access(&node, user_id) {
             anyhow::bail!(crate::error::ConusAiError::NotFound(format!("node {id}")));
         }
@@ -282,7 +284,9 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
             .get_mut(&node_id)
             .filter(|n| n.tenant_id == tenant_id && Self::check_access(n, user_id))
             .ok_or_else(|| {
-                anyhow::anyhow!(crate::error::ConusAiError::NotFound(format!("node {node_id}")))
+                anyhow::anyhow!(crate::error::ConusAiError::NotFound(format!(
+                    "node {node_id}"
+                )))
             })?;
         node.parent_id = new_parent;
         node.virtual_path = join_virtual_path(new_parent_path, &node.name);
@@ -340,7 +344,9 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
             .get_mut(&node_id)
             .filter(|n| n.tenant_id == tenant_id && n.owner_id == owner_id)
             .ok_or_else(|| {
-                anyhow::anyhow!(crate::error::ConusAiError::NotFound(format!("node {node_id}")))
+                anyhow::anyhow!(crate::error::ConusAiError::NotFound(format!(
+                    "node {node_id}"
+                )))
             })?;
         if !node.shared_with.contains(&with_user_id.to_string()) {
             node.shared_with.push(with_user_id.to_string());
@@ -361,7 +367,9 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
             .get_mut(&node_id)
             .filter(|n| n.tenant_id == tenant_id && n.owner_id == owner_id)
             .ok_or_else(|| {
-                anyhow::anyhow!(crate::error::ConusAiError::NotFound(format!("node {node_id}")))
+                anyhow::anyhow!(crate::error::ConusAiError::NotFound(format!(
+                    "node {node_id}"
+                )))
             })?;
         node.shared_with.retain(|u| u != with_user_id);
         node.last_modified = Utc::now();
@@ -426,7 +434,9 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
             .get_mut(&node_id)
             .filter(|n| n.tenant_id == tenant_id)
             .ok_or_else(|| {
-                anyhow::anyhow!(crate::error::ConusAiError::NotFound(format!("node {node_id}")))
+                anyhow::anyhow!(crate::error::ConusAiError::NotFound(format!(
+                    "node {node_id}"
+                )))
             })?;
         let mut meta = match node.metadata.take() {
             serde_json::Value::Object(m) => m,
@@ -468,10 +478,10 @@ impl WorkspaceContentStore for InMemoryWorkspaceContent {
     }
 
     async fn write(&self, tenant_id: &str, virtual_path: &str, body: &str) -> anyhow::Result<()> {
-        self.store
-            .lock()
-            .unwrap()
-            .insert((tenant_id.to_owned(), virtual_path.to_owned()), body.to_owned());
+        self.store.lock().unwrap().insert(
+            (tenant_id.to_owned(), virtual_path.to_owned()),
+            body.to_owned(),
+        );
         Ok(())
     }
 
