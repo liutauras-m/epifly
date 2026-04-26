@@ -139,10 +139,7 @@ impl QdrantClient {
             metrics::kv("collection", collection),
         ];
         let t0 = Instant::now();
-        let url = format!(
-            "{}/collections/{}/points/scroll",
-            self.base_url, collection
-        );
+        let url = format!("{}/collections/{}/points/scroll", self.base_url, collection);
         let res = self
             .http
             .post(&url)
@@ -169,6 +166,7 @@ impl QdrantClient {
     }
 
     /// POST a targeted payload SET — merges fields into an existing point without replacing it.
+    #[allow(dead_code)]
     #[instrument(skip(self, fields), fields(db.system = "qdrant", db.operation = "patch_payload", db.collection = collection, error.type = tracing::field::Empty))]
     pub async fn patch_payload(
         &self,
@@ -202,6 +200,7 @@ impl QdrantClient {
     }
 
     /// Delete a single point by its numeric ID.
+    #[allow(dead_code)]
     #[instrument(skip(self), fields(db.system = "qdrant", db.operation = "delete", db.collection = collection, error.type = tracing::field::Empty))]
     pub async fn delete_point(&self, collection: &str, pid: u64) -> anyhow::Result<()> {
         let labels = [
@@ -209,10 +208,7 @@ impl QdrantClient {
             metrics::kv("collection", collection),
         ];
         let t0 = Instant::now();
-        let url = format!(
-            "{}/collections/{}/points/delete",
-            self.base_url, collection
-        );
+        let url = format!("{}/collections/{}/points/delete", self.base_url, collection);
         let res = self
             .http
             .post(&url)
@@ -230,6 +226,7 @@ impl QdrantClient {
     }
 
     /// GET a single point by numeric ID.  Returns `None` on 404.
+    #[allow(dead_code)]
     pub async fn get_point(&self, collection: &str, pid: u64) -> anyhow::Result<Option<Value>> {
         let url = format!(
             "{}/collections/{}/points/{}",

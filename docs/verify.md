@@ -31,6 +31,7 @@ All previously identified gaps are now implemented and verified.
 | **Foundry UI — agent chat** | ✅ Verified | Prompt "Extract invoice" + attachment URL → `invoice-processing__extract_invoice` (9.43s) |
 | **Foundry UI — generic attachments** | ✅ Fixed | Non-invoice filenames show no "Extract invoice" button; detection requires extension + name match |
 | `file-storage` MCP executor | ⚠️ Mitigated | No MCP server; agent given download URL directly instead of token |
+| **`Capability*` → `Tool*` refactor** | ✅ Complete | Phase 1 (mechanical rename) + Phase 2 (`ToolProvider` trait + registry) done; 0 `Capability*` symbols remain in non-comment Rust code; all 30 tests pass; WASM + native paths verified in browser (2026-04-26) |
 
 ### Verdict
 
@@ -410,7 +411,50 @@ docker compose logs agent-gateway --since=2m | grep tenant_id
 
 ---
 
-## Phase 14 — Tear Down
+## Phase 14 — Tool Provider Regression Checklist
+
+Verifies the `Capability*` → `Tool*` refactor (plan.md Phases 1 + 2) did not regress any behaviour.
+
+```bash
+# 1. No Capability* symbols remain in Rust source (only comments and YAML paths)
+grep -rn 'Capability' crates/ evals/ --include='*.rs' | grep -v '^\s*//' \
+  | grep -v '"capabilities"' | grep -v 'CAPABILITIES_DIR' | grep -v 'v1/capabilities'
+# Expected: zero output
+
+# 2. All 30 tests pass
+cargo test --workspace 2>&1 | grep "test result"
+# Expected: 8 passed (agent-core) + 22 passed (common)
+
+# 3. Tool registry lists 7 tools via the HTTP API
+curl -s http://localhost:8080/v1/capabilities | python3 -c \
+  "import sys,json; d=json.load(sys.stdin); print(len(d['capabilities']), 'tools')"
+# Expected: 7 tools
+
+# 4. MCP lists 16 tool defs
+curl -s -X POST http://localhost:8080/mcp -H 'Content-Type: application/json' \
+  -H 'X-Tenant-ID: dev' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d['result']['tools']), 'defs')"
+# Expected: 16 defs
+
+# 5. WASM ToolProvider path (WasmProvider)
+#    In the browser UI: send "run a wasm ping test" → wasm-ping·ping tool card → result 42
+
+# 6. Native ToolProvider path (BuiltinProvider)
+#    In the browser UI: send "run cargo check on this repo" → native-tools·run_cargo tool card
+
+# 7. Agent provider lookup (resolve_and_invoke goes through provider registry)
+curl -s -X POST http://localhost:8080/v1/agent/completions \
+  -H 'Content-Type: application/json' -H 'X-Tenant-ID: dev' \
+  -d '{"model":"claude-opus-4-7","messages":[{"role":"user","content":"run a wasm ping test"}],"max_tokens":256}' \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['choices'][0]['message']['content'][:120])"
+# Expected: text mentioning ping / 42
+```
+
+**Pass criteria:** All grep checks return no output, all test counts correct, all curl responses as expected.
+
+---
+
+## Phase 15 — Tear Down
 
 ```bash
 docker compose --profile full down -v

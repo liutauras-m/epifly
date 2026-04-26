@@ -31,7 +31,7 @@ pub fn protected_router() -> Router<Arc<AppState>> {
         .route("/v1/chat/completions", post(chat::completions))
         // Agent with tool calling + optional thread memory
         .route("/v1/agent/completions", post(agent::agent_completions))
-        // Capability registry
+        // Tool registry (path kept as /v1/capabilities for API compatibility)
         .route("/v1/capabilities", get(capabilities::list_capabilities))
         // Semantic capability search (Qdrant-backed)
         .route("/v1/capabilities/search", get(search::search))

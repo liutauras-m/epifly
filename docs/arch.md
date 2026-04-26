@@ -9,7 +9,7 @@ A production-grade multitenant AI agent platform built on **Rust + Rig**, with *
 ### Workspace Members ([Cargo.toml](../Cargo.toml))
 
 - [crates/common](../crates/common) — Shared utilities and foundational types
-- [crates/agent-core](../crates/agent-core) — Agent runtime, capability registry, Rig integration
+- [crates/agent-core](../crates/agent-core) — Agent runtime, tool registry, Rig integration
 - [crates/agent-gateway](../crates/agent-gateway) — OpenAI-compatible HTTP gateway
 - [crates/invoice-demo](../crates/invoice-demo) — Standalone invoice extraction CLI
 - [evals](../evals) — Evaluation framework (runners + scorers)
@@ -115,7 +115,7 @@ components = ["rustfmt", "clippy", "rust-src"]
 | File | Purpose |
 |---|---|
 | [src/lib.rs](../crates/common/src/lib.rs) | Re-exports modules; defines `prelude` (`Result`, `ConusAiError`). |
-| [src/error.rs](../crates/common/src/error.rs) | `ConusAiError` enum (Config / Capability / Wasm / Mcp / Api / Io / Other). `ApiError { code, message }`. |
+| [src/error.rs](../crates/common/src/error.rs) | `ConusAiError` enum (Config / Tool / Wasm / Mcp / Api / Io / Other). `ApiError { code, message }`. |
 | [src/config/mod.rs](../crates/common/src/config/mod.rs) | `AppConfig`, `ServerConfig`, `QdrantConfig`, `TelemetryConfig`. Layered loading via `figment` (TOML + env + YAML). |
 | [src/telemetry.rs](../crates/common/src/telemetry.rs) | `TelemetryGuard` (RAII). `init(name, level)` — JSON `tracing-subscriber` + optional OTLP/Jaeger span exporter. |
 | [src/http_client.rs](../crates/common/src/http_client.rs) | `build_client()` → `reqwest::Client` (60 s timeout, UA `conusai-platform/0.1`). |
@@ -134,31 +134,39 @@ components = ["rustfmt", "clippy", "rust-src"]
 
 ---
 
-### 3.2 [`crates/agent-core`](../crates/agent-core) — Agent Runtime & Capability Registry
+### 3.2 [`crates/agent-core`](../crates/agent-core) — Agent Runtime & Tool Registry
 
-**Purpose:** Rig integration; capability discovery / registration; tool execution (MCP, WASM, pipeline); tenant context; invoice pipeline.
+**Purpose:** Rig integration; tool discovery / registration; tool execution (MCP, WASM, pipeline, builtin) via `ToolProvider` trait; tenant context; invoice/contract pipelines.
 
-#### Capabilities subsystem ([src/capabilities/](../crates/agent-core/src/capabilities))
+#### Tools subsystem ([src/tools/](../crates/agent-core/src/tools))
 
 | File | Purpose |
 |---|---|
-| [mod.rs](../crates/agent-core/src/capabilities/mod.rs) | Re-exports `card`, `discovery`, `embedding`, `manifest`, `mcp_adapter`, `provider`, `registry`, `tool_executor`, `wasm_loader`. |
-| [provider.rs](../crates/agent-core/src/capabilities/provider.rs) | `AgentCapability` async trait — `name()`, `description()`, `tool_names()`, `invoke(tool, input) -> Value`. |
-| [manifest.rs](../crates/agent-core/src/capabilities/manifest.rs) | `CapabilityManifest { name, version, description, kind, tools, config, tags }`; `CapabilityKind { Mcp, Wasm, Pipeline, Docker, Native }`; `ToolDef { name, description, input_schema }`. `from_yaml`, `from_file`, `embedding_text`. |
-| [card.rs](../crates/agent-core/src/capabilities/card.rs) | `CapabilityCard { id (UUID), manifest, source_path, embedding_id }`. |
-| [registry.rs](../crates/agent-core/src/capabilities/registry.rs) | `CapabilityRegistry`: in-memory `HashMap<String, CapabilityCard>`. `register`, `get`, `search_by_tag`, `all`, `len`, `is_empty`, `load_from_dir(dir)` — auto-discovers any subdir containing `capability.yaml`. |
-| [discovery.rs](../crates/agent-core/src/capabilities/discovery.rs) | `CapabilityDiscovery` — `from_env()` reads `CONUSAI_CAPABILITIES_DIR` (default `./capabilities`); `discover()` returns a populated `CapabilityRegistry`. |
-| [embedding.rs](../crates/agent-core/src/capabilities/embedding.rs) | `ToolEmbedding::describe(card)` — returns text used for semantic search (delegates to `manifest.embedding_text()`). |
-| [tool_executor.rs](../crates/agent-core/src/capabilities/tool_executor.rs) | `CapabilityExecutor::invoke(card, tool, input, tenant)` dispatcher: routes `invoice-processing` / `ocr-service` to `InvoicePipeline`, `native-tools` to `crate::tools`, WASM caps to `WasmCapabilityLoader`. Builds Anthropic tool definitions in `capability__tool` form via `tool_definitions(card)`. Downloads URL images to temp files when needed. |
-| [mcp_adapter.rs](../crates/agent-core/src/capabilities/mcp_adapter.rs) | `McpAdapter` — JSON-RPC 2.0 HTTP client (`call`, `list_tools`, `call_tool`) for external MCP servers. |
-| [wasm_loader.rs](../crates/agent-core/src/capabilities/wasm_loader.rs) | `WasmCapabilityLoader` (wraps `wasmtime::Engine`). `load(card)` reads `card.source_path/capability.wasm`; `invoke_i32`, `invoke_tool(card, tool, input)` (currently dispatches `ping`). |
+| [mod.rs](../crates/agent-core/src/tools/mod.rs) | Re-exports `card`, `discovery`, `embedding`, `executor`, `manifest`, `mcp_adapter`, `provider`, `registry`, `wasm_loader`, `providers/*`, `builtin/*`. |
+| [provider.rs](../crates/agent-core/src/tools/provider.rs) | `ToolProvider` async trait — `manifest()`, `invoke(tool, input, tenant) -> Value`, `tool_definitions()` (default impl). Backed by `Arc<dyn ToolProvider>` in the registry. |
+| [manifest.rs](../crates/agent-core/src/tools/manifest.rs) | `ToolManifest { name, version, description, kind, tools, config, tags }`; `ToolKind { Mcp, Wasm, Pipeline, Docker, Native }`; `ToolDef { name, description, input_schema }`. `from_yaml`, `from_file`, `embedding_text`. |
+| [card.rs](../crates/agent-core/src/tools/card.rs) | `ToolCard { id (UUID), manifest, source_path, embedding_id }`. |
+| [registry.rs](../crates/agent-core/src/tools/registry.rs) | `ToolRegistry`: in-memory `HashMap<String, ToolCard>` (metadata) + `HashMap<String, Arc<dyn ToolProvider>>` (executors). `register_provider`, `register_card`, `get_provider`, `get`, `search_by_tag`, `all`, `len`, `is_empty`, `load_from_dir(dir)` — auto-discovers any subdir containing `capability.yaml` and instantiates the right provider. |
+| [discovery.rs](../crates/agent-core/src/tools/discovery.rs) | `ToolDiscovery` — `from_env()` reads `CONUSAI_CAPABILITIES_DIR` (default `./capabilities`); `discover()` returns a populated `ToolRegistry`. |
+| [embedding.rs](../crates/agent-core/src/tools/embedding.rs) | `ToolEmbedding::describe(card)` — returns text used for semantic search (delegates to `manifest.embedding_text()`). |
+| [executor.rs](../crates/agent-core/src/tools/executor.rs) | `ToolExecutor::invoke(registry, cap_name, tool, input, tenant)` — dispatches via `registry.get_provider(cap_name)?.invoke(...)`. Metrics: `tool_invocations`, `tool_duration_ms`, `tool_errors`. `tool_definitions_from_manifest` helper for Anthropic format. |
+| [mcp_adapter.rs](../crates/agent-core/src/tools/mcp_adapter.rs) | `McpAdapter` — JSON-RPC 2.0 HTTP client (`call`, `list_tools`, `call_tool`) for external MCP servers. |
+| [wasm_loader.rs](../crates/agent-core/src/tools/wasm_loader.rs) | `WasmToolLoader` (wraps `wasmtime::Engine`). `load(card)` reads `card.source_path/capability.wasm`; `invoke_i32`, `invoke_tool(card, tool, input)`. |
+| [providers/mod.rs](../crates/agent-core/src/tools/providers/mod.rs) | `provider_for(card)` factory: routes `ToolKind::Mcp` → `McpProvider`, `Wasm` → `WasmProvider`, `Pipeline` → per-name (`InvoiceProvider`/`ContractProvider`/`OcrProvider`), `Native` → `BuiltinProvider`. |
+| [providers/pipeline.rs](../crates/agent-core/src/tools/providers/pipeline.rs) | `InvoiceProvider`, `ContractProvider`, `OcrProvider` — each implements `ToolProvider`. Keeps `(name, tool_name)` dispatch inside the provider. |
+| [providers/mcp.rs](../crates/agent-core/src/tools/providers/mcp.rs) | `McpProvider` wrapping `McpAdapter`. |
+| [providers/wasm.rs](../crates/agent-core/src/tools/providers/wasm.rs) | `WasmProvider` wrapping `WasmToolLoader`. |
+| [providers/builtin.rs](../crates/agent-core/src/tools/providers/builtin.rs) | `BuiltinProvider` — hard-coded manifest for `native-tools` (`read_file`, `write_file`, `run_cargo`). |
+| [builtin/fs.rs](../crates/agent-core/src/tools/builtin/fs.rs) | `read_file` / `write_file` — tenant-scoped filesystem access via `safe_join`. |
+| [builtin/cargo.rs](../crates/agent-core/src/tools/builtin/cargo.rs) | `run_cargo` — allowlisted subcommands via `tokio::process::Command`. |
+| [builtin/card.rs](../crates/agent-core/src/tools/builtin/card.rs) | `builtin_tool_card()` — builds a `ToolCard` with `kind: Native`. |
 
 #### Agent subsystem ([src/agent/](../crates/agent-core/src/agent))
 
 | File | Purpose |
 |---|---|
 | [builder.rs](../crates/agent-core/src/agent/builder.rs) | `GeneralAgentBuilder` (fluent — `model`, `preamble`, `max_tokens`, `with_tenant`, `build`); `build_for_tenant`. Honors plan-based `max_tokens`. `GeneralAgent::prompt(text)` wraps the Rig Anthropic agent. |
-| [runtime.rs](../crates/agent-core/src/agent/runtime.rs) | `AgentRuntime` = `GeneralAgent` + `CapabilityRegistry`; `new`, `for_tenant`, `run`, `registry`. |
+| [runtime.rs](../crates/agent-core/src/agent/runtime.rs) | `AgentRuntime` = `GeneralAgent` + `ToolRegistry`; `new`, `for_tenant`, `run`, `registry`. |
 
 #### Context subsystem ([src/context/](../crates/agent-core/src/context))
 
@@ -183,15 +191,15 @@ components = ["rustfmt", "clippy", "rust-src"]
 | [context_builder.rs](../crates/agent-core/src/memory/context_builder.rs) | `ContextBuilder` — assembles a workspace-scoped system preamble. `build_for_node(tenant, node_id, max_chars)` resolves the effective `user_id` (via `effective_user_id`), fetches `get_ancestors(...)` (already access-filtered), tries `{ancestor_path}/CONTEXT.md` then `{ancestor_path}/README.md` from MinIO for each ancestor folder, then loads the selected node body if it is a `Conversation`. Sections are joined with `\n\n---\n\n`, prefixed with the `virtual_path` as an H2, and **truncated from the front** (oldest ancestor first) until total length ≤ `max_chars`. Output begins with `# Workspace context\n` so the agent recognises it. Never errors hard — on any access failure returns an empty string. Used by `routes/agent.rs::build_ctx` with `max_chars = 6000` whenever `workspace_node_id` is present. |
 | [qdrant_audit.rs](../crates/agent-core/src/memory/qdrant_audit.rs) | `QdrantAuditStore` — implements `common::audit::AuditStore`. Per-tenant collection `audit_{tenant_id}`, 4-dim zero vectors, SHA-256→u64 point ID derived from `AuditEvent.id` (a ULID). `append` ensures the collection then upserts a single point with the full event as payload. `list(tenant, limit)` scrolls with `order_by: { key: "timestamp", direction: "desc" }` and deserialises payloads back into `AuditEvent`. Retention is currently unbounded — no expiry, no compaction. |
 
-#### Native tools subsystem ([src/tools/](../crates/agent-core/src/tools))
+#### Native tools subsystem ([src/tools/builtin/](../crates/agent-core/src/tools/builtin))
 
 | File | Purpose |
 |---|---|
-| [fs_tools.rs](../crates/agent-core/src/tools/fs_tools.rs) | `read_file(workspace_root, input)` / `write_file(workspace_root, input)` — tenant-scoped filesystem access via `safe_join` (rejects `..`). Uses `tokio::fs`. |
-| [cargo_tool.rs](../crates/agent-core/src/tools/cargo_tool.rs) | `run_cargo(workspace_root, input)` — runs `cargo {check,test,build,clippy,fmt}` via `tokio::process::Command`; returns stdout/stderr/exit_code as JSON. Allowlisted subcommands only. |
-| [native_capability.rs](../crates/agent-core/src/tools/native_capability.rs) | `native_capability_card()` — builds a `CapabilityCard` with `kind: Native` exposing `read_file`, `write_file`, `run_cargo` with full JSON schemas. Auto-registered at gateway startup. |
+| [builtin/fs.rs](../crates/agent-core/src/tools/builtin/fs.rs) | `read_file(workspace_root, input)` / `write_file(workspace_root, input)` — tenant-scoped filesystem access via `safe_join` (rejects `..`). Uses `tokio::fs`. |
+| [builtin/cargo.rs](../crates/agent-core/src/tools/builtin/cargo.rs) | `run_cargo(workspace_root, input)` — runs `cargo {check,test,build,clippy,fmt}` via `tokio::process::Command`; returns stdout/stderr/exit_code as JSON. Allowlisted subcommands only. |
+| [builtin/card.rs](../crates/agent-core/src/tools/builtin/card.rs) | `builtin_tool_card()` — builds a `ToolCard` with `kind: Native` exposing `read_file`, `write_file`, `run_cargo` with full JSON schemas. Auto-registered at gateway startup. |
 
-**Public re-exports** (via [`lib.rs`](../crates/agent-core/src/lib.rs)): `GeneralAgent`, `GeneralAgentBuilder`, `CapabilityDiscovery`, `CapabilityRegistry`, `PlanTier`, `TenantClaims`, `TenantContext`, `ContextBuilder`, `MinioWorkspaceContent`, `QdrantAuditStore`, `QdrantThreadStore`, `QdrantWorkspaceStore`, `ContractData`, `ContractParty`, `ContractPipeline`, `InvoiceData`, `InvoiceLineItem`, `InvoicePipeline`, `native_capability_card`.
+**Public re-exports** (via [`lib.rs`](../crates/agent-core/src/lib.rs)): `GeneralAgent`, `GeneralAgentBuilder`, `ToolDiscovery`, `ToolRegistry`, `PlanTier`, `TenantClaims`, `TenantContext`, `ContextBuilder`, `MinioWorkspaceContent`, `QdrantAuditStore`, `QdrantThreadStore`, `QdrantWorkspaceStore`, `ContractData`, `ContractParty`, `ContractPipeline`, `InvoiceData`, `InvoiceLineItem`, `InvoicePipeline`, `builtin_tool_card`.
 
 ---
 
@@ -202,7 +210,7 @@ components = ["rustfmt", "clippy", "rust-src"]
 | File | Purpose |
 |---|---|
 | [src/main.rs](../crates/agent-gateway/src/main.rs) | Tokio entrypoint. Initializes telemetry, builds `AppState`, mounts public + protected routers, applies `CorsLayer` + `TraceLayer` + tenant + trace middleware, binds `0.0.0.0:8080`. |
-| [src/state.rs](../crates/agent-gateway/src/state.rs) | `AppState { registry: Mutex<CapabilityRegistry>, rate_limiter, file_store: Option<Arc<dyn ObjectStore>>, qdrant_url, presigned_tokens: Mutex<HashMap>, thread_store: Arc<dyn ThreadStore>, audit_store: Arc<dyn AuditStore>, workspace_store: Arc<dyn WorkspaceStore>, workspace_content: Arc<dyn WorkspaceContentStore> }`. `from_env()` runs capability discovery, registers `native_capability_card()`, initializes MinIO if `MINIO_ENDPOINT`/`S3_ENDPOINT` is set, instantiates `QdrantThreadStore`, `QdrantAuditStore`, `QdrantWorkspaceStore`, and either `MinioWorkspaceContent` (when MinIO is up) or `NoopWorkspaceContent` (warns at startup; errors on use rather than panicking). |
+| [src/state.rs](../crates/agent-gateway/src/state.rs) | `AppState { registry: Mutex<ToolRegistry>, rate_limiter, file_store: Option<Arc<dyn ObjectStore>>, qdrant_url, presigned_tokens: Mutex<HashMap>, thread_store: Arc<dyn ThreadStore>, audit_store: Arc<dyn AuditStore>, workspace_store: Arc<dyn WorkspaceStore>, workspace_content: Arc<dyn WorkspaceContentStore> }`. `from_env()` runs tool discovery, registers `builtin_tool_card()` provider, initializes MinIO if `MINIO_ENDPOINT`/`S3_ENDPOINT` is set, instantiates `QdrantThreadStore`, `QdrantAuditStore`, `QdrantWorkspaceStore`, and either `MinioWorkspaceContent` (when MinIO is up) or `NoopWorkspaceContent` (warns at startup; errors on use rather than panicking). |
 
 #### Middleware ([src/mw/](../crates/agent-gateway/src/mw))
 
