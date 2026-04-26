@@ -4,7 +4,7 @@ members = [
     "crates/common",
     "crates/agent-core",
     "crates/agent-gateway",
-    "crates/invoice-demo",
+    "examples/invoice-cli",
     "evals",
 ]
 

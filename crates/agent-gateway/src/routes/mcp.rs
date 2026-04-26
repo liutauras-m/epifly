@@ -1,6 +1,6 @@
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
-use agent_core::capabilities::tool_executor::CapabilityExecutor;
+use agent_core::tools::executor::ToolExecutor;
 use axum::{Extension, Json, extract::State};
 use common::mcp::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use serde_json::{Value, json};
@@ -76,7 +76,7 @@ fn handle_tools_list(state: &Arc<AppState>) -> Value {
     let registry = state.registry.lock().unwrap();
     let tools: Vec<Value> = registry
         .all()
-        .flat_map(CapabilityExecutor::tool_definitions)
+        .flat_map(ToolExecutor::tool_definitions)
         .collect();
     json!({ "tools": tools })
 }
@@ -107,17 +107,19 @@ async fn handle_tools_call(
         data: None,
     })?;
 
-    let card = {
+    // Get provider Arc under a short-lived lock
+    let provider = {
         let registry = state.registry.lock().unwrap();
-        registry.get(cap_name).cloned()
+        registry.get_provider(cap_name).cloned()
     }
     .ok_or_else(|| JsonRpcError {
         code: -32602,
-        message: format!("Capability not found: {cap_name}"),
+        message: format!("Tool not found: {cap_name}"),
         data: None,
     })?;
 
-    let result = CapabilityExecutor::invoke(&card, tool_name, &arguments, Some(&tenant.0))
+    let result = provider
+        .invoke(tool_name, &arguments, Some(&tenant.0))
         .await
         .map_err(|e| JsonRpcError {
             code: -32603,

@@ -1,16 +1,16 @@
-use crate::capabilities::{
-    card::CapabilityCard,
-    manifest::{CapabilityKind, CapabilityManifest, ToolDef},
+use crate::tools::{
+    card::ToolCard,
+    manifest::{ToolDef, ToolKind, ToolManifest},
 };
 use serde_json::json;
 
-/// Build the built-in "native-tools" CapabilityCard (not loaded from YAML).
-pub fn native_capability_card() -> CapabilityCard {
-    let manifest = CapabilityManifest {
+/// Build the built-in "native-tools" ToolCard (not loaded from YAML).
+pub fn builtin_tool_card() -> ToolCard {
+    let manifest = ToolManifest {
         name: "native-tools".into(),
         version: "0.1.0".into(),
         description: "Built-in filesystem and Cargo tools for workspace-aware agents".into(),
-        kind: CapabilityKind::Native,
+        kind: ToolKind::Native,
         config: serde_json::Value::Null,
         tags: vec!["native".into(), "filesystem".into(), "cargo".into()],
         tools: vec![
@@ -73,5 +73,5 @@ pub fn native_capability_card() -> CapabilityCard {
         ],
     };
 
-    CapabilityCard::new(manifest, std::path::PathBuf::from("."))
+    ToolCard::new(manifest, std::path::PathBuf::from("."))
 }

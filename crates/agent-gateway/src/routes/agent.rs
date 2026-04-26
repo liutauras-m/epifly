@@ -8,7 +8,7 @@
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
 use agent_core::ContextBuilder;
-use agent_core::capabilities::tool_executor::CapabilityExecutor;
+use agent_core::tools::executor::ToolExecutor;
 use axum::{
     Extension, Json,
     extract::State,
@@ -21,13 +21,13 @@ use axum::{
 use chrono::Utc;
 use common::memory::thread::Message;
 use common::memory::workspace::effective_user_id;
+use common::metrics;
 use futures::StreamExt;
 use serde_json::{Value, json};
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use common::metrics;
 use tracing::{Span, info, instrument, warn};
 use ulid::Ulid as _Ulid;
 use uuid::Uuid;
@@ -79,7 +79,6 @@ struct AgentCtx {
     thread_id: Option<String>,
     tenant_id: String,
     tools: Vec<Value>,
-    cards: Vec<agent_core::capabilities::card::CapabilityCard>,
     messages: Vec<Value>,
     effective_system: Option<String>,
     /// Parsed workspace node ULID, used to index chat content for search.
@@ -185,14 +184,9 @@ async fn build_ctx(
         let registry = state.registry.lock().unwrap();
         registry
             .all()
-            .flat_map(CapabilityExecutor::tool_definitions)
+            .flat_map(ToolExecutor::tool_definitions)
             .collect()
     };
-    let cards: Vec<_> = {
-        let registry = state.registry.lock().unwrap();
-        registry.all().cloned().collect()
-    };
-
     let new_messages: Vec<Value> = req
         .messages
         .iter()
@@ -280,7 +274,6 @@ async fn build_ctx(
         thread_id,
         tenant_id,
         tools,
-        cards,
         messages: history,
         effective_system,
         workspace_node_id,
@@ -303,7 +296,6 @@ async fn blocking_agent(
         thread_id,
         tenant_id,
         tools,
-        cards,
         mut messages,
         effective_system,
         workspace_node_id,
@@ -445,7 +437,7 @@ async fn blocking_agent(
             info!(round, tool = tool_name, "executing tool");
             tool_calls_made += 1;
 
-            let result = match resolve_and_invoke(&cards, tool_name, tool_input, &tenant).await {
+            let result = match resolve_and_invoke(&state, tool_name, tool_input, &tenant).await {
                 Ok(v) => v.to_string(),
                 Err(e) => {
                     warn!(tool = tool_name, error = %e, "tool invocation failed");
@@ -493,7 +485,6 @@ pub async fn stream_agent(
             thread_id,
             tenant_id,
             tools,
-            cards,
             mut messages,
             effective_system,
             workspace_node_id,
@@ -772,7 +763,7 @@ pub async fn stream_agent(
                 info!(round, tool = name, "executing tool (stream)");
                 tool_calls_made += 1;
 
-                let result = match resolve_and_invoke(&cards, &name, &parsed_input, &tenant).await {
+                let result = match resolve_and_invoke(&state, &name, &parsed_input, &tenant).await {
                     Ok(v) => v.to_string(),
                     Err(e) => {
                         warn!(tool = name, error = %e, "tool invocation failed");
@@ -840,7 +831,7 @@ async fn maybe_set_title(
 }
 
 async fn resolve_and_invoke(
-    cards: &[agent_core::capabilities::card::CapabilityCard],
+    state: &Arc<AppState>,
     full_tool_name: &str,
     input: &Value,
     tenant: &ResolvedTenant,
@@ -849,12 +840,16 @@ async fn resolve_and_invoke(
         .split_once("__")
         .ok_or_else(|| anyhow::anyhow!("invalid tool name: {full_tool_name}"))?;
 
-    let card = cards
-        .iter()
-        .find(|c| c.manifest.name == cap_name)
-        .ok_or_else(|| anyhow::anyhow!("capability not found: {cap_name}"))?;
+    // Grab the provider Arc under a short-lived lock so we don't hold it across await.
+    let provider = {
+        let registry = state.registry.lock().unwrap();
+        registry
+            .get_provider(cap_name)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("no provider registered for '{cap_name}'"))?
+    };
 
-    CapabilityExecutor::invoke(card, tool_name, input, Some(&tenant.0)).await
+    provider.invoke(tool_name, input, Some(&tenant.0)).await
 }
 
 fn err500(msg: String) -> (StatusCode, Value) {

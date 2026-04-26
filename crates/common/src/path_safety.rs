@@ -15,7 +15,7 @@ pub fn safe_join(base: &Path, untrusted: &str) -> crate::error::Result<PathBuf> 
         acc
     });
     if !canonical.starts_with(base) {
-        return Err(crate::error::ConusAiError::Capability(format!(
+        return Err(crate::error::ConusAiError::Tool(format!(
             "path traversal attempt: {untrusted}"
         )));
     }
@@ -27,7 +27,7 @@ pub fn safe_join(base: &Path, untrusted: &str) -> crate::error::Result<PathBuf> 
 pub fn join_under_tenant(root: &Path, tenant_id: &str, rel: &str) -> crate::error::Result<PathBuf> {
     // tenant_id itself must not contain traversal characters
     if tenant_id.contains("..") || tenant_id.contains('/') || tenant_id.contains('\\') {
-        return Err(crate::error::ConusAiError::Capability(format!(
+        return Err(crate::error::ConusAiError::Tool(format!(
             "invalid tenant_id: {tenant_id}"
         )));
     }

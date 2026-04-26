@@ -68,7 +68,7 @@ pub async fn search(
 async fn ensure_collection(
     base: &str,
     collection: &str,
-    cards: &[agent_core::capabilities::card::CapabilityCard],
+    cards: &[agent_core::tools::card::ToolCard],
 ) -> anyhow::Result<()> {
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
@@ -171,7 +171,7 @@ async fn qdrant_search(
 fn local_search(
     tenant_id: &str,
     query: &str,
-    cards: &[agent_core::capabilities::card::CapabilityCard],
+    cards: &[agent_core::tools::card::ToolCard],
     limit: usize,
 ) -> Value {
     let q = query.to_lowercase();

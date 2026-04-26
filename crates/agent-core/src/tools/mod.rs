@@ -1,5 +1,13 @@
-pub mod cargo_tool;
-pub mod fs_tools;
-pub mod native_capability;
+pub mod builtin;
+pub mod card;
+pub mod discovery;
+pub mod embedding;
+pub mod executor;
+pub mod manifest;
+pub mod mcp_adapter;
+pub mod provider;
+pub mod providers;
+pub mod registry;
+pub mod wasm_loader;
 
-pub use native_capability::native_capability_card;
+pub use builtin::card::builtin_tool_card;

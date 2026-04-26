@@ -79,10 +79,7 @@ impl ContractPipeline {
         let resolved = self.resolve_path(path)?;
         info!(resolved = %resolved.display(), "reading contract document");
         let bytes = std::fs::read(&resolved).map_err(|e| {
-            common::error::ConusAiError::Capability(format!(
-                "cannot read document {:?}: {e}",
-                resolved
-            ))
+            common::error::ConusAiError::Tool(format!("cannot read document {:?}: {e}", resolved))
         })?;
         self.extract_from_bytes(&bytes).await
     }
@@ -113,7 +110,7 @@ impl ContractPipeline {
                 Respond ONLY with the JSON object, no markdown fences, no explanation.",
             ),
         ])
-        .map_err(|e| common::error::ConusAiError::Capability(e.to_string()))?;
+        .map_err(|e| common::error::ConusAiError::Tool(e.to_string()))?;
 
         let msg = Message::User { content };
 
@@ -133,7 +130,7 @@ impl ContractPipeline {
             .model
             .completion(request)
             .await
-            .map_err(|e| common::error::ConusAiError::Capability(e.to_string()))?;
+            .map_err(|e| common::error::ConusAiError::Tool(e.to_string()))?;
 
         let text = response
             .choice
@@ -150,7 +147,7 @@ impl ContractPipeline {
 
         let json_text = strip_markdown_fences(&text);
         serde_json::from_str::<ContractData>(json_text).map_err(|e| {
-            common::error::ConusAiError::Capability(format!(
+            common::error::ConusAiError::Tool(format!(
                 "failed to parse contract JSON: {e}\nRaw response:\n{text}"
             ))
         })
@@ -160,6 +157,29 @@ impl ContractPipeline {
 impl Default for ContractPipeline {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl super::extraction::ExtractionPipeline for ContractPipeline {
+    type Output = ContractData;
+
+    fn model_id(&self) -> &str {
+        "claude-opus-4-7"
+    }
+
+    fn system_prompt(&self) -> &str {
+        "You are a legal document analysis specialist. \
+        Extract structured data from contracts with high accuracy. \
+        Always respond with valid JSON only."
+    }
+
+    async fn extract_from_bytes(
+        &self,
+        bytes: &[u8],
+        _tenant: Option<&crate::context::tenant::TenantContext>,
+    ) -> common::error::Result<Self::Output> {
+        self.extract_from_bytes(bytes).await
     }
 }
 

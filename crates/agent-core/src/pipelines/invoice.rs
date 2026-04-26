@@ -92,10 +92,7 @@ impl InvoicePipeline {
         let resolved = self.resolve_path(path)?;
         info!(resolved = %resolved.display(), "reading invoice image");
         let bytes = std::fs::read(&resolved).map_err(|e| {
-            common::error::ConusAiError::Capability(format!(
-                "cannot read image {:?}: {e}",
-                resolved
-            ))
+            common::error::ConusAiError::Tool(format!("cannot read image {:?}: {e}", resolved))
         })?;
         self.extract_from_bytes(&bytes).await
     }
@@ -132,7 +129,7 @@ impl InvoicePipeline {
                 }\n\
                 Respond ONLY with the JSON object, no markdown fences, no explanation.",
             ),
-        ]).map_err(|e| common::error::ConusAiError::Capability(e.to_string()))?;
+        ]).map_err(|e| common::error::ConusAiError::Tool(e.to_string()))?;
 
         let msg = Message::User { content };
 
@@ -152,7 +149,7 @@ impl InvoicePipeline {
             .model
             .completion(request)
             .await
-            .map_err(|e| common::error::ConusAiError::Capability(e.to_string()))?;
+            .map_err(|e| common::error::ConusAiError::Tool(e.to_string()))?;
 
         let text = response
             .choice
@@ -169,7 +166,7 @@ impl InvoicePipeline {
 
         let json_text = strip_markdown_fences(&text);
         serde_json::from_str::<InvoiceData>(json_text).map_err(|e| {
-            common::error::ConusAiError::Capability(format!(
+            common::error::ConusAiError::Tool(format!(
                 "failed to parse invoice JSON: {e}\nRaw response:\n{text}"
             ))
         })
@@ -187,5 +184,29 @@ fn strip_markdown_fences(s: &str) -> &str {
 impl Default for InvoicePipeline {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl super::extraction::ExtractionPipeline for InvoicePipeline {
+    type Output = InvoiceData;
+
+    fn model_id(&self) -> &str {
+        // The model is opaque in the rig CompletionModel; return the default.
+        "claude-opus-4-7"
+    }
+
+    fn system_prompt(&self) -> &str {
+        "You are an invoice data extraction specialist. \
+        Extract structured data from invoice images with high accuracy. \
+        Always respond with valid JSON only."
+    }
+
+    async fn extract_from_bytes(
+        &self,
+        bytes: &[u8],
+        _tenant: Option<&crate::context::tenant::TenantContext>,
+    ) -> common::error::Result<Self::Output> {
+        self.extract_from_bytes(bytes).await
     }
 }

@@ -1,5 +1,5 @@
 [package]
-name        = "invoice-demo"
+name        = "invoice-cli"
 description = "End-to-end invoice extraction demo using Rig + Claude vision"
 version.workspace    = true
 edition.workspace    = true
@@ -8,12 +8,12 @@ authors.workspace    = true
 license.workspace    = true
 
 [[bin]]
-name = "invoice-demo"
+name = "invoice-cli"
 path = "src/main.rs"
 
 [dependencies]
-common     = { path = "../common" }
-agent-core = { path = "../agent-core" }
+common     = { path = "../../crates/common" }
+agent-core = { path = "../../crates/agent-core" }
 tokio.workspace      = true
 rig-core.workspace   = true
 serde.workspace      = true

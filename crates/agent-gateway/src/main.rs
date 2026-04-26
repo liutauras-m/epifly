@@ -27,7 +27,10 @@ async fn metrics_handler(State(registry): State<Arc<prometheus::Registry>>) -> i
     }
     (
         StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
         buf,
     )
         .into_response()

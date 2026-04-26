@@ -1,7 +1,8 @@
 use crate::mw::RateLimiter;
+use agent_core::tools::providers::builtin::BuiltinProvider;
 use agent_core::{
-    CapabilityDiscovery, CapabilityRegistry, MinioWorkspaceContent, QdrantAuditStore,
-    QdrantThreadStore, QdrantWorkspaceStore, native_capability_card,
+    MinioWorkspaceContent, QdrantAuditStore, QdrantThreadStore, QdrantWorkspaceStore,
+    ToolDiscovery, ToolRegistry,
 };
 use common::audit::AuditStore;
 use common::memory::{ThreadStore, WorkspaceContentStore, WorkspaceStore};
@@ -11,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
 pub struct AppState {
-    pub registry: Mutex<CapabilityRegistry>,
+    pub registry: Mutex<ToolRegistry>,
     pub rate_limiter: RateLimiter,
     /// MinIO / S3-compatible file store (None if not configured)
     pub file_store: Option<Arc<dyn ObjectStore>>,
@@ -32,9 +33,10 @@ pub struct AppState {
 
 impl AppState {
     pub fn from_env() -> common::error::Result<Self> {
-        let discovery = CapabilityDiscovery::from_env();
+        let discovery = ToolDiscovery::from_env();
         let mut registry = discovery.discover()?;
-        registry.register(native_capability_card());
+        // Register the built-in native-tools provider
+        registry.register_provider(Arc::new(BuiltinProvider::new()));
 
         let qdrant_url =
             std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".into());

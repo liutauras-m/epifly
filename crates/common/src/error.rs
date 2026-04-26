@@ -7,8 +7,8 @@ pub enum ConusAiError {
     #[error("configuration error: {0}")]
     Config(String),
 
-    #[error("capability error: {0}")]
-    Capability(String),
+    #[error("tool error: {0}")]
+    Tool(String),
 
     #[error("wasm error: {0}")]
     Wasm(String),

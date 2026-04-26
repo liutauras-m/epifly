@@ -1,16 +1,16 @@
-use super::manifest::CapabilityManifest;
+use super::manifest::ToolManifest;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
-pub struct CapabilityCard {
+pub struct ToolCard {
     pub id: Uuid,
-    pub manifest: CapabilityManifest,
+    pub manifest: ToolManifest,
     pub source_path: std::path::PathBuf,
     pub embedding_id: Option<String>,
 }
 
-impl CapabilityCard {
-    pub fn new(manifest: CapabilityManifest, source_path: std::path::PathBuf) -> Self {
+impl ToolCard {
+    pub fn new(manifest: ToolManifest, source_path: std::path::PathBuf) -> Self {
         Self {
             id: Uuid::new_v4(),
             manifest,

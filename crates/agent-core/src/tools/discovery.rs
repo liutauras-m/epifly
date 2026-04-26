@@ -1,12 +1,12 @@
-use super::registry::CapabilityRegistry;
+use super::registry::ToolRegistry;
 use std::path::PathBuf;
 use tracing::info;
 
-pub struct CapabilityDiscovery {
+pub struct ToolDiscovery {
     dirs: Vec<PathBuf>,
 }
 
-impl CapabilityDiscovery {
+impl ToolDiscovery {
     pub fn new(dirs: Vec<PathBuf>) -> Self {
         Self { dirs }
     }
@@ -17,15 +17,15 @@ impl CapabilityDiscovery {
         Self::new(vec![PathBuf::from(dir)])
     }
 
-    pub fn discover(&self) -> common::error::Result<CapabilityRegistry> {
-        let mut registry = CapabilityRegistry::new();
+    pub fn discover(&self) -> common::error::Result<ToolRegistry> {
+        let mut registry = ToolRegistry::new();
         let mut total = 0;
         for dir in &self.dirs {
             let count = registry.load_from_dir(dir)?;
-            info!(dir = ?dir, count, "discovered capabilities");
+            info!(dir = ?dir, count, "discovered tools");
             total += count;
         }
-        info!(total, "capability discovery complete");
+        info!(total, "tool discovery complete");
         Ok(registry)
     }
 }

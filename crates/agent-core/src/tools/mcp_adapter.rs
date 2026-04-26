@@ -25,11 +25,7 @@ impl McpAdapter {
             .json(&req)
             .send()
             .await
-            .map_err(|e| common::error::ConusAiError::Mcp(e.to_string()))
-            .and_then(|r| {
-                // We need async, so we'll do it below
-                Ok(r)
-            });
+            .map_err(|e| common::error::ConusAiError::Mcp(e.to_string()));
 
         let resp: JsonRpcResponse = result?
             .json()

@@ -39,6 +39,7 @@ impl SessionUser {
             .collect::<String>()
             .to_uppercase()
     }
+    #[allow(dead_code)]
     pub fn slug(&self) -> String {
         self.name
             .chars()
@@ -67,8 +68,7 @@ impl SessionUser {
         // and /ui/* (SessionUser-derived) share workspaces, threads, and ACL space.
         // In production, /v1/* requires JWT and tenant_id comes from claims; /ui/* is
         // not exposed there, so this fallback is dev-only.
-        let tenant_id =
-            std::env::var("CONUSAI_UI_TENANT_ID").unwrap_or_else(|_| "dev".into());
+        let tenant_id = std::env::var("CONUSAI_UI_TENANT_ID").unwrap_or_else(|_| "dev".into());
         TenantContext::new(
             tenant_id,
             Some(self.name.clone()),

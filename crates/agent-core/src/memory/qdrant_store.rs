@@ -12,10 +12,10 @@ use chrono::Utc;
 use common::limits::{MAX_MESSAGES_BEFORE_SUMMARY, MAX_MESSAGES_PER_THREAD};
 use common::memory::store::ThreadStore;
 use common::memory::thread::{Message, Thread};
+use common::metrics;
 use reqwest::Client;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use common::metrics;
 use std::time::Instant;
 use tracing::{Span, info, instrument, warn};
 use ulid::Ulid;
@@ -123,7 +123,10 @@ impl QdrantThreadStore {
     async fn upsert_point(&self, tenant_id: &str, point: Value) -> anyhow::Result<()> {
         let col = self.collection(tenant_id);
         Span::current().record("db.collection", col.as_str());
-        let labels = [metrics::kv("operation", "upsert"), metrics::kv("collection", col.as_str())];
+        let labels = [
+            metrics::kv("operation", "upsert"),
+            metrics::kv("collection", col.as_str()),
+        ];
         let t0 = Instant::now();
         let url = format!("{}/collections/{}/points", self.base_url, col);
         let res = self
@@ -151,7 +154,10 @@ impl QdrantThreadStore {
     ) -> anyhow::Result<Vec<Value>> {
         let col = self.collection(tenant_id);
         Span::current().record("db.collection", col.as_str());
-        let labels = [metrics::kv("operation", "scroll"), metrics::kv("collection", col.as_str())];
+        let labels = [
+            metrics::kv("operation", "scroll"),
+            metrics::kv("collection", col.as_str()),
+        ];
         let t0 = Instant::now();
         let url = format!("{}/collections/{}/points/scroll", self.base_url, col);
         let res = self

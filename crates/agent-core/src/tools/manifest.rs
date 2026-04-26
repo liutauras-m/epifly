@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CapabilityManifest {
+pub struct ToolManifest {
     pub name: String,
     pub version: String,
     pub description: String,
-    pub kind: CapabilityKind,
+    pub kind: ToolKind,
     pub tools: Vec<ToolDef>,
     #[serde(default)]
     pub config: serde_json::Value,
@@ -15,7 +15,7 @@ pub struct CapabilityManifest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub enum CapabilityKind {
+pub enum ToolKind {
     Mcp,
     Wasm,
     Pipeline,
@@ -31,14 +31,14 @@ pub struct ToolDef {
     pub input_schema: serde_json::Value,
 }
 
-impl CapabilityManifest {
+impl ToolManifest {
     pub fn from_yaml(s: &str) -> common::error::Result<Self> {
-        serde_yaml::from_str(s).map_err(|e| common::error::ConusAiError::Capability(e.to_string()))
+        serde_yaml::from_str(s).map_err(|e| common::error::ConusAiError::Tool(e.to_string()))
     }
 
     pub fn from_file(path: &std::path::Path) -> common::error::Result<Self> {
         let s = std::fs::read_to_string(path).map_err(|e| {
-            common::error::ConusAiError::Capability(format!("cannot read {:?}: {e}", path))
+            common::error::ConusAiError::Tool(format!("cannot read {:?}: {e}", path))
         })?;
         Self::from_yaml(&s)
     }
@@ -51,7 +51,7 @@ impl CapabilityManifest {
             .collect::<Vec<_>>()
             .join("\n");
         format!(
-            "Capability: {}\nDescription: {}\nKind: {:?}\nTools:\n{}",
+            "Tool: {}\nDescription: {}\nKind: {:?}\nTools:\n{}",
             self.name, self.description, self.kind, tools
         )
     }

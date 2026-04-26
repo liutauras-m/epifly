@@ -1,823 +1,505 @@
-# ConusAI Platform — Hierarchical Workspace Implementation Plan
+# ConusAI Platform — `Capability*` → `Tool*` Refactor Plan v0.3
 
-**Feature:** Left-sidebar hierarchical workspace (folders + conversations as `.md` files) with **private-by-default per-user access** and selective sharing.
-**Status:** Phases 0–6 implemented and shipped (workspace models, Qdrant store, MinIO body store, AppState wiring, ContextBuilder, full HTTP routes + sidebar UI, per-node thread binding, content_text indexing). Phases 7–9 (multi-layer context budgeting, live document mode, agent-callable workspace toolkit) remain planned. See "Phase status snapshot" below for the per-phase state of play.
+**Goal:** Rename `Capability*` → `Tool*` across the workspace and replace the imperative `match` in `tool_executor.rs` with a `ToolProvider` trait + registry. Pure refactor — no API/behaviour changes, no schema changes, no new features.
 
-## Phase status snapshot (2026-04-26)
+**Why:** Rig 0.9+ and the MCP ecosystem call these "tools". The current name "capability" is from an earlier draft and is now inconsistent with both the public-facing tool definitions (`ToolDef`, `tool_definitions()`, the UI's `appendToolCard`/`finalizeToolCard`) and the surrounding ecosystem.
 
-| Phase | Subject | Status |
-|---|---|---|
-| 0 | Errors + ADR + module re-export | ✅ Shipped — `Validation` and `NotFound` variants live in [`common::error`](../crates/common/src/error.rs); ADR 005 in [`docs/adr/`](adr/005-workspace-access-control.md). |
-| 1 | Core models | ✅ Shipped — [`common::memory::workspace`](../crates/common/src/memory/workspace.rs) with full test coverage. |
-| 2 | `WorkspaceStore` trait + Qdrant impl | ✅ Shipped — [`common::memory::store`](../crates/common/src/memory/store.rs), [`agent-core::memory::qdrant_workspace_store`](../crates/agent-core/src/memory/qdrant_workspace_store.rs). Trait grew beyond the original sketch — `bump_last_modified`, `search_nodes`, `index_content`, `bind_thread` are also part of the live trait. |
-| 3 | AppState wiring | ✅ Shipped — `workspace_store` and `workspace_content` in [`AppState`](../crates/agent-gateway/src/state.rs). When MinIO is unconfigured a `NoopWorkspaceContent` impl is installed (warns at startup, errors on use) rather than panicking. |
-| 4 | `ContextBuilder` | ✅ Shipped — [`agent-core::memory::context_builder`](../crates/agent-core/src/memory/context_builder.rs); flat `max_chars` (6 000 in agent.rs); folder probes try `CONTEXT.md` then `README.md`. |
-| 5 | HTTP routes + sidebar UI | ✅ Shipped — [`routes/workspaces.rs`](../crates/agent-gateway/src/routes/workspaces.rs) covers create / tree / search / get / get_content / patch_content / move / share / unshare / delete; [`assets/js/workspace.js`](../crates/agent-gateway/assets/js/workspace.js) and [`templates/app.html`](../crates/agent-gateway/templates/app.html) implement the tree, search input, dialogs, and context menu. Move dialog is currently a `prompt()` rather than drag-and-drop. Inline rename is still a TODO. |
-| 6 | Per-node thread binding | ✅ Shipped — `WorkspaceStore::bind_thread` writes `metadata.thread_id`; `routes/agent.rs::build_ctx` lazily creates + binds a thread when `workspace_node_id` is present and the node has no binding yet. |
-| 5.5 | Chat-content indexing (added late) | ✅ Shipped — both `blocking_agent` and `stream_agent` re-index the last 30 thread messages into `content_text` after every completed turn so chat history is searchable through `/v1/workspaces/search`. The Qdrant `node_to_point` seeds an empty `content_text` so new nodes are searchable by `name` immediately, and `patch_payload` is used everywhere a metadata field is touched so `content_text` is never clobbered by a `move` / `share` / `bind_thread`. |
-| 7 | Multi-layer context composition | 🟡 Planned — `ContextBuilder` is still a single-budget concatenation. No auto-summariser yet beyond the existing `QdrantThreadStore` background summary task. |
-| 7.c | Citations | 🟡 Planned. |
-| 8 | Live document mode | 🟡 Planned — workspace-write tools are not yet exposed to the agent loop. |
-| 9 | Agent-callable workspace toolkit (`workspace__search`, `workspace__list_tree`) | 🟡 Planned — `/v1/workspaces/search` exists for the UI but is not surfaced as an agent tool; vectors are still placeholder 4-dim zeros. |
+**Status:** **Not started.** This document is the implementation contract; no code has moved yet.
 
-**Updated:** 2026-04-26 — verified against actual codebase.
-**Goal:** VS-Code / Cursor / Claude-Projects style organization where:
-- Conversations are real `.md` files in tenant-scoped MinIO paths.
-- Folders are first-class nodes with optional `CONTEXT.md` / `README.md`.
-- Every node is private to its owner; explicit sharing per node, no inheritance.
-- Agent context is auto-scoped to nodes the current user can access.
+**Scope guardrails — these MUST NOT regress:**
 
-This plan was **rewritten after a full inventory** of `crates/common`, `crates/agent-core`, `crates/agent-gateway`, `templates/`, `assets/css/style.css`, and `docs/`. Every type, field, route, CSS token, and store pattern referenced below was confirmed to exist (or is explicitly flagged as a required addition).
-
-> **Data policy:** test data is disposable. **No migration scripts, no backward-compat shims.** If a schema changes, drop the Qdrant collection and the MinIO `workspaces/` prefix.
-
-> **Verification policy:** every phase ends by **invoking the `plan-browser-verifier` skill** (`.claude/skills/plan-browser-verifier/SKILL.md`). Phase is not complete until the verdict is `pass` or `pass-with-notes`. On `fail`, fix and re-run before advancing.
+- Public HTTP routes: `/v1/capabilities`, `/v1/capabilities/search`, `/v1/agent/completions`, `/v1/chat/completions`, `/mcp`, `/v1/files`, `/v1/threads/*`, `/v1/workspaces/*`, `/v1/audit`. Path strings stay as `capabilities`.
+- All `capabilities/*/capability.yaml` manifest files stay byte-identical.
+- Workspace/folder system ([qdrant_workspace_store.rs](../crates/agent-core/src/memory/qdrant_workspace_store.rs)), audit log ([qdrant_audit.rs](../crates/agent-core/src/memory/qdrant_audit.rs)), thread store, content_text indexing, and the ~5-round agent loop in [agent.rs](../crates/agent-gateway/src/routes/agent.rs) all keep current behaviour.
+- `cargo test --workspace` still passes 30 tests (8 `agent-core` + 22 `common`); no new tests required, but old tests must keep passing.
 
 ---
 
-## 0. Codebase Anchors (verified)
+## Current state — what actually exists today
 
-| Concern | Existing artifact |
+These are the inputs to the refactor. Verified 2026-04-26.
+
+### Capability-side files (under `crates/agent-core/src/capabilities/`)
+
+| File | Lines | Capability* symbol count | Contents |
+|---|---:|---:|---|
+| [`mod.rs`](../crates/agent-core/src/capabilities/mod.rs) | 9 | 0 | Pub mods only |
+| [`provider.rs`](../crates/agent-core/src/capabilities/provider.rs) | 10 | 1 | `AgentCapability` async trait — currently **unused by `tool_executor.rs`** (the match dispatches by `kind`, not via the trait). Defines `name`, `description`, `tool_names`, `invoke`. |
+| [`manifest.rs`](../crates/agent-core/src/capabilities/manifest.rs) | 58 | 7 | `CapabilityManifest`, `CapabilityKind { Mcp, Wasm, Pipeline, Docker, Native }`, `ToolDef { name, description, input_schema }`. `from_yaml`, `from_file`, `embedding_text`. |
+| [`card.rs`](../crates/agent-core/src/capabilities/card.rs) | 21 | 5 | `CapabilityCard { id (UUID), manifest, source_path, embedding_id }`. |
+| [`registry.rs`](../crates/agent-core/src/capabilities/registry.rs) | 129 | 21 | `CapabilityRegistry`: `HashMap<String, CapabilityCard>`. `register`, `get`, `search_by_tag`, `all`, `len`, `is_empty`, `load_from_dir`. |
+| [`discovery.rs`](../crates/agent-core/src/capabilities/discovery.rs) | 31 | 5 | `CapabilityDiscovery::from_env()` reads `CONUSAI_CAPABILITIES_DIR`; `discover()` returns a populated `CapabilityRegistry`. |
+| [`embedding.rs`](../crates/agent-core/src/capabilities/embedding.rs) | 11 | 2 | `ToolEmbedding::describe(card)` → `manifest.embedding_text()`. |
+| [`mcp_adapter.rs`](../crates/agent-core/src/capabilities/mcp_adapter.rs) | 65 | 0 | `McpAdapter` — JSON-RPC 2.0 HTTP client. No `Capability*` symbols (already provider-style). |
+| [`tool_executor.rs`](../crates/agent-core/src/capabilities/tool_executor.rs) | 317 | 12 | The big `match` — see below. Plus `tool_definitions(card) -> Vec<Value>` for Anthropic format. |
+| [`wasm_loader.rs`](../crates/agent-core/src/capabilities/wasm_loader.rs) | 107 | 11 | `WasmCapabilityLoader` (wraps `wasmtime::Engine`). `load(card)`, `invoke_i32`, `invoke_tool`. |
+
+**Total in this folder:** 758 lines, 64 `Capability*` occurrences.
+
+### `tool_executor.rs` dispatch — the actual match (lines 65-272)
+
+The match has **8 distinct arms**, not 3 as the v0.2 plan implied:
+
+```rust
+match (card.manifest.name.as_str(), tool_name) {
+    ("contract-processing", "extract_contract")   => ContractPipeline::extract_from_document_path(...)
+    ("contract-processing", "summarise_contract") => ContractPipeline::summarise(...)
+    ("invoice-processing",  "extract_invoice")    => InvoicePipeline::extract_from_image_path(...)
+    ("invoice-processing",  "validate_invoice")   => InvoicePipeline::validate(...)
+    ("ocr-service",         "extract_text")       => InvoicePipeline (vision OCR mode)
+    ("native-tools",        "read_file")          => fs_tools::read_file(workspace_root, input)
+    ("native-tools",        "write_file")         => fs_tools::write_file(workspace_root, input)
+    ("native-tools",        "run_cargo")          => cargo_tool::run_cargo(workspace_root, input)
+    (_, _) if kind == Mcp     => McpAdapter::new(endpoint).call_tool(tool, input)
+    (_, _) if kind == Wasm    => WasmCapabilityLoader::new().invoke_tool(card, tool, input)
+    (_, _) if kind == Docker  => bail!("reserved")
+    _                          => bail!("No executor registered for ...")
+}
+```
+
+The first 8 arms hardcode `(capability_name, tool_name)` pairs. Replacing this with a trait is the central refactor.
+
+### Files outside `capabilities/` that touch `Capability*`
+
+| File | Lines | Capability* count | Why it touches them |
+|---|---:|---:|---|
+| [`crates/agent-core/src/lib.rs`](../crates/agent-core/src/lib.rs) | 18 | 2 | Re-exports `CapabilityDiscovery`, `CapabilityRegistry` |
+| [`crates/agent-core/src/agent/runtime.rs`](../crates/agent-core/src/agent/runtime.rs) | — | 5 | `AgentRuntime` holds a `CapabilityRegistry` |
+| [`crates/agent-core/src/tools/native_capability.rs`](../crates/agent-core/src/tools/native_capability.rs) | 77 | 7 | `native_capability_card()` returns a `CapabilityCard` with `kind: CapabilityKind::Native`. Imports `CapabilityKind`, `CapabilityManifest`, `ToolDef`. |
+| [`crates/agent-core/src/pipelines/invoice.rs`](../crates/agent-core/src/pipelines/invoice.rs) | 191 | 4 | Doc comments + Card construction in tests |
+| [`crates/agent-core/src/pipelines/contract.rs`](../crates/agent-core/src/pipelines/contract.rs) | 172 | 4 | Same as invoice |
+| [`crates/agent-gateway/src/state.rs`](../crates/agent-gateway/src/state.rs) | 123 | 3 | `Mutex<CapabilityRegistry>` in `AppState` |
+| [`crates/agent-gateway/src/routes/mod.rs`](../crates/agent-gateway/src/routes/mod.rs) | 73 | 1 | Mounts `/v1/capabilities` (route path — keep) |
+| [`crates/agent-gateway/src/routes/agent.rs`](../crates/agent-gateway/src/routes/agent.rs) | 865 | 5 | Imports `CapabilityExecutor`; uses `CapabilityCard` + `CapabilityExecutor::tool_definitions` + `CapabilityExecutor::invoke` |
+| [`crates/agent-gateway/src/routes/mcp.rs`](../crates/agent-gateway/src/routes/mcp.rs) | 132 | 4 | Same as `agent.rs` for `tools/list` and `tools/call` |
+| [`crates/agent-gateway/src/routes/search.rs`](../crates/agent-gateway/src/routes/search.rs) | 227 | 2 | Iterates `registry.all()` to build search vectors |
+| [`crates/agent-gateway/src/routes/capabilities.rs`](../crates/agent-gateway/src/routes/capabilities.rs) | 33 | (counted under others) | Returns `/v1/capabilities` JSON list — no rename to filename, only internal type updates |
+| [`crates/common/src/error.rs`](../crates/common/src/error.rs) | — | 1 | `ConusAiError::Capability(String)` variant |
+| [`crates/common/src/path_safety.rs`](../crates/common/src/path_safety.rs) | — | 2 | Doc comments mention "capability" |
+| [`crates/agent-gateway/assets/js/app.js`](../crates/agent-gateway/assets/js/app.js) | — | 1 | One JSON field name; UI tool-card naming **already** uses `Tool` (`appendToolCard`/`finalizeToolCard`) |
+
+**Workspace total:** 21 files, **105 `Capability*` occurrences**.
+
+### Existing `tools/` module — naming collision
+
+`crates/agent-core/src/tools/` already exists and contains:
+
+```
+tools/
+├── mod.rs
+├── fs_tools.rs           — read_file / write_file (tenant-scoped via safe_join)
+├── cargo_tool.rs         — run_cargo (allowlisted subcommands)
+└── native_capability.rs  — builds a CapabilityCard for the built-in fs+cargo tools
+```
+
+The v0.2 plan said "rename `capabilities/` → `tools/`" — **this would collide**. We resolve the collision in Phase 1 by moving the existing fs/cargo tools into a `builtin/` submodule, then renaming `capabilities/` → `tools/`. See Phase 1 §1.1.
+
+### Existing trait surface
+
+- `AgentCapability` trait exists in [`provider.rs`](../crates/agent-core/src/capabilities/provider.rs) but is **not implemented** by any of the dispatch targets (`InvoicePipeline`, `ContractPipeline`, `McpAdapter`, `WasmCapabilityLoader`). The match in `tool_executor.rs` bypasses it. Phase 2 deletes the unused trait and replaces it with `ToolProvider`.
+- No `ExtractionPipeline` trait exists. `InvoicePipeline` and `ContractPipeline` are independent structs with different output types (`InvoiceData`, `ContractData`).
+
+---
+
+## Phase 0 — Preparation (5 min)
+
+1. Branch from `main`:
+   ```bash
+   git switch -c refactor/tool-provider-alignment
+   ```
+2. Baseline test pass:
+   ```bash
+   cargo check --workspace
+   cargo test --workspace 2>&1 | grep "test result"
+   # expected: 30 passed (8 agent-core + 22 common; rest are 0-test crates)
+   cargo clippy --workspace --all-targets -- -D warnings
+   ```
+3. Sanity-run the gateway against the live infra (Qdrant + MinIO already running locally per the user's session):
+   ```bash
+   curl -s http://localhost:8080/health
+   curl -s http://localhost:8080/v1/capabilities | jq '.[].name'
+   ```
+
+**Rollback safety:** Each phase below ends with a green `cargo check --workspace`. If a phase breaks anything that earlier phases didn't break, revert that phase's commit and re-plan.
+
+---
+
+## Phase 1 — Mechanical rename `Capability*` → `Tool*` (45 min)
+
+**Pure mechanical change. No behavioural change. No file deletions. After this phase the match in `tool_executor.rs` is unchanged in shape — only its types are renamed.**
+
+### 1.0 Resolve the `tools/` collision
+
+Move the existing built-in tools into a submodule so the new `tools/` (formerly `capabilities/`) can take its place:
+
+```
+crates/agent-core/src/tools/
+├── mod.rs                          ← becomes parent of both groups
+├── builtin/
+│   ├── mod.rs                      ← `pub mod fs; pub mod cargo; pub mod card;`
+│   ├── fs.rs                       ← was tools/fs_tools.rs
+│   ├── cargo.rs                    ← was tools/cargo_tool.rs
+│   └── card.rs                     ← was tools/native_capability.rs (renamed builtin_tool_card)
+└── (then add the renamed capabilities/* files below)
+```
+
+Update imports:
+- `crates/agent-core/src/capabilities/tool_executor.rs`: `use crate::tools::fs_tools` → `use crate::tools::builtin::fs`. Same for `cargo_tool` → `builtin::cargo`.
+- `crates/agent-core/src/lib.rs`: `pub use tools::native_capability_card` → `pub use tools::builtin::card::builtin_tool_card`.
+- `crates/agent-gateway/src/state.rs`: same.
+
+### 1.1 Move + rename source files
+
+```
+crates/agent-core/src/capabilities/  →  crates/agent-core/src/tools/
+```
+
+Then rename within (use `git mv` so blame is preserved):
+
+| Old path | New path |
 |---|---|
-| Tenant context | `crates/agent-core/src/context/tenant.rs::TenantContext { tenant_id, user_id: Option<String>, plan, workspace_root }` with `safe_path(rel) -> Result<PathBuf>`, `storage_prefix() -> "tenants/{id}/"`, `qdrant_collection(kind) -> "{kind}_{tenant_id}"`, `span_fields()` |
-| Tenant middleware | `crates/agent-gateway/src/mw/tenant.rs::ResolvedTenant(pub TenantContext)`. Prod: HS256 JWT `TenantClaims { sub, tenant_id, plan, exp }` → `user_id = Some(sub)`. Dev: `X-Tenant-ID` header → `user_id = None` |
-| Errors | `crates/common/src/error.rs::ConusAiError { Config, Capability, Wasm, Mcp, Storage, Api{status,message}, Io, Other }` — **needs `Validation(String)` and `NotFound(String)` variants added** |
-| Existing store template | `crates/agent-core/src/memory/qdrant_store.rs::QdrantThreadStore { http: reqwest::Client, base_url: String }` — REST API (not gRPC), 4-dim dummy vectors, payload indices via `PUT /collections/{name}/index` with `field_schema: "keyword"`, scroll via `POST /points/scroll` with filter |
-| AppState | `crates/agent-gateway/src/state.rs::AppState { registry, rate_limiter, file_store: Option<Arc<dyn ObjectStore>>, qdrant_url: String, presigned_tokens, thread_store: Arc<dyn ThreadStore>, audit_store: Arc<dyn AuditStore> }` |
-| Routes | `crates/agent-gateway/src/routes/mod.rs` — protected routes use `Extension<ResolvedTenant>` |
-| Templates | `templates/app.html` (main layout), `partials/composer.html`, `shared/head.html`, `login.html`. Sidebar already exists with "Sections" / "Recents" nav |
-| CSS tokens | `--ink/--ink-2/--ink-3`, `--paper/--paper-2/--paper-3`, `--rule`, `--seam`, `--ember/--ember-soft/--ember-glow`, `--success/--danger`, `--font-display/--font-body/--font-mono`, `--t-h1..--t-mono`, `--s-1..--s-8`, `--rail` (260px), `--r-xs..--r-full`, `dur-1..dur-4` |
-| Agent runtime | `crates/agent-core/src/agent/runtime.rs::AgentRuntime::for_tenant(model, preamble, registry, tenant)` — system context is injected via the `preamble` string at build time |
-| Agent route | `POST /v1/agent/completions` already wired (`routes/agent.rs`) |
-| Object store | `object_store = "0.11"` with `aws` feature, exposed as `Arc<dyn ObjectStore>` |
-| ADR dir | `docs/adr/` **does not exist yet** — must create alongside ADR 005 |
-| Existing thread trait | `crates/common/src/memory/store.rs::ThreadStore` (mirror this shape, do **not** extend it) |
+| `capabilities/mod.rs` | `tools/mod.rs` (merge with existing `tools/mod.rs`) |
+| `capabilities/provider.rs` | **deleted** (unused trait — see Phase 2) |
+| `capabilities/manifest.rs` | `tools/manifest.rs` |
+| `capabilities/card.rs` | `tools/card.rs` |
+| `capabilities/registry.rs` | `tools/registry.rs` |
+| `capabilities/discovery.rs` | `tools/discovery.rs` |
+| `capabilities/embedding.rs` | `tools/embedding.rs` |
+| `capabilities/mcp_adapter.rs` | `tools/mcp_adapter.rs` |
+| `capabilities/tool_executor.rs` | `tools/executor.rs` (drop the `tool_` prefix — module is already `tools`) |
+| `capabilities/wasm_loader.rs` | `tools/wasm_loader.rs` |
 
-Anything below that names a file/field/method that contradicts this table is the bug — fix the plan, not reality.
+### 1.2 Symbol renames
 
----
+| Old | New | Reason |
+|---|---|---|
+| `CapabilityManifest` | `ToolManifest` | Rig + MCP convention |
+| `CapabilityKind` | `ToolKind` | (variants stay: `Mcp`, `Wasm`, `Pipeline`, `Docker`, `Native`) |
+| `CapabilityCard` | `ToolCard` | matches UI's existing `appendToolCard` |
+| `CapabilityRegistry` | `ToolRegistry` | |
+| `CapabilityDiscovery` | `ToolDiscovery` | |
+| `CapabilityExecutor` | `ToolExecutor` | |
+| `WasmCapabilityLoader` | `WasmToolLoader` | |
+| `native_capability_card()` | `builtin_tool_card()` | |
+| `ConusAiError::Capability` (variant) | `ConusAiError::Tool` | one variant in `crates/common/src/error.rs` |
+| `AgentCapability` (trait) | **deleted** | unused; replaced in Phase 2 |
+| Module path `crate::capabilities::*` | `crate::tools::*` | |
 
-## 1. Architecture
+Mechanical tool: run from repo root, then read each diff before committing (some matches will be in doc comments and the route name `/v1/capabilities` which **must not** change):
 
-### Storage layout
+```bash
+# Source code only — do NOT touch capability.yaml, /v1/capabilities path, capabilities/ folder under repo root
+fd -e rs -E 'capabilities/*' . crates/ evals/ -x sd -- 'CapabilityManifest' 'ToolManifest' {}
+fd -e rs -E 'capabilities/*' . crates/ evals/ -x sd -- 'CapabilityKind'     'ToolKind'     {}
+fd -e rs -E 'capabilities/*' . crates/ evals/ -x sd -- 'CapabilityCard'     'ToolCard'     {}
+fd -e rs -E 'capabilities/*' . crates/ evals/ -x sd -- 'CapabilityRegistry' 'ToolRegistry' {}
+fd -e rs -E 'capabilities/*' . crates/ evals/ -x sd -- 'CapabilityDiscovery' 'ToolDiscovery' {}
+fd -e rs -E 'capabilities/*' . crates/ evals/ -x sd -- 'CapabilityExecutor' 'ToolExecutor' {}
+fd -e rs -E 'capabilities/*' . crates/ evals/ -x sd -- 'WasmCapabilityLoader' 'WasmToolLoader' {}
+fd -e rs -E 'capabilities/*' . crates/ evals/ -x sd -- 'native_capability_card' 'builtin_tool_card' {}
+fd -e rs -E 'capabilities/*' . crates/ evals/ -x sd -- 'crate::capabilities::' 'crate::tools::' {}
+fd -e rs -E 'capabilities/*' . crates/ evals/ -x sd -- 'agent_core::capabilities::' 'agent_core::tools::' {}
 
-| Entity | Index store | Body store | Access rules |
-|---|---|---|---|
-| Folder | Qdrant `workspaces_{tenant_id}` | — | owner OR `user_id ∈ shared_with` |
-| Conversation | Qdrant `workspaces_{tenant_id}` | MinIO `tenants/{tenant_id}/workspaces/{virtual_path}` (`.md`) | owner OR `user_id ∈ shared_with` |
-| Uploaded file ref | Qdrant node only | Existing MinIO `tenants/{tenant_id}/files/...` | Same |
-
-### Access model
-
-- Per-node `owner_id: String` and `shared_with: Vec<String>` (user IDs).
-- **No inheritance.** Sharing a folder does not share its children. Each node carries its own ACL. Rationale: predictable, easy to reason about, easy to audit.
-- All store reads filter Qdrant payload: `tenant_id == X AND (owner_id == U OR shared_with contains U)`.
-- Dev mode (`user_id = None`): treat as a single synthetic user `__dev__` so the same logic runs in dev and prod. Filter becomes `owner_id == "__dev__"` automatically.
-
-### Context flow
-
-`ContextBuilder.build_for_node(tenant, node_id, max_tokens)`:
-1. `get_ancestors(tenant, node_id)` — already access-filtered.
-2. For each ancestor folder, attempt MinIO read of `{path}/CONTEXT.md` then `{path}/README.md`. Missing files are silently skipped.
-3. Read selected node body if it is a conversation.
-4. Concatenate sections with `\n\n---\n\n`, prefix each with the `virtual_path` as an H2.
-5. Truncate from the top (drop most-distant ancestor first) until `~chars/4 ≤ max_tokens`.
-6. Return as a `String` — fed to `AgentRuntime::for_tenant(..., preamble = ctx, ...)`.
-
-### Storage invariants
-
-- Every MinIO key built via `tenant.safe_path(format!("workspaces/{virtual_path}"))`. Path traversal returns `Storage`.
-- Every Qdrant filter includes the tenant_id condition. There is no global query path.
-- Conversation creation order: **MinIO put first, Qdrant upsert second.** A failed Qdrant upsert leaves an orphan `.md` (acceptable; reconcilable). The reverse would leave an index pointing at nothing (returns 500 on read).
-- Save order on edit: **MinIO put first, then Qdrant `last_modified` bump.** A failed bump returns `Storage`; the body is already current and the next save will fix the index.
-
----
-
-## 2. Phased Implementation
-
-Each phase below specifies: files to touch, exact signatures matching project conventions, payload schemas, and a verifier invocation.
-
-### Phase 0 — Preparation
-
-**Files**
-- `crates/common/src/error.rs` — add two variants:
-  ```rust
-  #[error("validation error: {0}")]
-  Validation(String),
-  #[error("not found: {0}")]
-  NotFound(String),
-  ```
-- `crates/common/src/memory/mod.rs` — add `pub mod workspace;`.
-- `docs/adr/005-workspace-access-control.md` — create directory + ADR (template below).
-- `README.md` — one-paragraph "Workspace" section pointing at this plan.
-
-**ADR 005 skeleton:**
-```markdown
-# ADR 005: Workspace Access Control — Private by Default + Selective Sharing
-Status: Accepted   Date: 2026-04-26
-Decision: Each WorkspaceNode carries owner_id and shared_with: Vec<String>. All store
-queries filter on the current TenantContext.user_id (or "__dev__" sentinel in dev mode).
-Sharing is explicit per node — no inheritance.
-Rationale: predictable, auditable, reuses TenantContext.user_id, Qdrant-native (keyword
-indexes on owner_id and shared_with).
+# Hand-edit one occurrence each:
+# - crates/common/src/error.rs            ConusAiError::Capability → ConusAiError::Tool
+# - crates/agent-gateway/src/routes/mod.rs   route path "/v1/capabilities" stays
 ```
 
-**Verification — invoke `plan-browser-verifier`**
-- Declare: "errors + ADR + module re-export only".
-- Drive: `cargo build --workspace` clean. `curl -fsS http://localhost:8088/health` returns 200.
-- UI audit: N/A (declare skip).
-- Verdict: `pass`.
+### 1.3 Things that DO NOT change
 
----
+- Filenames `capabilities/*/capability.yaml` (these are external manifests).
+- The `capabilities/` directory at the repo root (capability source layout — separate from the Rust module path).
+- The `routes::capabilities` module name and the `/v1/capabilities*` HTTP path strings.
+- `CONUSAI_CAPABILITIES_DIR` env var name (would break running deployments).
 
-### Phase 1 — Core Models
+### 1.4 Verify
 
-**File:** `crates/common/src/memory/workspace.rs`
-
-```rust
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use ulid::Ulid;
-use crate::error::{ConusAiError, Result};
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum NodeKind { Folder, Conversation, File }
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct WorkspaceNode {
-    pub id: Ulid,
-    pub tenant_id: String,
-    pub owner_id: String,                 // never Option — dev maps None → "__dev__"
-    pub parent_id: Option<Ulid>,
-    pub kind: NodeKind,
-    pub name: String,                     // "Kickoff.md" or "Acme"
-    pub virtual_path: String,             // "Clients/Acme/Kickoff.md", no leading slash
-    pub last_modified: DateTime<Utc>,
-    #[serde(default)]
-    pub shared_with: Vec<String>,         // user_ids
-    #[serde(default)]
-    pub metadata: serde_json::Value,
-}
-
-pub fn validate_name(name: &str, kind: NodeKind) -> Result<()> {
-    if name.is_empty() || name.len() > 255
-        || name.contains('/') || name.contains("..") || name.starts_with('.')
-    {
-        return Err(ConusAiError::Validation(format!("invalid name: {name:?}")));
-    }
-    if kind == NodeKind::Conversation && !name.ends_with(".md") {
-        return Err(ConusAiError::Validation(
-            "conversation names must end in .md".into()));
-    }
-    Ok(())
-}
-
-pub fn join_virtual_path(parent: Option<&str>, name: &str) -> String {
-    match parent {
-        None | Some("") => name.to_string(),
-        Some(p) => format!("{p}/{name}"),
-    }
-}
+```bash
+cargo check --workspace             # green
+cargo test --workspace              # 30 passed
+cargo clippy --workspace -- -D warnings
+grep -rn 'Capability' crates/ evals/   # only doc comments + route path strings + env var name remain
 ```
 
-**Tests** (same file, `#[cfg(test)] mod tests`):
-- serde roundtrip (every field).
-- `validate_name`: empty / too long / `/` / `..` / leading `.` / missing `.md` for conversation / valid happy path.
-- `join_virtual_path`: None, empty, nested.
-
-**Verification — `plan-browser-verifier`**
-- Declare: "models only".
-- Drive: `cargo test -p common memory::workspace` green.
-- UI audit: N/A.
-- Verdict: `pass`.
+**Commit:** `refactor: rename Capability* to Tool* (mechanical)`
 
 ---
 
-### Phase 2 — `WorkspaceStore` Trait + `QdrantWorkspaceStore`
+## Phase 2 — Introduce `ToolProvider` trait + provider-based registry (90 min)
 
-**Files**
-- `crates/common/src/memory/store.rs` — add `WorkspaceStore` trait **alongside** `ThreadStore` (do not extend it; SRP).
-- `crates/agent-core/src/memory/qdrant_workspace_store.rs` — new file mirroring `qdrant_store.rs` (HTTP REST, `reqwest::Client`).
+**Behavioural goal: zero diff. The agent loop, MCP dispatcher, search, and `/v1/capabilities` listing all behave identically.**
 
-**Trait:**
+### 2.1 Define the trait
+
+`crates/agent-core/src/tools/provider.rs`:
+
 ```rust
-use crate::error::Result;
-use crate::memory::workspace::{NodeKind, WorkspaceNode};
+use crate::context::tenant::TenantContext;
+use crate::tools::manifest::ToolDef;
 use async_trait::async_trait;
-use ulid::Ulid;
+use serde_json::Value;
 
+/// Anything that can execute one or more named tools given a JSON input.
+///
+/// Implementors hold their own state (HTTP clients, WASM engines, model handles).
+/// The registry keeps `Arc<dyn ToolProvider>` so providers can be cheap to clone
+/// and shared across concurrent agent turns.
 #[async_trait]
-pub trait WorkspaceStore: Send + Sync + 'static {
-    async fn create_folder(&self, tenant_id: &str, owner_id: &str,
-        parent_id: Option<Ulid>, name: &str) -> Result<WorkspaceNode>;
-    async fn create_conversation(&self, tenant_id: &str, owner_id: &str,
-        parent_id: Option<Ulid>, name: &str) -> Result<WorkspaceNode>;
-    async fn list_accessible_children(&self, tenant_id: &str, user_id: &str,
-        parent_id: Option<Ulid>) -> Result<Vec<WorkspaceNode>>;
-    async fn get_accessible_node(&self, tenant_id: &str, user_id: &str,
-        id: Ulid) -> Result<WorkspaceNode>;
-    async fn get_ancestors(&self, tenant_id: &str, user_id: &str,
-        node_id: Ulid) -> Result<Vec<WorkspaceNode>>;
-    async fn move_node(&self, tenant_id: &str, user_id: &str, node_id: Ulid,
-        new_parent_id: Option<Ulid>) -> Result<WorkspaceNode>;
-    async fn delete_node(&self, tenant_id: &str, user_id: &str,
-        node_id: Ulid) -> Result<()>;          // recursive for folders
-    async fn share_node(&self, tenant_id: &str, owner_id: &str, node_id: Ulid,
-        with_user_id: &str) -> Result<WorkspaceNode>;       // owner-only
-    async fn unshare_node(&self, tenant_id: &str, owner_id: &str, node_id: Ulid,
-        with_user_id: &str) -> Result<WorkspaceNode>;       // owner-only
+pub trait ToolProvider: Send + Sync + 'static {
+    /// The manifest is the contract: name, kind, tool list, embedding text, etc.
+    fn manifest(&self) -> &crate::tools::manifest::ToolManifest;
+
+    /// Execute one tool and return its JSON output.
+    async fn invoke(
+        &self,
+        tool_name: &str,
+        input: &Value,
+        tenant: Option<&TenantContext>,
+    ) -> anyhow::Result<Value>;
+
+    /// Anthropic-format tool definitions; default implementation derives from the manifest.
+    fn tool_definitions(&self) -> Vec<Value> {
+        crate::tools::executor::tool_definitions_from_manifest(self.manifest())
+    }
 }
 ```
 
-(Markdown content read/write is on a separate `WorkspaceContentStore` because it needs `ObjectStore` — see below.)
+### 2.2 Implement `ToolProvider` for the four executor backends
 
-**Body trait:**
+One file per provider, each <100 lines. All keep their existing struct + methods so other call sites (e.g. `InvoicePipeline::extract_from_image_path` used by `ui/handlers/invoice.rs`) are untouched.
+
+| New file | Wraps | Manifest source |
+|---|---|---|
+| `tools/providers/builtin.rs` | `crate::tools::builtin::{fs, cargo}` | Hard-coded manifest from `builtin_tool_card()` |
+| `tools/providers/mcp.rs` | `McpAdapter` | The `ToolCard` loaded from `capability.yaml` (kind: mcp) |
+| `tools/providers/wasm.rs` | `WasmToolLoader` | The `ToolCard` (kind: wasm) |
+| `tools/providers/pipeline.rs` | `InvoicePipeline`, `ContractPipeline` | The `ToolCard` (kind: pipeline). One impl per pipeline; the registry decides which to instantiate from the manifest's `name` (`invoice-processing`, `contract-processing`, `ocr-service`). |
+
+**Important:** keep the `(name, tool_name)` decisions inside each provider. For example, `InvoicePipelineProvider::invoke` does its own `match tool_name { "extract_invoice" => ..., "validate_invoice" => ... }`. This is now a per-provider concern, not a registry concern.
+
+### 2.3 Refit the registry
+
+`crates/agent-core/src/tools/registry.rs`:
+
 ```rust
-#[async_trait]
-pub trait WorkspaceContentStore: Send + Sync + 'static {
-    async fn read(&self, tenant: &TenantContext, node: &WorkspaceNode) -> Result<String>;
-    async fn write(&self, tenant: &TenantContext, node: &WorkspaceNode, body: &str) -> Result<()>;
+pub struct ToolRegistry {
+    cards:     HashMap<String, ToolCard>,                // name → metadata (kept for /v1/capabilities listing)
+    providers: HashMap<String, Arc<dyn ToolProvider>>,   // name → executor
+}
+
+impl ToolRegistry {
+    pub fn register(&mut self, provider: Arc<dyn ToolProvider>) {
+        let name = provider.manifest().name.clone();
+        self.cards.insert(name.clone(), ToolCard::from_manifest(provider.manifest().clone()));
+        self.providers.insert(name, provider);
+    }
+
+    pub fn get_provider(&self, name: &str) -> Option<&Arc<dyn ToolProvider>> { ... }
+    pub fn all(&self) -> impl Iterator<Item = &ToolCard> { self.cards.values() }
+    // existing search_by_tag / len / is_empty unchanged
 }
 ```
 
-A single `MinioWorkspaceContent { object_store: Arc<dyn ObjectStore> }` impl satisfies it. `read` returns `""` if the object is missing (newly created conversation case).
+### 2.4 Provider factory used by `ToolDiscovery`
 
-**Qdrant collection (`workspaces_{tenant_id}`):**
+`crates/agent-core/src/tools/discovery.rs::discover()` already walks `CONUSAI_CAPABILITIES_DIR` and produces `ToolCard`s. Now it also instantiates the right provider:
 
-Vector: `{"size": 4, "distance": "Cosine"}` (placeholder, mirrors thread store).
-
-Payload schema (every point):
-```json
-{
-  "id": "01J...", "tenant_id": "dev", "owner_id": "user-123",
-  "parent_id": "01J..." | null,
-  "kind": "folder" | "conversation" | "file",
-  "name": "Kickoff.md", "virtual_path": "Clients/Acme/Kickoff.md",
-  "last_modified": "2026-04-26T10:00:00Z",
-  "shared_with": ["user-456"], "metadata": {}
-}
-```
-
-Indexes (created at first use, idempotent — see thread store pattern):
-- `tenant_id` keyword
-- `owner_id` keyword
-- `parent_id` keyword
-- `kind` keyword
-- `shared_with` keyword (Qdrant indexes array fields automatically; `match` on a single value covers any element)
-
-**Filter helper (used in every accessible read):**
 ```rust
-fn access_filter(tenant_id: &str, user_id: &str, extra: Vec<Value>) -> Value {
-    let mut must = vec![ json!({"key":"tenant_id","match":{"value":tenant_id}}) ];
-    must.extend(extra);
-    json!({
-        "must": must,
-        "min_should": {
-            "conditions": [
-                {"key":"owner_id","match":{"value":user_id}},
-                {"key":"shared_with","match":{"value":user_id}}
-            ],
-            "min_count": 1
-        }
+fn provider_for(card: ToolCard) -> anyhow::Result<Arc<dyn ToolProvider>> {
+    Ok(match card.manifest.kind {
+        ToolKind::Mcp     => Arc::new(McpProvider::new(card)?),
+        ToolKind::Wasm    => Arc::new(WasmProvider::new(card)?),
+        ToolKind::Pipeline => match card.manifest.name.as_str() {
+            "invoice-processing" => Arc::new(InvoiceProvider::new(card)),
+            "contract-processing" => Arc::new(ContractProvider::new(card)),
+            "ocr-service"        => Arc::new(OcrProvider::new(card)),
+            other => anyhow::bail!("Unknown pipeline capability: {other}"),
+        },
+        ToolKind::Docker => anyhow::bail!("Docker kind reserved"),
+        ToolKind::Native => Arc::new(BuiltinProvider::new()),
     })
 }
 ```
 
-> **Qdrant gotcha (verified 2026-04-26):** the REST API expects `min_should` as a **struct**
-> with `conditions` + `min_count`, not the integer shorthand. Using `"min_should": 1`
-> returns `Format error in JSON body: invalid type: integer 1, expected struct MinShould`.
+**Adding a new pipeline-kind capability becomes "one new provider file + one match arm here."** That's the open-closed win.
 
-**Method patterns** (mirror `QdrantThreadStore` exactly):
-- `#[instrument(skip(self), fields(tenant_id = %tenant_id, user_id = %user_id))]` on every method.
-- HTTP error → `ConusAiError::Storage(format!("workspace: {e}"))`.
-- 404 from Qdrant on `points/{id}` → `ConusAiError::NotFound`.
-- `delete_node` for folders: scroll children, recurse via worklist (avoid async recursion).
-- `share_node` / `unshare_node`: read point, mutate payload `shared_with`, upsert. Verify caller is `owner_id`; otherwise `ConusAiError::NotFound` (do **not** leak existence to non-owners).
+### 2.5 Replace `ToolExecutor` call sites with provider lookup
 
-**Tests:** `crates/agent-core/tests/workspace_store.rs` against an ephemeral Qdrant. Cover: tenant isolation, owner-only visibility, share-then-list-from-other-user, recursive delete, name validation surfaced via `Validation`.
-
-**Verification — `plan-browser-verifier`**
-- Declare: "trait + Qdrant impl + content trait, no HTTP yet".
-- Drive: integration test green; `curl http://localhost:6333/collections | jq` shows `workspaces_dev` after the test run.
-- UI audit: N/A.
-- Verdict: `pass`.
-
----
-
-### Phase 3 — `AppState` Wiring
-
-**Files**
-- `crates/agent-gateway/src/state.rs`:
-  ```rust
-  pub workspace_store: Arc<dyn WorkspaceStore>,
-  pub workspace_content: Arc<dyn WorkspaceContentStore>,
-  ```
-  `AppState::from_env()` constructs `QdrantWorkspaceStore::new(qdrant_url.clone())` and `MinioWorkspaceContent::new(file_store.clone().expect("file store required for workspace"))`. If `file_store` is `None`, **fail fast at startup** — workspace cannot work without object storage.
-
-**Verification — `plan-browser-verifier`**
-- Declare: "store wired into AppState; startup fails clearly without MinIO".
-- Drive: `MINIO_ENDPOINT` unset → startup error log mentions workspace requirement. Set, restart → `/health` 200.
-- UI audit: N/A.
-- Verdict: `pass`.
-
----
-
-### Phase 4 — `ContextBuilder`
-
-**File:** `crates/agent-core/src/memory/context_builder.rs`
+The big match in `executor.rs` becomes:
 
 ```rust
-use std::sync::Arc;
-use ulid::Ulid;
-use crate::context::tenant::TenantContext;
-use crate::memory::workspace::{NodeKind, WorkspaceNode};
-use common::error::Result;
-
-pub struct ContextBuilder {
-    store: Arc<dyn WorkspaceStore>,
-    content: Arc<dyn WorkspaceContentStore>,
-}
-
-impl ContextBuilder {
-    pub fn new(store: Arc<dyn WorkspaceStore>, content: Arc<dyn WorkspaceContentStore>) -> Self {
-        Self { store, content }
-    }
-
-    #[instrument(skip(self), fields(tenant_id = %tenant.tenant_id, node_id = %node_id))]
-    pub async fn build_for_node(&self, tenant: &TenantContext, node_id: Ulid,
-        max_chars: usize) -> Result<String>;
+pub async fn invoke(
+    registry: &ToolRegistry,
+    cap_name: &str,
+    tool_name: &str,
+    input: &Value,
+    tenant: Option<&TenantContext>,
+) -> anyhow::Result<Value> {
+    let provider = registry
+        .get_provider(cap_name)
+        .ok_or_else(|| anyhow::anyhow!("No provider registered for '{cap_name}'"))?;
+    provider.invoke(tool_name, input, tenant).await
 }
 ```
 
-**Algorithm:** as specified in §1. Implementation notes:
-- Resolve effective `user_id`: `tenant.user_id.as_deref().unwrap_or("__dev__")`.
-- Folder context probes: try names `["CONTEXT.md", "README.md"]` in order; first hit wins.
-- Truncation: count `chars`, drop oldest section while `total > max_chars * 4`. Always keep the selected node body.
-- Output starts with `# Workspace context\n` so the agent recognises it.
-
-**Wiring (`crates/agent-gateway/src/routes/agent.rs`):**
-- Extend the request body with optional `workspace_node_id: Option<Ulid>` (serde default).
-- If present, call `ContextBuilder::build_for_node(&tenant, id, 6000)` and pass the result as the `preamble` argument to `AgentRuntime::for_tenant`. Concatenate with the existing preamble: `format!("{base}\n\n{ctx}")`.
-- If absent, behaviour unchanged.
-
-**Tests:** unit-test truncation order with synthetic ancestors.
-
-**Verification — `plan-browser-verifier`**
-- Declare: "context injection live; new field `workspace_node_id` on agent route".
-- Drive (script):
-  1. `POST /v1/workspaces` create folder `clients`.
-  2. `PATCH /v1/workspaces/{id}/content` writes `CONTEXT.md` body via the soon-to-exist route, **or** seed MinIO directly via `mc cp` if Phase 5 not done — declare which.
-  3. Create conversation `kickoff.md` under it.
-  4. `POST /v1/agent/completions` with `workspace_node_id` and a question that requires the seeded fact. Verify response.
-- UI audit: N/A.
-- Verdict: `pass`.
-
----
-
-### Phase 5 — HTTP Routes + Sidebar UI
-
-**Files**
-- `crates/agent-gateway/src/routes/workspaces.rs` — new module.
-- `crates/agent-gateway/src/routes/mod.rs` — register routes.
-- `crates/agent-gateway/templates/app.html` — add tree section.
-- `crates/agent-gateway/templates/partials/workspace_tree.html` — new partial.
-- `crates/agent-gateway/assets/css/style.css` — workspace styles using existing tokens.
-- `crates/agent-gateway/assets/js/workspace.js` — new (vanilla, no framework).
-
-**Endpoints:**
-
-| Method | Path | Body | Returns |
-|---|---|---|---|
-| POST | `/v1/workspaces` | `{kind, parent_id?, name}` | `WorkspaceNode` |
-| GET | `/v1/workspaces/tree?parent_id=` | — | `[WorkspaceNode]` |
-| GET | `/v1/workspaces/{id}` | — | `WorkspaceNode` |
-| GET | `/v1/workspaces/{id}/content` | — | `{content: String}` |
-| PATCH | `/v1/workspaces/{id}/content` | `{content}` | `WorkspaceNode` |
-| POST | `/v1/workspaces/{id}/move` | `{new_parent_id?}` | `WorkspaceNode` |
-| POST | `/v1/workspaces/{id}/share` | `{user_id}` | `WorkspaceNode` |
-| POST | `/v1/workspaces/{id}/unshare` | `{user_id}` | `WorkspaceNode` |
-| DELETE | `/v1/workspaces/{id}` | — | `204` |
-
-**Handler template** (mirror `routes/audit.rs:20-30`):
+Every existing call site that did:
 ```rust
-use crate::mw::tenant::ResolvedTenant;
-use crate::state::AppState;
-use axum::{Extension, Json, extract::{Path, Query, State}, http::StatusCode};
-use serde::Deserialize;
-use serde_json::{Value, json};
-use std::sync::Arc;
-use tracing::instrument;
-use ulid::Ulid;
+ToolExecutor::invoke(card, tool_name, input, tenant).await
+```
+becomes:
+```rust
+ToolExecutor::invoke(&registry, &card.manifest.name, tool_name, input, tenant).await
+```
 
-#[derive(Deserialize)]
-pub struct CreateBody { pub kind: NodeKind, pub parent_id: Option<Ulid>, pub name: String }
+Sites to update:
+- [`crates/agent-gateway/src/routes/agent.rs`](../crates/agent-gateway/src/routes/agent.rs) line ~787 (`resolve_and_invoke`).
+- [`crates/agent-gateway/src/routes/mcp.rs`](../crates/agent-gateway/src/routes/mcp.rs) `tools/call` handler.
 
-#[instrument(skip(state, tenant, body))]
-pub async fn create(
-    State(state): State<Arc<AppState>>,
-    Extension(ResolvedTenant(tenant)): Extension<ResolvedTenant>,
-    Json(body): Json<CreateBody>,
-) -> Result<Json<WorkspaceNode>, (StatusCode, Json<Value>)> {
-    let owner = tenant.user_id.as_deref().unwrap_or("__dev__");
-    let res = match body.kind {
-        NodeKind::Folder => state.workspace_store
-            .create_folder(&tenant.tenant_id, owner, body.parent_id, &body.name).await,
-        NodeKind::Conversation => state.workspace_store
-            .create_conversation(&tenant.tenant_id, owner, body.parent_id, &body.name).await,
-        NodeKind::File => return Err((StatusCode::BAD_REQUEST,
-            Json(json!({"error":"files are created via /v1/files"})))),
-    };
-    res.map(Json).map_err(map_err)
+The `cards: Vec<ToolCard>` snapshot used by the agent loop stays for tool-definition listing; only the invocation path changes.
+
+### 2.6 Delete dead code
+
+- Remove `crates/agent-core/src/tools/provider.rs`'s old `AgentCapability` trait (we already deleted it in Phase 1; double-check no stragglers).
+- Delete `tool_definitions(card)` standalone function in favour of `provider.tool_definitions()` on the trait. Keep a shared `tool_definitions_from_manifest(manifest)` helper used by the default trait impl.
+
+### 2.7 Verify
+
+```bash
+cargo check --workspace
+cargo test --workspace                       # 30 passed
+cargo clippy --workspace -- -D warnings
+
+# Manual smoke through the live gateway:
+curl -s -X POST http://localhost:8080/v1/agent/completions \
+     -H 'Content-Type: application/json' -H 'X-Tenant-ID: dev' \
+     -d '{"model":"claude-opus-4-7","messages":[{"role":"user","content":"run cargo check on this repo"}],"max_tokens":256}' \
+     | jq '.choices[0].message.content'
+
+# MCP path:
+curl -s -X POST http://localhost:8080/mcp -H 'Content-Type: application/json' \
+     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq '.result | length'
+
+# UI path:
+# Open http://localhost:8080/?ws=<existing-conversation-ulid> and send a message
+# that triggers wasm-ping (e.g. "run a ping test"). Confirm the toolCard renders
+# and the streamed result shows ✅ Ping successful.
+```
+
+**Commit:** `refactor: replace tool_executor match with ToolProvider trait + provider-based registry`
+
+---
+
+## Phase 3 — `ExtractionPipeline<Output>` trait (45 min)
+
+**Optional.** Skip if Phase 2 satisfies the open-closed concern. Recommended only if a 3rd extraction pipeline is on the roadmap.
+
+The current pipelines (`InvoicePipeline`, `ContractPipeline`) and the OCR variant share a structural pattern — base64-encode bytes, send to Claude vision with a strict-JSON prompt, deserialize into a typed struct. Extracting the shared shape into a trait makes adding a 4th pipeline a one-file change.
+
+```rust
+// crates/agent-core/src/pipelines/extraction.rs (new)
+#[async_trait]
+pub trait ExtractionPipeline: Send + Sync {
+    type Output: serde::de::DeserializeOwned + serde::Serialize + schemars::JsonSchema + Send;
+
+    fn model(&self) -> &str;
+    fn system_prompt(&self) -> &str;       // strict JSON schema directive
+    fn schema(&self) -> serde_json::Value;  // JSON Schema for validation
+
+    async fn extract_from_bytes(
+        &self,
+        bytes: Vec<u8>,
+        mime: &str,
+        tenant: Option<&TenantContext>,
+    ) -> anyhow::Result<Self::Output>;
 }
-
-fn map_err(e: ConusAiError) -> (StatusCode, Json<Value>) {
-    let code = match &e {
-        ConusAiError::Validation(_) => StatusCode::BAD_REQUEST,
-        ConusAiError::NotFound(_)   => StatusCode::NOT_FOUND,
-        _                           => StatusCode::INTERNAL_SERVER_ERROR,
-    };
-    (code, Json(json!({"error": e.to_string()})))
-}
 ```
 
-Apply the same shape to every handler. Always:
-- `Extension(ResolvedTenant(tenant))` first.
-- Rate-limit check on mutating endpoints (`state.rate_limiter.check(&tenant.tenant_id, tenant.plan.rate_limit_rpm())` — see `routes/files.rs:27-35`).
-- `#[instrument]` with skipped large args.
-- Map `Validation→400`, `NotFound→404`, everything else `→500`.
-- For `share`/`unshare`/`delete`/`move`/`PATCH content`, the store enforces owner-only — handler does not need to recheck.
+`InvoicePipeline` and `ContractPipeline` become trait impls; `extract_from_image_path` and `extract_from_document_path` become extension-trait helpers (one per pipeline if signatures genuinely diverge).
 
-**UI plan (Askama + vanilla JS):**
+**This phase changes signatures used by:**
+- `crates/agent-gateway/src/ui/handlers/invoice.rs`
+- `crates/agent-core/src/tools/executor.rs` (now via providers)
+- `evals/src/runners/invoice.rs`
 
-Add a new sidebar section in `templates/app.html` between "Sections" and "Recents":
+Verify the same evals (`evals/datasets/invoice.jsonl`) still pass.
 
-```html
-<section class="nav-section workspace" aria-labelledby="ws-heading">
-  <header class="nav-header">
-    <h3 id="ws-heading" class="t-label">Workspace</h3>
-    <button type="button" class="icon-btn" data-action="ws-new" aria-label="New folder or conversation">
-      <svg><use href="/assets/icons/icons.svg#plus"/></svg>
-    </button>
-  </header>
-  <div id="workspace-tree" class="ws-tree" role="tree" aria-busy="true">
-    <div class="ws-skeleton" aria-hidden="true"></div>
-  </div>
-  <p class="ws-empty" hidden>No items yet. <button type="button" data-action="ws-new" class="link">Create your first folder</button></p>
-</section>
+---
+
+## Phase 4 — Polish (30 min, optional)
+
+1. **Move `crates/invoice-demo` → `examples/invoice-cli`** to follow standard Cargo conventions. Update root `Cargo.toml`, `start.sh`, and `verify.md` references.
+2. **Extract Qdrant boilerplate** — `crates/common/src/qdrant.rs` with a small `QdrantCollectionManager` (collection-create, payload-index-create, retry-on-409). Used by `qdrant_store.rs`, `qdrant_workspace_store.rs`, `qdrant_audit.rs` and the search route.
+3. **In-memory test stores** — `InMemoryWorkspaceStore`, `InMemoryThreadStore`, `InMemoryAuditStore` behind `#[cfg(test)]` in `common::memory`. Lets `agent-gateway` integration tests run without docker. Wire `AppState::from_env_with_test_overrides()` to use them when `CONUSAI_TEST_MODE=1`.
+
+---
+
+## Phase 5 — Verification & merge (15 min)
+
+```bash
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace                  # 30+ passed
+cargo test --package evals              # if datasets present
+./scripts/docker-verify.sh              # full e2e
+
+# Doc updates
+# - docs/arch.md §3.2: rename "Capabilities subsystem" → "Tools subsystem"; update file table
+# - docs/arch.md §11: add a "ToolProvider trait" bullet in Design Patterns
+# - docs/verify.md: add Phase 14 — Tool Provider regression checklist (smoke each ToolKind)
+# - README.md: update terminology in any intro paragraphs
+
+# Commit message
+git commit -m 'refactor: align to ToolProvider + Rig.rs naming (no behaviour change)'
 ```
 
-**JS (`assets/js/workspace.js`) responsibilities:**
-- On load: `GET /v1/workspaces/tree` → render root nodes; lazy-load children on `<details>` toggle (`GET /v1/workspaces/tree?parent_id=...`).
-- `+` button → `<dialog>` with `<form method="dialog">` for kind/name; submit → `POST /v1/workspaces`; on success, refresh parent.
-- Right-click on a node → custom context menu (`<ul role="menu">` positioned at cursor, dismissed on outside click / Escape) with: New folder, New conversation, Rename (F2), Share…, Move…, Delete.
-- Selecting a conversation → fetches `/content`, shows in editor pane (existing composer area gains a small `data-node-id` attribute), and every subsequent send to `/v1/agent/completions` includes `workspace_node_id`.
-- Live-save: editor `blur` → `PATCH /content`. Debounce 800ms during typing.
-- Share dialog → `POST /share` with target `user_id`. Show current `shared_with` list with "Remove" buttons (→ `/unshare`).
-- Drag-and-drop tree reorder → `POST /move`.
-- Keyboard map: `↑/↓` move focus, `→` expand, `←` collapse, `Enter` open, `F2` rename, `Delete` delete (with confirm), `Ctrl/Cmd+N` new conversation in current folder.
+**Done when:**
 
-**CSS additions** (use existing tokens, no new colors):
-```css
-.ws-tree { --indent: var(--s-3); display:flex; flex-direction:column; gap:2px; }
-.ws-tree [role="treeitem"] { display:flex; align-items:center; gap:var(--s-1);
-  padding:var(--s-1) var(--s-2); border-radius:var(--r-xs); color:var(--ink-2);
-  font:var(--t-body); cursor:default; }
-.ws-tree [role="treeitem"]:hover { background:var(--paper-2); color:var(--ink); }
-.ws-tree [aria-current="page"] { background:var(--ember-soft); color:var(--ink); }
-.ws-tree [role="treeitem"]:focus-visible { outline:2px solid var(--ember); outline-offset:1px; }
-.ws-tree details > summary { list-style:none; }
-.ws-tree details[open] > summary svg.chev { transform: rotate(90deg); }
-.ws-skeleton { height:120px; background:linear-gradient(90deg,var(--paper-2),var(--paper-3),var(--paper-2));
-  background-size:200% 100%; animation: ws-shimmer 1.2s linear infinite; border-radius:var(--r-xs); }
-@keyframes ws-shimmer { from { background-position:200% 0; } to { background-position:-200% 0; } }
-```
-
-**UI checklist (the verifier will enforce):**
-- Visible focus rings on every interactive element.
-- Empty state with explicit call-to-action.
-- Skeleton loader (not spinner) while tree loads.
-- Toast or `<output role="status" aria-live="polite">` for mutation errors.
-- `aria-expanded` on folder summaries; `aria-current="page"` on selected node.
-- Keyboard-only navigation works for every action.
-- Sidebar collapses cleanly at <768px (existing layout already supports this — verify it still does).
-- WCAG AA contrast against both `paper` and `forge` themes.
-
-**Verification — `plan-browser-verifier` (the big one)**
-- Declare every new route + every UI element.
-- Confirm dev server fresh (`cargo build -p agent-gateway && pkill agent-gateway; CONUSAI_SERVER__PORT=8088 target/debug/agent-gateway &`).
-- Drive (Chrome MCP):
-  1. Open `http://localhost:8088`. Wait ≥1s. Screenshot empty state. Confirm CTA visible.
-  2. Click `+` → dialog opens, focus traps inside, Esc closes. Create folder `Clients`. Tree updates.
-  3. Right-click `Clients` → context menu shown at cursor; create `New folder Acme`. Verify nesting.
-  4. Inside `Acme`, create conversation `Kickoff.md`. Parallel-curl MinIO to confirm `tenants/dev/workspaces/Clients/Acme/Kickoff.md` exists.
-  5. Type a message in composer with `Kickoff.md` selected; in Chrome devtools confirm request payload contains `"workspace_node_id":"01J..."`.
-  6. Drag `Kickoff.md` onto root; tree reflects move; `virtual_path` updated server-side (re-fetch and check).
-  7. Open Share dialog on `Acme`; add `user-other`; switch JWT to `user-other`; verify `Acme` now visible to that user but `Kickoff.md` (not shared) is not.
-  8. Delete `Acme` (recursive confirm). Verify gone from Qdrant scroll AND MinIO `ls`.
-  9. Tab through entire sidebar — every node reachable, focus order matches DOM order.
-  10. Resize to 375px wide — sidebar collapses, hamburger works.
-- UI audit: full checklist.
-- Verdict: `pass` or `pass-with-notes`. On `fail`, fix and re-drive the entire sequence.
+- `grep -rn 'Capability' crates/ evals/` returns only:
+  - Doc comments referring to capability YAML files
+  - The route path string `"/v1/capabilities"` and `"/v1/capabilities/search"`
+  - The env var `CONUSAI_CAPABILITIES_DIR`
+  - Strings like `"capabilities/"` referring to the on-disk directory
+- All 30 existing tests pass.
+- `docker-verify.sh` exits 0.
+- The UI works end-to-end: workspace tree loads, conversation opens, a chat message produces a streamed response, tool cards render for `wasm-ping`, search finds chat content.
 
 ---
 
-### Phase 6 — Per-Node Thread Binding (the "every .md is its own chat" feature)
+## Risk register
 
-**Why this matters.** Phase 5 ships the workspace as a *document* tree. Conversation
-history, however, lives in a separate `Thread` (Qdrant `threads_{tenant_id}`) addressed
-by a free-floating `thread_id`. Without binding, switching `Kickoff.md → Notes.md` in
-the sidebar leaves `activeThreadId` unchanged — the user appears to "continue the same
-chat" across files. To match Cursor / Claude Projects expectations, **each conversation
-node must own a persistent thread**, lazily created on first message and rehydrated on
-re-selection.
-
-**Design** (chosen after weighing alternatives — see §5 below):
-- Store `thread_id` inside `WorkspaceNode.metadata` (existing `serde_json::Value` slot).
-  No schema migration; Qdrant payload is already free-form JSON.
-- The binding is *server-resolved* on the chat path. The browser only sends
-  `workspace_node_id`. The server looks up `metadata.thread_id`; if missing it creates a
-  thread and writes the binding back. Atomic from the client's POV — one round-trip.
-- The first-message thread create is wrapped in an idempotent helper so a refresh-storm
-  cannot fork two threads onto the same node (re-read-then-decide pattern, mirrors how
-  `ensure_collection` is implemented).
-
-**Files**
-- `crates/common/src/memory/store.rs` — extend `WorkspaceStore`:
-  ```rust
-  /// Persist `thread_id` into `metadata.thread_id`. Idempotent.
-  /// Returns the updated node. Owner-only check: callers must have already
-  /// resolved access via `get_accessible_node`.
-  async fn bind_thread(
-      &self,
-      tenant_id: &str,
-      node_id: Ulid,
-      thread_id: &str,
-  ) -> anyhow::Result<WorkspaceNode>;
-  ```
-- `crates/agent-core/src/memory/qdrant_workspace_store.rs` — implement `bind_thread`:
-  read-modify-write the point payload; merge into `metadata` rather than overwrite.
-- `crates/agent-gateway/src/routes/agent.rs::build_ctx` — *before* loading thread
-  history, resolve effective `thread_id`:
-  ```rust
-  let effective_thread_id = match (req.thread_id.clone(), req.workspace_node_id.as_deref()) {
-      (Some(tid), _) => Some(tid),                           // explicit wins
-      (None, Some(node_id_str)) => {
-          let node_id: Ulid = node_id_str.parse()?;
-          let node = state.workspace_store
-              .get_accessible_node(&tenant.0.tenant_id, effective_user_id(...), node_id).await?;
-          match node.metadata.get("thread_id").and_then(|v| v.as_str()) {
-              Some(tid) => Some(tid.to_string()),
-              None => {
-                  let t = state.thread_store.create(&tenant.0.tenant_id, vec![]).await?;
-                  let _ = state.workspace_store
-                      .bind_thread(&tenant.0.tenant_id, node_id, &t.id).await;
-                  Some(t.id)
-              }
-          }
-      }
-      (None, None) => None,
-  };
-  ```
-  Then everything downstream uses `effective_thread_id` exactly as it uses
-  `req.thread_id` today. The SSE stream already echoes `thread_id` back to the client
-  (`app.js:225` captures it into `activeThreadId`), so no change is required there.
-
-- `crates/agent-gateway/assets/js/workspace.js::selectConversation` — extend the
-  existing `ws:select` event with `thread_id` from `node.metadata`:
-  ```javascript
-  const threadId = node?.metadata?.thread_id ?? null;
-  document.dispatchEvent(new CustomEvent("ws:select", {
-      detail: { nodeId: node.id, node, threadId }
-  }));
-  ```
-  When `restoreNodeFromUrl` ran a `GET /v1/workspaces/{id}` it already has the metadata.
-  When the user clicks a tree leaf we *don't* have metadata in hand (the tree fetch
-  is `list_accessible_children` which returns full nodes — confirm) — if not, do a
-  one-off `GET /v1/workspaces/{id}` here.
-
-- `crates/agent-gateway/assets/js/app.js` — listen for `ws:select`:
-  ```javascript
-  document.addEventListener("ws:select", async (e) => {
-      const { threadId } = e.detail;
-      activeThreadId = threadId;        // null = fresh thread will be created server-side
-      messagesEl.innerHTML = "";        // clear old conversation
-      if (!threadId) { showGreeting(); return; }
-      showChatView();
-      try {
-          const res = await fetch(`/v1/threads/${threadId}/messages`);
-          if (!res.ok) return;
-          const { data } = await res.json();
-          for (const m of data) {
-              appendMessage(m.role === "assistant" ? "ai" : m.role, m.content);
-          }
-      } catch (_) {}
-  });
-  ```
-
-**Failure modes & how the design handles them**
-- *User refreshes mid-create:* node has no `thread_id` yet, server creates one,
-  binds it. Race window is short (single Qdrant round-trip), but if two requests
-  collide the second binding overwrites the first and the older empty thread is
-  orphaned — acceptable.
-- *Node deleted while open:* `bind_thread` returns `NotFound`; chat still works
-  (server falls through to "no binding" branch and a transient thread is created
-  for that single turn — never persisted anywhere visible).
-- *Shared node:* the thread is owned by the original creator's tenant, but
-  `tenant_id` is shared across both users (single-tenant model). Both users append
-  to the same thread. **This is intentional** — shared `.md` = shared conversation.
-  Document this in the share dialog tooltip in Phase 5.
-
-**Tests** (`crates/agent-gateway/tests/workspace_thread_binding.rs`):
-1. Create conversation node, send chat with `workspace_node_id`, no `thread_id` →
-   response `thread_id` is non-null. Re-fetch node, `metadata.thread_id` matches.
-2. Send a second message with the *same* `workspace_node_id`, no `thread_id` →
-   `thread_id` matches the first. Thread now has 4 messages (2 user + 2 assistant).
-3. Send with explicit `thread_id` AND `workspace_node_id` → explicit wins (no rebind).
-4. Two sibling conversations created in the same folder → independent thread_ids,
-   no cross-contamination of message history.
-
-**Verification — `plan-browser-verifier`**
-- Drive (Chrome MCP):
-  1. Reset Qdrant + MinIO. Create folder `Projects`. Inside, create `alpha.md`,
-     `beta.md`, `gamma.md`.
-  2. Select `alpha.md`. Send "remember the word ORANGE." → response acknowledges.
-  3. Select `beta.md`. Send "what word did I just tell you?" → response must NOT
-     contain "ORANGE" (different thread). Send "remember the word PURPLE."
-  4. Re-select `alpha.md`. Verify message list re-renders with the ORANGE turn.
-     Send "what word?" → response contains "ORANGE", NOT "PURPLE".
-  5. Re-select `beta.md`. Send "what word?" → "PURPLE", not "ORANGE".
-  6. Hard refresh page; URL `?ws=<gamma_id>` restores selection AND empty thread.
-  7. DevTools: `GET /v1/workspaces/{alpha_id}` → `metadata.thread_id` populated.
-- Verdict: `pass`.
-
----
-
-### Phase 7 — Multi-Layer Context Composition (2026 RAG hygiene)
-
-**Why.** Phase 4's `ContextBuilder` only stitches ancestor `CONTEXT.md` files. Modern
-agent loops (per the OpenAI Memory paper, Anthropic's Projects writeup, and the
-2026 LangGraph "long-form memory" guidance) compose context in **layers** with explicit
-budgets per layer so no single source can crowd out the others.
-
-**Layered context budget** (target: ≤ 60% of model's context window so tools + the
-turn itself fit):
-| Layer | Default budget | Source |
+| Risk | Likelihood | Mitigation |
 |---|---|---|
-| L1 — System role/persona | 1k tokens | hard-coded preamble in `AgentRuntime` |
-| L2 — Workspace ancestors (`CONTEXT.md`) | 4k tokens | `ContextBuilder` (existing) |
-| L3 — Selected `.md` body | 2k tokens | `ContextBuilder` (existing) |
-| L4 — Thread summary (rolling) | 1k tokens | `Thread.summary` (existing field) |
-| L5 — Recent thread messages (verbatim) | 8k tokens | `thread_store.messages` |
-| L6 — Tool result history | 4k tokens | tool message turns inside `messages` |
-| Current turn | rest | user message |
-
-**What changes**
-- `ContextBuilder::build_for_node` gains an explicit `BudgetConfig` instead of a flat
-  `max_chars`. Per-layer truncation strategy:
-  - L2: drop oldest ancestor first (already implemented).
-  - L3: head-truncate the `.md` body (keep the tail = most recent edits).
-  - L5: keep last N message *pairs* until budget hit; oldest pairs become input to L4
-    summarisation (deferred to a background task — see "Auto-summarisation" below).
-- `agent.rs::build_ctx` reads thread summary AND messages, and respects L5 budget
-  by keeping last N messages whose total token count ≤ L5 budget. Older messages are
-  dropped; the dropped slice is enqueued for summarisation if not already summarised.
-
-**Auto-summarisation** (Phase 7.b, optional but recommended)
-- New `crates/agent-core/src/memory/summariser.rs`: tokio task triggered when a
-  thread crosses 16k tokens. Calls Anthropic with a "summarise the following
-  conversation in 800 tokens, preserving facts, decisions, and open questions"
-  preamble, writes result via `thread_store.set_summary`.
-- `build_ctx` already prepends `[Conversation summary: ...]` when present
-  (`agent.rs:160`). Just need to *generate* one.
-
-**Citations** (Phase 7.c)
-- When the agent quotes from `.md` content, prefix with `[ws:<virtual_path>:Lstart-Lend]`
-  via a system instruction in `ContextBuilder`'s output. The UI renders these as
-  clickable badges that scroll to the source line in the document panel (Phase 8).
-
-**Tests**
-- Unit: `BudgetConfig` enforcement — feed 30k synthetic ancestor text, assert L2
-  output ≤ 4k tokens.
-- Integration: send 50 messages on a single node, verify L5 truncates and L4 summary
-  appears.
-
-**Verification — `plan-browser-verifier`**
-- Seed `Clients/Acme/CONTEXT.md` with 5k-token brief.
-- Open `kickoff.md`, run a 25-turn conversation. After turn 25, devtools network tab:
-  the request body to Anthropic shows `system` includes the brief AND the rolling
-  summary AND the last ~8k of message history; older turns are NOT verbatim.
-- Verdict: `pass`.
+| Phase 1 mass-rename touches a string inside a hot path (e.g. `"capabilities"` route literal) | Low | The `sd` commands are restricted to symbol patterns (`CapabilityX`); route paths and env vars use lowercase strings unchanged. Read every diff. |
+| Phase 2 provider factory breaks the existing pipeline naming convention | Medium | Keep the existing `(name, tool_name)` keys inside each provider's `invoke`. The factory only routes by `kind` + `name` — the inner tool dispatch does not change. |
+| Workspace + audit subsystems use `crate::capabilities::*` indirectly via `agent_core::*` re-exports | Low | `lib.rs` re-exports use the new names after Phase 1. Workspace store does not import capability types directly (verified via grep). |
+| The UI's `appendToolCard` event flow depends on the `tool_call_start` SSE format from `agent.rs` | None | That format is JSON over SSE, not Rust types. Phase 1-2 don't touch the JSON wire format. |
+| Tests skip integration coverage — refactor passes `cargo test` but breaks live behaviour | Medium | Phase 2 verify step explicitly hits `/v1/agent/completions`, `/mcp`, and the browser UI. `docker-verify.sh` re-runs full e2e in Phase 5. |
+| Pipeline provider needs a per-tenant config but currently relies on `pipeline.with_tenant(t.clone())` per call | Medium | Provider keeps the same per-call pattern: `InvoiceProvider::invoke` constructs a fresh pipeline per call (cheap — just a struct + model id). Defer pooling to a future phase. |
 
 ---
 
-### Phase 8 — Live Document Mode (agent writes back to `.md`)
+## Out of scope (intentional)
 
-**Why.** A workspace where the agent only *reads* `.md` files is half the value. The
-2026 community pattern (cf. Cursor "Composer", Cline "memory bank", Claude Code's own
-`CLAUDE.md` workflow) is **bidirectional**: the agent can append decisions, write
-sub-files, or update notes during a turn. This makes the workspace a self-curating
-knowledge base instead of a write-once briefing folder.
-
-**Mechanism** — expose three new tools to the agent runtime when `workspace_node_id`
-is set on the request:
-
-| Tool name | Args | Effect |
-|---|---|---|
-| `workspace__read_file` | `{path}` | Read any `.md` in the *current node's ancestor scope* |
-| `workspace__append_section` | `{path, heading, body}` | Append `## heading\n{body}` to file |
-| `workspace__create_file` | `{parent_path, name, body}` | Create new `.md` under a sibling/child folder |
-
-**Safety rails** (non-negotiable):
-- Tool definitions are emitted **only when** `workspace_node_id` is present AND the
-  caller has write access (i.e. `owner_id == user_id`). Shared-but-not-owned nodes get
-  read-only tools.
-- Path argument is resolved through `tenant.safe_path(format!("workspaces/{path}"))`
-  and rejected if it escapes the *ancestor scope* of the current node (the same set
-  `ContextBuilder` walks). No editing arbitrary tenant files.
-- Every write goes through `WorkspaceContentStore.write` → `WorkspaceStore.bump_last_modified`,
-  emitting a structured audit log entry: `{tool, node_id, path, bytes_written, user_id}`.
-- A new SSE event `workspace_change` is emitted to the browser so the document panel
-  re-fetches and re-renders without a page reload.
-
-**Files**
-- `crates/agent-core/src/capabilities/builtin/workspace_tools.rs` — implement as a
-  built-in capability (not a WASM module — it needs `Arc<dyn WorkspaceStore>`).
-  Mirror the shape of the existing `tool_executor` invocation path.
-- `crates/agent-gateway/src/routes/agent.rs` — when building `tools` Vec, conditionally
-  include the workspace tools based on request payload.
-
-**UX contract**
-- The document panel shows a subtle "Live edit" indicator while the agent's tool call
-  is pending; on `workspace_change`, the panel diff-highlights the new lines for 4s.
-
-**Verification — `plan-browser-verifier`**
-- "Add a TODO section to this file with three actionable items" → agent calls
-  `workspace__append_section`, file content updates live in the right panel.
-- Path-escape attempt: send a crafted prompt asking for `../../../etc/passwd` →
-  tool returns `Error: path outside scope`, agent recovers gracefully.
-- Verdict: `pass`.
+- New tool kinds (`Docker`, `Rag`, etc.) — the refactor enables them but does not add them.
+- Schema-versioned manifests (no `manifest_version` field bumps).
+- Anthropic SDK upgrades.
+- `crates/common/src/error.rs` further changes beyond renaming `Capability(String)` → `Tool(String)`.
+- Audit log instrumentation gaps (separate task — see arch.md §3.2).
+- Workspace ACL changes (separate ADR — `docs/adr/005-workspace-access-control.md`).
 
 ---
 
-### Phase 9 — Workspace as Agent Toolkit (search + lateral context)
+## Effort summary
 
-**Why.** With dozens of `.md` files, the agent can't be *handed* every relevant doc
-through `ContextBuilder`. It must *search* its own workspace, the same way a human
-opens VS Code's quick-find. This is the 2026 standard for long-horizon agents
-(SWE-bench top entries, Cursor's "@workspace", Cline's RAG-on-demand).
+| Phase | Wall time | Risk | Reversibility |
+|---|---:|---|---|
+| 0 — Prep | 5 min | None | Trivial |
+| 1 — Mechanical rename | 45 min | Low | Single revert commit |
+| 2 — `ToolProvider` trait + registry | 90 min | Medium | Single revert commit |
+| 3 — `ExtractionPipeline` (optional) | 45 min | Medium | Single revert commit |
+| 4 — Polish (optional) | 30 min | Low | Per-item revertible |
+| 5 — Verify + docs + merge | 15 min | None | — |
+| **Total (required)** | **~2.5 h** | | |
+| **Total (with optional)** | **~4 h** | | |
 
-**Tools added on top of Phase 8:**
-
-| Tool | Args | Effect |
-|---|---|---|
-| `workspace__search` | `{query, kind?, limit?}` | BM25 + vector hybrid over node names + bodies; returns `[{path, snippet}]` |
-| `workspace__list_tree` | `{root_path?, depth?}` | Returns a compact JSON tree (no bodies) so the agent can pick targets before reading |
-
-**Implementation notes**
-- Vectors in `workspaces_{tenant}` are still 4-dim placeholders. Phase 9 *replaces*
-  them with real embeddings (cohere/voyage/whichever) — separate ADR (`006-workspace-embeddings.md`)
-  will pick the model. Until that ADR lands, `workspace__search` falls back to
-  payload-text scan (slow but correct), gated behind a feature flag
-  `workspace_search_enabled = false` by default.
-- BM25 stored as a separate sparse vector inside the same Qdrant collection (Qdrant
-  ≥ 1.10 supports hybrid). This avoids a second store.
-- All search results pass through the same `access_filter` as everything else.
-
-**Verification** — see ADR 006 (deferred).
-
----
-
-## 5. Architecture Trade-offs Considered
-
-| Question | Chosen | Rejected | Why |
-|---|---|---|---|
-| Where to store thread binding? | `WorkspaceNode.metadata` JSON | New `node_threads` collection; rename `Thread.metadata.node_id` | Metadata field already exists, no schema churn, single-document atomic update, no second source of truth to keep in sync. |
-| One thread per node, or one thread shared across siblings? | One per node | One per folder; one global per session | Predictable mental model = one `.md` ⇔ one conversation. Folder-scoped would surprise users when context bleeds. |
-| Auto-create thread on node *create*, or on first *message*? | First message | On create | Avoids orphan threads (most created nodes never get a chat). Lazy = cheaper. |
-| Resolve binding client-side or server-side? | Server-side | Client passes both `workspace_node_id` and looked-up `thread_id` | One round-trip. No client retry logic. Server is the only writer of `metadata.thread_id` so race window is bounded. |
-| What happens when a shared node receives messages from two users? | Append to same thread (current behaviour) | Per-user thread fork | Shared `.md` is collaborative by design; forking would surprise the owner. Author of each message is captured in `Message.role` (future: add `Message.author_id` — out of scope). |
-| Tool augmentation surface (Phase 8/9) | Built-in capability with workspace store dependency | WASM capability with stdio shim | WASM can't hold an `Arc<dyn WorkspaceStore>`. Built-in is the right boundary; WASM is for sandbox-required code. |
-
----
-
-## 3. Acceptance Criteria
-
-- `cargo fmt --all -- --check` clean.
-- `cargo clippy --workspace --all-targets -- -D warnings` clean.
-- `cargo test --workspace` green (incl. new workspace + access-control tests).
-- All new public methods carry `#[instrument]` with `tenant_id` and `user_id` fields.
-- Every MinIO key built via `tenant.safe_path` — no raw `format!` paths into `object_store`.
-- Every Qdrant query includes `tenant_id` AND access (`owner_id` OR `shared_with`) filter.
-- No `.unwrap()` / `.expect()` in route handlers (only at startup wiring).
-- Verifier verdict `pass` recorded for every phase.
-- README updated.
-
-## 4. Out of Scope (deliberately deferred)
-
-- Cross-tenant sharing.
-- Group / role-based ACLs (only individual user IDs for now).
-- Real-time collaboration / CRDT.
-- Workspace-wide semantic search (vectors are placeholder; future ADR).
-- Versioning / Git sync of `.md` files.
-- Uploading files directly into the tree (uploads stay on `/v1/files`; tree only references them via a separate ADR).
+Original v0.2 estimate was 65 min; the v0.3 estimate is higher because the v0.2 estimate undercounted the 21 affected files, the `tools/` collision, the second pipeline (`ContractPipeline` was added after v0.2), and the 8-arm dispatch (v0.2 assumed 3).
