@@ -9,10 +9,10 @@ use crate::routes::chat::{ChatMessage, ChatRequest};
 use crate::state::AppState;
 use crate::ui::session::SessionUser;
 use axum::{
+    Json,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -65,5 +65,7 @@ pub async fn ui_stream(
         thread_id: body.thread_id,
     };
 
-    agent::stream_agent(state, tenant, req).await.into_response()
+    agent::stream_agent(state, tenant, req)
+        .await
+        .into_response()
 }

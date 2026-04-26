@@ -1,7 +1,7 @@
 /// Thread multi-turn eval: creates a thread, runs N conversation turns via the gateway,
 /// then scores whether the agent correctly recalled information from earlier turns.
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::info;
 
 use crate::report::print_report;
@@ -18,8 +18,8 @@ struct ThreadEvalSample {
 }
 
 pub async fn run(dataset: Option<std::path::PathBuf>, _model: &str) -> Result<()> {
-    let dataset_path = dataset
-        .unwrap_or_else(|| std::path::PathBuf::from("evals/datasets/threads.jsonl"));
+    let dataset_path =
+        dataset.unwrap_or_else(|| std::path::PathBuf::from("evals/datasets/threads.jsonl"));
 
     anyhow::ensure!(
         dataset_path.exists(),
@@ -27,8 +27,8 @@ pub async fn run(dataset: Option<std::path::PathBuf>, _model: &str) -> Result<()
         dataset_path
     );
 
-    let gateway_url = std::env::var("GATEWAY_URL")
-        .unwrap_or_else(|_| "http://localhost:8080".into());
+    let gateway_url =
+        std::env::var("GATEWAY_URL").unwrap_or_else(|_| "http://localhost:8080".into());
     let tenant_id = std::env::var("EVAL_TENANT_ID").unwrap_or_else(|_| "eval".into());
 
     let content = std::fs::read_to_string(&dataset_path)?;
@@ -49,13 +49,23 @@ pub async fn run(dataset: Option<std::path::PathBuf>, _model: &str) -> Result<()
 
     for (i, sample) in samples.iter().enumerate() {
         info!(i, turns = sample.turns.len(), "evaluating thread sample");
-        print!("  [{}/{}] {} turns ... ", i + 1, samples.len(), sample.turns.len());
+        print!(
+            "  [{}/{}] {} turns ... ",
+            i + 1,
+            samples.len(),
+            sample.turns.len()
+        );
 
         match run_sample(&http, &gateway_url, &tenant_id, sample).await {
             Ok((recall_answer, score)) => {
                 let passed = score >= 0.8;
                 let status = if passed { "✅" } else { "❌" };
-                println!("{} score={:.2} answer='{}'", status, score, &recall_answer[..recall_answer.len().min(60)]);
+                println!(
+                    "{} score={:.2} answer='{}'",
+                    status,
+                    score,
+                    &recall_answer[..recall_answer.len().min(60)]
+                );
                 results.push(ScorerResult {
                     score,
                     passed,

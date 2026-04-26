@@ -1,6 +1,6 @@
 use anyhow::Result;
 use common::path_safety::safe_join;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 pub async fn read_file(workspace_root: &str, input: &Value) -> Result<Value> {
@@ -8,8 +8,7 @@ pub async fn read_file(workspace_root: &str, input: &Value) -> Result<Value> {
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
 
-    let full = safe_join(Path::new(workspace_root), rel)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let full = safe_join(Path::new(workspace_root), rel).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let content = tokio::fs::read_to_string(&full)
         .await
@@ -26,8 +25,7 @@ pub async fn write_file(workspace_root: &str, input: &Value) -> Result<Value> {
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing required field: content"))?;
 
-    let full = safe_join(Path::new(workspace_root), rel)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let full = safe_join(Path::new(workspace_root), rel).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     if let Some(parent) = full.parent() {
         tokio::fs::create_dir_all(parent)

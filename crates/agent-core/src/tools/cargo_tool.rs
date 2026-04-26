@@ -1,5 +1,5 @@
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::process::Command;
 
 /// Allowed cargo subcommands to prevent abuse.

@@ -2,11 +2,11 @@ use crate::state::AppState;
 use agent_core::{PlanTier, TenantClaims, TenantContext};
 use axum::{
     extract::{Request, State},
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use std::sync::Arc;
 use tracing::warn;
 

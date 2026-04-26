@@ -1,7 +1,7 @@
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
-use axum::{extract::State, Extension, Json};
-use serde_json::{json, Value};
+use axum::{Extension, Json, extract::State};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 pub async fn list_capabilities(

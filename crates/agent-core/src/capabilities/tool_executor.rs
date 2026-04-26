@@ -1,9 +1,12 @@
 use super::card::CapabilityCard;
+use super::mcp_adapter::McpAdapter;
 use super::wasm_loader::WasmCapabilityLoader;
+use crate::capabilities::manifest::CapabilityKind;
 use crate::context::tenant::TenantContext;
+use crate::pipelines::contract::ContractPipeline;
 use crate::pipelines::invoice::InvoicePipeline;
 use crate::tools::{cargo_tool, fs_tools};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 pub struct CapabilityExecutor;
@@ -20,6 +23,78 @@ impl CapabilityExecutor {
         tenant: Option<&TenantContext>,
     ) -> anyhow::Result<Value> {
         match (card.manifest.name.as_str(), tool_name) {
+            // ── Contract pipeline ────────────────────────────────────────────
+            ("contract-processing", "extract_contract") => {
+                let doc_path = input["document_path"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("missing document_path"))?;
+                let model = input["model"].as_str().unwrap_or("claude-opus-4-7");
+
+                let (temp_path, effective_path) = resolve_image_path(doc_path).await?;
+
+                let mut pipeline = ContractPipeline::with_model(model);
+                if let Some(t) = tenant {
+                    pipeline = pipeline.with_tenant(t.clone());
+                }
+
+                let result = pipeline.extract_from_document_path(&effective_path).await;
+
+                if let Some(ref tmp) = temp_path {
+                    let _ = std::fs::remove_file(tmp);
+                }
+
+                Ok(serde_json::to_value(result?)?)
+            }
+
+            ("contract-processing", "summarise_contract") => {
+                let contract = &input["contract_data"];
+                let parties = contract["parties"]
+                    .as_array()
+                    .map(|ps| {
+                        ps.iter()
+                            .filter_map(|p| p["name"].as_str().map(|n| n.to_string()))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default();
+                let contract_type = contract["contract_type"]
+                    .as_str()
+                    .unwrap_or("Unknown")
+                    .to_string();
+                let obligations = contract["key_obligations"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| format!("- {s}")))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let termination_clauses: Vec<String> = contract["termination_clauses"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let summary = format!(
+                    "{contract_type} between {parties}. Effective: {}. Expires: {}. Governed by: {}.",
+                    contract["effective_date"]
+                        .as_str()
+                        .unwrap_or("not specified"),
+                    contract["expiry_date"].as_str().unwrap_or("not specified"),
+                    contract["governing_law"]
+                        .as_str()
+                        .unwrap_or("not specified"),
+                );
+
+                Ok(json!({
+                    "summary": summary,
+                    "risk_flags": termination_clauses,
+                    "action_items": obligations,
+                }))
+            }
             // ── Invoice pipeline ─────────────────────────────────────────────
             ("invoice-processing", "extract_invoice") => {
                 let image_path = input["image_path"]
@@ -28,8 +103,7 @@ impl CapabilityExecutor {
                 let model = input["model"].as_str().unwrap_or("claude-opus-4-7");
 
                 // If a URL is provided, download to a temp file first
-                let (temp_path, effective_path) =
-                    resolve_image_path(image_path).await?;
+                let (temp_path, effective_path) = resolve_image_path(image_path).await?;
 
                 let mut pipeline = InvoicePipeline::with_model(model);
                 if let Some(t) = tenant {
@@ -63,8 +137,7 @@ impl CapabilityExecutor {
                     .ok_or_else(|| anyhow::anyhow!("missing image_path"))?;
                 let model = input["model"].as_str().unwrap_or("claude-opus-4-7");
 
-                let (temp_path, effective_path) =
-                    resolve_image_path(image_path).await?;
+                let (temp_path, effective_path) = resolve_image_path(image_path).await?;
 
                 let pipeline = InvoicePipeline::with_model(model);
                 let result = pipeline.extract_from_image_path(&effective_path).await;
@@ -112,20 +185,43 @@ impl CapabilityExecutor {
                 let workspace_root = tenant
                     .map(|t| t.workspace_root.to_string_lossy().to_string())
                     .unwrap_or_else(|| {
-                        std::env::var("CONUSAI_WORKSPACE_ROOT")
-                            .unwrap_or_else(|_| ".".into())
+                        std::env::var("CONUSAI_WORKSPACE_ROOT").unwrap_or_else(|_| ".".into())
                     });
                 cargo_tool::run_cargo(&workspace_root, input).await
             }
 
+            // ── External MCP server federation ───────────────────────────────
+            // Any `kind: mcp` capability with `config.endpoint` set is forwarded
+            // to the remote MCP server via JSON-RPC 2.0.
+            (_cap_name, tool) if card.manifest.kind == CapabilityKind::Mcp => {
+                let endpoint = card.manifest.config["endpoint"].as_str().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "MCP capability '{}' has no config.endpoint — \
+                        add `endpoint: http://...` to its capability.yaml config section",
+                        card.manifest.name
+                    )
+                })?;
+                let adapter = McpAdapter::new(endpoint).map_err(|e| anyhow::anyhow!("{e}"))?;
+                adapter
+                    .call_tool(tool, input.clone())
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+            }
+
             // ── WASM capabilities ────────────────────────────────────────────
-            (_cap_name, tool)
-                if card.manifest.kind == crate::capabilities::manifest::CapabilityKind::Wasm =>
-            {
+            (_cap_name, tool) if card.manifest.kind == CapabilityKind::Wasm => {
                 let loader = WasmCapabilityLoader::new().map_err(|e| anyhow::anyhow!("{e}"))?;
                 loader
                     .invoke_tool(card, tool, input)
                     .map_err(|e| anyhow::anyhow!("{e}"))
+            }
+
+            // ── Docker capabilities (reserved) ───────────────────────────────
+            (_cap, _tool) if card.manifest.kind == CapabilityKind::Docker => {
+                anyhow::bail!(
+                    "Docker capability kind is reserved and not yet executable. \
+                    Implement a container runner in tool_executor.rs to enable it."
+                )
             }
 
             // ── Unknown ──────────────────────────────────────────────────────
@@ -153,9 +249,7 @@ impl CapabilityExecutor {
 
 /// If `image_path` is a URL, download it to a temp file and return `(Some(temp), temp_path)`.
 /// If it's a local path, return `(None, original_path)`.
-async fn resolve_image_path(
-    image_path: &str,
-) -> anyhow::Result<(Option<PathBuf>, PathBuf)> {
+async fn resolve_image_path(image_path: &str) -> anyhow::Result<(Option<PathBuf>, PathBuf)> {
     if image_path.starts_with("http://") || image_path.starts_with("https://") {
         let bytes = reqwest::get(image_path)
             .await
@@ -173,12 +267,8 @@ async fn resolve_image_path(
             "png"
         };
 
-        let tmp = std::env::temp_dir().join(format!(
-            "conusai-{}.{ext}",
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::write(&tmp, &bytes)
-            .map_err(|e| anyhow::anyhow!("write temp file failed: {e}"))?;
+        let tmp = std::env::temp_dir().join(format!("conusai-{}.{ext}", uuid::Uuid::new_v4()));
+        std::fs::write(&tmp, &bytes).map_err(|e| anyhow::anyhow!("write temp file failed: {e}"))?;
 
         Ok((Some(tmp.clone()), tmp))
     } else {

@@ -1,0 +1,54 @@
+name: contract-processing
+version: "1.0.0"
+description: |
+  Specialized pipeline for structured extraction from contract and legal documents (PNG, JPEG, JPG, PDF).
+  Returns structured ContractData: parties, effective date, term, governing law, key obligations, termination clauses, and signatories.
+  Internally uses Claude vision — the vision step is already handled; do NOT chain ocr-service before this.
+  Use this capability whenever the user mentions "contract", "agreement", "NDA", "SLA", "MSA",
+  "service agreement", "legal document", "terms", or any document requiring clause extraction.
+  Do NOT use invoice-processing for contracts — they return incompatible schemas.
+kind: pipeline
+tags:
+  - contract
+  - legal
+  - structured-extraction
+  - vision
+  - document
+
+tools:
+  - name: extract_contract
+    description: |
+      Extract complete structured fields from a contract or legal document in a single call.
+      Handles the vision step internally — do not pre-process with ocr-service.
+      Input: document_path — absolute local path OR http/https URL (PNG, JPEG, JPG, PDF).
+      Output: ContractData JSON with parties, effective_date, expiry_date, term_months, governing_law,
+      jurisdiction, contract_type, key_obligations, termination_clauses, payment_terms, signatories, and summary.
+    input_schema:
+      type: object
+      required: [document_path]
+      properties:
+        document_path:
+          type: string
+          description: "Absolute local path OR http/https URL to the contract document (PNG, JPEG, JPG, PDF)"
+        model:
+          type: string
+          description: "Claude model ID to use (default: claude-opus-4-7)"
+          default: "claude-opus-4-7"
+
+  - name: summarise_contract
+    description: |
+      Produce a plain-language summary of a contract for non-legal stakeholders.
+      Input: contract_data — ContractData JSON previously returned by extract_contract.
+      Output: { summary: string, risk_flags: [string], action_items: [string] }
+    input_schema:
+      type: object
+      required: [contract_data]
+      properties:
+        contract_data:
+          type: object
+          description: "ContractData JSON previously returned by extract_contract"
+
+config:
+  default_model: "claude-opus-4-7"
+  max_document_size_mb: 20
+  supported_formats: ["png", "jpeg", "jpg", "pdf"]

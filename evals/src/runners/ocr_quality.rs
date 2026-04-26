@@ -1,7 +1,7 @@
 /// OCR quality eval: sends an image through the ocr-service capability and scores
 /// the extracted text against known ground-truth snippets.
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 use tracing::info;
 
@@ -16,8 +16,7 @@ struct OcrSample {
 }
 
 pub async fn run(dataset: Option<PathBuf>, _model: &str) -> Result<()> {
-    let dataset_path =
-        dataset.unwrap_or_else(|| PathBuf::from("evals/datasets/ocr_quality.jsonl"));
+    let dataset_path = dataset.unwrap_or_else(|| PathBuf::from("evals/datasets/ocr_quality.jsonl"));
 
     anyhow::ensure!(
         dataset_path.exists(),
@@ -25,8 +24,8 @@ pub async fn run(dataset: Option<PathBuf>, _model: &str) -> Result<()> {
         dataset_path
     );
 
-    let gateway_url = std::env::var("GATEWAY_URL")
-        .unwrap_or_else(|_| "http://localhost:8080".into());
+    let gateway_url =
+        std::env::var("GATEWAY_URL").unwrap_or_else(|_| "http://localhost:8080".into());
     let tenant_id = std::env::var("EVAL_TENANT_ID").unwrap_or_else(|_| "eval".into());
 
     let content = std::fs::read_to_string(&dataset_path)?;

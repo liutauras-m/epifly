@@ -12,7 +12,7 @@ use common::limits::{MAX_MESSAGES_BEFORE_SUMMARY, MAX_MESSAGES_PER_THREAD};
 use common::memory::store::ThreadStore;
 use common::memory::thread::{Message, Thread};
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tracing::{info, instrument, warn};
 use ulid::Ulid;
@@ -170,10 +170,12 @@ impl QdrantThreadStore {
             id: payload["thread_id"].as_str()?.to_owned(),
             tenant_id: payload["tenant_id"].as_str()?.to_owned(),
             title: payload["title"].as_str().map(String::from),
-            created_at: payload["created_at"].as_str()
+            created_at: payload["created_at"]
+                .as_str()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or_else(Utc::now),
-            last_active: payload["last_active"].as_str()
+            last_active: payload["last_active"]
+                .as_str()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or_else(Utc::now),
             message_count: payload["message_count"].as_u64().unwrap_or(0) as usize,
@@ -187,7 +189,8 @@ impl QdrantThreadStore {
             role: payload["role"].as_str()?.to_owned(),
             content: payload["content"].as_str()?.to_owned(),
             tool_calls: None,
-            timestamp: payload["timestamp"].as_str()
+            timestamp: payload["timestamp"]
+                .as_str()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or_else(Utc::now),
             seq: payload["seq"].as_u64().unwrap_or(0) as usize,
@@ -203,7 +206,7 @@ impl QdrantThreadStore {
         qdrant_url: String,
     ) {
         if message_count < MAX_MESSAGES_BEFORE_SUMMARY
-            || message_count % MAX_MESSAGES_BEFORE_SUMMARY != 0
+            || !message_count.is_multiple_of(MAX_MESSAGES_BEFORE_SUMMARY)
         {
             return;
         }
@@ -263,10 +266,7 @@ async fn summarise_thread(
         .json()
         .await?;
 
-    let summary = res["content"][0]["text"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let summary = res["content"][0]["text"].as_str().unwrap_or("").to_string();
 
     info!(thread_id, chars = summary.len(), "thread summarised");
     Ok(summary)
@@ -319,10 +319,7 @@ impl ThreadStore for QdrantThreadStore {
         }
 
         // Re-fetch to get accurate message_count after appends
-        Ok(self
-            .get(tenant_id, &thread_id)
-            .await?
-            .unwrap_or(thread))
+        Ok(self.get(tenant_id, &thread_id).await?.unwrap_or(thread))
     }
 
     #[instrument(skip(self), fields(tenant_id, thread_id))]
@@ -458,7 +455,7 @@ impl ThreadStore for QdrantThreadStore {
             .collect();
 
         // Newest first
-        threads.sort_by(|a, b| b.last_active.cmp(&a.last_active));
+        threads.sort_by_key(|t| std::cmp::Reverse(t.last_active));
         Ok(threads)
     }
 

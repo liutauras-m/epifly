@@ -1,25 +1,29 @@
 //! Mock auth handlers — login form, login submit, logout.
 
 use crate::ui::session::{self, COOKIE_NAME};
-use crate::ui::view::{time_greeting, LoginView};
+use crate::ui::view::{LoginView, time_greeting};
 use askama::Template;
 use axum::{
-    response::{Html, IntoResponse, Redirect, Response},
     Form,
+    response::{Html, IntoResponse, Redirect, Response},
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
-use time::Duration;
 use serde::Deserialize;
+use time::Duration;
 
 pub async fn login_get(jar: CookieJar) -> Response {
-    if let Some(c) = jar.get(COOKIE_NAME) {
-        if session::verify(c.value()).is_some() {
-            return Redirect::to("/").into_response();
-        }
+    if let Some(c) = jar.get(COOKIE_NAME)
+        && session::verify(c.value()).is_some()
+    {
+        return Redirect::to("/").into_response();
     }
     let view = LoginView {
         title: "Enter",
-        year: chrono::Utc::now().format("%Y").to_string().parse().unwrap_or(2026),
+        year: chrono::Utc::now()
+            .format("%Y")
+            .to_string()
+            .parse()
+            .unwrap_or(2026),
         greeting_eyebrow: format!("{} · ConusAI workshop", time_greeting()),
         default_name: "John Smith".into(),
         error: None,
@@ -43,7 +47,11 @@ pub async fn login_post(jar: CookieJar, Form(form): Form<LoginForm>) -> Response
     if name.is_empty() || name.len() > 60 {
         let view = LoginView {
             title: "Enter",
-            year: chrono::Utc::now().format("%Y").to_string().parse().unwrap_or(2026),
+            year: chrono::Utc::now()
+                .format("%Y")
+                .to_string()
+                .parse()
+                .unwrap_or(2026),
             greeting_eyebrow: format!("{} · ConusAI workshop", time_greeting()),
             default_name: name.into(),
             error: Some("Name must be between 1 and 60 characters.".into()),

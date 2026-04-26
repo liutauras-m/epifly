@@ -5,12 +5,12 @@ use crate::state::AppState;
 use crate::ui::session::SessionUser;
 use agent_core::pipelines::invoice::InvoicePipeline;
 use axum::{
+    Json,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
-use object_store::{path::Path as OsPath, ObjectStore};
+use object_store::{ObjectStore, path::Path as OsPath};
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
@@ -29,7 +29,12 @@ pub async fn ui_extract_invoice(
 ) -> Response {
     let store = match state.file_store.as_ref() {
         Some(s) => s,
-        None => return err(StatusCode::SERVICE_UNAVAILABLE, "file storage not configured"),
+        None => {
+            return err(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "file storage not configured",
+            );
+        }
     };
 
     // Resolve token → object key (same map used by presigned download)
@@ -42,7 +47,12 @@ pub async fn ui_extract_invoice(
                 }
                 key.clone()
             }
-            None => return err(StatusCode::NOT_FOUND, "token not found — upload the file first"),
+            None => {
+                return err(
+                    StatusCode::NOT_FOUND,
+                    "token not found — upload the file first",
+                );
+            }
         }
     };
 
@@ -52,14 +62,27 @@ pub async fn ui_extract_invoice(
     let os_path = OsPath::from(object_key.as_str());
     let get_result = match store.get(&os_path).await {
         Ok(r) => r,
-        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("storage get: {e}")),
+        Err(e) => {
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("storage get: {e}"),
+            );
+        }
     };
     let bytes = match get_result.bytes().await {
         Ok(b) => b,
-        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("storage read: {e}")),
+        Err(e) => {
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("storage read: {e}"),
+            );
+        }
     };
 
-    info!(bytes = bytes.len(), "running InvoicePipeline::extract_from_bytes");
+    info!(
+        bytes = bytes.len(),
+        "running InvoicePipeline::extract_from_bytes"
+    );
 
     // Run the pipeline directly — no agent, no tool-calling
     let pipeline = InvoicePipeline::new();

@@ -166,11 +166,11 @@ crates/agent-gateway/
 
 | Item | Priority | Notes |
 |---|---|---|
-| `Docker` capability kind | Low | Reserved in `CapabilityKind` enum |
-| External MCP server federation | Medium | `McpAdapter` exists, needs routing layer |
-| `contract-processing` capability | Medium | Follow `invoice-processing` YAML pattern |
-| Persistent audit log | Medium | Append-only log per tenant |
-| Billing / quota enforcement | Low | `PlanTier` already has limits |
+| ~~`Docker` capability kind~~ | ✅ Done | Reserved arm in `tool_executor.rs` returns actionable error; implement container runner to activate. |
+| ~~External MCP server federation~~ | ✅ Done | `CapabilityExecutor` now routes any `kind: mcp` capability with `config.endpoint` to `McpAdapter` via JSON-RPC 2.0. Add `endpoint: http://...` to any capability YAML to federate. |
+| ~~`contract-processing` capability~~ | ✅ Done | `ContractPipeline` + `ContractData` (parties, dates, obligations, signatories). YAML at `capabilities/contract-processing/`. Visible in sidebar. Tools: `extract_contract`, `summarise_contract`. |
+| ~~Persistent audit log~~ | ✅ Done | `AuditEvent` + `AuditStore` trait in `common::audit`. `QdrantAuditStore` in `agent-core` (collection `audit_{tenant_id}`). `GET /v1/audit?limit=N` route in gateway. |
+| ~~Billing / quota enforcement~~ | ✅ Done | Rate limiting extended to MCP dispatch (`POST /mcp`) and file upload (`POST /v1/files`). All 5 endpoints now enforce per-tenant RPM from `PlanTier`. |
 | Admin dashboard | Low | Capability management UI |
-| CI/CD GitHub Actions | Medium | build + test + evals workflow |
+| ~~CI/CD GitHub Actions~~ | ✅ Done | `.github/workflows/ci.yml` — fmt + clippy + unit tests on every PR; gated invoice eval on main pushes (skipped on forks without `ANTHROPIC_API_KEY`). Uses `Swatinem/rust-cache@v2`. |
 | Multi-instance deployment | Low | Qdrant + MinIO already stateless-ready |

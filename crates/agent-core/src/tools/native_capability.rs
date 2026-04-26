@@ -30,7 +30,9 @@ pub fn native_capability_card() -> CapabilityCard {
             },
             ToolDef {
                 name: "write_file".into(),
-                description: "Write content to a file inside the tenant workspace (creates dirs as needed)".into(),
+                description:
+                    "Write content to a file inside the tenant workspace (creates dirs as needed)"
+                        .into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -48,7 +50,9 @@ pub fn native_capability_card() -> CapabilityCard {
             },
             ToolDef {
                 name: "run_cargo".into(),
-                description: "Run a cargo subcommand (check/test/build/clippy/fmt) in the workspace root".into(),
+                description:
+                    "Run a cargo subcommand (check/test/build/clippy/fmt) in the workspace root"
+                        .into(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {

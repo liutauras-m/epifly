@@ -1,9 +1,9 @@
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
 use agent_core::capabilities::tool_executor::CapabilityExecutor;
-use axum::{extract::State, Extension, Json};
+use axum::{Extension, Json, extract::State};
 use common::mcp::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tracing::instrument;
 
@@ -15,6 +15,22 @@ pub async fn dispatch(
     Json(req): Json<JsonRpcRequest>,
 ) -> Json<JsonRpcResponse> {
     let id = req.id.clone();
+
+    if !state
+        .rate_limiter
+        .check(&tenant.0.tenant_id, tenant.0.plan.rate_limit_rpm())
+    {
+        return Json(JsonRpcResponse {
+            jsonrpc: "2.0".into(),
+            id,
+            result: None,
+            error: Some(JsonRpcError {
+                code: 429,
+                message: "rate limit exceeded".into(),
+                data: None,
+            }),
+        });
+    }
 
     let result = match req.method.as_str() {
         "initialize" => Ok(handle_initialize()),

@@ -3,8 +3,8 @@
 use crate::state::AppState;
 use crate::ui::handlers::{app, auth, chat, invoice, upload};
 use axum::{
-    routing::{get, post},
     Router,
+    routing::{get, post},
 };
 use std::sync::Arc;
 

@@ -8,11 +8,11 @@
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
 use axum::{
-    extract::{Query, State},
     Extension, Json,
+    extract::{Query, State},
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tracing::{info, warn};

@@ -3,13 +3,13 @@
 use crate::state::AppState;
 use crate::ui::session::SessionUser;
 use axum::{
+    Json,
     extract::{Multipart, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
-use object_store::{path::Path as OsPath, ObjectStore};
-use serde_json::{json, Value};
+use object_store::{ObjectStore, path::Path as OsPath};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tracing::warn;
 use uuid::Uuid;
@@ -21,7 +21,12 @@ pub async fn ui_upload(
 ) -> Response {
     let store = match state.file_store.as_ref() {
         Some(s) => s,
-        None => return err(StatusCode::SERVICE_UNAVAILABLE, "file storage not configured"),
+        None => {
+            return err(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "file storage not configured",
+            );
+        }
     };
 
     let tenant = user.tenant_context();
@@ -47,12 +52,7 @@ pub async fn ui_upload(
     };
     let size = data.len();
 
-    let object_key = format!(
-        "{}{}/{}",
-        tenant.storage_prefix(),
-        Uuid::new_v4(),
-        filename
-    );
+    let object_key = format!("{}{}/{}", tenant.storage_prefix(), Uuid::new_v4(), filename);
     let os_path = OsPath::from(object_key.as_str());
 
     if let Err(e) = store.put(&os_path, data.into()).await {

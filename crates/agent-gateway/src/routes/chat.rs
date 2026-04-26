@@ -1,19 +1,19 @@
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
 use axum::{
+    Extension, Json,
     extract::State,
     http::StatusCode,
     response::{
-        sse::{Event, Sse},
         IntoResponse, Response,
+        sse::{Event, Sse},
     },
-    Extension, Json,
 };
 use futures::StreamExt;
 use rig::completion::Prompt;
 use rig::providers::anthropic;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::mpsc;

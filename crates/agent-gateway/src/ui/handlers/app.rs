@@ -2,7 +2,7 @@
 
 use crate::state::AppState;
 use crate::ui::session::SessionUser;
-use crate::ui::view::{glyph_for, time_greeting, AppView, CapView, RecentView};
+use crate::ui::view::{AppView, CapView, RecentView, glyph_for, time_greeting};
 use askama::Template;
 use axum::{
     extract::State,
@@ -38,7 +38,11 @@ pub async fn index(State(state): State<Arc<AppState>>, user: SessionUser) -> Res
 
     let view = AppView {
         title: "Workshop",
-        year: chrono::Utc::now().format("%Y").to_string().parse().unwrap_or(2026),
+        year: chrono::Utc::now()
+            .format("%Y")
+            .to_string()
+            .parse()
+            .unwrap_or(2026),
         user_first_name: user.first_name().to_string(),
         user_initials: user.initials(),
         user_plan: user.plan.to_uppercase(),

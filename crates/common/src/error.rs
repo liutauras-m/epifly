@@ -16,6 +16,9 @@ pub enum ConusAiError {
     #[error("mcp error: {0}")]
     Mcp(String),
 
+    #[error("storage error: {0}")]
+    Storage(String),
+
     #[error("api error {status}: {message}")]
     Api { status: u16, message: String },
 

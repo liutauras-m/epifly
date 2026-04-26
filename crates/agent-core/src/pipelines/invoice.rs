@@ -1,9 +1,9 @@
 use crate::context::tenant::TenantContext;
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
+use rig::OneOrMany;
 use rig::completion::CompletionModel;
 use rig::message::{ContentFormat, ImageMediaType, Message, UserContent};
 use rig::providers::anthropic;
-use rig::OneOrMany;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::{info, instrument};

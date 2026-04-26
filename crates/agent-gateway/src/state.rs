@@ -1,7 +1,11 @@
 use crate::mw::RateLimiter;
-use agent_core::{CapabilityDiscovery, CapabilityRegistry, QdrantThreadStore, native_capability_card};
+use agent_core::{
+    CapabilityDiscovery, CapabilityRegistry, QdrantAuditStore, QdrantThreadStore,
+    native_capability_card,
+};
+use common::audit::AuditStore;
 use common::memory::ThreadStore;
-use object_store::{aws::AmazonS3Builder, ObjectStore};
+use object_store::{ObjectStore, aws::AmazonS3Builder};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
@@ -12,11 +16,14 @@ pub struct AppState {
     /// MinIO / S3-compatible file store (None if not configured)
     pub file_store: Option<Arc<dyn ObjectStore>>,
     /// Qdrant REST base URL (also used by thread store)
+    #[allow(dead_code)]
     pub qdrant_url: String,
     /// In-memory map of download tokens → (object_key, issued_at, ttl)
     pub presigned_tokens: Mutex<HashMap<String, (String, std::time::Instant, std::time::Duration)>>,
     /// Persistent conversation memory backed by Qdrant
     pub thread_store: Arc<dyn ThreadStore>,
+    /// Append-only audit log backed by Qdrant
+    pub audit_store: Arc<dyn AuditStore>,
 }
 
 impl AppState {
@@ -30,6 +37,7 @@ impl AppState {
 
         let file_store = init_file_store();
         let thread_store = Arc::new(QdrantThreadStore::new(&qdrant_url));
+        let audit_store = Arc::new(QdrantAuditStore::new(&qdrant_url));
 
         Ok(Self {
             registry: Mutex::new(registry),
@@ -38,6 +46,7 @@ impl AppState {
             qdrant_url,
             presigned_tokens: Mutex::new(HashMap::new()),
             thread_store,
+            audit_store,
         })
     }
 }

@@ -1,10 +1,11 @@
+pub mod audit;
 pub mod config;
 pub mod error;
-pub mod memory;
 pub mod eval;
 pub mod http_client;
 pub mod limits;
 pub mod mcp;
+pub mod memory;
 pub mod path_safety;
 pub mod telemetry;
 pub mod wasm;

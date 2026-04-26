@@ -16,6 +16,7 @@ pub struct LoginView {
 #[template(path = "app.html")]
 pub struct AppView {
     pub title: &'static str,
+    #[allow(dead_code)]
     pub year: i32,
     pub user_name: String,
     pub user_first_name: String,
@@ -49,7 +50,11 @@ pub fn glyph_for(kind: &str) -> &'static str {
 }
 
 pub fn time_greeting() -> String {
-    let hour = chrono::Local::now().format("%H").to_string().parse::<u32>().unwrap_or(12);
+    let hour = chrono::Local::now()
+        .format("%H")
+        .to_string()
+        .parse::<u32>()
+        .unwrap_or(12);
     match hour {
         5..=11 => "Morning".into(),
         12..=17 => "Afternoon".into(),

@@ -11,6 +11,14 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - run: cargo fmt --all -- --check
+
   check:
     name: Check & Clippy
     runs-on: ubuntu-latest
@@ -25,21 +33,13 @@ jobs:
       - name: Set up Rust toolchain
         run: rustup show
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - uses: Swatinem/rust-cache@v2
 
       - name: cargo check
-        run: cargo check --workspace
+        run: cargo check --workspace --all-targets
 
       - name: cargo clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
     name: Unit Tests
@@ -55,15 +55,7 @@ jobs:
       - name: Set up Rust toolchain
         run: rustup show
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - uses: Swatinem/rust-cache@v2
 
       - name: cargo test (unit only)
         run: cargo test --workspace --lib
@@ -71,33 +63,42 @@ jobs:
   evals:
     name: Invoice Evals
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: [check, test]
     steps:
       - uses: actions/checkout@v4
 
+      - name: Skip if no API key (forks)
+        id: gate
+        run: |
+          if [ -z "${{ secrets.ANTHROPIC_API_KEY }}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "ANTHROPIC_API_KEY not set — skipping evals."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install system dependencies
+        if: steps.gate.outputs.skip == 'false'
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev cmake clang
 
       - name: Set up Rust toolchain
+        if: steps.gate.outputs.skip == 'false'
         run: rustup show
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
+        if: steps.gate.outputs.skip == 'false'
         with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-evals-${{ hashFiles('**/Cargo.lock') }}
+          shared-key: evals
 
       - name: cargo build evals
+        if: steps.gate.outputs.skip == 'false'
         run: cargo build --release --bin evals
 
       - name: Run invoice eval suite
+        if: steps.gate.outputs.skip == 'false'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: ./target/release/evals run --suite invoice

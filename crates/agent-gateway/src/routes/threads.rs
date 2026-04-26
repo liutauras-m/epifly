@@ -9,14 +9,14 @@
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
 use axum::{
+    Extension, Json,
     extract::{Path, Query, State},
     http::StatusCode,
-    Extension, Json,
 };
 use chrono::Utc;
 use common::memory::thread::{Message, Thread};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tracing::instrument;
 
@@ -25,6 +25,7 @@ use tracing::instrument;
 #[derive(Debug, Deserialize)]
 pub struct CreateThreadRequest {
     pub messages: Option<Vec<MessageInput>>,
+    #[allow(dead_code)]
     pub metadata: Option<Value>,
 }
 

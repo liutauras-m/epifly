@@ -5,14 +5,14 @@
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
 use axum::{
+    Extension, Json,
     body::Body,
     extract::{Multipart, Path, State},
     http::StatusCode,
     response::Response,
-    Extension, Json,
 };
-use object_store::{path::Path as OsPath, ObjectStore};
-use serde_json::{json, Value};
+use object_store::{ObjectStore, path::Path as OsPath};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tracing::instrument;
 use uuid::Uuid;
@@ -24,6 +24,16 @@ pub async fn upload(
     Extension(tenant): Extension<ResolvedTenant>,
     mut multipart: Multipart,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !state
+        .rate_limiter
+        .check(&tenant.0.tenant_id, tenant.0.plan.rate_limit_rpm())
+    {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({"error": "rate limit exceeded"})),
+        ));
+    }
+
     let store = state.file_store.as_ref().ok_or_else(|| {
         (
             StatusCode::SERVICE_UNAVAILABLE,

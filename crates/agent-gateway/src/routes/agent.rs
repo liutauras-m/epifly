@@ -9,23 +9,23 @@ use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
 use agent_core::capabilities::tool_executor::CapabilityExecutor;
 use axum::{
+    Extension, Json,
     extract::State,
     http::StatusCode,
     response::{
-        sse::{Event, Sse},
         IntoResponse, Response,
+        sse::{Event, Sse},
     },
-    Extension, Json,
 };
 use chrono::Utc;
 use common::memory::thread::Message;
 use futures::StreamExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{info, instrument, warn, Span};
+use tracing::{Span, info, instrument, warn};
 use uuid::Uuid;
 
 const MAX_ROUNDS: usize = 5;
@@ -86,13 +86,17 @@ async fn build_ctx(
     req: &crate::routes::chat::ChatRequest,
 ) -> Result<AgentCtx, (StatusCode, Value)> {
     let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
-    let model_id = req.model.as_deref().unwrap_or("claude-opus-4-7").to_string();
+    let model_id = req
+        .model
+        .as_deref()
+        .unwrap_or("claude-opus-4-7")
+        .to_string();
     let max_tokens = req
         .max_tokens
         .unwrap_or(4096)
         .min(tenant.0.plan.max_tokens());
 
-    Span::current().record("gen_ai.request.model", &model_id.as_str());
+    Span::current().record("gen_ai.request.model", model_id.as_str());
 
     let thread_id = req.thread_id.clone();
     if let Some(ref tid) = thread_id {
@@ -360,9 +364,7 @@ pub async fn stream_agent(
         let ctx = match build_ctx(&state, &tenant, &req).await {
             Ok(c) => c,
             Err((_, body)) => {
-                let _ = tx
-                    .send(Ok(Event::default().data(body.to_string())))
-                    .await;
+                let _ = tx.send(Ok(Event::default().data(body.to_string()))).await;
                 return;
             }
         };
@@ -411,9 +413,9 @@ pub async fn stream_agent(
                 Ok(r) => r,
                 Err(e) => {
                     let _ = tx
-                        .send(Ok(Event::default().data(
-                            json!({"error": e.to_string()}).to_string(),
-                        )))
+                        .send(Ok(
+                            Event::default().data(json!({"error": e.to_string()}).to_string())
+                        ))
                         .await;
                     return;
                 }
@@ -453,9 +455,8 @@ pub async fn stream_agent(
 
                         match ev["type"].as_str().unwrap_or("") {
                             "message_start" => {
-                                total_input += ev["message"]["usage"]["input_tokens"]
-                                    .as_u64()
-                                    .unwrap_or(0);
+                                total_input +=
+                                    ev["message"]["usage"]["input_tokens"].as_u64().unwrap_or(0);
                             }
 
                             "content_block_start" => {
@@ -466,10 +467,8 @@ pub async fn stream_agent(
                                         current_text = String::new();
                                     }
                                     "tool_use" => {
-                                        let id =
-                                            cb["id"].as_str().unwrap_or("").to_string();
-                                        let name =
-                                            cb["name"].as_str().unwrap_or("").to_string();
+                                        let id = cb["id"].as_str().unwrap_or("").to_string();
+                                        let name = cb["name"].as_str().unwrap_or("").to_string();
                                         // Emit tool_start event to client
                                         let _ = tx
                                             .send(Ok(Event::default().data(
@@ -502,8 +501,7 @@ pub async fn stream_agent(
                                 let delta = &ev["delta"];
                                 match delta["type"].as_str().unwrap_or("") {
                                     "text_delta" => {
-                                        let text =
-                                            delta["text"].as_str().unwrap_or("");
+                                        let text = delta["text"].as_str().unwrap_or("");
                                         current_text.push_str(text);
                                         full_assistant_text.push_str(text);
                                         let _ = tx
@@ -523,9 +521,7 @@ pub async fn stream_agent(
                                             .await;
                                     }
                                     "input_json_delta" => {
-                                        let partial = delta["partial_json"]
-                                            .as_str()
-                                            .unwrap_or("");
+                                        let partial = delta["partial_json"].as_str().unwrap_or("");
                                         if let Some(entry) = tool_blocks.get_mut(&idx) {
                                             entry.2.push_str(partial);
                                         }
@@ -546,9 +542,7 @@ pub async fn stream_agent(
                             }
 
                             "message_delta" => {
-                                total_output += ev["usage"]["output_tokens"]
-                                    .as_u64()
-                                    .unwrap_or(0);
+                                total_output += ev["usage"]["output_tokens"].as_u64().unwrap_or(0);
                                 stop_reason = ev["delta"]["stop_reason"]
                                     .as_str()
                                     .unwrap_or("end_turn")
@@ -577,13 +571,7 @@ pub async fn stream_agent(
                             },
                         )
                         .await;
-                    maybe_set_title(
-                        &thread_store,
-                        &tenant_id,
-                        tid,
-                        &full_assistant_text,
-                    )
-                    .await;
+                    maybe_set_title(&thread_store, &tenant_id, tid, &full_assistant_text).await;
                 }
 
                 // Final chunk with usage
@@ -632,20 +620,18 @@ pub async fn stream_agent(
             sorted_tools.sort_by_key(|(idx, _)| *idx);
 
             for (_idx, (id, name, json_str)) in sorted_tools {
-                let parsed_input: Value =
-                    serde_json::from_str(&json_str).unwrap_or(json!({}));
+                let parsed_input: Value = serde_json::from_str(&json_str).unwrap_or(json!({}));
 
                 info!(round, tool = name, "executing tool (stream)");
                 tool_calls_made += 1;
 
-                let result =
-                    match resolve_and_invoke(&cards, &name, &parsed_input, &tenant).await {
-                        Ok(v) => v.to_string(),
-                        Err(e) => {
-                            warn!(tool = name, error = %e, "tool invocation failed");
-                            format!("Error: {e}")
-                        }
-                    };
+                let result = match resolve_and_invoke(&cards, &name, &parsed_input, &tenant).await {
+                    Ok(v) => v.to_string(),
+                    Err(e) => {
+                        warn!(tool = name, error = %e, "tool invocation failed");
+                        format!("Error: {e}")
+                    }
+                };
 
                 // Emit tool_result event
                 let _ = tx

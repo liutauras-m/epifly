@@ -9,7 +9,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use axum_extra::extract::CookieJar;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -64,7 +64,7 @@ impl SessionUser {
         let workspace_root = std::env::var("CONUSAI_WORKSPACE_ROOT")
             .unwrap_or_else(|_| "/tmp/conusai/workspaces".into());
         TenantContext::new(
-            &format!("ui-{}", self.slug()),
+            format!("ui-{}", self.slug()),
             Some(self.name.clone()),
             self.plan_tier(),
             workspace_root,

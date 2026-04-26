@@ -1,11 +1,12 @@
 use crate::state::AppState;
 use axum::{
-    routing::{get, post},
     Router,
+    routing::{get, post},
 };
 use std::sync::Arc;
 
 pub mod agent;
+mod audit;
 mod capabilities;
 pub mod chat;
 mod files;
@@ -49,4 +50,6 @@ pub fn protected_router() -> Router<Arc<AppState>> {
             "/v1/threads/{thread_id}/messages",
             post(threads::append_message),
         )
+        // ── Audit log ──────────────────────────────────────────────────────
+        .route("/v1/audit", get(audit::list_audit))
 }

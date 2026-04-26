@@ -1,6 +1,6 @@
 use crate::state::AppState;
-use axum::{extract::State, Json};
-use serde_json::{json, Value};
+use axum::{Json, extract::State};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 pub async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {

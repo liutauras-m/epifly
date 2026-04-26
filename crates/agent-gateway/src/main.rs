@@ -22,8 +22,8 @@ async fn main() -> Result<()> {
     let loaded = state.registry.lock().unwrap().len();
     info!(capabilities = loaded, "capability registry loaded");
 
-    let assets_dir = std::env::var("CONUSAI_UI_ASSETS")
-        .unwrap_or_else(|_| "crates/agent-gateway/assets".into());
+    let assets_dir =
+        std::env::var("CONUSAI_UI_ASSETS").unwrap_or_else(|_| "crates/agent-gateway/assets".into());
 
     let app = Router::new()
         .merge(routes::public_router())
