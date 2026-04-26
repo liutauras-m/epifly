@@ -1,242 +1,289 @@
 # ConusAI Platform — UI Design Guidelines
 
-Editorial, paper-canvas aesthetic. Warm neutral background, single teal accent, clear typographic hierarchy, soft borders, generous whitespace. All tokens live in [src/styles/tokens.css](../src/styles/tokens.css).
+**Foundry** aesthetic: editorial-industrial. Warm cream or carbon-ink ground, one teal accent (`#80cdc6`), hairline rules, generous negative space. All tokens live in [`crates/agent-gateway/assets/css/style.css`](../crates/agent-gateway/assets/css/style.css).
 
 ---
 
-## 1. Design principles
+## 1. Design Principles
 
-1. **Editorial, not corporate.** Treat the page like a printed magazine spread — headlines, eyebrows, rules, mono captions.
-2. **One accent.** Teal `--accent` is the only saturated colour. Never introduce new hues without updating tokens.
-3. **Soft surfaces.** Borders, panels and cards lean on translucency + `backdrop-filter` over hard shadows.
-4. **Whitespace earns attention.** Use `clamp()` padding scales; never crowd a section.
-5. **Motion is restrained.** Short (220–640ms) easings, always honour `prefers-reduced-motion`.
+1. **Editorial, not corporate.** Treat the page like a printed workshop spread — headlines, eyebrows, hairline rules, mono captions.
+2. **One accent.** Teal `--ember` is the only saturated colour. Never introduce new hues without adding a token.
+3. **Intentional corners.** Radius tokens follow the nested-radius principle: inner elements use smaller radii than their outer container (`r_inner ≈ r_outer − gap`). Sharp corners on structural chrome; subtle rounding on interactive surfaces.
+4. **Whitespace earns attention.** Use the `--s-*` spacing scale; never crowd a section.
+5. **Motion is restrained.** Short (120–520 ms) easings, always honour `prefers-reduced-motion`.
 
 ---
 
-## 2. Colour tokens
+## 2. Colour Tokens
+
+### Paper theme (default)
 
 | Token | Value | Use |
 |---|---|---|
-| `--background` | `#f5f1e8` | Page paper canvas |
-| `--foreground` | `#1a1814` | Primary text, icons, headings |
-| `--theme-color` | `#f5f1e8` | Browser theme-color meta |
-| `--accent` | `#80cdc6` | Teal — links, CTAs, highlights |
-| `--accent-hover` | `#9dddd7` | Button/link hover |
-| `--warning` | `#e53e3e` | Errors, destructive only |
-| `--editorial` | `#f97316` | Reserved editorial pop (sparingly) |
+| `--ink` | `#14110D` | Primary text, near-black, warm undertone |
+| `--ink-2` | `#3A332B` | Secondary text |
+| `--ink-3` | `#6E6357` | Muted labels, captions |
+| `--paper` | `#F4EEE3` | Page background — warm cream |
+| `--paper-2` | `#EBE3D4` | Sidebar, raised cards |
+| `--paper-3` | `#DFD4BF` | Hover surfaces |
+| `--rule` | `#D6CAB0` | Hairline borders, 1 px |
+| `--seam` | `#C2B391` | Stronger dividers |
 
-### Translucent surface tokens
+### Forge theme (dark)
+
+| Token | Value |
+|---|---|
+| `--ink` | `#F4EEE3` |
+| `--ink-2` | `#C8BFAE` |
+| `--ink-3` | `#8A8174` |
+| `--paper` | `#100E0B` |
+| `--paper-2` | `#181612` |
+| `--paper-3` | `#211E18` |
+| `--rule` | `#2A251E` |
+| `--seam` | `#3A3328` |
+
+### Shared accents (both themes)
 
 | Token | Value | Use |
 |---|---|---|
-| `--border-soft` | `rgba(26,24,20,0.10)` | Card / divider hairlines |
-| `--border-strong` | `rgba(26,24,20,0.20)` | Buttons (ghost), key panels |
-| `--panel` | `rgba(26,24,20,0.05)` | Subtle inset surfaces |
-| `--panel-strong` | `rgba(26,24,20,0.10)` | Hover states on panels |
-| `--text-soft` | `rgba(26,24,20,0.80)` | Body copy |
-| `--text-muted` | `rgba(26,24,20,0.60)` | Captions, labels, meta |
+| `--ember` | `#80cdc6` | Primary accent — teal |
+| `--ember-2` | `#5aada6` | Pressed / hover |
+| `--ember-soft` | `rgba(128,205,198,0.10)` | Focus rings, chip fills |
+| `--ember-glow` | `rgba(128,205,198,0.28)` | Button shadows, cursor glow |
+| `--steel` | `#5C6B7A` | Neutral — tool status idle |
+| `--rust` | `#8B2E0E` | Error / destructive |
+| `--moss` | `#4A6B3A` | Success (legacy; prefer `--success`) |
+| `--success` | `#1a7f4b` | Tool success dot |
+| `--success-soft` | `rgba(26,127,75,0.13)` | Invoice PAID badge bg |
+| `--danger` | `#b32400` | Error |
+| `--danger-soft` | `rgba(179,36,0,0.13)` | Invoice OVERDUE badge bg |
 
 **Rules**
-- Never hard-code hex outside `tokens.css`.
-- Tinted accent backgrounds use `rgba(128,205,198,0.10)` (see `.brand-chip--accent`).
-- Selection uses `--accent` on `--foreground`.
+- Never hard-code hex outside `style.css`.
+- Selection uses `--ember-soft` bg + `--ink` text.
 
 ---
 
 ## 3. Typography
 
-Three families, loaded via `next/font` style imports.
+Three families — loaded via Google Fonts + Fontshare CDN.
 
 | Token | Family | Role |
 |---|---|---|
-| `--font-display` | `Archivo` | Headings, buttons, eyebrows-strong, nav |
-| `--font-sans` | `Inter` | Body copy, UI text |
-| `--font-mono` | `Space Mono` | Eyebrows, labels, meta, captions, section numbers |
+| `--font-display` | `Fraunces` (variable) | Headings, greeting, login tagline |
+| `--font-body` | `Switzer` (Fontshare) | Body copy, nav labels, UI text |
+| `--font-mono` | `JetBrains Mono` | Eyebrows, labels, tool JSON, code |
 
-### Scale & rules
+### Scale
 
-- Base size: `18px` desktop, `16px` ≤640px (`html { font-size }`).
-- Headings: `font-weight: 600`, `letter-spacing: -0.02em`, `line-height: 1.1`.
-- Body: `font-weight: 400`, `line-height: 1.6`, `letter-spacing: 0.01em`.
-- Mono labels: `text-transform: uppercase`, `letter-spacing: 0.10–0.14em`.
-- Hero title: `clamp(2.25rem, 4vw, 3.75rem)`.
-- Section titles: `clamp(2rem, 4vw, 3rem)`.
-- Lead paragraphs: `clamp(0.95rem, 1.1vw, 1.1rem)`, capped at `56ch`.
-- Long-form measure: `--measure: 64ch`.
-
-### Utility classes (defined in [components.css](../src/styles/components.css))
-
-- `.brand-heading` — display headline.
-- `.brand-body` — body paragraph.
-- `.brand-mono` — mono caption.
-- `.brand-nav` — uppercase nav label.
-- `.brand-eyebrow` — mono eyebrow with muted colour, `0.75rem`, `letter-spacing: 0.12em`.
-- `.brand-section-number` — mono accent number prefix (e.g. `01 ⁄`).
-
----
-
-## 4. Spacing & layout
-
-- Container: `--container: 1200px`, centred via `.container`.
-- Section padding: `--section-pad-block: clamp(1.5rem, 3vw, 3rem)`, `--section-pad-inline: clamp(1.25rem, 4vw, 3rem)`.
-- Vertical rhythm in sections: `clamp(3rem, 6vw, 5rem)` for hero/footer; standard sections use the section-pad scale.
-- Grids: 1-column mobile, break at `560 / 720 / 880 / 980 / 1080px` depending on density.
-- Reading width: cap text columns at `52–58ch`.
-
----
-
-## 5. Border radius scale
-
-Single, consistent set. No arbitrary values.
-
-| Radius | Token / value | Use |
+| Token | Value | Usage |
 |---|---|---|
-| Pill | `999px` | Chips, language switcher segments, circular icon buttons |
-| `0.5rem` (8px) | hard-coded | Skip-link, small inset controls, focus outlines |
-| `0.75rem` (12px) | hard-coded | Buttons (`.brand-button`), small panels (`.about__stat`) |
-| `0.875rem` (14px) | hard-coded | Cards (`.product-card`, `.team-card`) |
-| `1rem` (16px) | hard-coded | Large panels (`.brand-panel`, `.hero__side-note`) |
-| `50%` | circle | Carousel arrows (`.team-arrow`, 36×36) |
+| `--t-display` | `clamp(40px, 5.4vw, 56px)` | Greeting headline |
+| `--t-h1` | `28px` | Section titles |
+| `--t-h2` | `20px` | Message headers |
+| `--t-body` | `15px` | Chat copy |
+| `--t-meta` | `13px` | Timestamps, metadata |
+| `--t-label` | `11px` | Uppercase mono labels (`letter-spacing: 0.14em`) |
+| `--t-mono` | `13px` | Tool JSON, code blocks |
 
-**Rule:** new components pick the closest existing step — do not introduce new radii.
-
----
-
-## 6. Borders & dividers
-
-- Hairlines: `1px solid var(--border-soft)` — default for cards, rules, footer, between rows.
-- Emphasised edges: `1px solid var(--border-strong)` — ghost buttons, hero side-note, key panels.
-- Section dividers: `<hr class="brand-rule">` (full-width, `1px`, `--border-soft`).
-- Card hover: lift border from `--border-soft` → `--border-strong`.
+**Greeting** uses `font-variation-settings: "opsz" 96, "SOFT" 30, "WONK" 0` to engage Fraunces' display optical size — distinctive wedge serifs.
 
 ---
 
-## 7. Surfaces & elevation
+## 4. Spacing Scale
 
-No drop shadows. Depth comes from translucency + blur.
+```css
+--s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
+--s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 72px;
+--rail: 260px;       /* sidebar width */
+--gutter: 64px;      /* main column inset */
+--composer-w: 720px; /* max input width */
+```
 
-| Pattern | Recipe |
+---
+
+## 5. Border Radius Scale
+
+All radii use tokens — no arbitrary values.
+
+| Token | Value | Use |
+|---|---|---|
+| `--r-xs` | `3px` | Badges, micro elements (inv-badge, plan labels, submit) |
+| `--r-sm` | `6px` | Buttons, pills, attachments, toasts, chips, tool cards |
+| `--r-md` | `10px` | Composer (outer container), invoice card |
+| `--r-lg` | `16px` | Reserved for large panels |
+| `--r-full` | `9999px` | Avatar circle, cursor caret, thinking dots |
+
+**Nested radius rule:** send button (`--r-sm`) sits inside the composer (`--r-md`). The gap between them (≈ 4 px) is the difference between the two radii — visually harmonic, following iOS squircle convention.
+
+---
+
+## 6. Motion
+
+```css
+--ease-out:    cubic-bezier(0.2, 0.8, 0.2, 1);
+--ease-in:     cubic-bezier(0.6, 0, 0.7, 0.2);
+--ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* slight overshoot */
+--dur-1: 120ms; --dur-2: 200ms; --dur-3: 320ms; --dur-4: 520ms;
+```
+
+### Page-load orchestration (staggered)
+
+| Delay | Element |
 |---|---|
-| Sticky header | `background: rgba(245,241,232,0.72); backdrop-filter: blur(14px);` border appears on scroll |
-| Glass panel (`.brand-panel`) | `rgba(245,241,232,0.72)` + `blur(12px)` + `--border-strong` + `1rem` radius |
-| Card surface | `rgba(245,241,232,0.55–0.60)` + `blur(8–12px)` + `--border-soft` |
-| Inset panel | `var(--panel)` (no blur) for chips, stats backgrounds |
-| Mobile nav overlay | `rgba(245,241,232,0.97)` + `blur(20px)` |
-| Footer | `rgba(245,241,232,0.60)` + `blur(10px)` |
+| `0.08s` | Brand logo |
+| `0.16–0.32s` | Sidebar nav sections (cascading) |
+| `0.36s` | User chip |
+| `0.42s` | Greeting (opacity + 8px rise) |
+| `0.56s` | Composer (opacity + 8px rise) |
+| `0.68–0.92s` | Quick chips (40 ms stagger) |
 
-Background canvas (`#brand-canvas`) sits at `z-index: 0` with a vignette overlay (`#brand-canvas-overlay` at `z-index: 2`). Content lives at `z-index: 3`.
+### Chat animations
+
+| Moment | Animation |
+|---|---|
+| User message arrives | `msg-in-user` — slide from right + fade |
+| AI message arrives | `msg-in` — rise from below + fade |
+| AI streaming | Left rail pulses (traveling ember gradient) |
+| Waiting for first token | 3-dot wave (`dot-wave`) |
+| Cursor in streaming AI | `cursor-pulse` — scale + opacity + glow |
+| Tool card running | Teal border + radial glow ring on dot |
+| Tool card done | `card-flash-success` / `card-flash-error` radial pulse |
+| View transition | `view-fade-in` — 320ms fade + 4px rise |
+| Toast in | `toast-in` — spring scale + fade |
+| Send button active | `scale(0.93)` spring rebound |
+| Chip hover | `translateY(-1px)` lift + teal border |
+
+**All animations gated by `@media (prefers-reduced-motion: reduce)` → durations clamped to 80 ms.**
+
+---
+
+## 7. Surfaces & Elevation
+
+Depth comes from typography weight and hairline rules — not box shadows.
+
+| Element | Recipe |
+|---|---|
+| Sidebar | `var(--paper-2)` + `1px solid var(--rule)` right border |
+| Sidebar left accent | 1px ember seam (animates `scaleY(0→1)` on load) |
+| Composer (rest) | `var(--paper)` + `1px solid var(--rule)` + `border-radius: var(--r-md)` + light `box-shadow` |
+| Composer (focus) | `border-color: var(--ember)` + `0 0 0 3px var(--ember-soft)` |
+| Composer (chat bottom) | deeper shadow — `0 -2px 24px var(--shadow-sm)` |
+| Login poster | `radial-gradient + linear-gradient` teal → dark with noise overlay |
 
 ---
 
 ## 8. Components
 
-All component classes are namespaced. Block prefixes: `.brand-*` (primitive), `.site-*` (chrome), `.hero__*` / `.about__*` / `.product-*` / `.team-*` (sections, BEM).
+### 8.1 Composer
 
-### 8.1 Buttons — `.brand-button`
+`border-radius: var(--r-md)` with `overflow: hidden` — child elements clip cleanly. Send button uses `var(--r-sm)` (nested radius). Focus ring follows the outer curve.
 
-- Padding: `0.95rem 1.35rem`, radius `0.75rem`, no border.
-- Font: display, `600`, `0.8125rem`, uppercase, `letter-spacing: 0.08em`.
-- Default: `background: var(--accent)`, text `#1a1814`.
-- Hover: `background: var(--accent-hover)`, transition `220ms cubic-bezier(0.4,0,0.2,1)`.
-- Variant `--ghost`: transparent background, `1px solid var(--border-strong)`, hover fills with `--panel`.
-- Optional arrow span `.brand-button__arrow` translates `+4px` on hover.
+### 8.2 Messages
 
-### 8.2 Links — `.brand-link`
+- **User bubble**: `border-radius: 0 var(--r-md) var(--r-md) var(--r-xs)` — sharp top-left (anchors to left), softened elsewhere. Left border `2.5px solid var(--ember)`. Max-width 78%.
+- **AI message**: Full-width with `padding-left: var(--s-5)` and a persistent 1.5px left rail (`var(--rule)` at rest, traveling ember gradient while streaming).
 
-- Colour `var(--accent)`. Hover: `var(--foreground)` + underline `text-underline-offset: 0.2em`.
-- Inline body links inherit `<a>` defaults (foreground → accent on hover).
+### 8.3 Thinking Indicator
 
-### 8.3 Chips — `.brand-chip`
+Shown immediately when a message is sent, before the first streaming token. Three teal dots in a `dot-wave` stagger (1.3s, delays 0 / 0.18s / 0.36s). Removed automatically when the first token or tool event arrives.
 
-- Pill (`999px`), padding `0.2rem 0.55rem`, mono `0.65rem`, uppercase, `letter-spacing: 0.08em`.
-- Default surface `--panel` + `--border-soft`.
-- Variant `--accent`: accent text + accent border + `rgba(128,205,198,0.10)` fill.
+### 8.4 Tool Cards
 
-### 8.4 Eyebrow — `.brand-eyebrow`
+`border-radius: var(--r-sm)`. Three states:
+- **running**: teal border + `0 0 0 2px var(--ember-soft)` glow. Dot is ember with expanding pulse ring (`dot-pulse`).
+- **success**: `card-flash-success` radial green pulse → settles. Dot is `var(--success)` with green ring.
+- **error**: `card-flash-error` radial rust pulse. Left border 2.5px rust. Dot is `var(--rust)` with danger ring.
 
-Mono, `0.75rem`, uppercase, `letter-spacing: 0.12em`, `--text-muted`. Often paired with `.brand-section-number` in accent.
+### 8.5 Quick Chips
 
-### 8.5 Cards
+`border-radius: var(--r-sm)`. Transparent border at rest; hover reveals teal border + `var(--ember-soft)` fill + 1px lift. No underline animation (replaced).
 
-- **Product card** (`.product-card`): `0.875rem` radius, `--border-soft`, surface `rgba(245,241,232,0.55)`, blur 8px. Header (display name + mono accent tag), body (italic pitch + muted desc, both `-webkit-line-clamp: 2`), footer separated by hairline.
-- **Team card** (`.team-card`): `0.875rem` radius, fixed photo aspect `3 / 4`, body padded `0.875rem 1rem 1rem` over hairline divider. Mono accent role label.
-- **Stat tile** (`.about__stat`): `0.75rem` radius, `--border-soft`, large display number + mono uppercase label.
-- **Side-note** (`.hero__side-note`): `1rem` radius, `--border-strong`, `blur(12px)`, max `36ch`.
+### 8.6 Avatar
 
-### 8.6 Panels & rules
+`border-radius: var(--r-full)` — fully circular, 30×30 px.
 
-- `.brand-panel` — primary glass panel (see §7).
-- `.brand-rule` — `1px` full-width divider in `--border-soft`.
+### 8.7 Nav Items
 
-### 8.7 Header — `.site-header`
+`border-radius: var(--r-xs)` on hover/active background. Accent left edge flash: `::before` grows `width: 0 → 2px` with matching `border-radius: 0 var(--r-xs) var(--r-xs) 0`.
 
-Sticky, `padding: 1.1rem var(--section-pad-inline)`, glass background. Logo height `28px`. Nav uses `.brand-nav` style tokens. Hamburger collapses below `880px`; mobile overlay slides from top with `380ms cubic-bezier(0.22,1,0.36,1)`.
+### 8.8 Toasts
 
-### 8.8 Language switcher — `.lang-switcher`
+`border-radius: var(--r-sm)`. Entrance: `toast-in` (`--ease-spring` scale + fade). Exit: opacity + translateY fade-out with `transition`.
 
-Inline-flex pill row, `0.375rem` radius, segmented flags. Inactive flags `opacity: 0.35`, hover `0.7`, active `1` with `8%` foreground tint.
+### 8.9 Login
 
-### 8.9 Carousel arrows — `.team-arrow`
+Submit button: `border-radius: var(--r-xs)`, lifts `translateY(-1px)` on hover with ember glow. Plan radio labels: `border-radius: var(--r-xs)`, lifts on hover, ember tint when checked.
 
-`36×36` circle, `1px solid var(--border-strong)`, transparent fill, hover fills with `--panel-strong`. Disabled at `opacity: 0.28`.
+### 8.10 Invoice Card
 
-### 8.10 Footer — `.site-footer`
-
-Top hairline, glass background, 3-column grid above `720px`. Section titles use mono uppercase muted style.
+`border-top: 3px solid var(--ember)`, `border-radius: 0 0 var(--r-sm) var(--r-sm)` (bottom corners only). Badge: `border-radius: var(--r-xs)`. Shadow: `0 4px 20px var(--shadow-sm)`.
 
 ---
 
-## 9. Iconography & imagery
+## 9. File Structure
 
-- Photos: object-fit `cover`, `object-position: center top`. Subtle `scale(1.04)` zoom on card hover (`500ms`).
-- Partner logos: `28px` tall, `grayscale(1)` + `opacity: 0.55`, fade to colour on hover.
-- Checkmarks in lists rendered as `✓` glyph in mono accent (see `.hero__trust-list`).
-- 3D / canvas backgrounds: keep `opacity: 0.9`, fade in via `is-loading` toggle.
-
----
-
-## 10. Motion
-
-- Standard easing: `cubic-bezier(0.4, 0, 0.2, 1)` for UI (220ms).
-- Entrance easing: `cubic-bezier(0.22, 1, 0.36, 1)` for reveals (600–640ms).
-- Reveal utilities:
-  - `.brand-reveal` — runs `brand-rise` keyframe immediately, with stagger classes `.brand-reveal-1…5` (80ms increments).
-  - `.brand-observe` → `.is-in-view` — IntersectionObserver-driven; opacity 0 + 16px translateY.
-- Hover micro-interactions: arrow translate `+4px`, photo zoom `1.04`, border darkening.
-- All motion gated by `@media (prefers-reduced-motion: reduce)` → `animation: none; transition: none`.
-
----
-
-## 11. Focus & accessibility
-
-- `:focus-visible` → `2px solid var(--accent)`, `outline-offset: 2px`, `border-radius: 2px`.
-- Skip-link `.skip-link` slides in from `top: -100%` to `0` on focus.
-- Maintain WCAG AA: foreground (`#1a1814`) on background (`#f5f1e8`) ≈ 14:1. Accent on background fails AA for body text — only use accent for ≥18px display text, icons, or decorative emphasis.
-- All interactive controls require visible focus and a hover state.
-- Honour `prefers-reduced-motion` everywhere.
+```
+crates/agent-gateway/
+├── assets/
+│   ├── css/style.css          # ~950 lines — design tokens + all components
+│   ├── js/app.js              # ~610 lines — streaming, animations, composer
+│   ├── icons/icons.svg        # SVG sprite (one <symbol> per icon)
+│   └── images/
+│       ├── favicon.png        # Brand sigil (used in head + greeting screen)
+│       ├── conusai-logo-lightmode.png
+│       └── conusai-logo-darkmode.png
+└── templates/
+    ├── app.html               # Full shell (sidebar + main + composer + chips)
+    ├── login.html             # Split layout — poster + form
+    ├── partials/
+    │   └── composer.html      # Textarea + toolbar + send button
+    └── shared/
+        └── head.html          # Meta, fonts, CSS link, theme bootstrap
+```
 
 ---
 
-## 12. Naming & file conventions
+## 10. Invoice File Detection
 
-- Tokens in [tokens.css](../src/styles/tokens.css), primitives in [components.css](../src/styles/components.css), structural in [layout.css](../src/styles/layout.css), section-specific in [sections.css](../src/styles/sections.css), base resets in [base.css](../src/styles/base.css).
-- BEM for sections: `.block__element--modifier`.
-- Primitives prefixed `.brand-`.
-- State classes: `.is-open`, `.is-active`, `.is-scrolled`, `.is-in-view`, `.is-dragging`, `.is-loading`.
+The "Extract invoice" button in the attachment chip only appears when the filename matches **both** conditions:
+
+```js
+const INVOICE_EXTS  = /\.(png|jpg|jpeg|pdf)$/i;
+const INVOICE_NAMES = /invoice|receipt|bill|facture/i;
+
+function isInvoiceFile(a) {
+  return INVOICE_EXTS.test(a.filename) && INVOICE_NAMES.test(a.filename);
+}
+```
+
+Generic files (e.g. `photo.png`, `report.pdf`) remain plain attachments.
 
 ---
 
-## 13. Do / Don't
+## 11. Focus & Accessibility
+
+- `:focus-visible` → `2px solid var(--ember)`, `outline-offset: 2px`.
+- `role="log"` on `.messages`; `aria-live="polite" aria-atomic="false"` for streaming.
+- `role="status"` + `aria-label="running|complete|error"` on tool card dots.
+- All interactive elements: visible focus ring + hover state.
+- `prefers-reduced-motion` disables all transforms, clamps durations to 80 ms.
+- WCAG AA: `--ink` on `--paper` ≈ 14:1.
+
+---
+
+## 12. Do / Don't
 
 **Do**
-- Reuse existing tokens, radii and component classes.
-- Pair display headings with mono eyebrows + numbered prefixes.
-- Use translucency + blur for layering.
-- Cap text columns at `52–58ch`.
+- Use `var(--r-*)` tokens — never a raw pixel radius.
+- Apply nested radius: inner element radius ≤ outer − gap.
+- Reuse `--s-*` spacing scale.
+- Gate every animation behind `prefers-reduced-motion`.
+- Keep the teal accent purposeful — focus rings, streaming states, interactive signals only.
 
 **Don't**
-- Add new colours, radii, or shadow stacks.
-- Use bold fills outside `--accent`.
-- Mix font families inside a single line.
-- Animate longer than 640ms or without a reduced-motion fallback.
+- Hard-code hex colours outside `style.css`.
+- Add new radii, shadow stacks, or colours without adding a token.
+- Use `border-radius: 12px` everywhere — this is not a soft/rounded app.
+- Animate longer than 520 ms.
+- Introduce purple gradients, glass blur panels, or Inter/Roboto.

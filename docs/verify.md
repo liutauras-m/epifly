@@ -27,8 +27,9 @@ All previously identified gaps are now implemented and verified.
 | Docker stack (Qdrant + MinIO) | ✅ Strong | Both services healthy, both exercise real data plane |
 | Evals framework | ✅ Strong | 100% score, ALL PASS |
 | **Foundry UI — file upload** | ✅ Verified | `POST /ui/upload` → MinIO, token chip in composer |
-| **Foundry UI — direct pipeline** | ✅ Verified | "Extract invoice" button → `POST /ui/extract-invoice` → `InvoiceData` card |
+| **Foundry UI — direct pipeline** | ✅ Verified | "Extract invoice" button (invoice-named files only) → `POST /ui/extract-invoice` → `InvoiceData` card |
 | **Foundry UI — agent chat** | ✅ Verified | Prompt "Extract invoice" + attachment URL → `invoice-processing__extract_invoice` (9.43s) |
+| **Foundry UI — generic attachments** | ✅ Fixed | Non-invoice filenames show no "Extract invoice" button; detection requires extension + name match |
 | `file-storage` MCP executor | ⚠️ Mitigated | No MCP server; agent given download URL directly instead of token |
 
 ### Verdict
@@ -113,7 +114,7 @@ cargo check --workspace
 cargo test --workspace --lib
 ```
 
-✅ **Pass**: **13 tests pass** (5 in `agent-core` incl. WASM ping test + 8 in `common`).
+✅ **Pass**: **19 tests pass** (agent-core + common; incl. WASM ping test, QdrantThreadStore point-id determinism, path traversal, serde roundtrips).
 
 ---
 
@@ -542,7 +543,7 @@ echo "   • Zero-code extension: PASS"
 **Build & Quality**
 - [ ] `cargo fmt --all -- --check` clean
 - [ ] `cargo clippy --workspace -- -D warnings` zero warnings
-- [ ] `cargo test --workspace --lib` → **13/13** pass (incl. WASM ping test)
+- [ ] `cargo test --workspace --lib` → **19/19** pass (incl. WASM ping test)
 
 **Docker Stack**
 - [ ] All three containers **healthy** (Qdrant, MinIO, gateway)

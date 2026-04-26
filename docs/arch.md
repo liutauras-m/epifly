@@ -215,6 +215,17 @@ components = ["rustfmt", "clippy", "rust-src"]
 | [files.rs](../crates/agent-gateway/src/routes/files.rs) | `POST /v1/files`, `GET /v1/files/{token}` | Multipart upload to MinIO under `tenants/{tenant_id}/{uuid}/{filename}`; returns 1-h TTL download token. Download endpoint is public (token-gated) and streams back the object. |
 | [mod.rs](../crates/agent-gateway/src/routes/mod.rs) | `public_router()` (health + file download), `protected_router()` (everything else, with tenant middleware + 5 thread routes). |
 
+#### UI Routes ([src/ui/](../crates/agent-gateway/src/ui))
+
+| File | Endpoint(s) | Purpose |
+|---|---|---|
+| [routes.rs](../crates/agent-gateway/src/ui/routes.rs) | — | `ui_router()` — assembles all UI routes. |
+| [handlers/auth.rs](../crates/agent-gateway/src/ui/handlers/auth.rs) | `GET /login`, `POST /login`, `GET /logout` | HMAC-signed session cookie (`conusai_session`). Login form: name + plan tier. |
+| [handlers/app.rs](../crates/agent-gateway/src/ui/handlers/app.rs) | `GET /` | Renders `app.html` with greeting, recents, capabilities, user info. |
+| [handlers/chat.rs](../crates/agent-gateway/src/ui/handlers/chat.rs) | `POST /ui/stream` | SSE stream — accepts `{message, thread_id?}`, calls `agent::stream_agent` in-process, emits OpenAI SSE chunks with `tool_call_start`/`tool_call_result` events. |
+| [handlers/upload.rs](../crates/agent-gateway/src/ui/handlers/upload.rs) | `POST /ui/upload` | Multipart → MinIO. Returns `{id, filename, size, download_url}`. |
+| [handlers/invoice.rs](../crates/agent-gateway/src/ui/handlers/invoice.rs) | `POST /ui/extract-invoice` | Direct pipeline: token → MinIO bytes → `InvoicePipeline::extract_from_bytes` → `InvoiceData` JSON. No agent loop. |
+
 ---
 
 ### 3.4 [`crates/invoice-demo`](../crates/invoice-demo) — Standalone CLI
@@ -515,7 +526,17 @@ conusai-platform/
 │   │                       pipelines/{mod,invoice}}.rs
 │   ├── agent-gateway/ src/{main,state,
 │   │                       mw/{mod,tenant,trace,rate_limit},
-│   │                       routes/{mod,health,chat,agent,capabilities,search,mcp,files,threads}}.rs
+│   │                       routes/{mod,health,chat,agent,capabilities,search,mcp,files,threads},
+│   │                       ui/{mod,routes,
+│   │                           handlers/{mod,auth,app,chat,upload,invoice}}}.rs
+│   │                   assets/
+│   │                       css/style.css          ← design system (~950 lines)
+│   │                       js/app.js              ← streaming + composer (~620 lines)
+│   │                       icons/icons.svg        ← SVG sprite
+│   │                       images/{favicon.png,conusai-logo-{light,dark}mode.png}
+│   │                   templates/{app,login}.html
+│   │                       partials/composer.html
+│   │                       shared/head.html
 │   └── invoice-demo/  src/main.rs
 │
 ├── capabilities/

@@ -1,6 +1,7 @@
-**CONUSAI PLATFORM — AGGRESSIVE v0.3 IMPROVEMENTS IMPLEMENTATION PLAN**  
-**Target:** Merge the best of both architectures into a **Rig-first, capability-extensible, self-hosted Ollama powerhouse** while keeping independent deployability.  
-**Deadline mindset:** Ship production-grade in < 3 weeks. Every step has verification. No shortcuts. SRP enforced at every layer. Follow Rig 0.26+ patterns strictly.
+**CONUSAI PLATFORM — v0.3 IMPROVEMENTS — HISTORICAL PLAN**
+> ⚠️ This document records the original improvement roadmap. All phases (1–5) are now implemented. See [`plan.md`](plan.md) for current status and [`arch.md`](arch.md) for authoritative architecture.
+
+**Original target:** Rig-first, capability-extensible platform. **Status: ✅ Complete.**
 
 ---
 

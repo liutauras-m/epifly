@@ -1,7 +1,7 @@
 # ConusAI Frontend Implementation Plan
 
 Last updated: 2026-04-26
-Status: ready to build
+Status: **fully implemented** — all 5 phases complete and verified in browser
 
 A production-grade chat UI that becomes the canonical entrypoint for ConusAI.
 Implemented inside `crates/agent-gateway` so the platform ships as a single
@@ -48,39 +48,41 @@ We commit to one direction and execute it with precision.
 
 ### 3.1 Color tokens
 
-Two themes share the same accent and structural tokens. Default is **Paper** (matches `docs/ui.png`); **Forge** is the dark counterpart, toggled by user.
+Two themes share the same accent and structural tokens. Default is **Paper**; **Forge** is the dark counterpart, toggled by user and persisted in `localStorage`.
 
 ```css
-/* Paper (default, matches ui.png) */
---ink:        #14110D;   /* primary text, near-black with warm undertone */
---ink-2:      #3A332B;   /* secondary text */
---ink-3:      #6E6357;   /* tertiary text, muted labels */
---paper:      #F4EEE3;   /* page bg — warm cream, not white */
---paper-2:    #EBE3D4;   /* sidebar bg, raised cards */
---paper-3:    #DFD4BF;   /* hover surfaces */
---rule:       #D6CAB0;   /* hairline borders, 1px */
---seam:       #C2B391;   /* stronger divider */
+/* Paper (default) */
+--ink:        #14110D;
+--ink-2:      #3A332B;
+--ink-3:      #6E6357;
+--paper:      #F4EEE3;
+--paper-2:    #EBE3D4;
+--paper-3:    #DFD4BF;
+--rule:       #D6CAB0;
+--seam:       #C2B391;
 
 /* Forge (dark) */
---ink:        #F4EEE3;   /* invert: text becomes paper */
+--ink:        #F4EEE3;
 --ink-2:      #C8BFAE;
 --ink-3:      #8A8174;
---paper:      #100E0B;   /* carbon black, warm */
---paper-2:    #181612;   /* sidebar */
+--paper:      #100E0B;
+--paper-2:    #181612;
 --paper-3:    #211E18;
 --rule:       #2A251E;
 --seam:       #3A3328;
 
-/* Shared accents (both themes) */
---ember:      #D9531E;   /* primary accent — flame copper */
---ember-2:    #B33F12;   /* pressed / shadow */
---ember-soft: rgba(217, 83, 30, 0.10);
---steel:      #5C6B7A;   /* neutral accent (link, info) */
---rust:       #8B2E0E;   /* error / destructive */
---moss:       #4A6B3A;   /* success / running tool */
-
-/* Streaming token glow (sparingly) */
---cursor:     linear-gradient(180deg, transparent 0%, var(--ember) 50%, transparent 100%);
+/* Shared accents — teal, not copper */
+--ember:      #80cdc6;   /* primary accent — teal */
+--ember-2:    #5aada6;
+--ember-soft: rgba(128, 205, 198, 0.10);
+--ember-glow: rgba(128, 205, 198, 0.28);
+--steel:      #5C6B7A;
+--rust:       #8B2E0E;
+--moss:       #4A6B3A;
+--success:    #1a7f4b;
+--success-soft: rgba(26, 127, 75, 0.13);
+--danger:     #b32400;
+--danger-soft: rgba(179, 36, 0, 0.13);
 ```
 
 ### 3.2 Typography
@@ -120,11 +122,24 @@ Greeting uses `font-variation-settings: "opsz" 96` to engage Fraunces' display o
 --composer-w: 720px; /* max input width */
 ```
 
-### 3.4 Motion
+### 3.4 Radius scale (nested-radius principle)
 
 ```css
---ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
---ease-in:  cubic-bezier(0.6, 0, 0.7, 0.2);
+--r-xs:   3px;    /* badges, micro elements */
+--r-sm:   6px;    /* buttons, pills, toasts, tool cards, chips */
+--r-md:   10px;   /* composer (outer), invoice card */
+--r-lg:   16px;   /* reserved */
+--r-full: 9999px; /* avatar, cursor, thinking dots */
+```
+
+Inner elements use a smaller radius than their container — e.g. send button (`--r-sm`) inside composer (`--r-md`), gap ≈ 4 px = radius difference. Following iOS squircle convention.
+
+### 3.5 Motion
+
+```css
+--ease-out:    cubic-bezier(0.2, 0.8, 0.2, 1);
+--ease-in:     cubic-bezier(0.6, 0, 0.7, 0.2);
+--ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* slight overshoot */
 --dur-1: 120ms; --dur-2: 200ms; --dur-3: 320ms; --dur-4: 520ms;
 ```
 
@@ -135,7 +150,13 @@ Greeting uses `font-variation-settings: "opsz" 96` to engage Fraunces' display o
 4. `560ms` — composer rises from 8px below, soft inner shadow settles
 5. `680ms` — quick chips reveal left-to-right (40ms stagger)
 
-**Streaming**: each token block fades in over 80ms with `translateY(2px) → 0`. A 2px-wide ember vertical bar pulses at the cursor position (1.2s `breath` loop).
+**Chat animations (implemented):**
+- User bubble: slides from right (`msg-in-user`)
+- AI bubble: rises from below (`msg-in`), persistent left rail (1.5px `--rule`, becomes traveling ember gradient while streaming)
+- Thinking: 3-dot wave appears immediately on send, clears on first token or tool event
+- Cursor: scale + opacity pulse with ember glow
+- Tool cards: teal glow ring (running), green/rust radial flash (done)
+- View transition: `view-fade-in` 320ms cross-fade between greeting ↔ chat
 
 **Reduced motion** (`@media (prefers-reduced-motion: reduce)`): all transforms removed, durations clamped to 80ms, opacity-only.
 
@@ -190,46 +211,42 @@ Hand-tuned 18×18 SVG sprite (single file `assets/icons.svg`, referenced via `<u
 
 ---
 
-## 6. File Structure
+## 6. File Structure (Implemented)
 
 ```
 crates/agent-gateway/
-├── Cargo.toml                       # + askama, askama_axum, axum-extra (cookie+multipart)
-├── assets/                          # served at /assets/*
-│   ├── style.css                    # ~600 lines, design system + components
-│   ├── app.js                       # ~250 lines: streaming, composer state, theme toggle
-│   ├── icons.svg                    # SVG sprite (one <symbol> per icon)
-│   ├── sigil.svg                    # brand mark
-│   └── fonts/                       # optional self-hosted (CDN by default)
-├── templates/                       # askama default location
-│   ├── login.html
-│   ├── app.html                     # full shell (sidebar + main + composer)
+├── Cargo.toml                       # askama, askama_axum, axum-extra (cookie+multipart)
+├── assets/                          # served at /assets/* via ServeDir
+│   ├── css/
+│   │   └── style.css                # ~950 lines — full design system + all components
+│   ├── js/
+│   │   └── app.js                   # ~620 lines — streaming, animations, composer, toasts
+│   ├── icons/
+│   │   └── icons.svg                # SVG sprite (<symbol> per icon, referenced via <use>)
+│   └── images/
+│       ├── favicon.png              # brand sigil — used in head + greeting screen
+│       ├── conusai-logo-lightmode.png
+│       └── conusai-logo-darkmode.png
+├── templates/
+│   ├── app.html                     # full shell (sidebar + main + composer + chips)
+│   ├── login.html                   # split layout — poster + form
 │   ├── partials/
-│   │   ├── sidebar.html
-│   │   ├── greeting.html
-│   │   ├── composer.html
-│   │   ├── quick_chips.html
-│   │   ├── message_user.html
-│   │   ├── message_ai.html
-│   │   ├── tool_card.html
-│   │   ├── attachment.html
-│   │   └── capability_card.html
+│   │   └── composer.html            # textarea + toolbar + attach + model + send
 │   └── shared/
-│       ├── head.html                # meta, fonts, css link, theme bootstrap
-│       └── flash.html               # error/success toast
+│       └── head.html                # meta, fonts CDN, css link, theme anti-FOUC script
 └── src/
-    ├── main.rs                      # mounts ui_router() + ServeDir("/assets")
+    ├── main.rs                      # mounts all routers + ServeDir("/assets")
     └── ui/
-        ├── mod.rs                   # pub use routes::ui_router; pub use session::*;
-        ├── routes.rs                # ui_router() — all UI routes in one place
-        ├── session.rs               # cookie sign/verify, SessionUser extractor
-        ├── view.rs                  # Askama Template structs (one per page)
+        ├── mod.rs
+        ├── routes.rs                # ui_router() — /, /login, /logout, /ui/stream, /ui/upload, /ui/extract-invoice
+        ├── session.rs               # HMAC cookie sign/verify, SessionUser axum extractor
+        ├── view.rs                  # Askama Template structs
         └── handlers/
-            ├── mod.rs
-            ├── auth.rs              # GET/POST /login, GET /logout
-            ├── app.rs               # GET / → app shell, GET /app/recents (HTMX)
-            ├── chat.rs              # POST /ui/stream (SSE), POST /ui/chat (partial), GET /ui/threads/:id (load history)
-            └── upload.rs            # POST /ui/upload (multipart → MinIO)
+            ├── auth.rs              # GET+POST /login, GET /logout
+            ├── app.rs               # GET / → renders app shell
+            ├── chat.rs              # POST /ui/stream — SSE agent stream
+            ├── upload.rs            # POST /ui/upload — multipart → MinIO
+            └── invoice.rs           # POST /ui/extract-invoice — direct pipeline (no agent)
 ```
 
 ---

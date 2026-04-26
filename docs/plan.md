@@ -108,16 +108,46 @@ Tool routing is description-driven: rich `description` fields in `capability.yam
 
 Full browser-based chat interface served by `agent-gateway` at `/`.
 
+### Asset structure
+
+```
+crates/agent-gateway/
+├── assets/
+│   ├── css/style.css          (~950 lines — full design system)
+│   ├── js/app.js              (~620 lines — streaming, animations, composer)
+│   ├── icons/icons.svg        (SVG sprite, <use> references)
+│   └── images/
+│       ├── favicon.png        (brand sigil — greeting screen + favicon)
+│       ├── conusai-logo-lightmode.png
+│       └── conusai-logo-darkmode.png
+└── templates/
+    ├── app.html, login.html
+    ├── partials/composer.html
+    └── shared/head.html
+```
+
+### Features
+
 - **Auth:** HMAC-signed session cookie (`conusai_session`, HttpOnly, SameSite=Lax)
 - **Streaming:** SSE via `POST /ui/stream` → in-process `agent::stream_agent` (no HTTP self-call)
-- **Tool cards:** `<details>` with status dot, timing, collapsible JSON — rendered live during stream
-- **File upload:** `POST /ui/upload` → MinIO; attachment chips; drag-drop on composer
+- **Tool cards:** `<details>` with status dot, timing, collapsible JSON — rendered live during stream. Three states: running (teal glow), success (green flash), error (rust flash).
+- **Thinking indicator:** 3-dot wave shown immediately on send; clears on first token or tool event.
+- **File upload:** `POST /ui/upload` → MinIO; attachment chips; drag-drop on composer. Invoice detection requires filename to match both extension (`png/jpg/jpeg/pdf`) AND name pattern (`invoice/receipt/bill/facture`).
+- **Direct invoice pipeline:** `POST /ui/extract-invoice` — token → MinIO bytes → `InvoicePipeline` → `InvoiceData` card. No agent loop, no tool selection.
 - **Recents:** sidebar thread list; click → load history from `/v1/threads/{id}/messages`
-- **Theme:** dark/light toggle with localStorage, CSS custom properties
+- **Theme:** dark (Forge) / light (Paper) toggle, persisted in localStorage, applied pre-paint to avoid FOUC
 - **Mobile:** fixed sidebar drawer, backdrop overlay, hamburger toggle
-- **Keyboard:** `⌘K` focus, `⌘N` new chat, `⌘/` theme, `Esc` blur
-- **Toasts:** success/error notifications via `window.__toast`
-- **Fonts:** Askama compile-time templates; assets served from `CONUSAI_UI_ASSETS`
+- **Keyboard:** `⌘K` focus, `⌘N` new chat, `⌘/` theme, `⌘↵` send, `Esc` blur
+- **Toasts:** `window.__toast(msg, kind)` — spring entrance animation, 3.5s auto-dismiss
+- **Templates:** Askama compile-time; static assets served via `tower_http::services::ServeDir`
+
+### Design system (Foundry)
+
+- **Colour:** two themes (Paper cream / Forge dark) with shared teal accent `#80cdc6` (`--ember`)
+- **Typography:** Fraunces (variable serif, display) + Switzer (grotesque, body) + JetBrains Mono
+- **Radius:** nested-radius token scale — `--r-xs/sm/md/lg/full` (3/6/10/16/9999px)
+- **Motion:** staggered page-load, chat message entrance animations, streaming rail, spring micro-interactions
+- **Atmosphere:** radial teal vignette + 5% noise grain overlay
 
 ---
 
