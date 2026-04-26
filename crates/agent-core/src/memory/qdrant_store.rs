@@ -7,20 +7,15 @@
 ///
 /// Vectors are 4-dim zeros; Qdrant is used purely as a document store here.
 /// Payload filtering (match/must) drives all queries.
+use super::qdrant_helpers::{QdrantClient, point_id, zero_vec};
 use async_trait::async_trait;
 use chrono::Utc;
 use common::limits::{MAX_MESSAGES_BEFORE_SUMMARY, MAX_MESSAGES_PER_THREAD};
 use common::memory::store::ThreadStore;
 use common::memory::thread::{Message, Thread};
-use common::metrics;
-use reqwest::Client;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
-use std::time::Instant;
-use tracing::{Span, info, instrument, warn};
+use tracing::{info, instrument, warn};
 use ulid::Ulid;
-
-const VECTOR_DIM: usize = 4;
 
 #[cfg(test)]
 mod tests {
@@ -48,28 +43,14 @@ mod tests {
     }
 }
 
-fn zero_vec() -> Vec<f32> {
-    vec![0.0; VECTOR_DIM]
-}
-
-/// Derive a stable u64 Qdrant point ID from any string.
-fn point_id(key: &str) -> u64 {
-    let mut h = Sha256::new();
-    h.update(key.as_bytes());
-    let digest = h.finalize();
-    u64::from_le_bytes(digest[..8].try_into().unwrap())
-}
-
 pub struct QdrantThreadStore {
-    http: Client,
-    base_url: String,
+    qdrant: QdrantClient,
 }
 
 impl QdrantThreadStore {
     pub fn new(qdrant_url: impl Into<String>) -> Self {
         Self {
-            http: Client::new(),
-            base_url: qdrant_url.into(),
+            qdrant: QdrantClient::new(qdrant_url),
         }
     }
 
@@ -79,113 +60,26 @@ impl QdrantThreadStore {
 
     async fn ensure_collection(&self, tenant_id: &str) -> anyhow::Result<()> {
         let col = self.collection(tenant_id);
-        let url = format!("{}/collections/{}", self.base_url, col);
-
-        // Check existence
-        if self.http.get(&url).send().await?.status().is_success() {
-            return Ok(());
-        }
-
-        // Create
-        let res = self
-            .http
-            .put(&url)
-            .json(&json!({
-                "vectors": { "size": VECTOR_DIM, "distance": "Cosine" }
-            }))
-            .send()
-            .await?;
-
-        if !res.status().is_success() {
-            let body = res.text().await.unwrap_or_default();
-            anyhow::bail!("failed to create Qdrant collection {col}: {body}");
-        }
-
-        // Create payload indices for fast filtering
-        for field in ["type", "thread_id", "tenant_id"] {
-            let idx_url = format!("{}/collections/{}/index", self.base_url, col);
-            let _ = self
-                .http
-                .put(&idx_url)
-                .json(&json!({
-                    "field_name": field,
-                    "field_schema": "keyword"
-                }))
-                .send()
-                .await;
-        }
-
-        info!(collection = col, "created Qdrant thread collection");
-        Ok(())
+        self.qdrant
+            .ensure_collection(&col, &["type", "thread_id", "tenant_id"], &[])
+            .await
     }
 
-    #[instrument(skip(self, point), fields(db.system = "qdrant", db.operation = "upsert", db.collection = tracing::field::Empty, error.type = tracing::field::Empty))]
     async fn upsert_point(&self, tenant_id: &str, point: Value) -> anyhow::Result<()> {
-        let col = self.collection(tenant_id);
-        Span::current().record("db.collection", col.as_str());
-        let labels = [
-            metrics::kv("operation", "upsert"),
-            metrics::kv("collection", col.as_str()),
-        ];
-        let t0 = Instant::now();
-        let url = format!("{}/collections/{}/points", self.base_url, col);
-        let res = self
-            .http
-            .put(&url)
-            .json(&json!({ "points": [point] }))
-            .send()
-            .await?;
-        metrics::qdrant_duration_ms().record(t0.elapsed().as_secs_f64() * 1000.0, &labels);
-        if !res.status().is_success() {
-            let body = res.text().await.unwrap_or_default();
-            metrics::qdrant_errors().add(1, &labels);
-            Span::current().record("error.type", body.as_str());
-            anyhow::bail!("Qdrant upsert failed: {body}");
-        }
-        Ok(())
+        self.qdrant
+            .upsert_point(&self.collection(tenant_id), point)
+            .await
     }
 
-    #[instrument(skip(self, filter), fields(db.system = "qdrant", db.operation = "scroll", db.collection = tracing::field::Empty, error.type = tracing::field::Empty))]
     async fn scroll_filter(
         &self,
         tenant_id: &str,
         filter: Value,
         limit: usize,
     ) -> anyhow::Result<Vec<Value>> {
-        let col = self.collection(tenant_id);
-        Span::current().record("db.collection", col.as_str());
-        let labels = [
-            metrics::kv("operation", "scroll"),
-            metrics::kv("collection", col.as_str()),
-        ];
-        let t0 = Instant::now();
-        let url = format!("{}/collections/{}/points/scroll", self.base_url, col);
-        let res = self
-            .http
-            .post(&url)
-            .json(&json!({
-                "filter": filter,
-                "limit": limit,
-                "with_payload": true,
-                "with_vector": false
-            }))
-            .send()
-            .await?;
-        metrics::qdrant_duration_ms().record(t0.elapsed().as_secs_f64() * 1000.0, &labels);
-
-        if !res.status().is_success() {
-            let body = res.text().await.unwrap_or_default();
-            metrics::qdrant_errors().add(1, &labels);
-            Span::current().record("error.type", body.as_str());
-            anyhow::bail!("Qdrant scroll failed: {body}");
-        }
-
-        let body: Value = res.json().await?;
-        let points = body["result"]["points"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
-        Ok(points)
+        self.qdrant
+            .scroll_filter(&self.collection(tenant_id), filter, limit)
+            .await
     }
 
     fn thread_from_payload(payload: &Value) -> Option<Thread> {
@@ -449,7 +343,7 @@ impl ThreadStore for QdrantThreadStore {
             tenant_id.to_owned(),
             thread_id.to_owned(),
             new_count,
-            self.base_url.clone(),
+            self.qdrant.base_url.clone(),
         );
 
         Ok(())
