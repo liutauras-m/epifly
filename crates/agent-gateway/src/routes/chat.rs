@@ -1,23 +1,37 @@
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
-use axum::{extract::State, http::StatusCode, Extension, Json};
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::{
+        sse::{Event, Sse},
+        IntoResponse, Response,
+    },
+    Extension, Json,
+};
+use futures::StreamExt;
 use rig::completion::Prompt;
 use rig::providers::anthropic;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::convert::Infallible;
 use std::sync::Arc;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::{info, instrument, warn};
+use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 pub struct ChatRequest {
     pub model: Option<String>,
     pub messages: Vec<ChatMessage>,
     pub max_tokens: Option<u64>,
-    #[allow(dead_code)]
     pub stream: Option<bool>,
+    /// Optional ULID — when provided, loads history from Qdrant and persists this turn.
+    pub thread_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
@@ -48,27 +62,45 @@ pub struct Usage {
 
 #[instrument(skip(state, tenant, req), fields(
     tenant_id = tenant.0.tenant_id.as_str(),
-    plan = %tenant.0.plan,
+    plan      = %tenant.0.plan,
 ))]
 pub async fn completions(
     State(state): State<Arc<AppState>>,
     Extension(tenant): Extension<ResolvedTenant>,
     Json(req): Json<ChatRequest>,
-) -> Result<Json<ChatResponse>, (StatusCode, Json<Value>)> {
-    // Per-tenant rate limit check
+) -> Response {
+    // Per-tenant rate limit
     if !state
         .rate_limiter
         .check(&tenant.0.tenant_id, tenant.0.plan.rate_limit_rpm())
     {
         warn!("rate limit hit");
-        return Err((
+        return (
             StatusCode::TOO_MANY_REQUESTS,
             Json(
                 json!({ "error": { "message": "rate limit exceeded", "type": "rate_limit_error" } }),
             ),
-        ));
+        )
+            .into_response();
     }
 
+    if req.stream.unwrap_or(false) {
+        stream_response(tenant, req).await.into_response()
+    } else {
+        match blocking_response(&state, &tenant, req).await {
+            Ok(r) => r.into_response(),
+            Err((status, body)) => (status, body).into_response(),
+        }
+    }
+}
+
+// ── Non-streaming ─────────────────────────────────────────────────────────────
+
+async fn blocking_response(
+    _state: &Arc<AppState>,
+    tenant: &ResolvedTenant,
+    req: ChatRequest,
+) -> Result<Json<ChatResponse>, (StatusCode, Json<Value>)> {
     let model_id = req.model.as_deref().unwrap_or("claude-opus-4-7");
     let max_tokens = req
         .max_tokens
@@ -98,13 +130,12 @@ pub async fn completions(
 
     let client = anthropic::Client::from_env();
     let mut builder = client.agent(model_id).max_tokens(max_tokens);
-
     if let Some(sys) = system {
         builder = builder.preamble(&sys);
     }
 
     let agent = builder.build();
-    let response_text = agent.prompt(last_user).await.map_err(|e| {
+    let text = agent.prompt(last_user).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": { "message": e.to_string(), "type": "provider_error" } })),
@@ -112,14 +143,14 @@ pub async fn completions(
     })?;
 
     Ok(Json(ChatResponse {
-        id: format!("chatcmpl-{}", uuid::Uuid::new_v4()),
+        id: format!("chatcmpl-{}", Uuid::new_v4()),
         object: "chat.completion".into(),
         model: model_id.into(),
         choices: vec![Choice {
             index: 0,
             message: ChatMessage {
                 role: "assistant".into(),
-                content: response_text,
+                content: text,
             },
             finish_reason: "stop".into(),
         }],
@@ -129,4 +160,124 @@ pub async fn completions(
             total_tokens: 0,
         },
     }))
+}
+
+// ── Streaming SSE ─────────────────────────────────────────────────────────────
+
+async fn stream_response(
+    tenant: ResolvedTenant,
+    req: ChatRequest,
+) -> Sse<ReceiverStream<Result<Event, Infallible>>> {
+    let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(64);
+
+    tokio::spawn(async move {
+        let model_id = req
+            .model
+            .as_deref()
+            .unwrap_or("claude-opus-4-7")
+            .to_string();
+        let max_tokens = req
+            .max_tokens
+            .unwrap_or(4096)
+            .min(tenant.0.plan.max_tokens());
+        let id = format!("chatcmpl-{}", Uuid::new_v4());
+        let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+
+        // Build Anthropic messages (skip system role, send separately)
+        let messages: Vec<Value> = req
+            .messages
+            .iter()
+            .filter(|m| m.role != "system")
+            .map(|m| json!({"role": m.role, "content": m.content}))
+            .collect();
+
+        let mut body = json!({
+            "model": model_id,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "stream": true,
+        });
+        if let Some(sys) = req.messages.iter().find(|m| m.role == "system") {
+            body["system"] = json!(sys.content);
+        }
+
+        let http = reqwest::Client::new();
+        let resp = http
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&body)
+            .send()
+            .await;
+
+        match resp {
+            Err(e) => {
+                let _ = tx
+                    .send(Ok(
+                        Event::default().data(json!({"error": e.to_string()}).to_string())
+                    ))
+                    .await;
+            }
+            Ok(response) => {
+                let mut byte_stream = response.bytes_stream();
+                let mut buf = String::new();
+
+                while let Some(chunk) = byte_stream.next().await {
+                    let Ok(bytes) = chunk else { break };
+                    buf.push_str(&String::from_utf8_lossy(&bytes));
+
+                    // SSE events are separated by \n\n
+                    while let Some(pos) = buf.find("\n\n") {
+                        let event_block = buf[..pos].to_string();
+                        buf = buf[pos + 2..].to_string();
+
+                        for line in event_block.lines() {
+                            let Some(data) = line.strip_prefix("data: ") else {
+                                continue;
+                            };
+                            if data == "[DONE]" {
+                                break;
+                            }
+                            let Ok(ev) = serde_json::from_str::<Value>(data) else {
+                                continue;
+                            };
+
+                            match ev["type"].as_str().unwrap_or("") {
+                                "content_block_delta" => {
+                                    let Some(text) = ev["delta"]["text"].as_str() else {
+                                        continue;
+                                    };
+                                    let chunk_json = json!({
+                                        "id": id,
+                                        "object": "chat.completion.chunk",
+                                        "model": model_id,
+                                        "choices": [{ "index": 0, "delta": { "content": text }, "finish_reason": null }]
+                                    });
+                                    let _ = tx
+                                        .send(Ok(Event::default().data(chunk_json.to_string())))
+                                        .await;
+                                }
+                                "message_stop" => {
+                                    let done_json = json!({
+                                        "id": id,
+                                        "object": "chat.completion.chunk",
+                                        "model": model_id,
+                                        "choices": [{ "index": 0, "delta": {}, "finish_reason": "stop" }]
+                                    });
+                                    let _ = tx
+                                        .send(Ok(Event::default().data(done_json.to_string())))
+                                        .await;
+                                    let _ = tx.send(Ok(Event::default().data("[DONE]"))).await;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    Sse::new(ReceiverStream::new(rx))
 }

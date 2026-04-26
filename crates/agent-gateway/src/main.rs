@@ -13,7 +13,8 @@ use state::AppState;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    common::telemetry::init("info");
+    // Hold the guard until process exit — flushes OTLP spans on shutdown.
+    let _telemetry = common::telemetry::init("agent-gateway", "info");
 
     let state = Arc::new(AppState::from_env()?);
     let loaded = state.registry.lock().unwrap().len();
@@ -22,10 +23,12 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .merge(routes::public_router())
         .merge(
-            routes::protected_router().layer(axum::middleware::from_fn_with_state(
-                Arc::clone(&state),
-                mw::tenant::extract_tenant,
-            )),
+            routes::protected_router()
+                .layer(axum::middleware::from_fn_with_state(
+                    Arc::clone(&state),
+                    mw::tenant::extract_tenant,
+                ))
+                .layer(axum::middleware::from_fn(mw::trace::propagate_trace)),
         )
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())

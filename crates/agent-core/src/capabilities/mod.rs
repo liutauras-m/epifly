@@ -5,4 +5,5 @@ pub mod manifest;
 pub mod mcp_adapter;
 pub mod provider;
 pub mod registry;
+pub mod tool_executor;
 pub mod wasm_loader;

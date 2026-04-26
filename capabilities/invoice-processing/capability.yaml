@@ -21,7 +21,7 @@ tools:
       properties:
         image_path:
           type: string
-          description: Absolute path to the invoice image file (PNG, JPEG)
+          description: "Absolute local path OR http/https URL to the invoice image file (PNG, JPEG, PDF)"
         model:
           type: string
           description: "Claude model ID to use (default: claude-opus-4-7)"

@@ -26,5 +26,6 @@ wasmtime-wasi.workspace = true
 reqwest.workspace     = true
 uuid.workspace        = true
 chrono.workspace      = true
+ulid.workspace        = true
 bytes.workspace       = true
 async-trait.workspace = true

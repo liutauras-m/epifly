@@ -37,6 +37,21 @@ services:
       retries: 5
     profiles: ["infra", "full"]
 
+  # ── MinIO bucket initialisation ───────────────────────────────────────────
+  minio-init:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: conusai-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://conusai-minio:9000 minioadmin minioadmin &&
+        mc mb --ignore-existing local/conusai &&
+        echo 'bucket conusai ready'
+      "
+    profiles: ["full"]
+
   # ── Agent Gateway ─────────────────────────────────────────────────────────
   agent-gateway:
     build:
@@ -47,13 +62,23 @@ services:
     depends_on:
       qdrant:
         condition: service_healthy
-      minio:
-        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      otel-collector:
+        condition: service_started
     env_file:
       - path: .env.local
         required: false
       - path: .env
         required: false
+    environment:
+      QDRANT_URL: "http://conusai-qdrant:6333"
+      MINIO_ENDPOINT: "http://conusai-minio:9000"
+      MINIO_BUCKET: "conusai"
+      MINIO_ACCESS_KEY: "minioadmin"
+      MINIO_SECRET_KEY: "minioadmin"
+      CONUSAI_WORKSPACE_ROOT: "/tmp/conusai/workspaces"
+      OTLP_ENDPOINT: "http://conusai-otel:4317"
     ports:
       - "8080:8080"
     volumes:
@@ -61,16 +86,28 @@ services:
     restart: unless-stopped
     profiles: ["full"]
 
-  # ── Observability (optional) ───────────────────────────────────────────────
+  # ── Observability ─────────────────────────────────────────────────────────
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    container_name: conusai-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "14317:4317"    # OTLP gRPC (host-side mapped to avoid conflict with otel-collector)
+    profiles: ["observability", "full"]
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.123.0
     container_name: conusai-otel
+    depends_on:
+      - jaeger
     volumes:
       - ./scripts/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
     ports:
-      - "4317:4317"   # gRPC
-      - "4318:4318"   # HTTP
-    profiles: ["observability"]
+      - "4317:4317"   # gRPC OTLP
+      - "4318:4318"   # HTTP OTLP
+    profiles: ["observability", "full"]
 
 volumes:
   qdrant_data:

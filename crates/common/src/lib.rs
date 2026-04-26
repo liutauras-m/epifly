@@ -1,5 +1,6 @@
 pub mod config;
 pub mod error;
+pub mod memory;
 pub mod eval;
 pub mod http_client;
 pub mod limits;
