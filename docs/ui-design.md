@@ -226,8 +226,9 @@ Submit button: `border-radius: var(--r-xs)`, lifts `translateY(-1px)` on hover w
 ```
 crates/agent-gateway/
 ├── assets/
-│   ├── css/style.css          # ~950 lines — design tokens + all components
-│   ├── js/app.js              # ~610 lines — streaming, animations, composer
+│   ├── css/style.css          # ~1320 lines — design tokens + all components incl. workspace tree
+│   ├── js/app.js              # ~660 lines — streaming, animations, composer
+│   ├── js/workspace.js        # ~750 lines — tree, search, dialogs, context menu
 │   ├── icons/icons.svg        # SVG sprite (one <symbol> per icon)
 │   └── images/
 │       ├── favicon.png        # Brand sigil (used in head + greeting screen)

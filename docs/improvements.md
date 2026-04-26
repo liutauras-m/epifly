@@ -1,7 +1,7 @@
 **CONUSAI PLATFORM — v0.3 IMPROVEMENTS — HISTORICAL PLAN**
-> ⚠️ This document records the original improvement roadmap. All phases (1–5) are now implemented. See [`plan.md`](plan.md) for current status and [`arch.md`](arch.md) for authoritative architecture.
+> ⚠️ This document records the original v0.3 improvement roadmap. All five phases (capability system, deeper Rig integration, threads & memory, streaming + tools, observability/evals/polish) shipped and have since been **superseded by larger systems** documented elsewhere — workspaces ([`plan.md`](plan.md)), audit log ([`arch.md`](arch.md) §3.2), per-tenant Qdrant collections, content_text indexing, sidebar redesign ([`frontend.md`](frontend.md)). Treat the body of this file as historical context only; nothing here should be taken as the current design.
 
-**Original target:** Rig-first, capability-extensible platform. **Status: ✅ Complete.**
+**Original target:** Rig-first, capability-extensible platform. **Status: ✅ Complete (and significantly extended since).**
 
 ---
 

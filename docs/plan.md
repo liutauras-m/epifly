@@ -1,7 +1,26 @@
 # ConusAI Platform — Hierarchical Workspace Implementation Plan
 
 **Feature:** Left-sidebar hierarchical workspace (folders + conversations as `.md` files) with **private-by-default per-user access** and selective sharing.
-**Status:** Updated 2026-04-26 — verified against actual codebase.
+**Status:** Phases 0–6 implemented and shipped (workspace models, Qdrant store, MinIO body store, AppState wiring, ContextBuilder, full HTTP routes + sidebar UI, per-node thread binding, content_text indexing). Phases 7–9 (multi-layer context budgeting, live document mode, agent-callable workspace toolkit) remain planned. See "Phase status snapshot" below for the per-phase state of play.
+
+## Phase status snapshot (2026-04-26)
+
+| Phase | Subject | Status |
+|---|---|---|
+| 0 | Errors + ADR + module re-export | ✅ Shipped — `Validation` and `NotFound` variants live in [`common::error`](../crates/common/src/error.rs); ADR 005 in [`docs/adr/`](adr/005-workspace-access-control.md). |
+| 1 | Core models | ✅ Shipped — [`common::memory::workspace`](../crates/common/src/memory/workspace.rs) with full test coverage. |
+| 2 | `WorkspaceStore` trait + Qdrant impl | ✅ Shipped — [`common::memory::store`](../crates/common/src/memory/store.rs), [`agent-core::memory::qdrant_workspace_store`](../crates/agent-core/src/memory/qdrant_workspace_store.rs). Trait grew beyond the original sketch — `bump_last_modified`, `search_nodes`, `index_content`, `bind_thread` are also part of the live trait. |
+| 3 | AppState wiring | ✅ Shipped — `workspace_store` and `workspace_content` in [`AppState`](../crates/agent-gateway/src/state.rs). When MinIO is unconfigured a `NoopWorkspaceContent` impl is installed (warns at startup, errors on use) rather than panicking. |
+| 4 | `ContextBuilder` | ✅ Shipped — [`agent-core::memory::context_builder`](../crates/agent-core/src/memory/context_builder.rs); flat `max_chars` (6 000 in agent.rs); folder probes try `CONTEXT.md` then `README.md`. |
+| 5 | HTTP routes + sidebar UI | ✅ Shipped — [`routes/workspaces.rs`](../crates/agent-gateway/src/routes/workspaces.rs) covers create / tree / search / get / get_content / patch_content / move / share / unshare / delete; [`assets/js/workspace.js`](../crates/agent-gateway/assets/js/workspace.js) and [`templates/app.html`](../crates/agent-gateway/templates/app.html) implement the tree, search input, dialogs, and context menu. Move dialog is currently a `prompt()` rather than drag-and-drop. Inline rename is still a TODO. |
+| 6 | Per-node thread binding | ✅ Shipped — `WorkspaceStore::bind_thread` writes `metadata.thread_id`; `routes/agent.rs::build_ctx` lazily creates + binds a thread when `workspace_node_id` is present and the node has no binding yet. |
+| 5.5 | Chat-content indexing (added late) | ✅ Shipped — both `blocking_agent` and `stream_agent` re-index the last 30 thread messages into `content_text` after every completed turn so chat history is searchable through `/v1/workspaces/search`. The Qdrant `node_to_point` seeds an empty `content_text` so new nodes are searchable by `name` immediately, and `patch_payload` is used everywhere a metadata field is touched so `content_text` is never clobbered by a `move` / `share` / `bind_thread`. |
+| 7 | Multi-layer context composition | 🟡 Planned — `ContextBuilder` is still a single-budget concatenation. No auto-summariser yet beyond the existing `QdrantThreadStore` background summary task. |
+| 7.c | Citations | 🟡 Planned. |
+| 8 | Live document mode | 🟡 Planned — workspace-write tools are not yet exposed to the agent loop. |
+| 9 | Agent-callable workspace toolkit (`workspace__search`, `workspace__list_tree`) | 🟡 Planned — `/v1/workspaces/search` exists for the UI but is not surfaced as an agent tool; vectors are still placeholder 4-dim zeros. |
+
+**Updated:** 2026-04-26 — verified against actual codebase.
 **Goal:** VS-Code / Cursor / Claude-Projects style organization where:
 - Conversations are real `.md` files in tenant-scoped MinIO paths.
 - Folders are first-class nodes with optional `CONTEXT.md` / `README.md`.

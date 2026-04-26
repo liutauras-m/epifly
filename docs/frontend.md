@@ -1,12 +1,40 @@
 # ConusAI Frontend Implementation Plan
 
 Last updated: 2026-04-26
-Status: **fully implemented** — all 5 phases complete and verified in browser
+Status: **fully implemented + redesigned** — all 5 original phases complete and verified in browser; sidebar superseded by the workspace-first layout described in §0.
 
 A production-grade chat UI that becomes the canonical entrypoint for ConusAI.
 Implemented inside `crates/agent-gateway` so the platform ships as a single
 binary. Structural cues are taken from `docs/ui.png` (Claude reference);
 visual identity is **distinct, opinionated, and ours**.
+
+---
+
+## 0. Current Sidebar (post-redesign)
+
+The original Phase-1 sidebar (brand monogram, "New chat" + "Search" nav items, secondary nav `Chats / Projects / Code / Customize / Design`, then Recents + Capabilities + user chip) has been **replaced** by a workspace-first layout. The current shell is rendered by [`crates/agent-gateway/templates/app.html`](../crates/agent-gateway/templates/app.html) and styled by [`assets/css/style.css`](../crates/agent-gateway/assets/css/style.css). Sections, top to bottom:
+
+| Section | Markup | Behaviour |
+|---|---|---|
+| Workspace header | `.nav-section.ws-section > .nav-header` with `Workspace` label and a `+` icon-button (`data-action="ws-new"`) | Opens the new-folder/new-conversation `<dialog>` (see [`assets/js/workspace.js::openNewDialog`](../crates/agent-gateway/assets/js/workspace.js)). Creates inside the currently-selected folder when one is selected; otherwise at root. |
+| Workspace search | `.ws-search-wrap` containing an `<input id="ws-search" type="search">` and a hidden `.ws-search-clear` button | 220 ms-debounced calls to `GET /v1/workspaces/search?q=…&limit=40`. Results render in `.ws-search-results` (a sibling panel) with `<mark>` highlighting on the matched substring. Empty input restores the tree view. |
+| Workspace tree | `<div id="workspace-tree" class="ws-tree" role="tree">` populated by `loadTree()` | Lazy-loads children when a folder `<details>` toggles open. `aria-current="page"` marks the selected node. URL state synced via `?ws=<ulid>` so deep links and reloads work; ancestors auto-expand on `restoreNodeFromUrl`. Skeleton loader (`.ws-skeleton`) plays while initial fetch is in flight. |
+| Recents | `.nav-section > .nav-heading.label-mono` + `.recents-list` | Server-rendered Askama loop over `recents` (newest threads from `ThreadStore::list`). |
+| Capabilities | `.nav-section > .cap-list` | Server-rendered loop over the registry; each entry shows kind glyph, name, tool count. |
+| User chip | `.user-chip` pinned at the bottom — avatar (initials), name, plan badge | From the `SessionUser` extractor. |
+
+**Sidebar scrolling** (recent fix): the sidebar itself is `height: 100vh; overflow: hidden`. The Workspace section grows with `flex: 1 1 0; min-height: 0; overflow: hidden`, and the inner `.ws-tree` carries `overflow-y: auto` so a long tree scrolls **inside the workspace section** without pushing Recents / Capabilities / user chip out of view.
+
+**Workspace node binding to chat**: `assets/js/app.js::streamChat()` posts to `/ui/stream` with body `{message, thread_id: activeThreadId, workspace_node_id: getActiveNodeId()}`. The server (`ui::handlers::chat::ui_stream`) constructs a `ChatRequest` and delegates to `routes::agent::stream_agent`. When `workspace_node_id` is set, the agent route auto-resolves a thread for that node (creating + binding via `WorkspaceStore::bind_thread` on first message), injects workspace context via `ContextBuilder::build_for_node(...)`, and re-indexes the recent thread messages back into `content_text` after each turn — so search finds anything that was said in chat, not only what was PATCHed into the body.
+
+**Context menu** on a tree node (right-click or `contextmenu` event): folders get `New folder`, `New conversation`, `Share…`, `Delete`; conversations get `Share…`, `Move…`, `Delete`. The Share dialog reads/writes `shared_with`. Delete prompts via native `confirm()`.
+
+**Custom events** (decoupling tree → chat):
+- `ws:select` — fired with `{nodeId, node, threadId}` when a conversation is selected. Consumed by `app.js` to swap to chat view and load thread history.
+- `ws:content` — fired with `{nodeId, content}` after `GET /content`.
+- `ws:deselect` — fired when the active node is deleted.
+
+The Phase-1 description in §6 / §7 below predates this redesign. Where the two contradict, this section is authoritative.
 
 ---
 

@@ -111,10 +111,10 @@ cargo check --workspace
 ## Phase 2 — Unit Tests
 
 ```bash
-cargo test --workspace --lib
+cargo test --workspace
 ```
 
-✅ **Pass**: **19 tests pass** (agent-core + common; incl. WASM ping test, QdrantThreadStore point-id determinism, path traversal, serde roundtrips).
+✅ **Pass**: **30 lib tests pass** (8 in `agent-core` + 22 in `common`). Coverage includes WASM ping, `QdrantThreadStore` point-id determinism, path traversal, serde roundtrips, `WorkspaceNode` serde + `validate_name` happy/sad paths, `effective_user_id` dev-mode mapping, and `join_virtual_path` helpers. The integration tests under `crates/agent-core/tests/` and `crates/agent-gateway/tests/` exercise Qdrant-backed stores and require an ephemeral Qdrant running on `localhost:6333`.
 
 ---
 
@@ -543,7 +543,7 @@ echo "   • Zero-code extension: PASS"
 **Build & Quality**
 - [ ] `cargo fmt --all -- --check` clean
 - [ ] `cargo clippy --workspace -- -D warnings` zero warnings
-- [ ] `cargo test --workspace --lib` → **19/19** pass (incl. WASM ping test)
+- [ ] `cargo test --workspace` → **30/30** lib tests pass (incl. WASM ping, `WorkspaceNode` serde, `validate_name` cases, `effective_user_id` mapping)
 
 **Docker Stack**
 - [ ] All three containers **healthy** (Qdrant, MinIO, gateway)
@@ -750,6 +750,177 @@ const lines = pendingAttachments
 | Agent chat with attachment URL hint | ✅ Verified | 1 tool call, 9.43s, correct capability selected |
 | `file-storage` MCP executor | ⚠️ Not implemented | MCP kind with no server — mitigated by URL hint |
 | `resolve_image_path` HTTP download | ✅ Verified | `reqwest::get` on `/v1/files/{token}` → temp file |
+
+---
+
+## Phase 11 — Hierarchical Workspace (folders + conversations)
+
+End-to-end exercise of the workspace metadata store, MinIO body store, content_text indexing, and search. All routes live under `/v1/workspaces/*` ([`routes/workspaces.rs`](../crates/agent-gateway/src/routes/workspaces.rs)) and require the tenant middleware.
+
+### 11.1 Create a folder + conversation
+
+```bash
+# Create a root folder
+FOLDER_ID=$(curl -sf -X POST http://localhost:8080/v1/workspaces \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"kind":"folder","name":"Clients","parent_id":null}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+
+# Create a conversation .md inside it
+CONV_ID=$(curl -sf -X POST http://localhost:8080/v1/workspaces \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"kind\":\"conversation\",\"name\":\"Kickoff.md\",\"parent_id\":\"$FOLDER_ID\"}" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+```
+
+✅ **Pass**: Qdrant collection `workspaces_{tenant_id}` is created on first call (`http://localhost:6333/collections | jq` shows it). MinIO contains `tenants/{tid}/workspaces/Clients/Kickoff.md` (empty body). The conversation node carries `virtual_path: "Clients/Kickoff.md"`.
+
+### 11.2 Tree listing + content patch
+
+```bash
+# Tree at root
+curl -sf -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/workspaces/tree | python3 -m json.tool
+
+# Tree under the folder
+curl -sf -H "Authorization: Bearer $TOKEN" "http://localhost:8080/v1/workspaces/tree?parent_id=$FOLDER_ID"
+
+# Patch content (writes MinIO + indexes content_text in Qdrant)
+curl -sf -X PATCH "http://localhost:8080/v1/workspaces/$CONV_ID/content" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"content":"# Kickoff notes\n\nClient wants invoice automation by Q3."}'
+
+# Read content back
+curl -sf -H "Authorization: Bearer $TOKEN" "http://localhost:8080/v1/workspaces/$CONV_ID/content"
+```
+
+✅ **Pass**: PATCH writes MinIO **first**, then issues a targeted Qdrant payload SET (`content_text` + `last_modified`) via `/collections/{col}/points/payload` so other payload keys are preserved. GET returns the same body via `MinioWorkspaceContent::read`.
+
+### 11.3 Full-text search
+
+```bash
+# Token-based text_match across name AND content_text
+curl -sf -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/v1/workspaces/search?q=invoice&limit=20" | python3 -m json.tool
+```
+
+✅ **Pass**: returns the conversation node because its body now contains the word `invoice`. Search uses Qdrant `text_match` with `tokenizer: word, lowercase: true`, falling back to a substring scan if the index is unbuilt or empty (see [`qdrant_workspace_store::search_nodes`](../crates/agent-core/src/memory/qdrant_workspace_store.rs)).
+
+### 11.4 Sharing (private-by-default ACL)
+
+```bash
+# Owner shares with another user
+curl -sf -X POST "http://localhost:8080/v1/workspaces/$FOLDER_ID/share" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"user_id":"user-other"}'
+
+# As user-other (a separate JWT with sub=user-other, same tenant_id), the folder is now visible
+TOKEN_OTHER=$(...)  # generate JWT with sub=user-other
+curl -sf -H "Authorization: Bearer $TOKEN_OTHER" http://localhost:8080/v1/workspaces/tree
+```
+
+✅ **Pass**: the folder appears for `user-other` because its `shared_with` payload contains `user-other`. The conversation inside (not shared individually) does **not** appear — sharing is per-node, no inheritance (see [`docs/adr/005-workspace-access-control.md`](adr/005-workspace-access-control.md)). Non-owners attempting to access an unshared node receive **404 NotFound**, never 403, so existence is not leaked.
+
+### 11.5 Move + recursive delete
+
+```bash
+# Move conversation to root
+curl -sf -X POST "http://localhost:8080/v1/workspaces/$CONV_ID/move" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"new_parent_id":null,"new_parent_path":null}'
+
+# Delete folder (recursive in Qdrant; MinIO cleanup is best-effort for conversations)
+curl -sf -X DELETE -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/v1/workspaces/$FOLDER_ID"
+```
+
+✅ **Pass**: `move_node` uses `patch_payload` so `content_text` is preserved. `delete_node` walks children via worklist (avoids deep async recursion) and best-effort deletes the MinIO object for each conversation.
+
+### 11.6 Chat-content indexing (workspace_node_id round-trip)
+
+```bash
+# Create a fresh conversation
+CONV2=$(curl -sf -X POST http://localhost:8080/v1/workspaces \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"kind":"conversation","name":"chat.md","parent_id":null}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+
+# Send a chat turn bound to that node — server lazily creates a thread
+curl -sf -X POST http://localhost:8080/v1/agent/completions \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d "{\"model\":\"claude-opus-4-7\",\"max_tokens\":200,\"workspace_node_id\":\"$CONV2\",\"messages\":[{\"role\":\"user\",\"content\":\"Remember the codeword PERIDOT.\"}]}"
+
+# Search for the codeword — finds the conversation because chat content was indexed
+curl -sf -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/v1/workspaces/search?q=peridot" | python3 -m json.tool
+```
+
+✅ **Pass**: after each completed turn (blocking and streaming paths in [`routes/agent.rs`](../crates/agent-gateway/src/routes/agent.rs)), the server reads the last 30 thread messages and re-indexes them via `WorkspaceStore::index_content`. The codeword becomes searchable through `/v1/workspaces/search` even though it was never PATCHed into the body.
+
+---
+
+## Phase 12 — Audit Log
+
+Append-only audit events backed by Qdrant collection `audit_{tenant_id}` ([`memory/qdrant_audit.rs`](../crates/agent-core/src/memory/qdrant_audit.rs), [`routes/audit.rs`](../crates/agent-gateway/src/routes/audit.rs)).
+
+```bash
+# Generate some traffic to populate audit events (server-side appends are wired
+# into mutating routes; see common::audit::AuditEvent + AuditStore).
+curl -sf -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/capabilities >/dev/null
+curl -sf -X POST http://localhost:8080/v1/workspaces \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"kind":"folder","name":"AuditTest","parent_id":null}' >/dev/null
+
+# Query — newest first, capped at 500
+curl -sf -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/v1/audit?limit=20" | python3 -m json.tool
+```
+
+Response shape:
+```json
+{
+  "events": [
+    {
+      "id": "01J...",
+      "tenant_id": "acme",
+      "timestamp": "2026-04-26T...",
+      "action": "...",
+      "tool": "invoice-processing__extract_invoice",
+      "status": "ok",
+      "duration_ms": 123,
+      "metadata": { "...": "..." }
+    }
+  ],
+  "count": 1
+}
+```
+
+✅ **Pass**: results ordered by `timestamp` desc (Qdrant `order_by`), payload deserialized into `AuditEvent`. The collection is created on first `append()`. Retention is **unbounded today** — Qdrant points are never expired by the gateway; deferred until a retention ADR lands.
+
+---
+
+## Phase 13 — UI Sidebar Smoke Test
+
+Browser-driven verification of the redesigned sidebar (login → workspace tree → search → recents → capabilities → user chip).
+
+```bash
+# Start the UI in dev mode
+unset JWT_SECRET
+CONUSAI_SERVER__PORT=8088 cargo run -p agent-gateway
+```
+
+Manual checklist (use Chrome MCP, Playwright, or a real browser):
+
+- [ ] `GET /` → 302 to `/login`. Submit name + plan → 302 to `/`.
+- [ ] Sidebar header reads **Workspace** with a `+` icon-button. Search input is below the header.
+- [ ] **No** legacy `New chat`, `Search` nav item, brand monogram, or `Chats / Projects / Code / Customize / Design / More` rows. Those were removed in the redesign — only Workspace, Recents, Capabilities, and the user chip remain.
+- [ ] Sidebar scrolls internally when the tree overflows (`.ws-section` is `flex: 1 1 0; overflow: hidden;` and `.ws-tree` has `overflow-y: auto`).
+- [ ] Type `inv` in the search input → `/v1/workspaces/search?q=inv` fires after a 220 ms debounce; matches render in `.ws-search-results` panel with `<mark>` highlight on the matched substring.
+- [ ] Click a conversation → URL updates to `?ws=<id>`; on hard refresh the selection is restored (folder ancestors expand lazily).
+- [ ] Send a message in the composer → DevTools shows `POST /ui/stream` with body `{"message":"…","thread_id":…,"workspace_node_id":"<id>"}`.
+- [ ] After response, `GET /v1/workspaces/{id}` shows `metadata.thread_id` populated; subsequent searches for words from the conversation text return that node.
+- [ ] Theme toggle, Cmd/Ctrl-Enter to send, and reduced-motion respect remain intact.
 
 ---
 

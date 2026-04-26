@@ -82,6 +82,8 @@ struct AgentCtx {
     cards: Vec<agent_core::capabilities::card::CapabilityCard>,
     messages: Vec<Value>,
     effective_system: Option<String>,
+    /// Parsed workspace node ULID, used to index chat content for search.
+    workspace_node_id: Option<_Ulid>,
 }
 
 async fn build_ctx(
@@ -265,6 +267,12 @@ async fn build_ctx(
 
     history.extend(new_messages);
 
+    // Parse workspace_node_id for later content indexing.
+    let workspace_node_id = req
+        .workspace_node_id
+        .as_ref()
+        .and_then(|s| s.parse::<_Ulid>().ok());
+
     Ok(AgentCtx {
         api_key,
         model_id,
@@ -275,6 +283,7 @@ async fn build_ctx(
         cards,
         messages: history,
         effective_system,
+        workspace_node_id,
     })
 }
 
@@ -297,6 +306,7 @@ async fn blocking_agent(
         cards,
         mut messages,
         effective_system,
+        workspace_node_id,
     } = ctx;
 
     let thread_store = Arc::clone(&state.thread_store);
@@ -384,6 +394,27 @@ async fn blocking_agent(
                 maybe_set_title(&thread_store, &tenant_id, tid, &text).await;
             }
 
+            // Index recent thread messages into the workspace node so the full
+            // conversation history is searchable (not just the latest turn).
+            if let (Some(node_id), Some(tid)) = (workspace_node_id, thread_id.as_ref()) {
+                let recent = thread_store
+                    .messages(&tenant_id, tid)
+                    .await
+                    .unwrap_or_default();
+                let snippet: String = recent
+                    .iter()
+                    .rev()
+                    .take(30)
+                    .rev()
+                    .map(|m| format!("{}: {}", m.role, m.content))
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                let _ = state
+                    .workspace_store
+                    .index_content(&tenant_id, node_id, &snippet)
+                    .await;
+            }
+
             return Ok(json!({
                 "id": format!("chatcmpl-{}", Uuid::new_v4()),
                 "object": "chat.completion",
@@ -465,6 +496,7 @@ pub async fn stream_agent(
             cards,
             mut messages,
             effective_system,
+            workspace_node_id,
         } = ctx;
 
         let thread_store = Arc::clone(&state.thread_store);
@@ -658,6 +690,29 @@ pub async fn stream_agent(
                         )
                         .await;
                     maybe_set_title(&thread_store, &tenant_id, tid, &full_assistant_text).await;
+                }
+
+                // Index recent thread messages into the workspace node so the full
+                // conversation history is searchable (not just the latest turn).
+                if let (Some(node_id), Some(tid)) = (workspace_node_id, thread_id.as_ref()) {
+                    let recent = thread_store
+                        .messages(&tenant_id, tid)
+                        .await
+                        .unwrap_or_default();
+                    // Take the last 30 messages (~15 turns) so the snippet stays within
+                    // the 32 KB limit enforced by index_content.
+                    let snippet: String = recent
+                        .iter()
+                        .rev()
+                        .take(30)
+                        .rev()
+                        .map(|m| format!("{}: {}", m.role, m.content))
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+                    let _ = state
+                        .workspace_store
+                        .index_content(&tenant_id, node_id, &snippet)
+                        .await;
                 }
 
                 // Emit metrics for streaming completion.

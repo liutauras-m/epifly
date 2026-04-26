@@ -96,9 +96,13 @@ components = ["rustfmt", "clippy", "rust-src"]
 
 | File | Purpose |
 |---|---|
-| [paln.md](../paln.md) | Detailed phased implementation plan (init → common → agent-core → capabilities → evals → gateway → infra → polish). |
-| [tenant.md](../tenant.md) | Multitenancy design — JWT, path scoping, Qdrant collection namespacing, rate limiting. |
-| [verify.md](../verify.md) | End-to-end Docker verification plan (~95% coverage), JWT helpers, curl recipes. |
+| [docs/plan.md](plan.md) | Hierarchical workspace implementation plan (per-phase status: 0–6 shipped; 7–9 planned). |
+| [docs/tenant.md](tenant.md) | Multitenancy design — `TenantContext`, `TenantClaims`, `extract_tenant`, dev-mode/JWT mode, isolation surfaces. |
+| [docs/verify.md](verify.md) | End-to-end Docker verification plan, JWT helpers, curl recipes (Phases 0–13 incl. workspace, audit, UI). |
+| [docs/frontend.md](frontend.md) | Frontend implementation plan + current sidebar redesign (workspace-first layout). |
+| [docs/ui-design.md](ui-design.md) | Design tokens (colour, type, spacing, motion) and component recipes. |
+| [docs/improvements.md](improvements.md) | Historical v0.3 roadmap; superseded — kept for context only. |
+| [docs/adr/005-workspace-access-control.md](adr/005-workspace-access-control.md) | ADR for the private-by-default + selective-sharing ACL model. |
 
 ---
 
@@ -121,7 +125,10 @@ components = ["rustfmt", "clippy", "rust-src"]
 | [src/path_safety.rs](../crates/common/src/path_safety.rs) | `safe_join()` (rejects `..`), `join_under_tenant(root, tenant_id, rel)`. |
 | [src/eval.rs](../crates/common/src/eval.rs) | Trait stubs shared by the evals crate. |
 | [src/memory/thread.rs](../crates/common/src/memory/thread.rs) | `Thread { id (ULID), tenant_id, title, created_at, last_active, message_count, summary, metadata }`. `Message { role, content, tool_calls, timestamp, seq }`. `ToolCall { id, name, input, output }`. |
-| [src/memory/store.rs](../crates/common/src/memory/store.rs) | `ThreadStore` async trait: `create`, `get`, `messages`, `append`, `list`, `set_summary`, `set_title`. All methods take `tenant_id: &str` (avoids circular dep with agent-core). |
+| [src/memory/workspace.rs](../crates/common/src/memory/workspace.rs) | `NodeKind { Folder, Conversation, File }`, `WorkspaceNode { id, tenant_id, owner_id, parent_id, kind, name, virtual_path, last_modified, shared_with, metadata }`. Helpers: `new_folder`, `new_conversation`, `validate_name` (rejects empty / >255 / `/` / `\` / `..` / leading `.` and enforces `.md` for conversations), `join_virtual_path`, `effective_user_id` (maps `None` → `"__dev__"`). |
+| [src/memory/store.rs](../crates/common/src/memory/store.rs) | Three async traits — `ThreadStore` (`create`, `get`, `messages`, `append`, `list`, `set_summary`, `set_title`); `WorkspaceStore` (`create_folder`, `create_conversation`, `list_accessible_children`, `get_accessible_node`, `get_ancestors`, `move_node`, `delete_node`, `share_node`, `unshare_node`, `bump_last_modified`, `search_nodes`, `index_content`, `bind_thread`); `WorkspaceContentStore` (`read`, `write`, `delete`). All methods take `tenant_id: &str` and (where access matters) a `user_id: &str`, avoiding any circular dep with agent-core. |
+| [src/audit.rs](../crates/common/src/audit.rs) | `AuditEvent { id (ULID), tenant_id, timestamp, action, tool?, status, duration_ms?, metadata }` with builder helpers (`with_tool`, `with_status`, `with_duration_ms`, `with_metadata`). `AuditStore` async trait: `append`, `list(tenant, limit)`. |
+| [src/metrics.rs](../crates/common/src/metrics.rs) | OpenTelemetry meter helpers (`qdrant_duration_ms`, `qdrant_errors`, `llm_requests`, `llm_input_tokens`, `llm_output_tokens`) plus `kv(key, value)` for label construction. |
 
 **Tests:** path-traversal rejection, valid joins, MCP serialization, `ApiError` fields, limit invariants, thread/message/tool-call serde roundtrips.
 
@@ -171,6 +178,10 @@ components = ["rustfmt", "clippy", "rust-src"]
 | File | Purpose |
 |---|---|
 | [qdrant_store.rs](../crates/agent-core/src/memory/qdrant_store.rs) | `QdrantThreadStore` — implements `ThreadStore` using Qdrant REST as a document store (not vector search). Uses 4-dim zero vectors; SHA-256 → u64 point IDs; collection per tenant (`threads_{tenant_id}`); payload indices on `type`, `thread_id`, `tenant_id`. `scroll_filter()` for all queries. Background `tokio::spawn` for auto-summarisation when `message_count % MAX_MESSAGES_BEFORE_SUMMARY == 0`, calling Claude Haiku via Anthropic API. All 7 trait methods instrumented with `#[instrument]` (OTel spans). |
+| [qdrant_workspace_store.rs](../crates/agent-core/src/memory/qdrant_workspace_store.rs) | `QdrantWorkspaceStore` — implements `WorkspaceStore`. Mirrors the thread store pattern (REST, 4-dim zero vectors, SHA-256→u64 point IDs) but as a hierarchical metadata store. Per-tenant collection `workspaces_{tenant_id}`. Payload schema: `id`, `tenant_id`, `owner_id`, `parent_id` (string, `""` for root), `kind` (`folder`/`conversation`/`file`), `name`, `virtual_path`, `last_modified` (RFC 3339), `shared_with: [user_id]`, `metadata: object`, `content_text` (truncated body for full-text search). On collection creation: keyword indexes on `tenant_id`/`owner_id`/`parent_id`/`kind`/`shared_with` and **text** indexes on `name`/`content_text` (`tokenizer: word, lowercase: true, min_token_len: 2, max_token_len: 128`). `node_to_point` seeds `content_text: ""` so new nodes are searchable by name immediately. `patch_payload(...)` is a targeted Qdrant payload SET via `POST /collections/{col}/points/payload` — used for `move_node`, `share_node`, `unshare_node`, `bind_thread`, `bump_last_modified`, and `index_content`, so `content_text` and other untouched keys are preserved across metadata updates. Access filter `tenant_id == X AND (owner_id == U OR shared_with ∋ U)` is built by `access_filter()` using the **struct form** of `min_should` (`{conditions, min_count}`) — Qdrant rejects the integer shorthand. `get_accessible_node` returns `NotFound` (never `Forbidden`) for non-owners to avoid leaking existence. `delete_node` walks children via worklist (avoids deep async recursion). `search_nodes` issues per-token `text_match` over `name` ∪ `content_text`, falling back to a substring scan when the index is missing or returns nothing. `index_content` truncates to 32 KB at a UTF-8 boundary and SETs `content_text` + `last_modified` in one targeted call. `ensure_text_indexes` lazily backfills text indexes on collections that pre-date this feature. |
+| [minio_workspace_content.rs](../crates/agent-core/src/memory/minio_workspace_content.rs) | `MinioWorkspaceContent` — implements `WorkspaceContentStore` against an `Arc<dyn ObjectStore>` (the same MinIO client wired into `AppState.file_store`). Object keys are built as `tenants/{tenant_id}/workspaces/{virtual_path}` via `OsPath::from(...)`. `read` returns `""` on `NotFound` so newly-created conversations work without a write-first; `write` puts UTF-8 bytes; `delete` is best-effort (silently OK on missing). |
+| [context_builder.rs](../crates/agent-core/src/memory/context_builder.rs) | `ContextBuilder` — assembles a workspace-scoped system preamble. `build_for_node(tenant, node_id, max_chars)` resolves the effective `user_id` (via `effective_user_id`), fetches `get_ancestors(...)` (already access-filtered), tries `{ancestor_path}/CONTEXT.md` then `{ancestor_path}/README.md` from MinIO for each ancestor folder, then loads the selected node body if it is a `Conversation`. Sections are joined with `\n\n---\n\n`, prefixed with the `virtual_path` as an H2, and **truncated from the front** (oldest ancestor first) until total length ≤ `max_chars`. Output begins with `# Workspace context\n` so the agent recognises it. Never errors hard — on any access failure returns an empty string. Used by `routes/agent.rs::build_ctx` with `max_chars = 6000` whenever `workspace_node_id` is present. |
+| [qdrant_audit.rs](../crates/agent-core/src/memory/qdrant_audit.rs) | `QdrantAuditStore` — implements `common::audit::AuditStore`. Per-tenant collection `audit_{tenant_id}`, 4-dim zero vectors, SHA-256→u64 point ID derived from `AuditEvent.id` (a ULID). `append` ensures the collection then upserts a single point with the full event as payload. `list(tenant, limit)` scrolls with `order_by: { key: "timestamp", direction: "desc" }` and deserialises payloads back into `AuditEvent`. Retention is currently unbounded — no expiry, no compaction. |
 
 #### Native tools subsystem ([src/tools/](../crates/agent-core/src/tools))
 
@@ -180,7 +191,7 @@ components = ["rustfmt", "clippy", "rust-src"]
 | [cargo_tool.rs](../crates/agent-core/src/tools/cargo_tool.rs) | `run_cargo(workspace_root, input)` — runs `cargo {check,test,build,clippy,fmt}` via `tokio::process::Command`; returns stdout/stderr/exit_code as JSON. Allowlisted subcommands only. |
 | [native_capability.rs](../crates/agent-core/src/tools/native_capability.rs) | `native_capability_card()` — builds a `CapabilityCard` with `kind: Native` exposing `read_file`, `write_file`, `run_cargo` with full JSON schemas. Auto-registered at gateway startup. |
 
-**Public re-exports** (via [`lib.rs`](../crates/agent-core/src/lib.rs)): `GeneralAgent`, `GeneralAgentBuilder`, `CapabilityDiscovery`, `CapabilityRegistry`, `PlanTier`, `TenantClaims`, `TenantContext`, `InvoiceData`, `InvoiceLineItem`, `InvoicePipeline`, `native_capability_card`.
+**Public re-exports** (via [`lib.rs`](../crates/agent-core/src/lib.rs)): `GeneralAgent`, `GeneralAgentBuilder`, `CapabilityDiscovery`, `CapabilityRegistry`, `PlanTier`, `TenantClaims`, `TenantContext`, `ContextBuilder`, `MinioWorkspaceContent`, `QdrantAuditStore`, `QdrantThreadStore`, `QdrantWorkspaceStore`, `ContractData`, `ContractParty`, `ContractPipeline`, `InvoiceData`, `InvoiceLineItem`, `InvoicePipeline`, `native_capability_card`.
 
 ---
 
@@ -191,7 +202,7 @@ components = ["rustfmt", "clippy", "rust-src"]
 | File | Purpose |
 |---|---|
 | [src/main.rs](../crates/agent-gateway/src/main.rs) | Tokio entrypoint. Initializes telemetry, builds `AppState`, mounts public + protected routers, applies `CorsLayer` + `TraceLayer` + tenant + trace middleware, binds `0.0.0.0:8080`. |
-| [src/state.rs](../crates/agent-gateway/src/state.rs) | `AppState { registry: Mutex<CapabilityRegistry>, rate_limiter, file_store: Option<Arc<dyn ObjectStore>>, thread_store: Arc<dyn ThreadStore>, qdrant_url, presigned_tokens: Mutex<HashMap> }`. `from_env()` runs capability discovery, registers `native_capability_card()`, initializes MinIO if `MINIO_ENDPOINT` is set, and initializes `QdrantThreadStore`. |
+| [src/state.rs](../crates/agent-gateway/src/state.rs) | `AppState { registry: Mutex<CapabilityRegistry>, rate_limiter, file_store: Option<Arc<dyn ObjectStore>>, qdrant_url, presigned_tokens: Mutex<HashMap>, thread_store: Arc<dyn ThreadStore>, audit_store: Arc<dyn AuditStore>, workspace_store: Arc<dyn WorkspaceStore>, workspace_content: Arc<dyn WorkspaceContentStore> }`. `from_env()` runs capability discovery, registers `native_capability_card()`, initializes MinIO if `MINIO_ENDPOINT`/`S3_ENDPOINT` is set, instantiates `QdrantThreadStore`, `QdrantAuditStore`, `QdrantWorkspaceStore`, and either `MinioWorkspaceContent` (when MinIO is up) or `NoopWorkspaceContent` (warns at startup; errors on use rather than panicking). |
 
 #### Middleware ([src/mw/](../crates/agent-gateway/src/mw))
 
@@ -207,24 +218,28 @@ components = ["rustfmt", "clippy", "rust-src"]
 |---|---|---|
 | [health.rs](../crates/agent-gateway/src/routes/health.rs) | `GET /health` | Status, version, capability count. |
 | [chat.rs](../crates/agent-gateway/src/routes/chat.rs) | `POST /v1/chat/completions` | OpenAI-compatible chat (streaming via SSE or blocking). Builds Rig Anthropic agent with system preamble + `max_tokens`, enforces per-tenant rate limits. |
-| [agent.rs](../crates/agent-gateway/src/routes/agent.rs) | `POST /v1/agent/completions` | Thread-aware tool-calling agent loop with blocking and streaming (`"stream": true`) modes. Accepts optional `thread_id`; loads history + injects thread summary as system context; persists user message before loop and assistant reply after; auto-sets thread title from first reply. Up to 5 tool-use rounds. Streaming path emits OpenAI SSE chunks + `tool_call_start` / `tool_call_result` events so clients can follow tool execution in real-time. Accumulates `gen_ai.*` span attributes (model, input/output tokens). Returns `thread_id` in response. |
+| [agent.rs](../crates/agent-gateway/src/routes/agent.rs) | `POST /v1/agent/completions` | Thread-aware tool-calling agent loop with blocking and streaming (`"stream": true`) modes. Accepts optional `thread_id` and `workspace_node_id`. Thread resolution rule: explicit `thread_id` wins; else if `workspace_node_id` is set, `WorkspaceStore::get_accessible_node(...)` reads `metadata.thread_id` and either reuses the bound thread or lazily creates one and writes the binding via `WorkspaceStore::bind_thread`. Loads history + injects thread summary as system context. When `workspace_node_id` is set, also runs `ContextBuilder::build_for_node(..., 6000)` and concatenates the result into the system preamble. Persists user message before the loop and assistant reply after; auto-sets thread title from first reply. After every completed turn (both paths) reads the last 30 messages and re-indexes them via `WorkspaceStore::index_content` so chat history is searchable. Up to 5 tool-use rounds. Streaming path emits OpenAI SSE chunks + `tool_call_start` / `tool_call_result` events so clients can follow tool execution in real-time. Accumulates `gen_ai.*` span attributes (model, input/output tokens). Returns `thread_id` in response. |
 | [threads.rs](../crates/agent-gateway/src/routes/threads.rs) | Thread CRUD | `create_thread`, `list_threads`, `get_thread`, `get_messages`, `append_message`. Delegates to `AppState::thread_store` (`QdrantThreadStore`). |
 | [capabilities.rs](../crates/agent-gateway/src/routes/capabilities.rs) | `GET /v1/capabilities` | Lists capabilities (name, version, description, kind, tags, tools) with tenant + plan. |
 | [search.rs](../crates/agent-gateway/src/routes/search.rs) | `GET /v1/capabilities/search?q=…&limit=…` | Semantic search via Qdrant (64-dim deterministic hash embeddings). On first call per tenant, creates collection `capabilities_{tenant_id}` and upserts capability vectors. Falls back to local substring match if Qdrant is unreachable. |
 | [mcp.rs](../crates/agent-gateway/src/routes/mcp.rs) | `POST /mcp` | JSON-RPC 2.0 dispatcher. Methods: `initialize` (server info), `tools/list` (all tool defs), `tools/call` (`capability__tool`, splits name, dispatches to `CapabilityExecutor`). |
 | [files.rs](../crates/agent-gateway/src/routes/files.rs) | `POST /v1/files`, `GET /v1/files/{token}` | Multipart upload to MinIO under `tenants/{tenant_id}/{uuid}/{filename}`; returns 1-h TTL download token. Download endpoint is public (token-gated) and streams back the object. |
-| [mod.rs](../crates/agent-gateway/src/routes/mod.rs) | `public_router()` (health + file download), `protected_router()` (everything else, with tenant middleware + 5 thread routes). |
+| [audit.rs](../crates/agent-gateway/src/routes/audit.rs) | `GET /v1/audit?limit=` | Lists recent `AuditEvent`s for the calling tenant from `audit_{tenant_id}`, ordered by `timestamp desc`. `limit` defaults to 50, capped at 500. Returns `{events, count}`. |
+| [workspaces.rs](../crates/agent-gateway/src/routes/workspaces.rs) | `POST /v1/workspaces`, `GET /v1/workspaces/tree`, `GET /v1/workspaces/search`, `GET /v1/workspaces/{id}`, `GET/PATCH /v1/workspaces/{id}/content`, `POST /v1/workspaces/{id}/move`, `POST /v1/workspaces/{id}/share`, `POST /v1/workspaces/{id}/unshare`, `DELETE /v1/workspaces/{id}` | Hierarchical workspace CRUD over `WorkspaceStore` + `WorkspaceContentStore`. `create` validates the name eagerly (returns 400) and, for conversations, writes an empty `.md` to MinIO after Qdrant upsert. `patch_content` writes MinIO first, then `index_content` updates `content_text`. `tree` lists immediate children via `list_accessible_children`. `search` runs token-based text_match across `name` ∪ `content_text` (limit defaults to 40, capped at 200). `delete` is recursive in Qdrant; for conversation leaves it best-effort deletes the MinIO object first. All mutating routes rate-limit; `Validation`/`NotFound`/other → `400`/`404`/`500`. |
+| [mod.rs](../crates/agent-gateway/src/routes/mod.rs) | `public_router()` (health + file download), `protected_router()` (chat, agent, capabilities, capability search, MCP, files upload, 5 thread routes, `/v1/audit`, 9 workspace routes). |
 
 #### UI Routes ([src/ui/](../crates/agent-gateway/src/ui))
 
 | File | Endpoint(s) | Purpose |
 |---|---|---|
 | [routes.rs](../crates/agent-gateway/src/ui/routes.rs) | — | `ui_router()` — assembles all UI routes. |
-| [handlers/auth.rs](../crates/agent-gateway/src/ui/handlers/auth.rs) | `GET /login`, `POST /login`, `GET /logout` | HMAC-signed session cookie (`conusai_session`). Login form: name + plan tier. |
+| [handlers/auth.rs](../crates/agent-gateway/src/ui/handlers/auth.rs) | `GET /login`, `POST /login`, `GET /logout` | HMAC-signed session cookie (`conusai_session`) — see [`ui/session.rs`](../crates/agent-gateway/src/ui/session.rs). Login form: name + plan tier. Cookie HMAC key from `UI_SESSION_KEY` (defaults to a dev-only secret). |
 | [handlers/app.rs](../crates/agent-gateway/src/ui/handlers/app.rs) | `GET /` | Renders `app.html` with greeting, recents, capabilities, user info. |
-| [handlers/chat.rs](../crates/agent-gateway/src/ui/handlers/chat.rs) | `POST /ui/stream` | SSE stream — accepts `{message, thread_id?}`, calls `agent::stream_agent` in-process, emits OpenAI SSE chunks with `tool_call_start`/`tool_call_result` events. |
+| [handlers/chat.rs](../crates/agent-gateway/src/ui/handlers/chat.rs) | `POST /ui/stream` | SSE stream — accepts `{message, thread_id?, model?, workspace_node_id?}`, builds a `ChatRequest` with `stream: true`, calls `agent::stream_agent` in-process. The `workspace_node_id` carries through to `routes/agent.rs` so the chat is bound to the active node, gets workspace context injection, and is re-indexed for search. |
 | [handlers/upload.rs](../crates/agent-gateway/src/ui/handlers/upload.rs) | `POST /ui/upload` | Multipart → MinIO. Returns `{id, filename, size, download_url}`. |
 | [handlers/invoice.rs](../crates/agent-gateway/src/ui/handlers/invoice.rs) | `POST /ui/extract-invoice` | Direct pipeline: token → MinIO bytes → `InvoicePipeline::extract_from_bytes` → `InvoiceData` JSON. No agent loop. |
+
+**Session bridge** ([`ui/session.rs`](../crates/agent-gateway/src/ui/session.rs)): `SessionUser { name, plan, exp }` is signed with HMAC-SHA256, base64url-encoded as `payload.sig`, and verified in constant time. `SessionUser::tenant_context()` produces a shared `TenantContext { tenant_id = "dev" (or `CONUSAI_UI_TENANT_ID`), user_id = Some(name), plan, workspace_root }` so `/v1/*` and `/ui/*` resolve to the same tenant + ACL space in dev mode. The `SessionUser` extractor auto-redirects to `/login` on missing/invalid/expired cookie. In production (`JWT_SECRET` set) the protected `/v1/*` routes ignore session cookies and require a Bearer JWT — see [`docs/tenant.md`](tenant.md).
 
 ---
 
@@ -327,16 +342,35 @@ HTTP request
         └─ protected_router (tenant middleware → ResolvedTenant)
               ├─ /v1/chat/completions      → routes/chat.rs    (Rig agent.prompt)
               ├─ /v1/agent/completions     → routes/agent.rs   (≤5-round tool loop)
+              │     ├─ if workspace_node_id: WorkspaceStore::get_accessible_node
+              │     │     ├─ resolve metadata.thread_id (lazy create + bind_thread)
+              │     │     └─ ContextBuilder::build_for_node → system preamble suffix
               │     └─ Anthropic /v1/messages
-              │           └─ on stop_reason=tool_use:
-              │                 CapabilityExecutor::invoke(card, tool, input, tenant)
-              │                   ├─ pipeline → InvoicePipeline
-              │                   ├─ wasm     → WasmCapabilityLoader
-              │                   └─ mcp      → McpAdapter
+              │           ├─ on stop_reason=tool_use:
+              │           │     CapabilityExecutor::invoke(card, tool, input, tenant)
+              │           │       ├─ pipeline → InvoicePipeline
+              │           │       ├─ wasm     → WasmCapabilityLoader
+              │           │       └─ mcp      → McpAdapter
+              │           └─ on stop_reason=end_turn:
+              │                 ├─ ThreadStore::append(assistant)
+              │                 └─ if workspace_node_id:
+              │                       WorkspaceStore::index_content(last 30 msgs)
               ├─ /v1/capabilities          → registry list
               ├─ /v1/capabilities/search   → Qdrant (fallback: local)
               ├─ /mcp                      → JSON-RPC dispatcher
-              └─ /v1/files (POST)          → MinIO upload + token
+              ├─ /v1/files (POST)          → MinIO upload + token
+              ├─ /v1/threads               → ThreadStore CRUD (5 routes)
+              ├─ /v1/audit                 → AuditStore::list (Qdrant order_by timestamp desc)
+              └─ /v1/workspaces            → WorkspaceStore + WorkspaceContentStore (9 routes)
+                    ├─ POST    create (folder/conversation; conversation also writes empty .md to MinIO)
+                    ├─ GET     tree?parent_id=
+                    ├─ GET     search?q=&limit=  (text_match + substring fallback)
+                    ├─ GET     {id}
+                    ├─ GET/PATCH {id}/content   (PATCH: MinIO write → index_content)
+                    ├─ POST    {id}/move         (patch_payload: parent_id + virtual_path)
+                    ├─ POST    {id}/share        (owner-only; patch_payload: shared_with)
+                    ├─ POST    {id}/unshare      (owner-only; patch_payload: shared_with)
+                    └─ DELETE  {id}              (recursive; MinIO best-effort cleanup for conversations)
 ```
 
 ### Tenant propagation
@@ -375,6 +409,17 @@ Per-tenant 60-second sliding window; plan-based limits (Free 10 / Pro 60 / Enter
 | GET | `/v1/threads/{thread_id}` | Get thread metadata |
 | GET | `/v1/threads/{thread_id}/messages` | Get messages ordered by seq |
 | POST | `/v1/threads/{thread_id}/messages` | Append a message |
+| GET | `/v1/audit?limit=` | List recent audit events for the calling tenant (newest first; default 50, max 500) |
+| POST | `/v1/workspaces` | Create folder or conversation (`{kind, name, parent_id?}`) |
+| GET | `/v1/workspaces/tree?parent_id=` | Immediate children visible to caller |
+| GET | `/v1/workspaces/search?q=&limit=` | Token-based text_match across `name` ∪ `content_text`, with substring fallback |
+| GET | `/v1/workspaces/{id}` | Single node (`NotFound` if not accessible) |
+| GET | `/v1/workspaces/{id}/content` | Read markdown body from MinIO |
+| PATCH | `/v1/workspaces/{id}/content` | Save body — MinIO write then `index_content` Qdrant payload SET |
+| POST | `/v1/workspaces/{id}/move` | Reparent (`{new_parent_id?, new_parent_path?}`) |
+| POST | `/v1/workspaces/{id}/share` | Owner-only — append a `user_id` to `shared_with` |
+| POST | `/v1/workspaces/{id}/unshare` | Owner-only — remove a `user_id` from `shared_with` |
+| DELETE | `/v1/workspaces/{id}` | Recursive (worklist); best-effort MinIO cleanup for conversations |
 
 ### Sample payloads
 
@@ -461,9 +506,9 @@ curl http://localhost:9000/minio/health/live
 
 ## 10. Tests & Quality
 
-- **Common:** path traversal, safe joins, MCP serialization, `ApiError`, limit invariants, thread/message/tool-call serde roundtrips.
-- **agent-core:** registry register/get/tag-search; manifest embedding text; nonexistent-dir handling; WASM `ping` execution; `QdrantThreadStore` point-id determinism + collection namespacing.
-- **Total:** 19 tests passing.
+- **Common (22 tests):** path traversal, safe joins, MCP serialization, `ApiError`, limit invariants, thread/message/tool-call serde roundtrips, `WorkspaceNode` serde + every `validate_name` branch (empty, >255, `/`, `..`, leading `.`, `.md` requirement, happy path), `join_virtual_path` root + nested, `effective_user_id` dev-mode mapping.
+- **agent-core (8 tests):** registry register/get/tag-search; manifest embedding text; nonexistent-dir handling; WASM `ping` execution; `QdrantThreadStore` point-id determinism + collection namespacing.
+- **Total:** 30 lib tests passing (`cargo test --workspace`). Integration tests under `crates/agent-core/tests/` and `crates/agent-gateway/tests/` exercise live Qdrant; not counted in the lib total.
 - **Quality gates:** `cargo clippy --workspace -- -D warnings`, `cargo fmt --all`.
 
 ---
@@ -496,9 +541,9 @@ curl http://localhost:9000/minio/health/live
 - **Version:** 0.1.0
 - **State:** operational, ~95 % verified end-to-end (per [verify.md](../verify.md)).
 
-**Implemented:** multitenancy, invoice pipeline, YAML capability discovery, OpenAI-compatible chat, SSE streaming, tool-calling agent loop (blocking + streaming), MCP JSON-RPC, Qdrant semantic search, MinIO file storage, WASM execution, Google Workspace manifest, evals framework (invoice + OCR + threads), Jaeger/OTLP tracing, per-tenant rate limiting, persistent thread memory (Qdrant-backed), thread REST API (5 endpoints), thread-aware agent loop with auto-summarisation, `gen_ai.*` OTel span attributes, W3C traceparent propagation, native filesystem + cargo tools, cargo-chef Docker caching.
+**Implemented:** multitenancy, invoice + contract pipelines, YAML capability discovery, OpenAI-compatible chat, SSE streaming, tool-calling agent loop (blocking + streaming), MCP JSON-RPC, Qdrant semantic capability search, MinIO file storage, WASM execution, Google Workspace manifest, evals framework (invoice + OCR + threads), Jaeger/OTLP tracing, per-tenant rate limiting, persistent thread memory (Qdrant-backed) with auto-summarisation, thread REST API (5 endpoints), `gen_ai.*` OTel span attributes, W3C traceparent propagation, native filesystem + cargo tools, cargo-chef Docker caching, **hierarchical workspace** (folders + conversations as `.md` in MinIO; per-tenant Qdrant index with text indexes on `name` + `content_text`; private-by-default per-user ACL with explicit per-node sharing — see [ADR 005](adr/005-workspace-access-control.md)), **per-node thread binding** (lazy `bind_thread` from agent route), **chat-content indexing** (last 30 messages re-indexed into `content_text` after every turn), **workspace context injection** (`ContextBuilder` walks ancestor `CONTEXT.md` / `README.md`), **append-only audit log** (`audit_{tenant_id}` Qdrant collection + `GET /v1/audit`), **workspace-first sidebar redesign** (Workspace + search + tree, Recents, Capabilities, user chip), `metrics` module with OTel meters for Qdrant + LLM operations.
 
-**Reserved / future:** `Docker` capability kind, external MCP server federation, multi-instance deployment, persistent audit log, billing/quota enforcement, admin dashboard.
+**Reserved / future:** `Docker` capability kind, external MCP server federation, multi-instance deployment, audit retention/compaction, billing/quota enforcement, admin dashboard, multi-layer context budgeting (plan §7), live document mode (plan §8), agent-callable workspace toolkit (plan §9), real workspace embeddings (vectors are still 4-dim placeholders — see plan §9 / future ADR 006).
 
 ---
 
@@ -511,27 +556,31 @@ conusai-platform/
 ├── docker-compose.yml               # qdrant, minio, gateway, jaeger, otel-collector
 ├── start.sh                         # orchestration entrypoint
 ├── rust-toolchain.toml              # stable + wasm32-wasip1
-├── paln.md / tenant.md / verify.md  # design + verification docs
+├── docs/                            # arch.md, plan.md, tenant.md, verify.md, frontend.md, ui-design.md, adr/
 │
 ├── crates/
 │   ├── common/        src/{lib,error,config/mod,telemetry,http_client,mcp,wasm,limits,path_safety,eval,
-│   │                       memory/{mod,thread,store,tests}}.rs
+│   │                       audit,metrics,
+│   │                       memory/{mod,thread,store,workspace,tests}}.rs
 │   ├── agent-core/    src/{lib,
 │   │                       agent/{mod,builder,runtime},
 │   │                       capabilities/{mod,provider,manifest,card,registry,discovery,
 │   │                                     embedding,tool_executor,mcp_adapter,wasm_loader},
 │   │                       context/{mod,tenant},
-│   │                       memory/{mod,qdrant_store},
+│   │                       memory/{mod,qdrant_store,qdrant_workspace_store,
+│   │                               minio_workspace_content,context_builder,qdrant_audit},
 │   │                       tools/{mod,fs_tools,cargo_tool,native_capability},
-│   │                       pipelines/{mod,invoice}}.rs
+│   │                       pipelines/{mod,invoice,contract}}.rs
 │   ├── agent-gateway/ src/{main,state,
 │   │                       mw/{mod,tenant,trace,rate_limit},
-│   │                       routes/{mod,health,chat,agent,capabilities,search,mcp,files,threads},
-│   │                       ui/{mod,routes,
+│   │                       routes/{mod,health,chat,agent,capabilities,search,mcp,files,
+│   │                               threads,audit,workspaces},
+│   │                       ui/{mod,routes,session,view,
 │   │                           handlers/{mod,auth,app,chat,upload,invoice}}}.rs
 │   │                   assets/
-│   │                       css/style.css          ← design system (~950 lines)
-│   │                       js/app.js              ← streaming + composer (~620 lines)
+│   │                       css/style.css          ← design system + workspace styles (~1320 lines)
+│   │                       js/app.js              ← streaming + composer + ws:select handler (~660 lines)
+│   │                       js/workspace.js        ← tree + search + dialogs + ctx menu (~750 lines)
 │   │                       icons/icons.svg        ← SVG sprite
 │   │                       images/{favicon.png,conusai-logo-{light,dark}mode.png}
 │   │                   templates/{app,login}.html
@@ -558,5 +607,13 @@ conusai-platform/
 │   ├── docker-verify.sh
 │   └── otel-collector.yaml
 └── docs/
-    └── arch.md                      # this document
+    ├── arch.md                      # this document — master index
+    ├── plan.md                      # workspace implementation plan + phase status
+    ├── tenant.md                    # multitenancy design
+    ├── verify.md                    # end-to-end verification plan
+    ├── frontend.md                  # frontend implementation + sidebar redesign
+    ├── ui-design.md                 # design tokens + component recipes
+    ├── improvements.md              # historical v0.3 roadmap (superseded)
+    └── adr/
+        └── 005-workspace-access-control.md
 ```
