@@ -8,7 +8,7 @@ const themeIcon = document.getElementById('theme-icon');
 function setTheme(t) {
   html.setAttribute('data-theme', t);
   localStorage.setItem('conusai-theme', t);
-  if (themeIcon) themeIcon.setAttribute('href', t === 'forge' ? '/assets/icons.svg#i-sun' : '/assets/icons.svg#i-moon');
+  if (themeIcon) themeIcon.setAttribute('href', t === 'forge' ? '/assets/icons/icons.svg#i-sun' : '/assets/icons/icons.svg#i-moon');
   if (themeBtn) themeBtn.setAttribute('aria-pressed', t === 'forge' ? 'true' : 'false');
 }
 setTheme(localStorage.getItem('conusai-theme') || 'paper');
@@ -25,8 +25,12 @@ let activeThreadId = null;
 let inFlight = false;
 
 function showChatView() {
+  if (!chatView?.hasAttribute('hidden')) return;
   greetingScreen?.setAttribute('hidden', '');
   chatView?.removeAttribute('hidden');
+  chatView?.classList.remove('view-fade-in');
+  void chatView?.offsetWidth; // reflow
+  chatView?.classList.add('view-fade-in');
 }
 function showGreeting() {
   chatView?.setAttribute('hidden', '');
@@ -117,8 +121,22 @@ async function streamChat(prompt) {
   appendMessage('user', prompt);
 
   let aiEl = null;
+  // Show thinking indicator until first token / tool event arrives
   let cursorEl = null;
+  let thinkingEl = null;
+  const showThinking = () => {
+    if (thinkingEl) return;
+    thinkingEl = document.createElement('div');
+    thinkingEl.className = 'message ai thinking';
+    thinkingEl.innerHTML = '<span class="thinking-dots" aria-label="Thinking"><i></i><i></i><i></i></span>';
+    messagesEl.appendChild(thinkingEl);
+    scrollIfNear();
+  };
+  const clearThinking = () => {
+    if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; }
+  };
   const ensureAi = () => {
+    clearThinking();
     if (!aiEl || !aiEl.isConnected || aiEl !== messagesEl.lastElementChild) {
       if (cursorEl) cursorEl.remove();
       aiEl = appendMessage('ai', '');
@@ -140,6 +158,7 @@ async function streamChat(prompt) {
   const toolNameById = new Map();
 
   try {
+    showThinking();
     const res = await fetch('/ui/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -181,6 +200,7 @@ async function streamChat(prompt) {
             if (cursorEl) el.appendChild(cursorEl); // keep cursor at end
             scrollIfNear();
           } else if (delta.tool_call_start) {
+            clearThinking();
             sealAi();
             const { id, name } = delta.tool_call_start;
             toolCardById.set(id, appendToolCard(name));
@@ -211,6 +231,7 @@ async function streamChat(prompt) {
     el.classList.add('error');
     window.__toast?.(`Stream failed: ${e.message}`, 'error');
   } finally {
+    clearThinking();
     sealAi();
     inFlight = false;
   }
@@ -342,7 +363,7 @@ const INVOICE_EXTS = /\.(png|jpg|jpeg|pdf)$/i;
 const INVOICE_NAMES = /invoice|receipt|bill|facture/i;
 
 function isInvoiceFile(a) {
-  return INVOICE_EXTS.test(a.filename);
+  return INVOICE_EXTS.test(a.filename) && INVOICE_NAMES.test(a.filename);
 }
 
 function renderAttachments() {
@@ -357,12 +378,12 @@ function renderAttachments() {
       const chip = document.createElement('span');
       chip.className = 'attachment';
       chip.innerHTML = `
-        <span class="attachment-thumb"><svg class="icon"><use href="/assets/icons.svg#i-file"/></svg></span>
+        <span class="attachment-thumb"><svg class="icon"><use href="/assets/icons/icons.svg#i-file"/></svg></span>
         <span class="attachment-name">${escapeHtml(a.filename)}</span>
         <span class="attachment-size">${fmtSize(a.size)}</span>
         ${isInvoiceFile(a) ? `<button type="button" class="attachment-extract" title="Extract invoice data directly (no AI chat)">Extract invoice</button>` : ''}
         <button type="button" class="attachment-remove" aria-label="Remove">
-          <svg class="icon"><use href="/assets/icons.svg#i-x"/></svg>
+          <svg class="icon"><use href="/assets/icons/icons.svg#i-x"/></svg>
         </button>
       `;
       chip.querySelector('.attachment-remove').addEventListener('click', () => {

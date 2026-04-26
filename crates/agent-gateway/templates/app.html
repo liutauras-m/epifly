@@ -7,34 +7,28 @@
 <div class="app">
   <aside class="sidebar" aria-label="Workshop navigation">
     <div class="brand">
-      <svg class="sigil" viewBox="0 0 32 32" fill="none" stroke="var(--ember)" stroke-width="1.5" stroke-linecap="square">
-        <path d="M16 3 L16 13"/><path d="M16 19 L16 29"/>
-        <path d="M3 16 L13 16"/><path d="M19 16 L29 16"/>
-        <path d="M7 7 L13 13"/><path d="M19 19 L25 25"/>
-        <path d="M25 7 L19 13"/><path d="M13 19 L7 25"/>
-        <circle cx="16" cy="16" r="2.5" fill="var(--ember)" stroke="none"/>
-      </svg>
-      <span class="brand-name">ConusAI</span>
+      <img class="brand-logo brand-logo--light" src="/assets/images/conusai-logo-lightmode.png" alt="ConusAI">
+      <img class="brand-logo brand-logo--dark"  src="/assets/images/conusai-logo-darkmode.png"  alt="ConusAI">
     </div>
 
     <nav class="nav-section" aria-label="Primary">
       <div class="nav-item" data-action="new-chat">
-        <svg class="icon"><use href="/assets/icons.svg#i-plus"/></svg>
+        <svg class="icon"><use href="/assets/icons/icons.svg#i-plus"/></svg>
         New chat
       </div>
       <div class="nav-item" data-action="search">
-        <svg class="icon"><use href="/assets/icons.svg#i-search"/></svg>
+        <svg class="icon"><use href="/assets/icons/icons.svg#i-search"/></svg>
         Search
       </div>
     </nav>
 
     <nav class="nav-section" aria-label="Sections">
-      <div class="nav-item"><svg class="icon"><use href="/assets/icons.svg#i-chats"/></svg>Chats</div>
-      <div class="nav-item"><svg class="icon"><use href="/assets/icons.svg#i-projects"/></svg>Projects</div>
-      <div class="nav-item"><svg class="icon"><use href="/assets/icons.svg#i-code"/></svg>Code</div>
-      <div class="nav-item"><svg class="icon"><use href="/assets/icons.svg#i-customize"/></svg>Customize</div>
-      <div class="nav-item"><svg class="icon"><use href="/assets/icons.svg#i-design"/></svg>Design</div>
-      <div class="nav-item"><svg class="icon"><use href="/assets/icons.svg#i-more"/></svg>More</div>
+      <div class="nav-item"><svg class="icon"><use href="/assets/icons/icons.svg#i-chats"/></svg>Chats</div>
+      <div class="nav-item"><svg class="icon"><use href="/assets/icons/icons.svg#i-projects"/></svg>Projects</div>
+      <div class="nav-item"><svg class="icon"><use href="/assets/icons/icons.svg#i-code"/></svg>Code</div>
+      <div class="nav-item"><svg class="icon"><use href="/assets/icons/icons.svg#i-customize"/></svg>Customize</div>
+      <div class="nav-item"><svg class="icon"><use href="/assets/icons/icons.svg#i-design"/></svg>Design</div>
+      <div class="nav-item"><svg class="icon"><use href="/assets/icons/icons.svg#i-more"/></svg>More</div>
     </nav>
 
     <div class="nav-section">
@@ -83,36 +77,28 @@
       </button>
       <div style="flex:1"></div>
       <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme" aria-pressed="false">
-        <svg class="icon"><use href="/assets/icons.svg#i-sun" id="theme-icon"/></svg>
+        <svg class="icon"><use href="/assets/icons/icons.svg#i-sun" id="theme-icon"/></svg>
       </button>
       <button class="icon-btn" aria-label="Help">
-        <svg class="icon"><use href="/assets/icons.svg#i-help"/></svg>
+        <svg class="icon"><use href="/assets/icons/icons.svg#i-help"/></svg>
       </button>
     </div>
     <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
 
     <section class="greeting-screen" id="greeting-screen">
       <div class="greeting">
-        <svg class="sigil" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square">
-          <g class="ember-spark">
-            <path d="M16 3 L16 13"/><path d="M16 19 L16 29"/>
-            <path d="M3 16 L13 16"/><path d="M19 16 L29 16"/>
-            <path d="M7 7 L13 13"/><path d="M19 19 L25 25"/>
-            <path d="M25 7 L19 13"/><path d="M13 19 L7 25"/>
-            <circle cx="16" cy="16" r="2.5" fill="currentColor" stroke="none"/>
-          </g>
-        </svg>
+        <img class="sigil" src="/assets/images/favicon.png" alt="" aria-hidden="true">
         <h1 class="greeting-text">{{ greeting }}, {{ user_first_name }}</h1>
       </div>
 
       {% include "partials/composer.html" %}
 
       <div class="chips" id="chips">
-        <button class="chip" data-prompt="Help me write code that "><svg class="icon"><use href="/assets/icons.svg#i-code"/></svg>Code</button>
-        <button class="chip" data-prompt="Help me write "><svg class="icon"><use href="/assets/icons.svg#i-write"/></svg>Write</button>
-        <button class="chip" data-prompt="Teach me about "><svg class="icon"><use href="/assets/icons.svg#i-learn"/></svg>Learn</button>
-        <button class="chip" data-prompt="Help me with "><svg class="icon"><use href="/assets/icons.svg#i-life"/></svg>Life stuff</button>
-        <button class="chip" data-prompt="Pick the best approach for "><svg class="icon"><use href="/assets/icons.svg#i-spark"/></svg>Operator's choice</button>
+        <button class="chip" data-prompt="Help me write code that "><svg class="icon"><use href="/assets/icons/icons.svg#i-code"/></svg>Code</button>
+        <button class="chip" data-prompt="Help me write "><svg class="icon"><use href="/assets/icons/icons.svg#i-write"/></svg>Write</button>
+        <button class="chip" data-prompt="Teach me about "><svg class="icon"><use href="/assets/icons/icons.svg#i-learn"/></svg>Learn</button>
+        <button class="chip" data-prompt="Help me with "><svg class="icon"><use href="/assets/icons/icons.svg#i-life"/></svg>Life stuff</button>
+        <button class="chip" data-prompt="Pick the best approach for "><svg class="icon"><use href="/assets/icons/icons.svg#i-spark"/></svg>Operator's choice</button>
       </div>
     </section>
 
@@ -125,6 +111,6 @@
   </main>
 </div>
 
-<script src="/assets/app.js" type="module"></script>
+<script src="/assets/js/app.js" type="module"></script>
 </body>
 </html>
