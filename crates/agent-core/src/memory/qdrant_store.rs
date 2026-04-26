@@ -1,3 +1,4 @@
+#![allow(clippy::items_after_test_module)]
 /// QdrantThreadStore — persists Thread + Message documents in Qdrant.
 ///
 /// Data layout (per tenant, single collection `threads_{tenant_id}`):
@@ -14,7 +15,9 @@ use common::memory::thread::{Message, Thread};
 use reqwest::Client;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tracing::{info, instrument, warn};
+use common::metrics;
+use std::time::Instant;
+use tracing::{Span, info, instrument, warn};
 use ulid::Ulid;
 
 const VECTOR_DIM: usize = 4;
@@ -116,8 +119,12 @@ impl QdrantThreadStore {
         Ok(())
     }
 
+    #[instrument(skip(self, point), fields(db.system = "qdrant", db.operation = "upsert", db.collection = tracing::field::Empty, error.type = tracing::field::Empty))]
     async fn upsert_point(&self, tenant_id: &str, point: Value) -> anyhow::Result<()> {
         let col = self.collection(tenant_id);
+        Span::current().record("db.collection", col.as_str());
+        let labels = [metrics::kv("operation", "upsert"), metrics::kv("collection", col.as_str())];
+        let t0 = Instant::now();
         let url = format!("{}/collections/{}/points", self.base_url, col);
         let res = self
             .http
@@ -125,13 +132,17 @@ impl QdrantThreadStore {
             .json(&json!({ "points": [point] }))
             .send()
             .await?;
+        metrics::qdrant_duration_ms().record(t0.elapsed().as_secs_f64() * 1000.0, &labels);
         if !res.status().is_success() {
             let body = res.text().await.unwrap_or_default();
+            metrics::qdrant_errors().add(1, &labels);
+            Span::current().record("error.type", body.as_str());
             anyhow::bail!("Qdrant upsert failed: {body}");
         }
         Ok(())
     }
 
+    #[instrument(skip(self, filter), fields(db.system = "qdrant", db.operation = "scroll", db.collection = tracing::field::Empty, error.type = tracing::field::Empty))]
     async fn scroll_filter(
         &self,
         tenant_id: &str,
@@ -139,6 +150,9 @@ impl QdrantThreadStore {
         limit: usize,
     ) -> anyhow::Result<Vec<Value>> {
         let col = self.collection(tenant_id);
+        Span::current().record("db.collection", col.as_str());
+        let labels = [metrics::kv("operation", "scroll"), metrics::kv("collection", col.as_str())];
+        let t0 = Instant::now();
         let url = format!("{}/collections/{}/points/scroll", self.base_url, col);
         let res = self
             .http
@@ -151,9 +165,12 @@ impl QdrantThreadStore {
             }))
             .send()
             .await?;
+        metrics::qdrant_duration_ms().record(t0.elapsed().as_secs_f64() * 1000.0, &labels);
 
         if !res.status().is_success() {
             let body = res.text().await.unwrap_or_default();
+            metrics::qdrant_errors().add(1, &labels);
+            Span::current().record("error.type", body.as_str());
             anyhow::bail!("Qdrant scroll failed: {body}");
         }
 

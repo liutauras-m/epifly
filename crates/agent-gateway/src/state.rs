@@ -1,10 +1,10 @@
 use crate::mw::RateLimiter;
 use agent_core::{
-    CapabilityDiscovery, CapabilityRegistry, QdrantAuditStore, QdrantThreadStore,
-    native_capability_card,
+    CapabilityDiscovery, CapabilityRegistry, MinioWorkspaceContent, QdrantAuditStore,
+    QdrantThreadStore, QdrantWorkspaceStore, native_capability_card,
 };
 use common::audit::AuditStore;
-use common::memory::ThreadStore;
+use common::memory::{ThreadStore, WorkspaceContentStore, WorkspaceStore};
 use object_store::{ObjectStore, aws::AmazonS3Builder};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -24,6 +24,10 @@ pub struct AppState {
     pub thread_store: Arc<dyn ThreadStore>,
     /// Append-only audit log backed by Qdrant
     pub audit_store: Arc<dyn AuditStore>,
+    /// Workspace node index (Qdrant)
+    pub workspace_store: Arc<dyn WorkspaceStore>,
+    /// Workspace markdown body store (MinIO)
+    pub workspace_content: Arc<dyn WorkspaceContentStore>,
 }
 
 impl AppState {
@@ -38,6 +42,15 @@ impl AppState {
         let file_store = init_file_store();
         let thread_store = Arc::new(QdrantThreadStore::new(&qdrant_url));
         let audit_store = Arc::new(QdrantAuditStore::new(&qdrant_url));
+        let workspace_store = Arc::new(QdrantWorkspaceStore::new(&qdrant_url));
+
+        let workspace_content: Arc<dyn WorkspaceContentStore> = match &file_store {
+            Some(fs) => Arc::new(MinioWorkspaceContent::new(Arc::clone(fs))),
+            None => {
+                warn!("file store not configured — workspace content (MinIO) will be unavailable");
+                Arc::new(NoopWorkspaceContent)
+            }
+        };
 
         Ok(Self {
             registry: Mutex::new(registry),
@@ -47,7 +60,25 @@ impl AppState {
             presigned_tokens: Mutex::new(HashMap::new()),
             thread_store,
             audit_store,
+            workspace_store,
+            workspace_content,
         })
+    }
+}
+
+/// Fallback content store used when MinIO is not configured.
+struct NoopWorkspaceContent;
+
+#[async_trait::async_trait]
+impl WorkspaceContentStore for NoopWorkspaceContent {
+    async fn read(&self, _: &str, _: &str) -> anyhow::Result<String> {
+        anyhow::bail!("workspace content store not configured (MINIO_ENDPOINT missing)")
+    }
+    async fn write(&self, _: &str, _: &str, _: &str) -> anyhow::Result<()> {
+        anyhow::bail!("workspace content store not configured (MINIO_ENDPOINT missing)")
+    }
+    async fn delete(&self, _: &str, _: &str) -> anyhow::Result<()> {
+        anyhow::bail!("workspace content store not configured (MINIO_ENDPOINT missing)")
     }
 }
 

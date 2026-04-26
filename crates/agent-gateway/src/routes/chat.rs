@@ -29,6 +29,8 @@ pub struct ChatRequest {
     pub stream: Option<bool>,
     /// Optional ULID — when provided, loads history from Qdrant and persists this turn.
     pub thread_id: Option<String>,
+    /// Optional workspace node ULID — when provided, injects folder+conversation context.
+    pub workspace_node_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

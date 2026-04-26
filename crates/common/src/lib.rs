@@ -6,6 +6,7 @@ pub mod http_client;
 pub mod limits;
 pub mod mcp;
 pub mod memory;
+pub mod metrics;
 pub mod path_safety;
 pub mod telemetry;
 pub mod wasm;
@@ -54,7 +55,7 @@ mod tests {
 
     #[test]
     fn test_limits_sanity() {
-        assert!(limits::MAX_PROMPT_TOKENS > 0);
-        assert!(limits::MAX_WASM_SIZE_BYTES < limits::MAX_CAPABILITY_SIZE_BYTES);
+        const { assert!(limits::MAX_PROMPT_TOKENS > 0) };
+        const { assert!(limits::MAX_WASM_SIZE_BYTES < limits::MAX_CAPABILITY_SIZE_BYTES) };
     }
 }

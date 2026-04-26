@@ -19,6 +19,12 @@ pub enum ConusAiError {
     #[error("storage error: {0}")]
     Storage(String),
 
+    #[error("validation error: {0}")]
+    Validation(String),
+
+    #[error("not found: {0}")]
+    NotFound(String),
+
     #[error("api error {status}: {message}")]
     Api { status: u16, message: String },
 

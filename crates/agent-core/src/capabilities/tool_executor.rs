@@ -6,8 +6,11 @@ use crate::context::tenant::TenantContext;
 use crate::pipelines::contract::ContractPipeline;
 use crate::pipelines::invoice::InvoicePipeline;
 use crate::tools::{cargo_tool, fs_tools};
+use common::metrics;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
+use tracing::{Span, instrument};
 
 pub struct CapabilityExecutor;
 
@@ -16,7 +19,44 @@ impl CapabilityExecutor {
     ///
     /// Handles: invoice-processing, ocr-service (pipeline), wasm-ping (wasmtime).
     /// File-storage is handled in the gateway (requires MinIO client).
+    #[instrument(
+        skip(card, input, tenant),
+        fields(
+            capability.name  = %card.manifest.name,
+            tool.name        = tool_name,
+            tool.kind        = ?card.manifest.kind,
+            error.type       = tracing::field::Empty,
+        )
+    )]
     pub async fn invoke(
+        card: &CapabilityCard,
+        tool_name: &str,
+        input: &Value,
+        tenant: Option<&TenantContext>,
+    ) -> anyhow::Result<Value> {
+        let t0 = Instant::now();
+        let cap = card.manifest.name.as_str();
+        let labels = [
+            metrics::kv("capability", cap),
+            metrics::kv("tool", tool_name),
+        ];
+        metrics::tool_invocations().add(1, &labels);
+
+        let result = Self::dispatch(card, tool_name, input, tenant).await;
+
+        let elapsed = t0.elapsed().as_secs_f64() * 1000.0;
+        metrics::tool_duration_ms().record(elapsed, &labels);
+
+        if let Err(ref e) = result {
+            metrics::tool_errors().add(1, &labels);
+            metrics::record_error(&Span::current(), e);
+        }
+
+        result
+    }
+
+    /// Internal dispatch — called from `invoke` after metrics setup.
+    async fn dispatch(
         card: &CapabilityCard,
         tool_name: &str,
         input: &Value,

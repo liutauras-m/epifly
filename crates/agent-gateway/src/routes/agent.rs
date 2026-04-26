@@ -7,6 +7,7 @@
 /// Pass `"thread_id": "<ulid>"` to load history from Qdrant and persist the turn.
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
+use agent_core::ContextBuilder;
 use agent_core::capabilities::tool_executor::CapabilityExecutor;
 use axum::{
     Extension, Json,
@@ -19,13 +20,16 @@ use axum::{
 };
 use chrono::Utc;
 use common::memory::thread::Message;
+use common::memory::workspace::effective_user_id;
 use futures::StreamExt;
 use serde_json::{Value, json};
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
+use common::metrics;
 use tracing::{Span, info, instrument, warn};
+use ulid::Ulid as _Ulid;
 use uuid::Uuid;
 
 const MAX_ROUNDS: usize = 5;
@@ -98,13 +102,66 @@ async fn build_ctx(
 
     Span::current().record("gen_ai.request.model", model_id.as_str());
 
-    let thread_id = req.thread_id.clone();
+    let tenant_id = tenant.0.tenant_id.clone();
+    let thread_store = Arc::clone(&state.thread_store);
+
+    // Resolve effective thread_id:
+    //   1. Explicit `thread_id` on the request always wins.
+    //   2. Otherwise, if `workspace_node_id` is provided, look up the node's
+    //      `metadata.thread_id` binding; create one lazily on first message.
+    //   3. Else, no thread (transient turn).
+    let thread_id = if let Some(tid) = req.thread_id.clone() {
+        Some(tid)
+    } else if let Some(ref node_id_str) = req.workspace_node_id {
+        match node_id_str.parse::<_Ulid>() {
+            Ok(node_id) => {
+                let user = effective_user_id(tenant.0.user_id.as_deref()).to_string();
+                match state
+                    .workspace_store
+                    .get_accessible_node(&tenant_id, &user, node_id)
+                    .await
+                {
+                    Ok(node) => {
+                        let bound = node
+                            .metadata
+                            .get("thread_id")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        match bound {
+                            Some(tid) => Some(tid),
+                            None => match thread_store.create(&tenant_id, vec![]).await {
+                                Ok(t) => {
+                                    if let Err(e) = state
+                                        .workspace_store
+                                        .bind_thread(&tenant_id, node_id, &t.id)
+                                        .await
+                                    {
+                                        warn!(error = %e, "failed to bind thread to node");
+                                    }
+                                    Some(t.id)
+                                }
+                                Err(e) => {
+                                    warn!(error = %e, "failed to create node thread");
+                                    None
+                                }
+                            },
+                        }
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "node not accessible; skipping thread binding");
+                        None
+                    }
+                }
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
     if let Some(ref tid) = thread_id {
         Span::current().record("thread_id", tid.as_str());
     }
-
-    let tenant_id = tenant.0.tenant_id.clone();
-    let thread_store = Arc::clone(&state.thread_store);
 
     // Load thread history
     let mut history: Vec<Value> = if let Some(ref tid) = thread_id {
@@ -147,7 +204,7 @@ async fn build_ctx(
         .find(|m| m.role == "system")
         .map(|m| m.content.clone());
 
-    let effective_system = if let Some(ref tid) = thread_id {
+    let base_system = if let Some(ref tid) = thread_id {
         let summary = thread_store
             .get(&tenant_id, tid)
             .await
@@ -162,6 +219,29 @@ async fn build_ctx(
         }
     } else {
         system_content
+    };
+
+    // Inject workspace context when workspace_node_id is provided
+    let effective_system = if let Some(ref node_id_str) = req.workspace_node_id {
+        if let Ok(node_id) = node_id_str.parse::<_Ulid>() {
+            let ctx_builder = ContextBuilder::new(
+                Arc::clone(&state.workspace_store),
+                Arc::clone(&state.workspace_content),
+            );
+            let ws_ctx = ctx_builder.build_for_node(&tenant.0, node_id, 6000).await;
+            if ws_ctx.is_empty() {
+                base_system
+            } else {
+                Some(match base_system {
+                    Some(existing) => format!("{existing}\n\n{ws_ctx}"),
+                    None => ws_ctx,
+                })
+            }
+        } else {
+            base_system
+        }
+    } else {
+        base_system
     };
 
     // Persist incoming user messages to thread
@@ -266,6 +346,12 @@ async fn blocking_agent(
         if stop_reason != "tool_use" {
             Span::current().record("gen_ai.usage.input_tokens", total_input);
             Span::current().record("gen_ai.usage.output_tokens", total_output);
+
+            // Emit metrics for this completion turn.
+            let model_label = [metrics::kv("model", model_id.as_str())];
+            metrics::llm_requests().add(1, &model_label);
+            metrics::llm_input_tokens().record(total_input, &model_label);
+            metrics::llm_output_tokens().record(total_output, &model_label);
 
             let text = content
                 .iter()
@@ -573,6 +659,12 @@ pub async fn stream_agent(
                         .await;
                     maybe_set_title(&thread_store, &tenant_id, tid, &full_assistant_text).await;
                 }
+
+                // Emit metrics for streaming completion.
+                let model_label = [metrics::kv("model", model_id.as_str())];
+                metrics::llm_requests().add(1, &model_label);
+                metrics::llm_input_tokens().record(total_input, &model_label);
+                metrics::llm_output_tokens().record(total_output, &model_label);
 
                 // Final chunk with usage
                 let _ = tx

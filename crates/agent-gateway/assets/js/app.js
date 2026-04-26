@@ -1,4 +1,5 @@
 // ConusAI · Foundry client.
+import { getActiveNodeId } from '/assets/js/workspace.js';
 
 // ── Theme toggle ───────────────────────────────────────────────────────────
 const html = document.documentElement;
@@ -38,6 +39,39 @@ function showGreeting() {
   if (messagesEl) messagesEl.innerHTML = '';
   activeThreadId = null;
 }
+
+// ── Per-node thread switching ─────────────────────────────────────────────
+// Each conversation node owns its own persistent thread. Selecting a node
+// swaps the active thread and rehydrates its message history. If the node
+// has no binding yet (metadata.thread_id absent) we leave activeThreadId null;
+// the server will create + bind on the first message of the turn.
+async function loadThreadHistory(threadId) {
+  if (!threadId) return;
+  try {
+    const res = await fetch(`/v1/threads/${threadId}/messages`);
+    if (!res.ok) return;
+    const { data } = await res.json();
+    for (const m of data) {
+      const role = m.role === 'assistant' ? 'ai' : m.role;
+      appendMessage(role, m.content);
+    }
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  } catch (_) {}
+}
+
+document.addEventListener('ws:select', async (e) => {
+  if (inFlight) return;
+  const { threadId } = e.detail || {};
+  activeThreadId = threadId || null;
+  if (messagesEl) messagesEl.innerHTML = '';
+  if (threadId) {
+    showChatView();
+    await loadThreadHistory(threadId);
+  } else {
+    // Fresh node, no binding yet — show empty chat surface ready for first turn.
+    showChatView();
+  }
+});
 
 function nearBottom() {
   const m = messagesEl;
@@ -162,7 +196,7 @@ async function streamChat(prompt) {
     const res = await fetch('/ui/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: prompt, thread_id: activeThreadId }),
+      body: JSON.stringify({ message: prompt, thread_id: activeThreadId, workspace_node_id: getActiveNodeId() }),
     });
     if (!res.ok || !res.body) {
       const el = ensureAi();
@@ -608,6 +642,20 @@ function toast(msg, kind = 'info') {
   host.appendChild(el);
   setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 300); }, 3500);
 }
+// ── Recents — click a recent thread to reopen it ─────────────────────────
+document.querySelectorAll('.recent[data-thread-id]').forEach((el) => {
+  el.addEventListener('click', async () => {
+    if (inFlight) return;
+    const threadId = el.dataset.threadId;
+    activeThreadId = threadId;
+    // Deselect any active workspace node highlight
+    document.querySelectorAll('[aria-current="page"]').forEach((n) => n.removeAttribute('aria-current'));
+    if (messagesEl) messagesEl.innerHTML = '';
+    showChatView();
+    await loadThreadHistory(threadId);
+  });
+});
+
 window.__toast = toast;
 window.__extractInvoice = extractInvoice;
 window.__pendingAttachments = pendingAttachments;

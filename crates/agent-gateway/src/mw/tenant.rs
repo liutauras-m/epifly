@@ -60,13 +60,29 @@ pub async fn extract_tenant(
             }
         }
     } else {
-        // ── Dev mode: JWT_SECRET unset. Accept X-Tenant-ID, otherwise default.
-        let tenant = if let Some(tid) = req
+        // ── Dev mode: JWT_SECRET unset. Accept X-Tenant-ID, otherwise prefer the
+        // UI session cookie so /v1/* and /ui/* share the same tenant + user_id.
+        let header_tid = req
             .headers()
             .get("X-Tenant-ID")
             .and_then(|v| v.to_str().ok())
-        {
+            .map(String::from);
+        let session = req
+            .headers()
+            .get(header::COOKIE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|cookies| {
+                cookies.split(';').find_map(|c| {
+                    let c = c.trim();
+                    c.strip_prefix("conusai_session=")
+                        .and_then(crate::ui::session::verify)
+                })
+            });
+
+        let tenant = if let Some(tid) = header_tid {
             TenantContext::new(tid, None, PlanTier::Free, workspace_root)
+        } else if let Some(user) = session {
+            user.tenant_context()
         } else {
             TenantContext::new("dev", None, PlanTier::Enterprise, workspace_root)
         };

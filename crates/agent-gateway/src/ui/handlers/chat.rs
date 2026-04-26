@@ -25,6 +25,8 @@ pub struct UiChatBody {
     pub thread_id: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
+    #[serde(default)]
+    pub workspace_node_id: Option<String>,
 }
 
 pub async fn ui_stream(
@@ -63,6 +65,7 @@ pub async fn ui_stream(
         max_tokens: Some(2048),
         stream: Some(true),
         thread_id: body.thread_id,
+        workspace_node_id: body.workspace_node_id,
     };
 
     agent::stream_agent(state, tenant, req)

@@ -6,30 +6,42 @@
 <body>
 <div class="app">
   <aside class="sidebar" aria-label="Workshop navigation">
-    <div class="brand">
-      <img class="brand-logo brand-logo--light" src="/assets/images/conusai-logo-lightmode.png" alt="ConusAI">
-      <img class="brand-logo brand-logo--dark"  src="/assets/images/conusai-logo-darkmode.png"  alt="ConusAI">
-    </div>
-
-    <nav class="nav-section" aria-label="Primary">
-      <div class="nav-item" data-action="new-chat">
-        <svg class="icon"><use href="/assets/icons/icons.svg#i-plus"/></svg>
-        New chat
+    <section class="nav-section ws-section" aria-labelledby="ws-heading">
+      <header class="nav-header">
+        <span id="ws-heading" class="nav-heading label-mono">Workspace</span>
+        <button type="button" class="icon-btn ws-new-btn" data-action="ws-new" aria-label="New folder or conversation">
+          <svg class="icon" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+            <line x1="9" y1="3" x2="9" y2="15"/><line x1="3" y1="9" x2="15" y2="9"/>
+          </svg>
+        </button>
+      </header>
+      <div class="ws-search-wrap">
+        <svg class="ws-search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+          <circle cx="6.5" cy="6.5" r="4.5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/>
+        </svg>
+        <input
+          id="ws-search"
+          class="ws-search-input"
+          type="search"
+          placeholder="Search conversations…"
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="Search workspace"
+        >
+        <button class="ws-search-clear" id="ws-search-clear" aria-label="Clear search" hidden>
+          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+            <line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/>
+          </svg>
+        </button>
       </div>
-      <div class="nav-item" data-action="search">
-        <svg class="icon"><use href="/assets/icons/icons.svg#i-search"/></svg>
-        Search
+      <div id="workspace-tree" class="ws-tree" role="tree" aria-busy="true" aria-labelledby="ws-heading">
+        <div class="ws-skeleton" aria-hidden="true"></div>
       </div>
-    </nav>
-
-    <nav class="nav-section" aria-label="Sections">
-      <div class="nav-item"><svg class="icon"><use href="/assets/icons/icons.svg#i-chats"/></svg>Chats</div>
-      <div class="nav-item"><svg class="icon"><use href="/assets/icons/icons.svg#i-projects"/></svg>Projects</div>
-      <div class="nav-item"><svg class="icon"><use href="/assets/icons/icons.svg#i-code"/></svg>Code</div>
-      <div class="nav-item"><svg class="icon"><use href="/assets/icons/icons.svg#i-customize"/></svg>Customize</div>
-      <div class="nav-item"><svg class="icon"><use href="/assets/icons/icons.svg#i-design"/></svg>Design</div>
-      <div class="nav-item"><svg class="icon"><use href="/assets/icons/icons.svg#i-more"/></svg>More</div>
-    </nav>
+      <p class="ws-empty" hidden>
+        No items yet.
+        <button type="button" data-action="ws-new" class="ws-empty-cta">Create your first folder</button>
+      </p>
+    </section>
 
     <div class="nav-section">
       <div class="nav-heading label-mono">Recents</div>
@@ -111,6 +123,7 @@
   </main>
 </div>
 
+<script src="/assets/js/workspace.js" type="module"></script>
 <script src="/assets/js/app.js" type="module"></script>
 </body>
 </html>

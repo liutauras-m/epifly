@@ -48,9 +48,11 @@ anyhow       = { version = "1" }
 # Tracing / Observability
 tracing                    = { version = "0.1" }
 tracing-subscriber         = { version = "0.3", features = ["env-filter", "json"] }
-opentelemetry              = { version = "0.27" }
-opentelemetry_sdk          = { version = "0.27", features = ["rt-tokio"] }
-opentelemetry-otlp         = { version = "0.27", features = ["tonic"] }
+opentelemetry              = { version = "0.27", features = ["metrics"] }
+opentelemetry_sdk          = { version = "0.27", features = ["rt-tokio", "metrics"] }
+opentelemetry-otlp         = { version = "0.27", features = ["tonic", "metrics"] }
+opentelemetry-prometheus   = { version = "0.27" }
+prometheus                 = { version = "0.13" }
 tracing-opentelemetry      = { version = "0.28" }
 
 # WASM

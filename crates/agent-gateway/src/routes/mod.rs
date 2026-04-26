@@ -1,7 +1,7 @@
 use crate::state::AppState;
 use axum::{
     Router,
-    routing::{get, post},
+    routing::{delete, get, patch, post},
 };
 use std::sync::Arc;
 
@@ -14,6 +14,7 @@ mod health;
 mod mcp;
 mod search;
 mod threads;
+mod workspaces;
 
 /// Routes that require no auth (health probe, token-based file download).
 pub fn public_router() -> Router<Arc<AppState>> {
@@ -52,4 +53,21 @@ pub fn protected_router() -> Router<Arc<AppState>> {
         )
         // ── Audit log ──────────────────────────────────────────────────────
         .route("/v1/audit", get(audit::list_audit))
+        // ── Workspace ──────────────────────────────────────────────────────
+        .route("/v1/workspaces", post(workspaces::create))
+        .route("/v1/workspaces/tree", get(workspaces::tree))
+        .route("/v1/workspaces/search", get(workspaces::search))
+        .route("/v1/workspaces/{id}", get(workspaces::get_node))
+        .route("/v1/workspaces/{id}", delete(workspaces::delete_node))
+        .route("/v1/workspaces/{id}/content", get(workspaces::get_content))
+        .route(
+            "/v1/workspaces/{id}/content",
+            patch(workspaces::patch_content),
+        )
+        .route("/v1/workspaces/{id}/move", post(workspaces::move_node))
+        .route("/v1/workspaces/{id}/share", post(workspaces::share_node))
+        .route(
+            "/v1/workspaces/{id}/unshare",
+            post(workspaces::unshare_node),
+        )
 }

@@ -63,8 +63,14 @@ impl SessionUser {
     pub fn tenant_context(&self) -> TenantContext {
         let workspace_root = std::env::var("CONUSAI_WORKSPACE_ROOT")
             .unwrap_or_else(|_| "/tmp/conusai/workspaces".into());
+        // Single shared tenant in UI/dev mode so /v1/* (extract_tenant default = "dev")
+        // and /ui/* (SessionUser-derived) share workspaces, threads, and ACL space.
+        // In production, /v1/* requires JWT and tenant_id comes from claims; /ui/* is
+        // not exposed there, so this fallback is dev-only.
+        let tenant_id =
+            std::env::var("CONUSAI_UI_TENANT_ID").unwrap_or_else(|_| "dev".into());
         TenantContext::new(
-            format!("ui-{}", self.slug()),
+            tenant_id,
             Some(self.name.clone()),
             self.plan_tier(),
             workspace_root,
