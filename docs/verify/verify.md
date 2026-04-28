@@ -60,6 +60,8 @@ grep -q JWT_SECRET .env.local || echo "JWT_SECRET=$(openssl rand -hex 32)" >> .e
 
 # 4. The invoice fixture
 ls invoice.png   # must be present in repo root
+# If missing, copy the checked-in fixture:
+[ -f invoice.png ] || cp docs/verify/invoice.png invoice.png
 ```
 
 ---
@@ -1021,7 +1023,7 @@ curl -sf -X POST http://localhost:8080/mcp \
 curl -sf -X POST http://localhost:8080/v1/agent/completions \
   -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
   -d "{\"model\":\"claude-opus-4-7\",\"max_tokens\":512,\"messages\":[
-        {\"role\":\"user\",\"content\":\"Extract the invoice at path $(pwd)/evals/datasets/invoice.png\"}
+        {\"role\":\"user\",\"content\":\"Extract the invoice at path $(pwd)/invoice.png\"}
       ]}" | python3 -c "import sys,json; c=json.load(sys.stdin)['choices'][0]['message']['content']; assert 'HCY-23256029' in c or 'extract' in c.lower(); print('ok')"
 ```
 
