@@ -322,20 +322,26 @@ curl -sf -X POST http://localhost:8080/v1/agent/completions \
 
 ---
 
-## Phase 9 — File Storage (MinIO) ✅ **NEW**
+## Phase 9 — File Storage + Uploaded Invoice Extraction (MinIO) ✅ **NEW**
 
 ```bash
-# Upload
-echo "hello conusai" > /tmp/test.txt
+# Upload invoice fixture
 RESP=$(curl -sf -X POST http://localhost:8080/v1/files \
   -H "Authorization: Bearer $TOKEN" \
-  -F "file=@/tmp/test.txt")
+  -F "file=@invoice.png;type=image/png")
 echo $RESP | python3 -m json.tool
 FTOKEN=$(echo $RESP | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 
-# Download
-curl -sf -H "Authorization: Bearer $TOKEN" "http://localhost:8080/v1/files/$FTOKEN"
-# → hello conusai
+# Download and validate PNG signature bytes
+curl -sf -H "Authorization: Bearer $TOKEN" "http://localhost:8080/v1/files/$FTOKEN" > /tmp/uploaded-invoice.png
+python3 -c "d=open('/tmp/uploaded-invoice.png','rb').read(8); assert d==b'\\x89PNG\\r\\n\\x1a\\n'; print('PNG OK')"
+
+# Verify extraction from uploaded file URL
+curl -sf -X POST http://localhost:8080/v1/agent/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d "{\"model\":\"claude-opus-4-7\",\"messages\":[{\"role\":\"user\",\"content\":\"Extract invoice at http://localhost:8080/v1/files/$FTOKEN and return invoice number, status, total.\"}],\"max_tokens\":400}" \
+  | python3 -c "import sys,json; c=json.load(sys.stdin)['choices'][0]['message']['content']; print(c[:300]); assert 'HCY-23256029' in c and 'PAID' in c and ('63.99' in c or '€63.99' in c)"
 
 # Verify in MinIO
 docker run --rm --network conusai-platform_default \
@@ -343,7 +349,7 @@ docker run --rm --network conusai-platform_default \
   amazon/aws-cli --endpoint-url http://conusai-minio:9000 s3 ls s3://conusai/ --recursive
 ```
 
-✅ **Pass**: file uploaded to MinIO, retrieved via token, `tenants/acme/...` path visible in S3 listing.
+✅ **Pass**: `invoice.png` uploaded to MinIO, retrieved via token with valid PNG bytes, extracted values match `HCY-23256029` / `PAID` / `€63.99`, and `tenants/acme/...` path is visible in S3 listing.
 
 ---
 
@@ -511,13 +517,18 @@ curl -sf -X POST http://localhost:8080/mcp \
   | python3 -c "import sys,json; tools=json.load(sys.stdin)['result']['tools']; assert len(tools)>0" \
   || { echo "❌ MCP tools/list failed"; exit 1; }
 
-# Phase 9: file upload
-echo "ci-verify" > /tmp/ci-file.txt
+# Phase 9: upload invoice fixture + verify extraction from uploaded token URL
 FTOKEN=$(curl -sf -X POST http://localhost:8080/v1/files \
-  -H "Authorization: Bearer $TOKEN" -F "file=@/tmp/ci-file.txt" \
+  -H "Authorization: Bearer $TOKEN" -F "file=@invoice.png;type=image/png" \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
-curl -sf -H "Authorization: Bearer $TOKEN" "http://localhost:8080/v1/files/$FTOKEN" \
-  | grep -q "ci-verify" || { echo "❌ File round-trip failed"; exit 1; }
+curl -sf -H "Authorization: Bearer $TOKEN" "http://localhost:8080/v1/files/$FTOKEN" > /tmp/ci-uploaded-invoice.png
+python3 -c "d=open('/tmp/ci-uploaded-invoice.png','rb').read(8); assert d==b'\\x89PNG\\r\\n\\x1a\\n'" \
+  || { echo "❌ Uploaded file is not PNG"; exit 1; }
+curl -sf -X POST http://localhost:8080/v1/agent/completions \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  -d "{\"model\":\"claude-opus-4-7\",\"messages\":[{\"role\":\"user\",\"content\":\"Extract invoice at http://localhost:8080/v1/files/$FTOKEN and return invoice number, status, total.\"}],\"max_tokens\":400}" \
+  | python3 -c "import sys,json; c=json.load(sys.stdin)['choices'][0]['message']['content']; assert 'HCY-23256029' in c and 'PAID' in c and ('63.99' in c or '€63.99' in c)" \
+  || { echo "❌ Uploaded invoice extraction failed"; exit 1; }
 
 # Phase 10: semantic search (seeds Qdrant)
 curl -sf -H "Authorization: Bearer $TOKEN" \
@@ -573,7 +584,7 @@ echo "   • Docker stack healthy (Qdrant + MinIO + gateway)"
 echo "   • JWT auth strictly enforced"
 echo "   • Streaming SSE: PASS"
 echo "   • MCP JSON-RPC 2.0: PASS (11 tools)"
-echo "   • File upload/download (MinIO): PASS"
+echo "   • File upload (invoice.png) + extraction from uploaded URL: PASS"
 echo "   • Semantic search (Qdrant): PASS"
 echo "   • WASM execution (wasmtime): PASS (ping → 42)"
 echo "   • Invoice extraction: HCY-23256029 / PAID / €63.99"
@@ -614,7 +625,8 @@ echo "   • Zero-code extension: PASS"
 
 **File Storage (MinIO)**
 - [ ] `POST /v1/files` multipart upload → returns `id` + `download_url`
-- [ ] `GET /v1/files/{token}` → returns uploaded bytes
+- [ ] `GET /v1/files/{token}` → returns uploaded `invoice.png` bytes (valid PNG signature)
+- [ ] Uploaded file is extractable via `/v1/agent/completions` → `HCY-23256029` / `PAID` / `€63.99`
 - [ ] MinIO `s3 ls s3://conusai/ --recursive` shows `tenants/acme/...` path
 
 **Semantic Search (Qdrant)**

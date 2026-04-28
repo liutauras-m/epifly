@@ -50,7 +50,7 @@ services:
         mc mb --ignore-existing local/conusai &&
         echo 'bucket conusai ready'
       "
-    profiles: ["full"]
+    profiles: ["infra", "full"]
 
   # ── Agent Gateway ─────────────────────────────────────────────────────────
   agent-gateway:

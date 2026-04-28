@@ -1,7 +1,55 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROFILE="${1:-infra}"   # infra | full | observability
+usage() {
+  cat <<'EOF'
+Usage:
+  ./start.sh [profile]
+  ./start.sh start [profile]
+  ./start.sh stop [profile]
+
+Commands:
+  start          Start services for a profile (default)
+  stop           Stop services for a profile
+
+Profiles:
+  infra          Qdrant + MinIO (+ minio-init)
+  full           Full stack (gateway + infra + observability)
+  observability  Jaeger + OTel collector
+EOF
+}
+
+ACTION="start"
+PROFILE="infra"   # infra | full | observability
+
+if [ "${1:-}" = "start" ] || [ "${1:-}" = "stop" ]; then
+  ACTION="$1"
+  PROFILE="${2:-infra}"
+elif [ -n "${1:-}" ]; then
+  # Backward compatibility: ./start.sh full
+  PROFILE="$1"
+fi
+
+case "$PROFILE" in
+  infra|full|observability)
+    ;;
+  -h|--help|help)
+    usage
+    exit 0
+    ;;
+  *)
+    echo "❌ Invalid profile: $PROFILE"
+    usage
+    exit 1
+    ;;
+esac
+
+if [ "$ACTION" = "stop" ]; then
+  echo "🛑 ConusAI Platform — stopping profile: $PROFILE"
+  docker compose --profile "$PROFILE" down
+  echo "✅ Profile stopped"
+  exit 0
+fi
 
 echo "🚀 ConusAI Platform — starting profile: $PROFILE"
 
@@ -17,7 +65,7 @@ docker compose --profile "$PROFILE" up -d --wait
 
 # ── Wait for Qdrant ───────────────────────────────────────────────────────────
 echo "⏳ Waiting for Qdrant..."
-until curl -sf http://localhost:6333/health > /dev/null 2>&1; do sleep 1; done
+until curl -sf http://localhost:6333/healthz > /dev/null 2>&1; do sleep 1; done
 echo "✅ Qdrant ready"
 
 # ── Build agent-gateway (if running full profile) ─────────────────────────────
