@@ -1,6 +1,6 @@
-use super::card::RegisteredToolCard;
+use super::card::CapabilityCard;
 use super::manifest::ToolManifest;
-use super::provider::{ToolProvider, ToolProviderFactory};
+use super::provider::{CapabilityProvider, CapabilityFactory};
 use crate::llm::LlmRegistry;
 use std::collections::HashMap;
 use std::path::Path;
@@ -10,12 +10,9 @@ use tracing::{info, warn};
 
 #[derive(Default)]
 pub struct ToolRegistry {
-    cards: HashMap<String, RegisteredToolCard>,
-    factories: Vec<Box<dyn ToolProviderFactory>>,
+    cards: HashMap<String, CapabilityCard>,
+    factories: Vec<Box<dyn CapabilityFactory>>,
 }
-
-// Keep the alias so callers using `ToolCard` still compile.
-pub use super::card::ToolCard;
 
 impl ToolRegistry {
     pub fn new() -> Self {
@@ -34,27 +31,27 @@ impl ToolRegistry {
         r
     }
 
-    pub fn register_factory(&mut self, factory: impl ToolProviderFactory) {
+    pub fn register_factory(&mut self, factory: impl CapabilityFactory) {
         self.factories.push(Box::new(factory));
     }
 
     /// Register a card that already has a provider cached on it.
-    pub fn register(&mut self, card: RegisteredToolCard) {
+    pub fn register(&mut self, card: CapabilityCard) {
         info!(name = %card.manifest.name, kind = ?card.manifest.kind, enabled = %card.enabled, "registering tool card");
         self.cards.insert(card.manifest.name.clone(), card);
     }
 
     /// Register a provider by building a card from its manifest.
-    pub fn register_provider(&mut self, provider: Arc<dyn ToolProvider>) {
+    pub fn register_provider(&mut self, provider: Arc<dyn CapabilityProvider>) {
         let manifest = provider.manifest().clone();
         info!(name = %manifest.name, kind = ?manifest.kind, "registering tool provider");
-        let card = RegisteredToolCard::new(manifest, std::path::PathBuf::from("."))
+        let card = CapabilityCard::new(manifest, std::path::PathBuf::from("."))
             .with_provider(provider);
         self.cards.insert(card.manifest.name.clone(), card);
     }
 
     /// Register a card without a provider.
-    pub fn register_card(&mut self, card: RegisteredToolCard) {
+    pub fn register_card(&mut self, card: CapabilityCard) {
         self.register(card);
     }
 
@@ -66,7 +63,7 @@ impl ToolRegistry {
     }
 
     /// Replace or add a provider in-place.
-    pub fn replace(&mut self, provider: Arc<dyn ToolProvider>) {
+    pub fn replace(&mut self, provider: Arc<dyn CapabilityProvider>) {
         let name = provider.manifest().name.clone();
         if let Some(card) = self.cards.get_mut(&name) {
             card.provider = Some(provider);
@@ -93,7 +90,7 @@ impl ToolRegistry {
         let manifest_path = dir.join("capability.toml");
         let manifest = ToolManifest::from_file(&manifest_path)?;
         let name = manifest.name.clone();
-        let mut card = RegisteredToolCard::new(manifest, dir.to_path_buf());
+        let mut card = CapabilityCard::new(manifest, dir.to_path_buf());
         // Preserve enabled state.
         card.enabled = self.cards.get(&name).map(|c| c.enabled).unwrap_or(true);
         if let Some(factory) = self.factory_for(&card) {
@@ -108,19 +105,19 @@ impl ToolRegistry {
 
     // ── Reads ─────────────────────────────────────────────────────────────────
 
-    pub fn get(&self, name: &str) -> Option<&RegisteredToolCard> {
+    pub fn get(&self, name: &str) -> Option<&CapabilityCard> {
         self.cards.get(name)
     }
 
-    pub fn get_mut(&mut self, name: &str) -> Option<&mut RegisteredToolCard> {
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut CapabilityCard> {
         self.cards.get_mut(name)
     }
 
-    pub fn get_provider(&self, name: &str) -> Option<Arc<dyn ToolProvider>> {
+    pub fn get_provider(&self, name: &str) -> Option<Arc<dyn CapabilityProvider>> {
         self.cards.get(name)?.provider.clone()
     }
 
-    pub fn search_by_tag(&self, tag: &str) -> Vec<&RegisteredToolCard> {
+    pub fn search_by_tag(&self, tag: &str) -> Vec<&CapabilityCard> {
         self.cards
             .values()
             .filter(|c| c.manifest.tags.iter().any(|t| t == tag))
@@ -128,12 +125,12 @@ impl ToolRegistry {
     }
 
     /// All cards (enabled and disabled).
-    pub fn all(&self) -> impl Iterator<Item = &RegisteredToolCard> {
+    pub fn all(&self) -> impl Iterator<Item = &CapabilityCard> {
         self.cards.values()
     }
 
     /// Only enabled cards — used by `/v1/capabilities` and agent execution.
-    pub fn all_enabled(&self) -> impl Iterator<Item = &RegisteredToolCard> {
+    pub fn all_enabled(&self) -> impl Iterator<Item = &CapabilityCard> {
         self.cards.values().filter(|c| c.enabled)
     }
 
@@ -147,7 +144,7 @@ impl ToolRegistry {
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
-    fn factory_for(&self, card: &RegisteredToolCard) -> Option<&dyn ToolProviderFactory> {
+    fn factory_for(&self, card: &CapabilityCard) -> Option<&dyn CapabilityFactory> {
         self.factories
             .iter()
             .find(|f| f.supports(&card.manifest.kind, &card.manifest.name))
@@ -174,7 +171,7 @@ impl ToolRegistry {
 
             match ToolManifest::from_file(&manifest_path) {
                 Ok(manifest) => {
-                    let mut card = RegisteredToolCard::new(manifest, cap_dir);
+                    let mut card = CapabilityCard::new(manifest, cap_dir);
                     card.enabled = state_enabled;
                     if let Some(factory) = self.factory_for(&card) {
                         match factory.create(card.clone()) {
@@ -208,7 +205,7 @@ mod tests {
     use super::*;
     use crate::tools::manifest::{ToolKind, ToolManifest};
 
-    fn make_card(name: &str, tags: Vec<String>) -> RegisteredToolCard {
+    fn make_card(name: &str, tags: Vec<String>) -> CapabilityCard {
         let manifest = ToolManifest {
             name: name.into(),
             version: "0.1.0".into(),
@@ -219,7 +216,7 @@ mod tests {
             tags,
             chain: None,
         };
-        RegisteredToolCard::new(manifest, std::path::PathBuf::from("/tmp"))
+        CapabilityCard::new(manifest, std::path::PathBuf::from("/tmp"))
     }
 
     #[test]

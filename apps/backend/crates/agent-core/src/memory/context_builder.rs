@@ -2,8 +2,9 @@
 ///
 /// Walks ancestor folders, loads each folder's CONTEXT.md or README.md from MinIO,
 /// then loads the selected conversation body. Concatenates sections with a divider,
-/// truncating from the oldest ancestor first when the total exceeds max_chars.
+/// truncating via the injected `ContextTruncator` strategy (default: oldest-first).
 use crate::context::tenant::TenantContext;
+use crate::memory::truncator::{ContextTruncator, OldestFirstTruncator};
 use common::memory::store::{WorkspaceContentStore, WorkspaceStore};
 use common::memory::workspace::{NodeKind, effective_user_id};
 use std::sync::Arc;
@@ -13,11 +14,22 @@ use ulid::Ulid;
 pub struct ContextBuilder {
     store: Arc<dyn WorkspaceStore>,
     content: Arc<dyn WorkspaceContentStore>,
+    truncator: Arc<dyn ContextTruncator>,
 }
 
 impl ContextBuilder {
     pub fn new(store: Arc<dyn WorkspaceStore>, content: Arc<dyn WorkspaceContentStore>) -> Self {
-        Self { store, content }
+        Self {
+            store,
+            content,
+            truncator: Arc::new(OldestFirstTruncator),
+        }
+    }
+
+    /// Override the truncation strategy.
+    pub fn with_truncator(mut self, truncator: Arc<dyn ContextTruncator>) -> Self {
+        self.truncator = truncator;
+        self
     }
 
     /// Build a system message string for the agent, scoped to `node_id`.
@@ -86,12 +98,8 @@ impl ContextBuilder {
             return String::new();
         }
 
-        // Truncate from the front (oldest ancestor) if total exceeds max_chars
-        let mut total: usize = sections.iter().map(|(_, b)| b.len()).sum();
-        while total > max_chars && sections.len() > 1 {
-            let removed = sections.remove(0);
-            total -= removed.1.len();
-        }
+        // Delegate truncation to the injected strategy.
+        self.truncator.truncate(&mut sections, max_chars);
 
         // Build final string
         let mut out = String::from("# Workspace context\n");

@@ -69,6 +69,7 @@ pub async fn ui_upload(
                 object_key,
                 std::time::Instant::now(),
                 std::time::Duration::from_secs(3600),
+                tenant.tenant_id.to_string(),
             ),
         );
     }
@@ -78,7 +79,7 @@ pub async fn ui_upload(
         "filename": filename,
         "size": size,
         "content_type": content_type,
-        "download_url": format!("/v1/files/{token}"),
+        "download_url": format!("/ui/files/{token}"),
     });
     (StatusCode::OK, Json(payload)).into_response()
 }

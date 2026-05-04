@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/common",
     "crates/agent-core",
+    "crates/jobs",
     "crates/agent-gateway",
     "evals",
 ]
@@ -18,7 +19,7 @@ repository   = "https://github.com/conusai/conusai-platform"
 [workspace.dependencies]
 # Async runtime
 tokio        = { version = "1", features = ["full"] }
-tokio-stream = { version = "0.1" }
+tokio-stream = { version = "0.1", features = ["sync"] }
 
 # AI / Rig
 rig-core     = { version = "0.36" }
@@ -28,7 +29,7 @@ qdrant-client = { version = "1" }
 
 # HTTP
 axum         = { version = "0.8", features = ["ws", "multipart"] }
-reqwest      = { version = "0.13", features = ["json", "stream"] }
+reqwest      = { version = "0.13", features = ["json", "stream", "multipart"] }
 tower        = { version = "0.5" }
 tower-http   = { version = "0.6", features = ["cors", "trace", "compression-br", "fs"] }
 
@@ -86,6 +87,9 @@ bon          = { version = "3" }
 
 # CLI args
 clap         = { version = "4", features = ["derive"] }
+
+# Scheduled jobs
+tokio-cron-scheduler = { version = "0.13" }
 
 # Colored output
 colored      = { version = "2" }

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use axum::{Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
+use jobs::JobSchedulerService;
 use prometheus::Encoder;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,6 +13,7 @@ mod mw;
 mod routes;
 mod state;
 mod ui;
+mod capabilities;
 
 use state::AppState;
 
@@ -109,6 +111,20 @@ async fn main() -> Result<()> {
     let loaded = state.registry.lock().unwrap().len();
     info!(capabilities = loaded, "capability registry loaded");
 
+    // Register dynamic capabilities that depend on runtime services (e.g. JobExecutor).
+    {
+        use agent_core::tools::provider::CapabilityProvider;
+        use capabilities::transcribe_video::TranscribeVideoCapability;
+        let provider: Arc<dyn CapabilityProvider> =
+            Arc::new(TranscribeVideoCapability::new(Arc::clone(&state.job_executor)));
+        let card = agent_core::tools::card::CapabilityCard::new(
+            provider.manifest().clone(),
+            std::path::PathBuf::from("runtime"),
+        ).with_provider(Arc::clone(&provider));
+        state.registry.lock().unwrap().register(card);
+        info!("TranscribeVideoCapability registered");
+    }
+
     // Validate that all LLM aliases resolve to registered providers.
     // Logs a warning on failure but does not abort startup (provider may be
     // temporarily unavailable at deploy time).
@@ -117,6 +133,11 @@ async fn main() -> Result<()> {
     } else {
         info!("LLM registry verified");
     }
+
+    // Start the cron scheduler in the background.
+    // The `_scheduler` guard is kept alive for the process lifetime.
+    let _scheduler = JobSchedulerService::start(&state.job_registry).await?;
+    info!("job scheduler started");
 
     let assets_dir = resolve_assets_dir()?;
     info!(assets_dir = %assets_dir.display(), "serving UI assets");

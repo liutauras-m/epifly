@@ -18,8 +18,6 @@ impl PromptTemplate {
     /// an empty string. Values are rendered as compact JSON scalars (strings without
     /// surrounding quotes, numbers/booleans as-is).
     pub fn render(&self, ctx: &Value) -> String {
-        let mut result = self.template.clone();
-        // Find all {{...}} placeholders.
         let mut start = 0;
         let mut output = String::with_capacity(self.template.len() * 2);
         let tmpl = self.template.as_str();
@@ -27,7 +25,6 @@ impl PromptTemplate {
             let abs_open = start + open;
             if let Some(close) = tmpl[abs_open..].find("}}") {
                 let abs_close = abs_open + close;
-                // Push literal text before placeholder.
                 output.push_str(&tmpl[start..abs_open]);
                 let path = &tmpl[abs_open + 2..abs_close];
                 output.push_str(&resolve_path(ctx, path.trim()));
@@ -37,8 +34,7 @@ impl PromptTemplate {
             }
         }
         output.push_str(&tmpl[start..]);
-        result = output;
-        result
+        output
     }
 }
 

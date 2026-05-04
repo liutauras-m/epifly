@@ -1,386 +1,171 @@
-# ConusAI Platform — Implementation Plan
-
-**Based on:** Backend API Reference Review v0.1.0 + 2026 Best-Practice Elevation  
-**Review Date:** 2026-05-04  
-**Status:** Production-Ready Foundation (95% aligned)  
-**Target:** 100% compliance — Rig v0.30 hooks, compile-safe OpenAPI, zero-trust security posture
-
----
-
-## Overview
-
-The backend is architecturally sound (Axum 0.8+ + Rig + Utoipa + Tower/Governor). This plan tightens existing phases, merges related work, and adds one Rig-modernization step (hook-based extensibility). All changes stay inside the documented project structure (`crates/`, `capabilities/`, `docs/`, `evals/`). No scope creep.
-
-**Key upgrades over v1 plan:**
-- Rig v0.30: `max_turns()` (renamed from `max_depth`/`max_steps`), `HookAction` / `ToolCallHookAction::Skip` for safe agent loops
-- `thiserror` + `ApiError` enum (enhances existing `ConusAiError`) instead of ad-hoc `AppError` struct
-- `axum-autoroute` for compile-time OpenAPI accuracy — zero handler/spec drift
-- Generated TS/Zod from `/openapi.json` via `openapi-typescript` — no manual type duplication
-- Phases 5+6 merged into a single reusable Tower auth+plan layer
-- API keys stored as `BLAKE3(key)` hash — never plaintext
+# ConusAI Platform Improvement Plan
 
----
+Date: 2026-05-04
+Owner: Backend platform team
+Status: Ready to execute
 
-## Phase 0 — Prep: Dependency Alignment
+## Objective
 
-**Goal:** Workspace `Cargo.toml` reflects 2026 stack. All agent calls use `max_turns()`.
+Apply community-aligned naming and extensibility refinements with zero feature creep and no runtime behavior regressions.
 
-**Estimated effort:** 1h / ~400 tokens
+## Scope
 
-### Steps
+In scope:
+- Naming refactor to Capability-first terminology as a direct canonical rename.
+- PromptTemplate extraction from agent-core into common for cross-crate reuse.
+- Injectable context truncation strategy for workspace context assembly.
+- Rig 0.36 streaming alignment cleanup in Anthropic provider path.
+- Architecture/docs refresh to reflect final public API names and compatibility policy.
 
-1. **Update `apps/backend/Cargo.toml` workspace**
-   - Set `edition = "2024"` on all crates
-   - Bump: `rig-core = "0.30"`, `utoipa = "5"`, add `thiserror`, `axum-autoroute = "0.2"`
+Out of scope:
+- New product features.
+- Askama to Next.js switch in v0.x.
+- Changes to multitenancy/auth/rate-limit behavior.
 
-2. **Run `cargo update`** and resolve any version conflicts
+## Current State Review (Validated Against Workspace)
 
-3. **Rename all `max_depth`/`max_steps` agent builder calls to `max_turns()`** across:
-   - `crates/agent-core/src/agent/`
-   - `crates/agent-gateway/src/routes/agent.rs`
-   - `crates/agent-gateway/src/routes/chat.rs`
-   - `evals/src/runners/`
+Confirmed in codebase:
+- Strong trait boundaries already exist for LLM, tools/capabilities, memory stores, and admin orchestration.
+- Naming is partially updated today (for example CapabilitySummary exists, but RegisteredTool* and ToolProvider* remain).
+- Context truncation in ContextBuilder is currently hard-coded as oldest-first and max_chars is passed by caller.
+- ResolvedTenant already derives Clone.
+- Anthropic streaming currently wraps complete() as a single chunk and includes a TODO to switch to native streaming helpers.
 
-4. **Verify**: `cargo check --workspace`
+Decision:
+- Keep Askama UI for v0.x. Treat Next.js app as optional future frontend that can consume existing API/SSE endpoints.
 
----
+## Plan
 
-## Phase 1 — P0: Unified Structured Error Envelope + Rig Error Mapping
+### Phase 0 - Baseline and Safety
 
-**Goal:** Every HTTP response and MCP JSON-RPC body uses a single `{"error": {...}}` shape. Frontend type-narrows on one discriminant. Rig errors (`MaxTurnsError`, `ToolError`, `ProviderError`, `ExtractionError`) map cleanly.
+Goals:
+- Freeze public behavior before refactor.
+- Ensure deterministic rollback path.
 
-**Estimated effort:** 3h / ~1200 tokens
+Tasks:
+- Run baseline checks for agent-core and agent-gateway.
+- Snapshot OpenAPI and validate no endpoint/shape changes.
+- Add release note: breaking rename policy and required code updates.
 
-### Steps
+Acceptance criteria:
+- Baseline tests/checks pass.
+- No behavioral diffs in API responses for unchanged flows.
 
-1. **Enhance `crates/common/src/error.rs`** — extend existing `ApiError` / `ConusAiError` using `thiserror`:
-   ```rust
-   use thiserror::Error;
-   use serde::{Deserialize, Serialize};
-   use utoipa::ToSchema;
+### Phase 1 - Naming Refactor (Canonical, Breaking)
 
-   #[derive(Debug, Error, Serialize, Deserialize, ToSchema)]
-   #[serde(rename_all = "snake_case")]
-   pub enum ApiError {
-       #[error("Authentication failed: {0}")]
-       Authentication(String),
-       #[error("Rate limit exceeded")]
-       RateLimit { retry_after: Option<u64> },
-       #[error("Not found: {resource}")]
-       NotFound { resource: String },
-       #[error("Validation error")]
-       Validation { field: String, message: String },
-       #[error("Rig agent error: {0}")]
-       Agent(String), // maps RigError / MaxTurnsError / ExtractionError
-       #[error("Internal error")]
-       Internal { request_id: String, trace_id: Option<String> },
-   }
+Goals:
+- Adopt Capability-first naming as the only supported API surface.
 
-   #[derive(Debug, Serialize, ToSchema)]
-   pub struct ErrorEnvelope {
-       pub error: ApiError,
-   }
+Primary renames:
+- GeneralAgent -> Agent
+- GeneralAgentBuilder -> AgentBuilder
+- LlmProvider -> CompletionProvider (alias)
+- ToolProvider -> CapabilityProvider
+- ToolProviderFactory -> CapabilityFactory
+- LlmChainTool -> PromptChainCapability
+- RegisteredToolCard/ToolCard -> CapabilityCard
+- RegisteredToolAdmin -> CapabilityAdmin
 
-   impl IntoResponse for ApiError {
-       fn into_response(self) -> Response {
-           let status = match &self {
-               ApiError::Authentication(_) => StatusCode::UNAUTHORIZED,
-               ApiError::RateLimit { .. } => StatusCode::TOO_MANY_REQUESTS,
-               ApiError::NotFound { .. } => StatusCode::NOT_FOUND,
-               ApiError::Validation { .. } => StatusCode::UNPROCESSABLE_ENTITY,
-               ApiError::Agent(_) | ApiError::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
-           };
-           // always set X-Request-ID header + body
-           (status, Json(ErrorEnvelope { error: self })).into_response()
-       }
-   }
-   ```
+Execution strategy:
+- Introduce new canonical names first.
+- Remove old names, aliases, and deprecated re-exports in the same refactor window.
+- Update internal references in one coordinated rename to avoid dual naming.
 
-2. **Add Rig error mapping helper** in `crates/agent-core/src/agent/runtime.rs`:
-   ```rust
-   pub fn map_rig_error(e: rig::error::RigError) -> ApiError { ... }
-   ```
+Acceptance criteria:
+- New canonical names appear in crate-level exports and docs.
+- Previous symbol names are fully removed from public exports.
+- No runtime behavior changes.
 
-3. **Replace all ad-hoc error returns** in `crates/agent-gateway/src/routes/` using `?` returning `Result<_, ApiError>`:
-   - `chat.rs`, `agent.rs`, `threads.rs`, `workspaces.rs`, `files.rs`, `capabilities.rs`, `audit.rs`
-   - `mcp.rs` — still HTTP 200; embed JSON-RPC error codes in body per spec; rate-limit still 429
+### Phase 2 - PromptTemplate Extraction
 
-4. **Register in Utoipa components** in `main.rs`:
-   ```rust
-   #[openapi(components(schemas(ApiError, ErrorEnvelope, ...)))]
-   ```
+Goals:
+- Move PromptTemplate into common for shared reuse.
 
-5. **Verify**: `cargo clippy -- -D warnings && cargo test -p agent-gateway -p common`
+Tasks:
+- Add module under common (for example common::prompt::template).
+- Re-export from agent-core to preserve existing import paths.
+- Update chain and prompt callers to canonical location.
 
----
+Acceptance criteria:
+- No functional changes in template rendering behavior.
+- Existing agent-core consumers remain compatible.
 
-## Phase 2 — P0: Request-ID + Trace Propagation in All Error Paths
+### Phase 3 - Injectable Context Truncation
 
-**Goal:** Every error response carries `X-Request-ID` header and `request_id` in body. Clients correlate errors with traces.
+Goals:
+- Replace hard-coded truncation logic with strategy trait.
 
-**Estimated effort:** 1.5h / ~600 tokens
+Design:
+- Add ContextTruncator trait with method to trim sections to max_chars.
+- Provide default OldestFirstTruncator implementing current behavior.
+- ContextBuilder accepts Arc<dyn ContextTruncator> with default constructor preserving current behavior.
 
-### Steps
+Acceptance criteria:
+- Default path yields identical output to current implementation.
+- Unit tests cover at least default truncation and one alternate strategy.
 
-1. **Confirm `Extension<RequestId>` flows** from `crates/agent-gateway/src/mw/` to `ApiError::into_response`
-   - Middleware already injects it on success — ensure error path reads the same extension
+### Phase 4 - Rig 0.36 Streaming Alignment
 
-2. **Embed `request_id` in `ApiError::Internal`** (done in Phase 1) and set `X-Request-ID` response header on all `IntoResponse` paths
+Goals:
+- Reduce custom streaming glue and align with Rig helper patterns where available.
 
-3. **Propagate `traceparent` context into Rig calls** using `opentelemetry::Context::with_remote_span_context`
-   - Read `traceparent`/`tracestate` headers in middleware
-   - Pass OTel context to every `.prompt().max_turns(n).send()` call
+Tasks:
+- Update anthropic provider streaming path to use Rig streaming helpers.
+- Remove obsolete TODO and dead glue once parity is confirmed.
 
-4. **Verify**: `curl -i http://localhost:8080/v1/chat/completions` with invalid token → confirm `X-Request-ID` header and `error.request_id` in body match
+Acceptance criteria:
+- Streaming endpoints continue emitting expected SSE chunk sequence.
+- Token/finish metadata remain consistent with current contracts.
 
----
+### Phase 5 - Documentation and Release Notes
 
-## Phase 3 — P1: Compile-Safe OpenAPI with `axum-autoroute`
+Goals:
+- Publish clear release and architecture updates.
 
-**Goal:** `/openapi.json` is 100% accurate and usable for codegen. Zero drift between handlers and spec — unannotated handler = compile error.
+Tasks:
+- Update arch doc terminology to Capability-first naming.
+- Add rename table old -> new and exact replacement rules.
+- Note Askama v0.x UI decision and future optional frontend approach.
 
-**Estimated effort:** 4h / ~1800 tokens
+Acceptance criteria:
+- Docs reflect actual exported symbols.
+- v0.2 release notes include breaking rename section and examples.
 
-### Steps
+## Estimates
 
-1. **Add to `crates/agent-gateway/Cargo.toml`**: `axum-autoroute = "0.2"`
+- Phase 0: 20-30 min
+- Phase 1: 60-90 min
+- Phase 2: 25-40 min
+- Phase 3: 25-40 min
+- Phase 4: 20-30 min
+- Phase 5: 20-30 min
 
-2. **Annotate every handler** with `#[utoipa::path]`:
-   - `POST /v1/chat/completions` — `request_body(content = ChatRequest)`, `responses(200, 401, 429, 500)`, SSE variant in description
-   - `POST /v1/agent/completions` — `thread_id` in 200 schema, `tool_call_start`/`tool_call_result` delta events in description
-   - All CRUD: threads, workspaces, files, audit, capabilities, MCP
+Total: approximately 2.5 to 4.0 hours (AI-assisted, excluding review latency)
 
-3. **Add `SecurityScheme` definitions**:
-   - `BearerAuth`: `http`, `bearer`, `JWT`
-   - `CookieAuth`: `apiKey`, `cookie`, `conusai_session`
-   - `ApiKeyAuth`: `apiKey`, `header`, `X-API-Key` (added in Phase 5+6)
+## Risks and Mitigations
 
-4. **Document MCP tool schema format** — example `tools/list` response showing Rig `Tool` trait JSON schema fields
+- Risk: breaking external imports during rename.
+	Mitigation: provide explicit old-to-new rename map and perform a single coordinated release with compile checks.
 
-5. **Wire `axum-autoroute`** — compile-time completeness enforcement
+- Risk: subtle context behavior change during truncation refactor.
+	Mitigation: golden tests capturing current output and order.
 
-6. **Verify**: `curl -sf http://localhost:8080/openapi.json | jq '.paths | keys | length'` — all routes present
+- Risk: streaming regressions.
+	Mitigation: SSE contract tests and manual endpoint smoke checks.
 
----
+## Definition of Done
 
-## Phase 4 — P1: Document `chat` Reserved Fields
+- Capability-first canonical names are exported and documented.
+- Previous names are removed from public API and documentation.
+- PromptTemplate lives in common and is re-exported from agent-core.
+- ContextBuilder uses pluggable truncation strategy with default parity.
+- Streaming path aligned with Rig helper APIs where available.
+- arch and release notes updated for v0.2.
 
-**Goal:** No silent data loss — callers know which fields `/v1/chat/completions` accepts but ignores.
+## Recommended Execution Order (This Week)
 
-**Estimated effort:** 1h / ~400 tokens
-
-### Steps
-
-1. **In `crates/agent-gateway/src/routes/chat.rs`**, add doc comments to `ChatRequest` reserved fields:
-   ```rust
-   /// Reserved for future agentic routing. Currently ignored by this endpoint.
-   /// Use POST /v1/agent/completions if thread/workspace context is needed.
-   pub thread_id: Option<String>,
-   pub workspace_node_id: Option<String>,
-   pub max_turns: Option<u32>,
-   ```
-
-2. **In Utoipa annotation** for `POST /v1/chat/completions`, set `description = "Reserved. Use /v1/agent/completions for full agentic context."` on these schema fields
-
-3. **Update `docs/frontend/api.md`** Notes section to match code comments exactly
-
----
-
-## Phase 5+6 — P2: Enterprise Auth + Plan Enforcement (Merged)
-
-**Goal:** Single reusable Tower layer handles `X-API-Key` auth and per-plan limit clamping. Applied once in router — handlers stay thin.
-
-**Estimated effort:** 4h / ~1500 tokens
-
-### Steps
-
-1. **Add `API_KEYS` config** to `crates/common/src/config/`
-   - Format: comma-separated `BLAKE3(key):tenant_id:plan` tuples in `API_KEYS` env var
-   - Store only the hash — validate by hashing the incoming `X-API-Key` value and comparing (never log the raw key)
-
-2. **Create `crates/agent-gateway/src/mw/auth.rs`** — `ApiKeyExtractor` layer:
-   - Check `X-API-Key` header before JWT check
-   - On hash match: resolve `tenant_id` and `plan`; set `TenantClaims` extension identically to JWT path
-
-3. **Create `crates/agent-gateway/src/mw/plan.rs`** — `PlanEnforcer` layer:
-   - Read `TenantClaims` from extension
-   - Reject if plan claim missing or unrecognized (prevents malformed JWTs bypassing limits)
-   - Clamp `max_tokens` and `max_turns` to plan limits before reaching handler
-
-4. **Apply layers once** in `protected_router()`:
-   ```rust
-   Router::new()
-       .layer(ApiKeyExtractor::new(config.api_keys.clone()))
-       .layer(PlanEnforcer::new())
-   ```
-
-5. **Remove per-handler clamping** — handlers trust middleware has enforced limits
-
-6. **Add `ApiKeyAuth` security scheme** to OpenAPI spec (see Phase 3)
-
-7. **Write unit tests** for Free/Pro/Enterprise boundaries:
-   - `max_tokens` clamping, `max_turns` clamping, rate limit window
-
-8. **Document in `docs/frontend/api.md`** under Authentication section
-
----
-
-## Phase 7 — P3: Thread Auto-Title on Creation
-
-**Goal:** Threads have human-readable titles for display in the sidebar Recents/History.
-
-**Estimated effort:** 2h / ~700 tokens
-
-### Steps
-
-1. **On `POST /v1/threads`**, accept `first_message: Option<String>` in request body:
-   - If provided: use first 60 characters as title (no LLM call for v1)
-   - If not provided: default to `"New Thread <timestamp>"`
-
-2. **On `POST /v1/agent/completions`**, after first assistant turn completes:
-   - If thread was auto-created and title is still default: run fast Rig prompt (`max_turns: 1`, `max_tokens: 20`) to generate 5–8 word title
-   - Alternatively use `rig::Extractor` for structured output
-   - Persist via `thread_store.update_title(thread_id, title)`
-
-3. **Confirm `title` is present in `GET /v1/threads` list response** (`ThreadSummary` shape)
-
----
-
-## Phase 8 — P3: End-to-End Observability via Rig v0.30 Hooks
-
-**Goal:** Unified tracing across all agent paths (chat, agent/completions, invoice pipeline, evals) without copy-paste. Uses Rig v0.30 `HookAction` / `ToolCallHookAction` pattern — SRP: hooks own cross-cutting concerns, handlers stay thin.
-
-**Estimated effort:** 3h / ~1100 tokens
-
-### Steps
-
-1. **Implement `TracingHook` in `crates/agent-core/src/agent/`**:
-   ```rust
-   pub struct TracingHook;
-
-   impl PromptHook<Anthropic> for TracingHook {
-       async fn on_completion_call(&self, ctx: &HookContext) -> HookAction {
-           // start OTel child span with tenant_id, model, thread_id, max_turns
-           HookAction::Continue
-       }
-       async fn on_tool_call(&self, ctx: &ToolCallHookContext) -> ToolCallHookAction {
-           // record tool_name, args in span event
-           ToolCallHookAction::Continue
-       }
-   }
-   ```
-
-2. **Implement `PermissionHook`** — uses `ToolCallHookAction::Skip { reason }` to reject tools the current plan tier cannot call
-
-3. **Attach hooks** in `AgentBuilder` in `agent-core`:
-   ```rust
-   GeneralAgentBuilder::new()
-       .with_hook(TracingHook)
-       .with_hook(PermissionHook::for_plan(plan))
-       .max_turns(plan.max_turns())
-   ```
-
-4. **Add span attributes**: `tenant_id`, `plan`, `model`, `workspace_node_id`, `thread_id`, `tool_calls_made`, `max_turns`
-
-5. **Verify** in OTLP collector (Jaeger or Tempo) that a complete trace chain appears: frontend → Axum handler → Rig turns → tool calls → Anthropic
-
----
-
-## Phase 9 — P4: Generated Frontend Type Contracts
-
-**Goal:** Single source of truth — TypeScript types and Zod schemas generated from `/openapi.json`. No manual duplication in `packages/types/`.
-
-**Estimated effort:** 2.5h / ~900 tokens
-
-### Steps
-
-1. **Run `openapi-typescript`** against the completed `/openapi.json`:
-   ```bash
-   npx openapi-typescript http://localhost:8080/openapi.json -o packages/types/src/api.ts
-   ```
-
-2. **Add Zod schemas** for runtime validation (orval can generate these; or add manually for key shapes):
-   - `ThreadSchema`, `WorkspaceNodeSchema`, `ErrorEnvelopeSchema`
-
-3. **Wire into `apps/web`**:
-   - `AgentCompletionRequest` → `useChat` / `useCompletion` body type
-   - `ErrorEnvelope` → unified error display in `features/chat` and `features/agent`
-
-4. **Export from `packages/types/src/index.ts`**
-
-5. **Add codegen script** to root `package.json`:
-   ```json
-   "generate:types": "openapi-typescript http://localhost:8080/openapi.json -o packages/types/src/api.ts"
-   ```
-
-6. **Verify**: `bun x tsc --noEmit -p packages/types`
-
----
-
-## Phase 10 — P4: Rich Capability Metadata per Tenant
-
-**Goal:** Frontend adapts UI per tenant (hide image input, show available tools) based on capability metadata.
-
-**Estimated effort:** 1.5h / ~500 tokens
-
-### Steps
-
-1. **Extend `CapabilityItem`** with optional fields:
-   ```rust
-   pub models: Vec<String>,          // e.g. ["claude-opus-4-7"]
-   pub max_turns_limit: Option<u32>,
-   pub supported_tools: Vec<String>,
-   ```
-
-2. **In capabilities handler**, resolve `models` from `ANTHROPIC_MODEL` env var + per-tenant config overrides
-
-3. **Use existing Qdrant semantic search** for capability discovery — no new infrastructure needed
-
-4. **Update Utoipa schema** and `docs/frontend/api.md` accordingly
-
----
-
-## Verification Checklist (run after each phase)
-
-```bash
-# Backend
-cargo clippy --workspace -- -D warnings
-cargo test --workspace --all-features
-cargo test -p agent-core   # Rig hooks
-cargo test -p common       # ApiError shapes
-
-# Error shape spot-check
-curl -i http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer invalid" | grep -E "X-Request-ID|error"
-
-# OpenAPI completeness
-curl -sf http://localhost:8080/openapi.json | jq '.paths | keys | length'
-
-# Frontend contracts
-bun x tsc --noEmit -p packages/types
-bun run lint   # biome
-
-# Integration
-turbo build
-curl -sf http://localhost:8080/health
-```
-
----
-
-## Milestone Summary
-
-| Phase | Priority | AI Time | Tokens (est.) | Outcome |
-|-------|----------|---------|---------------|---------|
-| 0 — Dependency alignment | Prep | 1h | 400 | Rig v0.30, `max_turns()`, edition 2024 |
-| 1 — `ApiError` envelope + Rig mapping | P0 | 3h | 1200 | Single error shape + `thiserror` |
-| 2 — Request-ID + trace in errors | P0 | 1.5h | 600 | Every error traceable |
-| 3 — Compile-safe OpenAPI + autoroute | P1 | 4h | 1800 | Zero handler/spec drift |
-| 4 — Document chat reserved fields | P1 | 1h | 400 | No silent data loss |
-| 5+6 — Auth layer + plan enforcement | P2 | 4h | 1500 | `X-API-Key` hashed + reusable Tower layers |
-| 7 — Thread auto-title | P3 | 2h | 700 | Human-readable thread names |
-| 8 — Rig Hook-based tracing | P3 | 3h | 1100 | Pluggable, SRP-compliant observability |
-| 9 — Generated TS/Zod contracts | P4 | 2.5h | 900 | No manual type duplication |
-| 10 — Rich capability metadata | P4 | 1.5h | 500 | Adaptive per-tenant UI |
-| **Total** | | **~24h** | **~9100** | |
-
-> **Recommended starting point:** Phase 8 (Rig Hooks) first — gives pluggable, reusable behavior for every agent path (chat, agent/completions, invoice pipeline, evals) without copy-paste. Then Phase 1 (ApiError envelope) for consistent error handling.
+1. Phase 1 (canonical naming, breaking rename).
+2. Phase 3 (truncation trait) to unblock future RAG policy work.
+3. Phase 2 (PromptTemplate extraction).
+4. Phase 4 (streaming cleanup).
+5. Phase 5 (docs/release finalization).

@@ -1,16 +1,16 @@
-use super::builder::{GeneralAgent, GeneralAgentBuilder};
+use super::builder::{Agent, AgentBuilder};
 use crate::context::tenant::TenantContext;
 use crate::tools::registry::ToolRegistry;
 use common::error::HttpError;
 use tracing::{info, instrument};
 
 pub struct AgentRuntime {
-    agent: GeneralAgent,
+    agent: Agent,
     registry: ToolRegistry,
 }
 
 impl AgentRuntime {
-    pub fn new(agent: GeneralAgent, registry: ToolRegistry) -> Self {
+    pub fn new(agent: Agent, registry: ToolRegistry) -> Self {
         Self { agent, registry }
     }
 
@@ -20,7 +20,7 @@ impl AgentRuntime {
         registry: ToolRegistry,
         tenant: TenantContext,
     ) -> Self {
-        let agent = GeneralAgentBuilder::build_for_tenant(model, preamble, tenant);
+        let agent = AgentBuilder::build_for_tenant(model, preamble, tenant);
         Self { agent, registry }
     }
 

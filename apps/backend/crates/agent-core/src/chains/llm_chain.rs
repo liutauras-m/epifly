@@ -1,4 +1,4 @@
-//! Data-driven LLM chain tool — implements `ToolProvider` purely from TOML manifest config.
+//! Data-driven LLM chain tool — implements `CapabilityProvider` purely from TOML manifest config.
 //!
 //! Any capability with `kind = "chain"` and a `[chain]` block in its manifest uses
 //! this provider instead of a bespoke Rust implementation.
@@ -8,7 +8,7 @@ use crate::llm::types::{LlmRequest, LlmResponse};
 use crate::llm::LlmRegistry;
 use crate::prompt::PromptTemplate;
 use crate::tools::manifest::{LlmChainConfig, ToolManifest};
-use crate::tools::provider::ToolProvider;
+use crate::tools::provider::CapabilityProvider;
 use async_trait::async_trait;
 use rig::completion::Message;
 use rig::message::UserContent;
@@ -17,26 +17,26 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use tracing::{debug, instrument};
 
-pub struct LlmChainTool {
+pub struct PromptChainCapability {
     manifest: ToolManifest,
     cfg: LlmChainConfig,
     prompt: PromptTemplate,
     llm: Arc<LlmRegistry>,
 }
 
-impl LlmChainTool {
+impl PromptChainCapability {
     pub fn new(manifest: ToolManifest, llm: Arc<LlmRegistry>) -> anyhow::Result<Self> {
         let cfg = manifest
             .chain
             .clone()
-            .ok_or_else(|| anyhow::anyhow!("LlmChainTool: manifest '{}' has no [chain] section", manifest.name))?;
+            .ok_or_else(|| anyhow::anyhow!("PromptChainCapability: manifest '{}' has no [chain] section", manifest.name))?;
         let prompt = PromptTemplate::new(cfg.prompt_template.clone());
         Ok(Self { manifest, cfg, prompt, llm })
     }
 }
 
 #[async_trait]
-impl ToolProvider for LlmChainTool {
+impl CapabilityProvider for PromptChainCapability {
     fn manifest(&self) -> &ToolManifest {
         &self.manifest
     }
@@ -61,7 +61,7 @@ impl ToolProvider for LlmChainTool {
         let ctx = json!({ "input": input, "tenant": tenant_view });
         let user_message = self.prompt.render(&ctx);
 
-        debug!(user_message = %user_message, model = %self.cfg.model, "LlmChainTool invoking");
+        debug!(user_message = %user_message, model = %self.cfg.model, "PromptChainCapability invoking");
 
         // Build LLM request.
         let mut messages = Vec::new();
@@ -75,7 +75,7 @@ impl ToolProvider for LlmChainTool {
         let provider = self
             .llm
             .resolve(&self.cfg.model, tenant)
-            .map_err(|e| anyhow::anyhow!("LlmChainTool: model resolve failed: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("PromptChainCapability: model resolve failed: {e}"))?;
 
         let req = LlmRequest::builder()
             .model(self.cfg.model.clone())
@@ -86,7 +86,7 @@ impl ToolProvider for LlmChainTool {
         let LlmResponse { content, .. } = provider
             .complete(req)
             .await
-            .map_err(|e| anyhow::anyhow!("LlmChainTool: LLM call failed: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("PromptChainCapability: LLM call failed: {e}"))?;
 
         // Try to parse response as JSON; fall back to plain text.
         let output: Value = serde_json::from_str(&content)

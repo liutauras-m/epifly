@@ -1,4 +1,4 @@
-use super::card::ToolCard;
+use super::card::CapabilityCard;
 use super::manifest::ToolManifest;
 use super::registry::ToolRegistry;
 use crate::context::tenant::TenantContext;
@@ -64,13 +64,13 @@ impl ToolExecutor {
 
     /// Build Anthropic-format tool definitions from a tool card (for callers
     /// that still snapshot cards without going through the provider).
-    pub fn tool_definitions(card: &ToolCard) -> Vec<Value> {
+    pub fn tool_definitions(card: &CapabilityCard) -> Vec<Value> {
         tool_definitions_from_manifest(&card.manifest)
     }
 }
 
 /// Shared helper used by `ToolExecutor::tool_definitions` and the default
-/// `ToolProvider::tool_definitions` impl.
+/// `CapabilityProvider::tool_definitions` impl.
 pub fn tool_definitions_from_manifest(manifest: &ToolManifest) -> Vec<Value> {
     manifest
         .tools

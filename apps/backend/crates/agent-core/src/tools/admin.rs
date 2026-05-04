@@ -1,12 +1,12 @@
 //! High-level admin operations for capabilities: CRUD, toggle, reload, test.
 //!
-//! `RegisteredToolAdmin` is the single place that coordinates:
+//! `CapabilityAdmin` is the single place that coordinates:
 //! - `RegisteredToolStore`  — filesystem persistence
 //! - `ToolRegistry`         — in-memory state
 //! - `RegisteredToolValidator` — input validation
 //! - `AuditStore`           — event recording
 
-use super::card::RegisteredToolCard;
+use super::card::CapabilityCard;
 use super::manifest::ToolManifest;
 use super::store::{FilesystemStore, RegisteredToolState, RegisteredToolStore};
 use super::validator::RegisteredToolValidator;
@@ -68,8 +68,8 @@ pub struct CapabilitySummary {
     pub updated_at: String,
 }
 
-impl From<&RegisteredToolCard> for CapabilitySummary {
-    fn from(c: &RegisteredToolCard) -> Self {
+impl From<&CapabilityCard> for CapabilitySummary {
+    fn from(c: &CapabilityCard) -> Self {
         use std::time::UNIX_EPOCH;
         let fmt = |t: std::time::SystemTime| {
             let secs = t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
@@ -118,14 +118,14 @@ pub struct TestInvokeResponse {
 
 // ── Admin service ─────────────────────────────────────────────────────────────
 
-pub struct RegisteredToolAdmin {
+pub struct CapabilityAdmin {
     store: Arc<dyn RegisteredToolStore>,
     registry: Arc<Mutex<ToolRegistry>>,
     audit: Arc<dyn AuditStore>,
     limits: AdminLimits,
 }
 
-impl RegisteredToolAdmin {
+impl CapabilityAdmin {
     pub fn new(
         store: Arc<dyn RegisteredToolStore>,
         registry: Arc<Mutex<ToolRegistry>>,
@@ -361,12 +361,12 @@ impl RegisteredToolAdmin {
     }
 }
 
-/// Build a `RegisteredToolAdmin` from `AppState`-like components.
+/// Build a `CapabilityAdmin` from `AppState`-like components.
 pub fn build_admin(
     registry: Arc<Mutex<ToolRegistry>>,
     audit: Arc<dyn AuditStore>,
-) -> RegisteredToolAdmin {
+) -> CapabilityAdmin {
     let store = Arc::new(FilesystemStore::from_env());
-    RegisteredToolAdmin::new(store, registry, audit)
+    CapabilityAdmin::new(store, registry, audit)
         .with_limits(AdminLimits::from_env())
 }

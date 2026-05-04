@@ -2,7 +2,7 @@
 
 use crate::mw::admin::require_super_admin_session;
 use crate::state::AppState;
-use crate::ui::handlers::{app, auth, chat, invoice, super_admin, upload};
+use crate::ui::handlers::{app, auth, chat, files, invoice, super_admin, upload};
 use axum::{
     Router,
     middleware,
@@ -27,6 +27,7 @@ pub fn ui_router() -> Router<Arc<AppState>> {
         .route("/logout", get(auth::logout))
         .route("/ui/stream", post(chat::ui_stream))
         .route("/ui/upload", post(upload::ui_upload))
+        .route("/ui/files/{token}", get(files::ui_download))
         .route("/ui/extract-invoice", post(invoice::ui_extract_invoice))
         .merge(admin_routes)
 }

@@ -77,7 +77,7 @@ pub async fn upload(
         .await
         .map_err(|e| HttpError::agent(format!("storage write error: {e}")))?;
 
-    // Issue a time-limited download token
+    // Issue a time-limited download token bound to this tenant
     let token = Uuid::new_v4().to_string();
     {
         let mut tokens = state.presigned_tokens.lock().unwrap();
@@ -87,6 +87,7 @@ pub async fn upload(
                 object_key,
                 std::time::Instant::now(),
                 std::time::Duration::from_secs(3600),
+                tenant.0.tenant_id.to_string(),
             ),
         );
     }
@@ -100,9 +101,10 @@ pub async fn upload(
     })))
 }
 
-/// Download a file by token.
+/// Download a file by token (requires auth; token must belong to the caller's tenant).
 pub async fn download(
     State(state): State<Arc<AppState>>,
+    Extension(tenant): Extension<ResolvedTenant>,
     Path(token): Path<String>,
 ) -> Result<Response, HttpError> {
     let store = state
@@ -112,11 +114,14 @@ pub async fn download(
 
     let object_key = {
         let tokens = state.presigned_tokens.lock().unwrap();
-        let (key, created, ttl) = tokens
+        let (key, created, ttl, stored_tid) = tokens
             .get(&token)
             .ok_or_else(|| HttpError::not_found("download token"))?;
         if created.elapsed() > *ttl {
             return Err(HttpError::not_found("download token (expired)"));
+        }
+        if stored_tid != tenant.0.tenant_id.as_str() {
+            return Err(HttpError::not_found("download token"));
         }
         key.clone()
     };

@@ -1,11 +1,11 @@
 use crate::tools::{
-    card::ToolCard,
+    card::CapabilityCard,
     manifest::{ToolDef, ToolKind, ToolManifest},
 };
 use serde_json::json;
 
-/// Build the built-in "native-tools" ToolCard (not loaded from YAML).
-pub fn builtin_tool_card() -> ToolCard {
+/// Build the built-in "native-tools" CapabilityCard (not loaded from YAML).
+pub fn builtin_tool_card() -> CapabilityCard {
     let manifest = ToolManifest {
         name: "native-tools".into(),
         version: "0.1.0".into(),
@@ -74,5 +74,5 @@ pub fn builtin_tool_card() -> ToolCard {
         chain: None,
     };
 
-    ToolCard::new(manifest, std::path::PathBuf::from("."))
+    CapabilityCard::new(manifest, std::path::PathBuf::from("."))
 }

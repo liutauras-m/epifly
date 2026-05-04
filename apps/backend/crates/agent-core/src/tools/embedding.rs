@@ -1,11 +1,11 @@
-use super::card::ToolCard;
+use super::card::CapabilityCard;
 
 /// Generates an embedding-friendly description for a tool.
 /// Full Qdrant integration wired in Phase 6.
 pub struct ToolEmbedding;
 
 impl ToolEmbedding {
-    pub fn describe(card: &ToolCard) -> String {
+    pub fn describe(card: &CapabilityCard) -> String {
         card.manifest.embedding_text()
     }
 }

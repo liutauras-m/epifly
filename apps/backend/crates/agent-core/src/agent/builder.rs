@@ -6,14 +6,14 @@ use rig::completion::Prompt;
 use rig::providers::anthropic;
 use tracing::{info, instrument};
 
-pub struct GeneralAgentBuilder {
+pub struct AgentBuilder {
     model: String,
     preamble: String,
     max_tokens: u64,
     tenant: Option<TenantContext>,
 }
 
-impl GeneralAgentBuilder {
+impl AgentBuilder {
     pub fn new(model: impl Into<String>) -> Self {
         Self {
             model: model.into(),
@@ -38,7 +38,7 @@ impl GeneralAgentBuilder {
         self
     }
 
-    pub fn build(self) -> GeneralAgent {
+    pub fn build(self) -> Agent {
         let client = anthropic::Client::from_env();
         let max_tokens = self
             .tenant
@@ -53,7 +53,7 @@ impl GeneralAgentBuilder {
             .max_tokens(max_tokens)
             .build();
 
-        GeneralAgent {
+        Agent {
             inner,
             tenant: self.tenant,
         }
@@ -64,7 +64,7 @@ impl GeneralAgentBuilder {
         model: impl Into<String>,
         preamble: impl Into<String>,
         tenant: TenantContext,
-    ) -> GeneralAgent {
+    ) -> Agent {
         Self::new(model)
             .preamble(preamble)
             .with_tenant(tenant)
@@ -72,12 +72,12 @@ impl GeneralAgentBuilder {
     }
 }
 
-pub struct GeneralAgent {
+pub struct Agent {
     inner: rig::agent::Agent<rig::providers::anthropic::completion::CompletionModel>,
     pub tenant: Option<TenantContext>,
 }
 
-impl GeneralAgent {
+impl Agent {
     #[instrument(skip(self), fields(tenant_id = self.tenant.as_ref().map(|t| t.tenant_id.as_str()).unwrap_or("none")))]
     pub async fn prompt(&self, text: &str) -> common::error::Result<String> {
         info!("agent prompt");
@@ -100,7 +100,7 @@ impl GeneralAgent {
     }
 }
 
-impl Default for GeneralAgentBuilder {
+impl Default for AgentBuilder {
     fn default() -> Self {
         Self::new("claude-sonnet-4-6")
     }

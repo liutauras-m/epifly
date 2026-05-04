@@ -1,16 +1,16 @@
-//! Chain-kind tool providers — thin adapters that bridge `ToolProvider::invoke`
+//! Chain-kind tool providers — thin adapters that bridge `CapabilityProvider::invoke`
 //! to the concrete extraction pipelines (`InvoicePipeline`, `ContractPipeline`),
-//! or to the generic `LlmChainTool` when a `[chain]` block is present in the manifest.
+//! or to the generic `PromptChainCapability` when a `[chain]` block is present in the manifest.
 
 use crate::chains::contract::ContractPipeline;
 use crate::chains::invoice::InvoicePipeline;
-use crate::chains::llm_chain::LlmChainTool;
+use crate::chains::llm_chain::PromptChainCapability;
 use crate::context::tenant::TenantContext;
 use crate::llm::LlmRegistry;
-use crate::tools::card::ToolCard;
+use crate::tools::card::CapabilityCard;
 use crate::tools::executor::resolve_image_path;
 use crate::tools::manifest::{ToolKind, ToolManifest};
-use crate::tools::provider::{ToolProvider, ToolProviderFactory};
+use crate::tools::provider::{CapabilityProvider, CapabilityFactory};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -23,7 +23,7 @@ pub struct InvoiceProvider {
 }
 
 impl InvoiceProvider {
-    pub fn new(card: ToolCard) -> Self {
+    pub fn new(card: CapabilityCard) -> Self {
         Self {
             manifest: card.manifest,
         }
@@ -31,7 +31,7 @@ impl InvoiceProvider {
 }
 
 #[async_trait]
-impl ToolProvider for InvoiceProvider {
+impl CapabilityProvider for InvoiceProvider {
     fn manifest(&self) -> &ToolManifest {
         &self.manifest
     }
@@ -90,7 +90,7 @@ pub struct ContractProvider {
 }
 
 impl ContractProvider {
-    pub fn new(card: ToolCard) -> Self {
+    pub fn new(card: CapabilityCard) -> Self {
         Self {
             manifest: card.manifest,
         }
@@ -98,7 +98,7 @@ impl ContractProvider {
 }
 
 #[async_trait]
-impl ToolProvider for ContractProvider {
+impl CapabilityProvider for ContractProvider {
     fn manifest(&self) -> &ToolManifest {
         &self.manifest
     }
@@ -195,7 +195,7 @@ pub struct OcrProvider {
 }
 
 impl OcrProvider {
-    pub fn new(card: ToolCard) -> Self {
+    pub fn new(card: CapabilityCard) -> Self {
         Self {
             manifest: card.manifest,
         }
@@ -203,7 +203,7 @@ impl OcrProvider {
 }
 
 #[async_trait]
-impl ToolProvider for OcrProvider {
+impl CapabilityProvider for OcrProvider {
     fn manifest(&self) -> &ToolManifest {
         &self.manifest
     }
@@ -256,7 +256,7 @@ impl ToolProvider for OcrProvider {
 }
 
 /// Factory for `ToolKind::Chain` — routes by manifest name to the right provider.
-/// When `[chain]` is present in the manifest, delegates to `LlmChainTool`.
+/// When `[chain]` is present in the manifest, delegates to `PromptChainCapability`.
 pub struct ChainFactory {
     pub llm: Arc<LlmRegistry>,
 }
@@ -267,15 +267,15 @@ impl ChainFactory {
     }
 }
 
-impl ToolProviderFactory for ChainFactory {
+impl CapabilityFactory for ChainFactory {
     fn supports(&self, kind: &ToolKind, _name: &str) -> bool {
         matches!(kind, ToolKind::Chain)
     }
 
-    fn create(&self, card: ToolCard) -> anyhow::Result<Arc<dyn ToolProvider>> {
-        // Data-driven: if [chain] block present, use generic LlmChainTool.
+    fn create(&self, card: CapabilityCard) -> anyhow::Result<Arc<dyn CapabilityProvider>> {
+        // Data-driven: if [chain] block present, use generic PromptChainCapability.
         if card.manifest.chain.is_some() {
-            return Ok(Arc::new(LlmChainTool::new(card.manifest, Arc::clone(&self.llm))?));
+            return Ok(Arc::new(PromptChainCapability::new(card.manifest, Arc::clone(&self.llm))?));
         }
         // Legacy: hardcoded providers for existing capabilities.
         match card.manifest.name.as_str() {

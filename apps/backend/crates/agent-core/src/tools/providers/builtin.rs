@@ -1,8 +1,8 @@
 use crate::context::tenant::TenantContext;
 use crate::tools::builtin::{cargo, fs};
-use crate::tools::card::ToolCard;
+use crate::tools::card::CapabilityCard;
 use crate::tools::manifest::{ToolKind, ToolManifest};
-use crate::tools::provider::{ToolProvider, ToolProviderFactory};
+use crate::tools::provider::{CapabilityProvider, CapabilityFactory};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
@@ -28,7 +28,7 @@ impl BuiltinProvider {
 }
 
 #[async_trait]
-impl ToolProvider for BuiltinProvider {
+impl CapabilityProvider for BuiltinProvider {
     fn manifest(&self) -> &ToolManifest {
         &self.manifest
     }
@@ -65,12 +65,12 @@ impl ToolProvider for BuiltinProvider {
 /// Factory for `ToolKind::Native` — creates a `BuiltinProvider`.
 pub struct BuiltinFactory;
 
-impl ToolProviderFactory for BuiltinFactory {
+impl CapabilityFactory for BuiltinFactory {
     fn supports(&self, kind: &ToolKind, _name: &str) -> bool {
         matches!(kind, ToolKind::Native)
     }
 
-    fn create(&self, _card: ToolCard) -> anyhow::Result<Arc<dyn ToolProvider>> {
+    fn create(&self, _card: CapabilityCard) -> anyhow::Result<Arc<dyn CapabilityProvider>> {
         Ok(Arc::new(BuiltinProvider::new()))
     }
 }

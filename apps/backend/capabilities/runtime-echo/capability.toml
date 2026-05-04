@@ -19,5 +19,5 @@ description = "Text to echo back"
 [chain]
 model = "claude-opus-4-7"
 system_prompt = "You are an echo tool. Repeat back exactly what the user says."
-prompt_template = "Echo: {{input.query}}"
+prompt_template = "Echo: {{input.message}}"
 max_tokens = 128

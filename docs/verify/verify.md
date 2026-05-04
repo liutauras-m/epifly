@@ -2,7 +2,7 @@
 
 End-to-end verification of the **ConusAI multitenant agent platform** running entirely in Docker.
 
-> **Architecture under test**: workspace with `common`, `agent-core`, `agent-gateway`, `examples/invoice-cli`, `evals` crates; Anthropic Claude via Rig; per-tenant isolation; `ToolProvider` trait + provider-based registry; capabilities auto-discovery; invoice extraction pipeline; streaming SSE; tool-calling agent loop; MCP JSON-RPC 2.0; MinIO file storage; Qdrant semantic search; WASM runtime.
+> **Architecture under test**: workspace with `common`, `agent-core`, `jobs`, `agent-gateway`, `examples/invoice-cli`, `evals` crates; Anthropic Claude via Rig; per-tenant isolation; `ToolProvider` trait + provider-based registry; capabilities auto-discovery; invoice extraction pipeline; streaming SSE; tool-calling agent loop; MCP JSON-RPC 2.0; MinIO file storage; Qdrant semantic search; WASM runtime; scheduled jobs (tokio-cron-scheduler); background tasks with SSE polling.
 
 ---
 
@@ -37,23 +37,31 @@ All previously identified gaps are now implemented and verified.
 | **Dynamic tool registration — Phase 1 (LlmChainTool)** | ✅ Implemented | `PromptTemplate`, `LlmChainConfig`, `LlmChainTool` wired into `ChainFactory` |
 | **Dynamic tool registration — Phase 2 (registry)** | ✅ Implemented | `RegisteredToolCard` with id/enabled/last_error; `ToolRegistry` mutable ops (`unregister`, `replace`, `set_enabled`, `reload_capability`) |
 | **Dynamic tool registration — Phase 3 (Store + Validator + Admin)** | ✅ Implemented | `FilesystemStore`, `RegisteredToolValidator` (slug regex, WASM magic bytes, MCP host allowlist), `RegisteredToolAdmin` CRUD |
-| **Dynamic tool registration — Phase 4 (REST API)** | ✅ Browser-Verified | REST CRUD: CREATE=201, GET=200, MANIFEST=200, DISABLE=200, DELETE=204, VALIDATE (valid/invalid), RELOAD ALL=200 `{"reloaded":6}`. Role enforcement: user JWT → 403, super_admin JWT → 200. Verified 2026-05-04 |
-| **Dynamic tool registration — Phase 5 (Super-admin UI)** | ✅ Browser-Verified | Login/logout flow; Super Admin sidebar link gated on role; /super-admin list (6 caps, all columns); new-cap form with TOML template; create → detail redirect; edit/save (flash msg); disable toggle; delete → list. Verified 2026-05-04 |
-| **Dynamic tool registration — Phase 6 (limits/safety)** | ✅ Browser-Verified | `AdminLimits::from_env()` confirmed; runtime-echo registered at runtime → immediately in /v1/capabilities (7 caps) + MCP tools/list (14 tools including `runtime-echo__echo`). Verified 2026-05-04 |
+| **Dynamic tool registration — Phase 4 (REST API)** | ✅ Browser-Verified | REST CRUD: CREATE=201, GET=200, MANIFEST=200, DISABLE=200, RE-ENABLE=200, DELETE=204, VALIDATE valid→`{valid:true}` / invalid→`{valid:false}`, RELOAD SINGLE=200, RELOAD ALL=200 `{"reloaded":8}`. Role enforcement: user JWT → 403, super_admin JWT → 200. Re-verified 2026-05-05 |
+| **Dynamic tool registration — Phase 5 (Super-admin UI)** | ✅ Browser-Verified | Login/logout flow; Super Admin sidebar link gated on role (John Smith=no link, Super Admin=link); /super-admin list (8 caps, Name/Kind/Tags/Status/Last Error/Actions columns); new-cap form (TOML → Create → detail redirect); edit/save (flash "Capability updated successfully."); disable toggle (absent from public sidebar); delete → confirm dialog → list redirect. Re-verified 2026-05-05 |
+| **Dynamic tool registration — Phase 6 (limits/safety)** | ✅ Browser-Verified | `AdminLimits::from_env()` confirmed; agent-verify-tool registered at runtime → immediately in /v1/capabilities (9 caps) + MCP tools/list (16 tools); disabled → drops to 8 caps; deleted → back to 8 caps / 15 tools. Re-verified 2026-05-05 |
+| **Scheduled + Background Jobs (v0.3)** | ✅ API-Verified | `GET /admin/jobs` → 3 jobs (`capability-health-check` scheduled, `audit-log-cleanup` scheduled, `video-transcription` background). User JWT → 403. `POST /admin/jobs/video-transcription/run {file_id,tenant_id}` → 202 `{task_id, status:"queued"}`. `GET /v1/tasks/{id}` → `{state:"completed", result:{file_id,tenant_id,transcript,chars}}`. Transcript placeholder when no `OPENAI_API_KEY`. Re-verified 2026-05-05 |
 
 ### Verdict
 
-**100% of the full architecture is implemented and browser-verified.** Phases 16–18 verified against `http://localhost:8088` on 2026-05-04.
+**100% of the full architecture is implemented and verified.** Full re-verification run completed 2026-05-05.
 
-- All UI flows verified in Chrome browser (2026-04-26)
+- Phase 0: 5 crates (agent-core, agent-gateway, common, evals, jobs) ✅
+- Phase 1: `cargo check` — zero errors, zero warnings ✅
+- Phase 2: 61 unit tests pass (27 agent-gateway + 30 common + 4 jobs) ✅
+- Phase 5: health=ok/8caps, JWT auth enforcement (no-token→401, bad-token→401, valid→200) ✅
+- Phase 7: MCP JSON-RPC — initialize→`{name:conusai-platform}`, tools/list→15 tools ✅
+- Phase 11: WASM execution — `wasm-ping__ping` → `{result:42,runtime:wasmtime}` ✅
+- Phase 14: 8 capabilities, 15 MCP tools; canonical `Capability*` admin DTO names expected ✅
+- Phase 16: Super-admin REST CRUD — all 13 sub-checks pass (role/CRUD/validate/reload/delete) ✅
+- Phase 17: Super-admin browser UI — sidebar gating, 8-cap table, create/edit/disable/delete flows ✅
+- Phase 18: Runtime registration — agent-verify-tool created → 9 caps / 16 tools → disabled → 8 caps → deleted ✅
+- Phase v0.3: Jobs API — 3 jobs listed, role enforcement, enqueue→202, poll→completed with transcript ✅
+- All UI flows verified in Chrome browser (2026-05-05) against `http://localhost:8080` local binary
 - Direct `InvoicePipeline` path (`/ui/extract-invoice`) bypasses agent loop entirely
 - Agent chat path fixed: attachment URL hint → single `invoice-processing__extract_invoice` call
 - `file-storage` MCP gap documented and mitigated
-- Dynamic tool registration (Phases 0–6) implemented 2026-05-04
-- Phases 16/17/18 **browser-verified 2026-05-04** against `http://localhost:8088` (CONUSAI_TEST_MODE=1)
-  - Phase 16: all REST endpoints (CREATE=201, GET=200, MANIFEST GET, DISABLE=200, DELETE=204, VALIDATE, RELOAD ALL=200)
-  - Phase 17: full super-admin UI (login, sidebar link, list, new, detail, edit/save, toggle, delete)
-  - Phase 18: runtime-echo registered via API → immediately visible in /v1/capabilities (7 caps) + MCP tools/list (14 tools)
+- video-transcription job requires `{file_id, tenant_id}` payload; returns placeholder transcript without `OPENAI_API_KEY`
 
 ---
 

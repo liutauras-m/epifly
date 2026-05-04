@@ -11,6 +11,7 @@ use utoipa_swagger_ui::SwaggerUi;
 
 pub mod agent;
 mod admin_capabilities;
+mod admin_jobs;
 mod audit;
 pub mod auth;
 mod capabilities;
@@ -19,6 +20,7 @@ mod files;
 mod health;
 mod mcp;
 mod search;
+mod tasks;
 mod workspaces;
 
 /// Adds security scheme definitions to the generated OpenAPI spec.
@@ -97,12 +99,10 @@ impl Modify for SecurityAddon {
 )]
 pub struct ApiDoc;
 
-/// Routes that require no auth (health probe, token-based file download, auth, OpenAPI).
+/// Routes that require no auth (health probe, auth, OpenAPI).
 pub fn public_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/health", get(health::health))
-        // Token-based download: the token itself is the capability proof
-        .route("/v1/files/{token}", get(files::download))
         // Auth: exchange credentials for JWT
         .route("/v1/auth/login", post(auth::login))
         // OpenAPI spec (machine-readable) + Swagger UI
@@ -127,6 +127,11 @@ pub fn admin_router() -> Router<Arc<AppState>> {
         .route("/admin/capabilities/{name}/enabled", axum::routing::patch(admin_capabilities::set_enabled))
         .route("/admin/capabilities/{name}", axum::routing::delete(admin_capabilities::delete_one))
         .route("/admin/capabilities/{name}/reload", post(admin_capabilities::reload_one))
+        // Job management
+        .route("/admin/jobs", get(admin_jobs::list_jobs))
+        .route("/admin/jobs/{name}", get(admin_jobs::get_job))
+        .route("/admin/jobs/{name}/run", post(admin_jobs::run_now))
+        .route("/admin/tasks", get(admin_jobs::list_tasks))
         .layer(middleware::from_fn(require_super_admin_jwt))
 }
 
@@ -145,6 +150,7 @@ pub fn protected_router() -> Router<Arc<AppState>> {
         .route("/mcp", post(mcp::dispatch))
         // File storage (MinIO-backed)
         .route("/v1/files", post(files::upload))
+        .route("/v1/files/{token}", get(files::download))
         // ── Audit log ──────────────────────────────────────────────────────
         .route("/v1/audit", get(audit::list_audit))
         // ── Workspace ──────────────────────────────────────────────────────
@@ -164,4 +170,8 @@ pub fn protected_router() -> Router<Arc<AppState>> {
             "/v1/workspaces/{id}/unshare",
             post(workspaces::unshare_node),
         )
+        // ── Tasks (background job polling + SSE) ────────────────────────────
+        .route("/v1/tasks", get(tasks::list_tasks))
+        .route("/v1/tasks/{id}", get(tasks::get_task))
+        .route("/v1/tasks/{id}/sse", get(tasks::task_sse))
 }

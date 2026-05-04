@@ -8,7 +8,7 @@
 //!
 //! - [`types`] — `LlmRequest`, `LlmResponse`, `LlmStream`, `LlmBinding`, …
 //! - [`error`] — `LlmError`
-//! - [`provider`] — `LlmProvider` trait
+//! - [`provider`] — `CompletionProvider` trait
 //! - [`registry`] — `LlmRegistry` + `verify_llm_providers`
 //! - [`streaming`] — OpenAI-compatible SSE helper
 //! - [`providers`] — concrete provider implementations
@@ -23,7 +23,7 @@ pub mod types;
 // ── Flat re-exports ───────────────────────────────────────────────────────────
 
 pub use error::LlmError;
-pub use provider::LlmProvider;
+pub use provider::CompletionProvider;
 pub use registry::{LlmRegistry, verify_llm_providers};
 pub use types::{
     LlmBinding, LlmChunk, LlmRequest, LlmResponse, LlmStream, LlmUsage,

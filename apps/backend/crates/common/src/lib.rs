@@ -8,6 +8,7 @@ pub mod mcp;
 pub mod memory;
 pub mod metrics;
 pub mod path_safety;
+pub mod prompt;
 pub mod telemetry;
 pub mod types;
 pub mod wasm;

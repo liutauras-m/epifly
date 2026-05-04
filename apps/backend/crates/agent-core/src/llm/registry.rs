@@ -1,6 +1,6 @@
 use crate::context::tenant::TenantContext;
 use crate::llm::error::LlmError;
-use crate::llm::provider::LlmProvider;
+use crate::llm::provider::CompletionProvider;
 use crate::llm::types::LlmBinding;
 use common::config::LlmConfig;
 use std::collections::HashMap;
@@ -15,14 +15,14 @@ use tracing::{info, instrument};
 /// 3. `tenant.plan.default_alias()`.
 /// 4. `self.default` (from `[llm].default` in config).
 pub struct LlmRegistry {
-    providers: HashMap<String, Arc<dyn LlmProvider>>,
+    providers: HashMap<String, Arc<dyn CompletionProvider>>,
     aliases: HashMap<String, LlmBinding>,
     default: LlmBinding,
 }
 
 impl LlmRegistry {
     pub fn new(
-        providers: HashMap<String, Arc<dyn LlmProvider>>,
+        providers: HashMap<String, Arc<dyn CompletionProvider>>,
         aliases: HashMap<String, LlmBinding>,
         default: LlmBinding,
     ) -> Self {
@@ -36,7 +36,7 @@ impl LlmRegistry {
     /// env vars.
     pub fn from_config(
         config: &LlmConfig,
-        providers_map: HashMap<String, Arc<dyn LlmProvider>>,
+        providers_map: HashMap<String, Arc<dyn CompletionProvider>>,
     ) -> Result<Self, LlmError> {
         let aliases: HashMap<String, LlmBinding> = config
             .aliases
@@ -99,12 +99,12 @@ impl LlmRegistry {
         Ok(self.default.clone())
     }
 
-    /// Resolve to the `Arc<dyn LlmProvider>` for the resolved binding.
+    /// Resolve to the `Arc<dyn CompletionProvider>` for the resolved binding.
     pub fn resolve(
         &self,
         alias_or_model: &str,
         tenant: Option<&TenantContext>,
-    ) -> Result<Arc<dyn LlmProvider>, LlmError> {
+    ) -> Result<Arc<dyn CompletionProvider>, LlmError> {
         let binding = self.resolve_binding(alias_or_model, tenant)?;
         self.providers
             .get(&binding.provider)
@@ -144,7 +144,7 @@ mod tests {
     use super::*;
     use crate::context::tenant::{PlanTier, TenantContext};
     use crate::llm::error::LlmError;
-    use crate::llm::provider::LlmProvider;
+    use crate::llm::provider::CompletionProvider;
     use crate::llm::types::{LlmChunk, LlmRequest, LlmResponse, LlmStream};
     use async_trait::async_trait;
     use std::collections::HashMap;
@@ -155,7 +155,7 @@ mod tests {
     struct MockProvider;
 
     #[async_trait]
-    impl LlmProvider for MockProvider {
+    impl CompletionProvider for MockProvider {
         fn name(&self) -> &'static str {
             "mock"
         }
@@ -183,9 +183,9 @@ mod tests {
         default_provider: &str,
         default_model: &str,
     ) -> LlmRegistry {
-        let providers_map: HashMap<String, Arc<dyn LlmProvider>> = providers
+        let providers_map: HashMap<String, Arc<dyn CompletionProvider>> = providers
             .iter()
-            .map(|(name, _)| (name.to_string(), Arc::new(MockProvider) as Arc<dyn LlmProvider>))
+            .map(|(name, _)| (name.to_string(), Arc::new(MockProvider) as Arc<dyn CompletionProvider>))
             .collect();
         let aliases_map: HashMap<String, LlmBinding> = aliases
             .iter()

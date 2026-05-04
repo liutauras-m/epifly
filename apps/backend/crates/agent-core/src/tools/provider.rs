@@ -1,5 +1,5 @@
 use crate::context::tenant::TenantContext;
-use crate::tools::card::ToolCard;
+use crate::tools::card::CapabilityCard;
 use crate::tools::manifest::{ToolKind, ToolManifest};
 use async_trait::async_trait;
 use serde::{Serialize, de::DeserializeOwned};
@@ -9,10 +9,10 @@ use std::sync::Arc;
 /// Anything that can execute one or more named tools given a JSON input.
 ///
 /// Implementors hold their own state (HTTP clients, WASM engines, model handles).
-/// The registry keeps `Arc<dyn ToolProvider>` so providers can be cheap to clone
+/// The registry keeps `Arc<dyn CapabilityProvider>` so providers can be cheap to clone
 /// and shared across concurrent agent turns.
 #[async_trait]
-pub trait ToolProvider: Send + Sync + 'static {
+pub trait CapabilityProvider: Send + Sync + 'static {
     /// The manifest is the contract: name, kind, tool list, embedding text, etc.
     fn manifest(&self) -> &ToolManifest;
 
@@ -28,7 +28,7 @@ pub trait ToolProvider: Send + Sync + 'static {
     /// Default impl — no provider needs to override.
     ///
     /// `where Self: Sized` keeps the trait dyn-compatible; call the free function
-    /// `invoke_typed_dyn` when you only have `&dyn ToolProvider`.
+    /// `invoke_typed_dyn` when you only have `&dyn CapabilityProvider`.
     async fn invoke_typed<I, O>(
         &self,
         tool_name: &str,
@@ -52,12 +52,12 @@ pub trait ToolProvider: Send + Sync + 'static {
     }
 }
 
-/// Free-function equivalent of `invoke_typed` for use with `&dyn ToolProvider`.
+/// Free-function equivalent of `invoke_typed` for use with `&dyn CapabilityProvider`.
 ///
 /// Prefer calling `.invoke_typed()` directly on a concrete provider.  Use this
-/// when you only have an `Arc<dyn ToolProvider>` or `&dyn ToolProvider`.
+/// when you only have an `Arc<dyn CapabilityProvider>` or `&dyn CapabilityProvider`.
 pub async fn invoke_typed_dyn<I, O>(
-    provider: &dyn ToolProvider,
+    provider: &dyn CapabilityProvider,
     tool_name: &str,
     input: I,
     tenant: Option<&TenantContext>,
@@ -78,10 +78,10 @@ where
 /// dynamically.  Adding a new capability kind = one new file + one
 /// `registry.register_factory(MyFactory)` call — the registry, executor, and
 /// agent loop never need to change.
-pub trait ToolProviderFactory: Send + Sync + 'static {
+pub trait CapabilityFactory: Send + Sync + 'static {
     /// Returns true when this factory can handle the given kind + name combination.
     fn supports(&self, kind: &ToolKind, name: &str) -> bool;
 
     /// Create a provider from the card.  Called once per discovered capability.
-    fn create(&self, card: ToolCard) -> anyhow::Result<Arc<dyn ToolProvider>>;
+    fn create(&self, card: CapabilityCard) -> anyhow::Result<Arc<dyn CapabilityProvider>>;
 }

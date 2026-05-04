@@ -45,7 +45,7 @@ pub struct LlmChunk {
     pub finish_reason: Option<String>,
 }
 
-/// A boxed async stream of chunks, yielded by `LlmProvider::stream`.
+/// A boxed async stream of chunks, yielded by `CompletionProvider::stream`.
 pub type LlmStream = Pin<Box<dyn Stream<Item = Result<LlmChunk, LlmError>> + Send>>;
 
 // ── Registry binding ──────────────────────────────────────────────────────────

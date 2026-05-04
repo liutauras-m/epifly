@@ -11,7 +11,7 @@ use async_trait::async_trait;
 /// - The trait is dyn-safe: all async methods use `#[async_trait]`.
 /// - Default capability flags are conservative (`supports_vision = false`).
 #[async_trait]
-pub trait LlmProvider: Send + Sync {
+pub trait CompletionProvider: Send + Sync {
     fn name(&self) -> &'static str;
 
     fn supports_tools(&self) -> bool {

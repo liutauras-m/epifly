@@ -1,26 +1,26 @@
 use crate::context::tenant::TenantContext;
-use crate::tools::card::ToolCard;
+use crate::tools::card::CapabilityCard;
 use crate::tools::manifest::{ToolKind, ToolManifest};
-use crate::tools::provider::{ToolProvider, ToolProviderFactory};
+use crate::tools::provider::{CapabilityProvider, CapabilityFactory};
 use crate::tools::wasm_loader::WasmToolLoader;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
 
 pub struct WasmProvider {
-    card: ToolCard,
+    card: CapabilityCard,
     manifest: ToolManifest,
 }
 
 impl WasmProvider {
-    pub fn new(card: ToolCard) -> Self {
+    pub fn new(card: CapabilityCard) -> Self {
         let manifest = card.manifest.clone();
         Self { card, manifest }
     }
 }
 
 #[async_trait]
-impl ToolProvider for WasmProvider {
+impl CapabilityProvider for WasmProvider {
     fn manifest(&self) -> &ToolManifest {
         &self.manifest
     }
@@ -41,12 +41,12 @@ impl ToolProvider for WasmProvider {
 /// Factory for `ToolKind::Wasm`.
 pub struct WasmFactory;
 
-impl ToolProviderFactory for WasmFactory {
+impl CapabilityFactory for WasmFactory {
     fn supports(&self, kind: &ToolKind, _name: &str) -> bool {
         matches!(kind, ToolKind::Wasm)
     }
 
-    fn create(&self, card: ToolCard) -> anyhow::Result<Arc<dyn ToolProvider>> {
+    fn create(&self, card: CapabilityCard) -> anyhow::Result<Arc<dyn CapabilityProvider>> {
         Ok(Arc::new(WasmProvider::new(card)))
     }
 }

@@ -1,8 +1,8 @@
 use crate::context::tenant::TenantContext;
-use crate::tools::card::ToolCard;
+use crate::tools::card::CapabilityCard;
 use crate::tools::manifest::{ToolKind, ToolManifest};
 use crate::tools::mcp_adapter::McpAdapter;
-use crate::tools::provider::{ToolProvider, ToolProviderFactory};
+use crate::tools::provider::{CapabilityProvider, CapabilityFactory};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
@@ -13,7 +13,7 @@ pub struct McpProvider {
 }
 
 impl McpProvider {
-    pub fn new(card: ToolCard) -> anyhow::Result<Self> {
+    pub fn new(card: CapabilityCard) -> anyhow::Result<Self> {
         let endpoint = card.manifest.config["endpoint"]
             .as_str()
             .ok_or_else(|| {
@@ -32,7 +32,7 @@ impl McpProvider {
 }
 
 #[async_trait]
-impl ToolProvider for McpProvider {
+impl CapabilityProvider for McpProvider {
     fn manifest(&self) -> &ToolManifest {
         &self.manifest
     }
@@ -54,12 +54,12 @@ impl ToolProvider for McpProvider {
 /// Factory for `ToolKind::Mcp`.
 pub struct McpFactory;
 
-impl ToolProviderFactory for McpFactory {
+impl CapabilityFactory for McpFactory {
     fn supports(&self, kind: &ToolKind, _name: &str) -> bool {
         matches!(kind, ToolKind::Mcp)
     }
 
-    fn create(&self, card: ToolCard) -> anyhow::Result<Arc<dyn ToolProvider>> {
+    fn create(&self, card: CapabilityCard) -> anyhow::Result<Arc<dyn CapabilityProvider>> {
         Ok(Arc::new(McpProvider::new(card)?))
     }
 }

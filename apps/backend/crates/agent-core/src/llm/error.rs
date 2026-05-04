@@ -19,4 +19,7 @@ pub enum LlmError {
 
     #[error("tenant override invalid: {0}")]
     TenantOverride(String),
+
+    #[error("streaming error: {0}")]
+    Streaming(String),
 }

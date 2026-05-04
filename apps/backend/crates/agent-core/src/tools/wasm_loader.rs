@@ -1,4 +1,4 @@
-use super::card::ToolCard;
+use super::card::CapabilityCard;
 use anyhow::Context;
 use serde_json::{Value, json};
 use wasmtime::{Engine, Linker, Module, Store};
@@ -14,14 +14,14 @@ impl WasmToolLoader {
         })
     }
 
-    pub fn load(&self, card: &ToolCard) -> common::error::Result<Module> {
+    pub fn load(&self, card: &CapabilityCard) -> common::error::Result<Module> {
         let wasm_path = card.source_dir.join("capability.wasm");
         Module::from_file(&self.engine, &wasm_path)
             .map_err(|e| common::error::ConusAiError::Wasm(e.to_string()))
     }
 
     /// Invoke an exported i32-returning function from a WASM tool.
-    pub fn invoke_i32(&self, card: &ToolCard, func_name: &str) -> common::error::Result<i32> {
+    pub fn invoke_i32(&self, card: &CapabilityCard, func_name: &str) -> common::error::Result<i32> {
         let module = self.load(card)?;
         let mut store: Store<()> = Store::new(&self.engine, ());
         let linker: Linker<()> = Linker::new(&self.engine);
@@ -43,7 +43,7 @@ impl WasmToolLoader {
     /// Invoke a WASM tool and return a JSON result.
     pub fn invoke_tool(
         &self,
-        card: &ToolCard,
+        card: &CapabilityCard,
         tool_name: &str,
         _input: &Value,
     ) -> common::error::Result<Value> {
@@ -73,7 +73,7 @@ impl Default for WasmToolLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::{card::ToolCard, manifest::ToolManifest};
+    use crate::tools::{card::CapabilityCard, manifest::ToolManifest};
     use std::path::PathBuf;
 
     #[test]
@@ -92,7 +92,7 @@ tools = []
         let capabilities_dir =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../capabilities/template-wasm");
 
-        let card = ToolCard::new(manifest, capabilities_dir);
+        let card = CapabilityCard::new(manifest, capabilities_dir);
 
         // Only run if the WASM file exists (CI may skip this)
         if !card.source_dir.join("capability.wasm").exists() {

@@ -1,2 +1,2 @@
-pub mod template;
-pub use template::PromptTemplate;
+// Re-export from common for backwards compat — callers can use either path.
+pub use common::prompt::PromptTemplate;

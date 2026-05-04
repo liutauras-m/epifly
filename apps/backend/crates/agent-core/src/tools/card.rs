@@ -1,11 +1,11 @@
 use super::manifest::ToolManifest;
-use super::provider::ToolProvider;
+use super::provider::CapabilityProvider;
 use std::sync::Arc;
 use std::time::SystemTime;
 use uuid::Uuid;
 
 #[derive(Clone)]
-pub struct RegisteredToolCard {
+pub struct CapabilityCard {
     pub id: Uuid,
     pub manifest: ToolManifest,
     /// Directory on disk where `capability.toml` (and optional `.wasm`) live.
@@ -18,10 +18,10 @@ pub struct RegisteredToolCard {
     pub registered_at: SystemTime,
     pub updated_at: SystemTime,
     /// Cached provider — cheap to clone, avoids re-creating on each read.
-    pub provider: Option<Arc<dyn ToolProvider>>,
+    pub provider: Option<Arc<dyn CapabilityProvider>>,
 }
 
-impl RegisteredToolCard {
+impl CapabilityCard {
     pub fn new(manifest: ToolManifest, source_dir: std::path::PathBuf) -> Self {
         let now = SystemTime::now();
         Self {
@@ -37,11 +37,10 @@ impl RegisteredToolCard {
         }
     }
 
-    pub fn with_provider(mut self, provider: Arc<dyn ToolProvider>) -> Self {
+    pub fn with_provider(mut self, provider: Arc<dyn CapabilityProvider>) -> Self {
         self.provider = Some(provider);
         self
     }
 }
 
-/// Backwards-compat type alias — internal code should migrate to `RegisteredToolCard`.
-pub type ToolCard = RegisteredToolCard;
+

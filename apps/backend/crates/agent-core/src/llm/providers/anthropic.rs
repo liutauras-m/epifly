@@ -1,13 +1,14 @@
 use crate::llm::error::LlmError;
-use crate::llm::provider::LlmProvider;
+use crate::llm::provider::CompletionProvider;
 use crate::llm::types::{LlmChunk, LlmRequest, LlmResponse, LlmStream, LlmUsage};
 use async_trait::async_trait;
-use futures::stream;
+use futures::StreamExt;
 use rig::client::ProviderClient;
 use rig::client::completion::CompletionClient;
 use rig::completion::CompletionModel;
 use rig::message::{AssistantContent, Message};
 use rig::providers::anthropic;
+use rig::streaming::StreamedAssistantContent;
 use tracing::instrument;
 
 // ── AnthropicProvider ─────────────────────────────────────────────────────────
@@ -44,10 +45,10 @@ impl AnthropicProvider {
     }
 }
 
-// ── LlmProvider impl ──────────────────────────────────────────────────────────
+// ── CompletionProvider impl ──────────────────────────────────────────────────────────
 
 #[async_trait]
-impl LlmProvider for AnthropicProvider {
+impl CompletionProvider for AnthropicProvider {
     fn name(&self) -> &'static str {
         "anthropic"
     }
@@ -115,8 +116,8 @@ impl LlmProvider for AnthropicProvider {
         })
     }
 
-    /// Wraps the blocking `complete` call in a single-chunk stream.
-    /// Replace with native SSE streaming when rig exposes a streaming completion API.
+    /// Uses Rig 0.36 native SSE streaming via `CompletionModel::stream`.
+    /// Text deltas are forwarded as `LlmChunk`s; the final chunk carries `finish_reason = "stop"`.
     #[instrument(
         skip_all,
         fields(
@@ -128,12 +129,63 @@ impl LlmProvider for AnthropicProvider {
         )
     )]
     async fn stream(&self, req: LlmRequest) -> Result<LlmStream, LlmError> {
-        let resp = self.complete(req).await?;
-        let chunk = LlmChunk {
-            delta: resp.content,
-            finish_reason: Some("stop".to_string()),
-        };
-        Ok(Box::pin(stream::once(async move { Ok(chunk) })))
+        let model = self.client.completion_model(&req.model);
+        let mut builder = model.completion_request(Message::User {
+            content: rig::OneOrMany::one(rig::message::UserContent::text(
+                req.messages
+                    .iter()
+                    .filter_map(|m| match m {
+                        Message::User { content } => {
+                            let texts: Vec<_> = content
+                                .iter()
+                                .filter_map(|c| {
+                                    if let rig::message::UserContent::Text(t) = c {
+                                        Some(t.text.as_str())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect();
+                            if texts.is_empty() { None } else { Some(texts.join("\n")) }
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )),
+        });
+        if let Some(t) = req.temperature {
+            builder = builder.temperature(t as f64);
+        }
+        if let Some(mt) = req.max_tokens {
+            builder = builder.max_tokens(mt as u64);
+        }
+        let rig_req = builder.build();
+
+        let rig_stream = model
+            .stream(rig_req)
+            .await
+            .map_err(|e| LlmError::Streaming(e.to_string()))?;
+
+        // Map Rig's StreamedAssistantContent chunks to our LlmChunk type.
+        let mapped = rig_stream.filter_map(|item| async move {
+            match item {
+                Ok(StreamedAssistantContent::Text(t)) => Some(Ok(LlmChunk {
+                    delta: t.text.clone(),
+                    finish_reason: None,
+                })),
+                // Final response sentinel — emit finish_reason.
+                Ok(StreamedAssistantContent::Final(_)) => Some(Ok(LlmChunk {
+                    delta: String::new(),
+                    finish_reason: Some("stop".to_string()),
+                })),
+                // Tool call / reasoning chunks are silently skipped in the streaming text path.
+                Ok(_) => None,
+                Err(e) => Some(Err(LlmError::Streaming(e.to_string()))),
+            }
+        });
+
+        Ok(Box::pin(mapped))
     }
 
 }

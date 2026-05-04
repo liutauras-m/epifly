@@ -21,10 +21,10 @@ pub struct ExtractRequest {
     pub token: String,
 }
 
-#[instrument(skip(state, _user, body), fields(token = %body.token))]
+#[instrument(skip(state, user, body), fields(token = %body.token))]
 pub async fn ui_extract_invoice(
     State(state): State<Arc<AppState>>,
-    _user: SessionUser,
+    user: SessionUser,
     Json(body): Json<ExtractRequest>,
 ) -> Response {
     let store = match state.file_store.as_ref() {
@@ -37,13 +37,17 @@ pub async fn ui_extract_invoice(
         }
     };
 
-    // Resolve token → object key (same map used by presigned download)
+    // Resolve token → object key, verifying this session's tenant owns it
     let object_key = {
         let tokens = state.presigned_tokens.lock().unwrap();
+        let tenant = user.tenant_context();
         match tokens.get(&body.token) {
-            Some((key, created, ttl)) => {
+            Some((key, created, ttl, stored_tid)) => {
                 if created.elapsed() > *ttl {
                     return err(StatusCode::GONE, "upload token expired");
+                }
+                if stored_tid != tenant.tenant_id.as_str() {
+                    return err(StatusCode::NOT_FOUND, "token not found — upload the file first");
                 }
                 key.clone()
             }

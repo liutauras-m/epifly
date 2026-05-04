@@ -83,7 +83,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./apps/backend/capabilities:/app/capabilities:ro
+      - ./apps/backend/capabilities:/app/capabilities
       - ./apps/backend/crates/agent-gateway/assets:/app/ui-assets:ro
     restart: unless-stopped
     profiles: ["full"]

@@ -1,7 +1,7 @@
 use crate::mw::RateLimiter;
 use agent_core::{
     ConversationService, DefaultConversationService, LlmRegistry, MinioWorkspaceContent,
-    QdrantAuditStore, QdrantThreadStore, QdrantWorkspaceStore, RegisteredToolAdmin, ToolDiscovery,
+    QdrantAuditStore, QdrantThreadStore, QdrantWorkspaceStore, CapabilityAdmin, ToolDiscovery,
     ToolRegistry, build_admin,
 };
 use agent_core::llm::providers::anthropic::AnthropicProvider;
@@ -10,6 +10,8 @@ use common::memory::{
     InMemoryAuditStore, InMemoryThreadStore, InMemoryWorkspaceContent, InMemoryWorkspaceStore,
     ThreadStore, WorkspaceContentStore, WorkspaceStore,
 };
+use jobs::{JobAdmin, JobContext, JobExecutor, JobRegistry};
+use jobs::jobs::{AuditLogCleanupJob, CapabilityHealthCheckJob, VideoTranscriptionJob};
 use object_store::{ObjectStore, aws::AmazonS3Builder};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -22,8 +24,8 @@ pub struct AppState {
     pub llm: Arc<LlmRegistry>,
     /// MinIO / S3-compatible file store (None if not configured)
     pub file_store: Option<Arc<dyn ObjectStore>>,
-    /// In-memory map of download tokens → (object_key, issued_at, ttl)
-    pub presigned_tokens: Mutex<HashMap<String, (String, std::time::Instant, std::time::Duration)>>,
+    /// In-memory map of download tokens → (object_key, issued_at, ttl, tenant_id)
+    pub presigned_tokens: Mutex<HashMap<String, (String, std::time::Instant, std::time::Duration, String)>>,
     /// Persistent conversation memory backed by Qdrant (or in-memory in test mode)
     pub thread_store: Arc<dyn ThreadStore>,
     /// Append-only audit log backed by Qdrant (or in-memory in test mode)
@@ -35,7 +37,13 @@ pub struct AppState {
     /// Unified conversation service (single source of truth for thread lifecycle).
     pub conversation_service: Arc<dyn ConversationService>,
     /// Super-admin capability management service.
-    pub tool_admin: Arc<RegisteredToolAdmin>,
+    pub tool_admin: Arc<CapabilityAdmin>,
+    /// Scheduled + background job registry.
+    pub job_registry: Arc<JobRegistry>,
+    /// Background task executor (in-memory).
+    pub job_executor: Arc<JobExecutor>,
+    /// Super-admin job management facade.
+    pub job_admin: Arc<JobAdmin>,
 }
 
 impl AppState {
@@ -46,7 +54,7 @@ impl AppState {
 
         let llm = Arc::new(build_llm_registry());
         let mut registry = ToolRegistry::with_default_factories(Arc::clone(&llm));
-        ToolDiscovery::from_env().discover_into(&mut registry)?;;
+        ToolDiscovery::from_env().discover_into(&mut registry)?;
 
         let qdrant_url =
             std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".into());
@@ -74,6 +82,22 @@ impl AppState {
         let registry = Arc::new(Mutex::new(registry));
         let tool_admin = Arc::new(build_admin(Arc::clone(&registry), Arc::clone(&audit_store)));
 
+        // Build job infrastructure
+        let minio_endpoint = std::env::var("MINIO_ENDPOINT")
+            .or_else(|_| std::env::var("S3_ENDPOINT"))
+            .ok();
+        let bucket = std::env::var("MINIO_BUCKET")
+            .unwrap_or_else(|_| "conusai".into());
+        let job_ctx = Arc::new(JobContext::new(
+            Arc::clone(&audit_store),
+            &qdrant_url,
+            minio_endpoint,
+            Some(bucket),
+        ));
+        let job_registry = build_job_registry(job_ctx);
+        let job_executor = JobExecutor::new(Arc::clone(&job_registry));
+        let job_admin = Arc::new(JobAdmin::new(Arc::clone(&job_registry), Arc::clone(&job_executor)));
+
         Ok(Self {
             registry,
             rate_limiter: RateLimiter::new(),
@@ -86,6 +110,9 @@ impl AppState {
             workspace_content,
             conversation_service,
             tool_admin,
+            job_registry,
+            job_executor,
+            job_admin,
         })
     }
 
@@ -98,7 +125,7 @@ impl AppState {
 
         let llm = Arc::new(build_llm_registry());
         let mut registry = ToolRegistry::with_default_factories(Arc::clone(&llm));
-        ToolDiscovery::from_env().discover_into(&mut registry)?;;
+        ToolDiscovery::from_env().discover_into(&mut registry)?;
 
         let thread_store: Arc<dyn ThreadStore> = Arc::new(InMemoryThreadStore::new());
         let workspace_store: Arc<dyn WorkspaceStore> = Arc::new(InMemoryWorkspaceStore::new());
@@ -112,6 +139,17 @@ impl AppState {
         let registry = Arc::new(Mutex::new(registry));
         let tool_admin = Arc::new(build_admin(Arc::clone(&registry), Arc::clone(&audit_store)));
 
+        // Build job infrastructure (no Qdrant/MinIO in test mode)
+        let job_ctx = Arc::new(JobContext::new(
+            Arc::clone(&audit_store),
+            "http://localhost:6333",
+            None,
+            None,
+        ));
+        let job_registry = build_job_registry(job_ctx);
+        let job_executor = JobExecutor::new(Arc::clone(&job_registry));
+        let job_admin = Arc::new(JobAdmin::new(Arc::clone(&job_registry), Arc::clone(&job_executor)));
+
         Ok(Self {
             registry,
             rate_limiter: RateLimiter::new(),
@@ -124,6 +162,9 @@ impl AppState {
             workspace_content: Arc::new(InMemoryWorkspaceContent::new()),
             conversation_service,
             tool_admin,
+            job_registry,
+            job_executor,
+            job_admin,
         })
     }
 }
@@ -193,7 +234,7 @@ fn build_llm_registry() -> LlmRegistry {
     use agent_core::llm::types::LlmBinding;
     use std::collections::HashMap;
 
-    let mut providers: HashMap<String, Arc<dyn agent_core::LlmProvider>> = HashMap::new();
+    let mut providers: HashMap<String, Arc<dyn agent_core::CompletionProvider>> = HashMap::new();
 
     match AnthropicProvider::from_env() {
         Ok(p) => {
@@ -211,4 +252,13 @@ fn build_llm_registry() -> LlmRegistry {
     };
     let aliases = HashMap::new();
     LlmRegistry::new(providers, aliases, default_binding)
+}
+
+/// Build a `JobRegistry` pre-populated with the platform's built-in jobs.
+fn build_job_registry(ctx: Arc<JobContext>) -> Arc<JobRegistry> {
+    let mut registry = JobRegistry::new(ctx);
+    registry.register_scheduled(CapabilityHealthCheckJob);
+    registry.register_scheduled(AuditLogCleanupJob);
+    registry.register_background(VideoTranscriptionJob);
+    Arc::new(registry)
 }
