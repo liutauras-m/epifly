@@ -21,6 +21,7 @@ mod health;
 mod mcp;
 mod search;
 mod tasks;
+mod threads;
 mod workspaces;
 
 /// Adds security scheme definitions to the generated OpenAPI spec.
@@ -174,4 +175,6 @@ pub fn protected_router() -> Router<Arc<AppState>> {
         .route("/v1/tasks", get(tasks::list_tasks))
         .route("/v1/tasks/{id}", get(tasks::get_task))
         .route("/v1/tasks/{id}/sse", get(tasks::task_sse))
+        // ── Threads ─────────────────────────────────────────────────────────
+        .route("/v1/threads/{id}/messages", get(threads::get_messages))
 }
