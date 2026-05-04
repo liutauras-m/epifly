@@ -1,0 +1,108 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/common",
+    "crates/agent-core",
+    "crates/agent-gateway",
+    "evals",
+]
+
+[workspace.package]
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.88"
+authors      = ["Liutauras Medziunas <info@conusai.com>"]
+license      = "MIT"
+repository   = "https://github.com/conusai/conusai-platform"
+
+[workspace.dependencies]
+# Async runtime
+tokio        = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1" }
+
+# AI / Rig
+rig-core     = { version = "0.36" }
+
+# Vector DB
+qdrant-client = { version = "1" }
+
+# HTTP
+axum         = { version = "0.8", features = ["ws", "multipart"] }
+reqwest      = { version = "0.13", features = ["json", "stream"] }
+tower        = { version = "0.5" }
+tower-http   = { version = "0.6", features = ["cors", "trace", "compression-br", "fs"] }
+
+# Serialization
+serde        = { version = "1", features = ["derive"] }
+serde_json   = { version = "1" }
+toml         = { version = "0.8" }
+
+# Config
+figment      = { version = "0.10", features = ["env", "toml"] }
+
+# Error handling
+thiserror    = { version = "2" }
+anyhow       = { version = "1" }
+
+# Tracing / Observability
+tracing                    = { version = "0.1" }
+tracing-subscriber         = { version = "0.3", features = ["env-filter", "json"] }
+opentelemetry              = { version = "0.27", features = ["metrics"] }
+opentelemetry_sdk          = { version = "0.27", features = ["rt-tokio", "metrics"] }
+opentelemetry-otlp         = { version = "0.27", features = ["tonic", "metrics"] }
+opentelemetry-prometheus   = { version = "0.27" }
+prometheus                 = { version = "0.13" }
+tracing-opentelemetry      = { version = "0.28" }
+
+# WASM
+wasmtime     = { version = "29", features = ["component-model"] }
+wasmtime-wasi = { version = "29" }
+
+# Auth / Crypto
+jsonwebtoken = { version = "9" }
+sha2         = { version = "0.10" }
+blake3       = { version = "1" }
+
+# Schema / validation
+schemars     = { version = "0.8", features = ["derive"] }
+
+# Base64
+base64       = { version = "0.22" }
+
+# Object / file storage (MinIO / S3)
+object_store = { version = "0.11", features = ["aws"] }
+
+# HMAC (for SigV4 / search helpers)
+hmac         = { version = "0.12" }
+
+# Utilities
+uuid         = { version = "1", features = ["v4", "v5", "serde"] }
+chrono       = { version = "0.4", features = ["serde"] }
+ulid         = { version = "1.1", features = ["serde"] }
+bytes        = { version = "1" }
+futures      = { version = "0.3" }
+async-trait  = { version = "0.1" }
+bon          = { version = "3" }
+
+# CLI args
+clap         = { version = "4", features = ["derive"] }
+
+# Colored output
+colored      = { version = "2" }
+
+# Server-side templates
+askama       = { version = "0.12" }
+
+# OpenAPI documentation
+utoipa       = { version = "5", features = ["axum_extras", "chrono", "uuid", "ulid"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
+
+[profile.release]
+opt-level     = 3
+lto           = "thin"
+codegen-units = 1
+strip         = "symbols"
+
+[profile.dev]
+opt-level = 0
+debug     = true

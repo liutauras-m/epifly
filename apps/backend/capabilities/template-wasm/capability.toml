@@ -1,0 +1,17 @@
+name = "wasm-ping"
+version = "0.1.0"
+description = "Minimal WASM capability demonstrating the WASM runtime type. Exports a ping tool that returns an integer result via WebAssembly execution."
+kind = "wasm"
+tags = ["demo", "wasm", "test"]
+
+[[tools]]
+name = "ping"
+description = "Returns 42 as a proof-of-execution from the WASM runtime."
+
+[tools.input_schema]
+type = "object"
+required = []
+
+[tools.input_schema.properties.name]
+type = "string"
+description = "Optional label (echoed back in response)"

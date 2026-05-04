@@ -1,0 +1,38 @@
+name = "ocr-service"
+version = "1.0.0"
+description = """
+General-purpose OCR for raw text extraction from any image or scanned document.
+Use ONLY when you need plain unstructured text output: contracts, letters, handwritten notes,
+meeting agendas, signage, or receipts where no structured fields are needed.
+For invoices, bills, purchase orders, or any document requiring structured field extraction,
+use invoice-processing__extract_invoice instead — it is faster, more accurate, and returns
+typed structured data rather than raw text.
+"""
+kind = "chain"
+tags = ["ocr", "vision", "text-extraction", "document", "general-purpose"]
+
+[[tools]]
+name = "extract_text"
+description = """
+Extract raw plain text from an image or scanned document using Claude vision.
+Returns unstructured text — suitable for contracts, letters, handwritten notes, or any document
+where you need the raw content rather than structured fields.
+For invoices or structured documents, prefer invoice-processing__extract_invoice.
+Input: image_path — local path or http/https URL. preserve_layout keeps whitespace structure.
+"""
+
+[tools.input_schema]
+type = "object"
+required = ["image_path"]
+
+[tools.input_schema.properties.image_path]
+type = "string"
+description = "Local path or http/https URL to the image or PDF"
+
+[tools.input_schema.properties.preserve_layout]
+type = "boolean"
+default = false
+description = "Preserve whitespace/column layout in output"
+
+[config]
+default_model = "claude-sonnet-4-6"

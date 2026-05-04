@@ -1,63 +1,10 @@
 # ConusAI Platform — Architecture & Functionality
 
-A production-grade multitenant AI agent platform built on **Rust + Rig**, with **WASM/MCP capabilities**, **Qdrant** vector search, **MinIO** file storage, and full **OpenTelemetry** observability.
+A production-grade multitenant AI agent platform. The monorepo contains a **Rust + Rig** backend (`apps/backend/`) and WASM/MCP capabilities. The built-in **Foundry UI** (served by the gateway at `GET /`) provides workspace management, agent chat, file upload, and invoice extraction without a separate frontend app.
 
 ---
 
-## 1. Workspace Overview
-
-### Workspace Members ([Cargo.toml](../Cargo.toml))
-
-- [crates/common](../crates/common) — Shared utilities and foundational types
-- [crates/agent-core](../crates/agent-core) — Agent runtime, tool registry, Rig integration
-- [crates/agent-gateway](../crates/agent-gateway) — OpenAI-compatible HTTP gateway
-- [examples/invoice-cli](../examples/invoice-cli) — Standalone invoice extraction CLI
-- [evals](../evals) — Evaluation framework (runners + scorers)
-
-### Key Workspace Dependencies
-
-| Category | Crates |
-|----------|--------|
-| Async runtime | `tokio` (full), `tokio-stream` |
-| AI / LLM | `rig-core` 0.9 (Anthropic) |
-| Vector DB | `qdrant-client` 1.x |
-| HTTP server | `axum` 0.8 (ws, multipart), `tower`, `tower-http` (cors, trace, br) |
-| HTTP client | `reqwest` 0.12 (json, stream) |
-| Serialization | `serde`, `serde_json`, `serde_yaml` |
-| Config | `figment` (env, toml, yaml) |
-| Errors | `thiserror`, `anyhow` |
-| Observability | `tracing`, `tracing-subscriber`, `opentelemetry` 0.27, `opentelemetry-otlp`, `tracing-opentelemetry` |
-| WASM | `wasmtime` 29 (component-model), `wasmtime-wasi` |
-| Auth/Crypto | `jsonwebtoken`, `sha2`, `hmac` |
-| Schema | `schemars` 0.8 |
-| Object storage | `object_store` 0.11 (S3/MinIO) |
-| IDs | `ulid = "1.1"` (time-sortable, serde) |
-| Utilities | `uuid`, `chrono`, `bytes`, `futures`, `async-trait`, `bon`, `clap`, `colored` |
-
-- **Rust edition:** 2024
-- **Dependency resolver:** 3
-- **Rust version:** 1.88 (stable)
-- **WASM target:** `wasm32-wasip1` (configured in [rust-toolchain.toml](../rust-toolchain.toml))
-
----
-
-## 2. Top-Level Files
-
-### [Dockerfile](../Dockerfile) — 4-stage cargo-chef build
-
-**Stage 1 — Planner** (`rust:1.88-slim`) — `cargo chef prepare` generates `recipe.json` from the workspace manifests.
-
-**Stage 2 — Cacher** — `cargo chef cook --release` builds all dependencies into a layer; cached by Docker unless `Cargo.toml`/`Cargo.lock` change (10× faster incremental rebuilds).
-
-**Stage 3 — Builder** — copies pre-built deps from cacher, compiles real source with `cargo build --release --bin agent-gateway`.
-
-**Stage 4 — Runtime** (`debian:bookworm-slim`)
-- Installs `libssl3`, `ca-certificates`, `curl`
-- Copies `/build/target/release/agent-gateway` → `/app/agent-gateway`
-- Copies `/capabilities` (read-only)
-- Env: `CONUSAI_SERVER__HOST=0.0.0.0`, `CONUSAI_SERVER__PORT=8080`, `CONUSAI_CAPABILITIES_DIR=/app/capabilities`
-- Exposes 8080
-- Healthcheck: `curl -sf http://localhost:8080/health` (15s/5s/3 retries)
+## 3. Infrastructure
 
 ### [docker-compose.yml](../docker-compose.yml) (v3.9)
 
@@ -98,10 +45,9 @@ components = ["rustfmt", "clippy", "rust-src"]
 |---|---|
 | [docs/plan.md](plan.md) | Rig.rs alignment refactor plan v0.2.0 (Steps 1–6 complete). |
 | [docs/tenant.md](tenant.md) | Multitenancy design — `TenantContext`, `TenantClaims`, `extract_tenant`, dev-mode/JWT mode, isolation surfaces. |
-| [docs/verify.md](verify.md) | End-to-end Docker verification plan, JWT helpers, curl recipes (Phases 0–14 incl. workspace, audit, UI, ToolProvider regression). |
-| [docs/frontend.md](frontend.md) | Frontend implementation plan + current sidebar redesign (workspace-first layout). |
+| [docs/about.md](about.md) | Platform overview — purpose, key capabilities, target use cases. |
+| [docs/verify/verify.md](verify/verify.md) | End-to-end Docker verification plan, JWT helpers, curl recipes (Phases 0–14 incl. workspace, audit, UI, ToolProvider regression). |
 | [docs/ui-design.md](ui-design.md) | Design tokens (colour, type, spacing, motion) and component recipes. |
-| [docs/improvements.md](improvements.md) | Historical v0.3 roadmap; superseded — kept for context only. |
 | [docs/adr/005-workspace-access-control.md](adr/005-workspace-access-control.md) | ADR for the private-by-default + selective-sharing ACL model. |
 
 ---
@@ -246,6 +192,7 @@ components = ["rustfmt", "clippy", "rust-src"]
 |---|---|---|
 | [routes.rs](../crates/agent-gateway/src/ui/routes.rs) | — | `ui_router()` — assembles all UI routes. |
 | [handlers/auth.rs](../crates/agent-gateway/src/ui/handlers/auth.rs) | `GET /login`, `POST /login`, `GET /logout` | HMAC-signed session cookie (`conusai_session`) — see [`ui/session.rs`](../crates/agent-gateway/src/ui/session.rs). Login form: name + plan tier. Cookie HMAC key from `UI_SESSION_KEY` (defaults to a dev-only secret). |
+| [view.rs](../crates/agent-gateway/src/ui/view.rs) | — | Askama template view structs (`LoginView`, `AppView`, `RecentView`, `CapView`) — pure data containers; no routing logic. |
 | [handlers/app.rs](../crates/agent-gateway/src/ui/handlers/app.rs) | `GET /` | Renders `app.html` with greeting, recents, capabilities, user info. |
 | [handlers/chat.rs](../crates/agent-gateway/src/ui/handlers/chat.rs) | `POST /ui/stream` | SSE stream — accepts `{message, thread_id?, model?, workspace_node_id?}`, builds a `ChatRequest` with `stream: true`, calls `agent::stream_agent` in-process. The `workspace_node_id` carries through to `routes/agent.rs` so the chat is bound to the active node, gets workspace context injection, and is re-indexed for search. |
 | [handlers/upload.rs](../crates/agent-gateway/src/ui/handlers/upload.rs) | `POST /ui/upload` | Multipart → MinIO. Returns `{id, filename, size, download_url}`. |
@@ -285,7 +232,7 @@ components = ["rustfmt", "clippy", "rust-src"]
 
 ## 4. [`capabilities/`](../capabilities) — Zero-Code Extension
 
-Drop a folder with a `capability.yaml` (and optionally an implementation) into `capabilities/`; the registry auto-discovers it on startup.
+Drop a folder with a `capability.toml` (and optionally an implementation) into `capabilities/`; the registry auto-discovers it on startup.
 
 ### Capability kinds (`ToolKind`)
 
@@ -301,13 +248,13 @@ Drop a folder with a `capability.yaml` (and optionally an implementation) into `
 
 | Folder | Kind | Tools | Notes |
 |---|---|---|---|
-| [file-storage](../capabilities/file-storage/capability.yaml) | mcp | `upload_file`, `download_file`, `presigned_url` | Manifest only — actual storage handled directly by [`routes/files.rs`](../crates/agent-gateway/src/routes/files.rs) using `object_store`. |
-| [google-workspace](../capabilities/google-workspace/capability.yaml) | mcp | `list_files`, `read_document`, `append_to_sheet`, `send_email` | OAuth2 scopes: `drive.readonly`, `documents.readonly`, `spreadsheets`, `gmail.send`. |
-| [invoice-processing](../capabilities/invoice-processing/capability.yaml) | chain | `extract_invoice`, `validate_invoice` | Backed by [`InvoicePipeline`](../crates/agent-core/src/chains/invoice.rs) via `InvoiceProvider`; default model `claude-opus-4-7`, max image 20 MB, formats `png/jpeg/jpg/pdf`. |
-| [contract-processing](../capabilities/contract-processing/capability.yaml) | chain | `extract_contract`, `summarise_contract` | Backed by [`ContractPipeline`](../crates/agent-core/src/chains/contract.rs) via `ContractProvider`. |
-| [ocr-service](../capabilities/ocr-service/capability.yaml) | chain | `extract_text` | Reuses `InvoicePipeline` for vision OCR via `OcrProvider`; default model `claude-sonnet-4-6`. |
-| [template-wasm](../capabilities/template-wasm/capability.yaml) | wasm | `ping` | Loads `capability.wasm` exporting `ping() -> i32 = 42`. |
-| [template](../capabilities/template) | — | — | Boilerplate for new capabilities. |
+| [file-storage](../capabilities/file-storage/capability.toml) | mcp | `upload_file`, `download_file`, `presigned_url` | Manifest only — actual storage handled directly by [`routes/files.rs`](../crates/agent-gateway/src/routes/files.rs) using `object_store`. |
+| [google-workspace](../capabilities/google-workspace/capability.toml) | mcp | `list_files`, `read_document`, `append_to_sheet`, `send_email` | OAuth2 scopes: `drive.readonly`, `documents.readonly`, `spreadsheets`, `gmail.send`. |
+| [invoice-processing](../capabilities/invoice-processing/capability.toml) | chain | `extract_invoice`, `validate_invoice` | Backed by [`InvoicePipeline`](../crates/agent-core/src/chains/invoice.rs) via `InvoiceProvider`; default model `claude-opus-4-7`, max image 20 MB, formats `png/jpeg/jpg/pdf`. |
+| [contract-processing](../capabilities/contract-processing/capability.toml) | chain | `extract_contract`, `summarise_contract` | Backed by [`ContractPipeline`](../crates/agent-core/src/chains/contract.rs) via `ContractProvider`. |
+| [ocr-service](../capabilities/ocr-service/capability.toml) | chain | `extract_text` | Reuses `InvoicePipeline` for vision OCR via `OcrProvider`; default model `claude-sonnet-4-6`. |
+| [template-wasm](../capabilities/template-wasm/capability.toml) | wasm | `ping` | Loads `capability.wasm` exporting `ping() -> i32 = 42`. |
+
 
 ### Capability selection: `invoice-processing` vs `ocr-service`
 
@@ -318,14 +265,14 @@ These two capabilities are intentionally **non-overlapping** — the LLM (Claude
 | Invoice, bill, purchase order, accounts-payable document → **structured fields** | `invoice-processing__extract_invoice` |
 | Contract, letter, handwritten note, generic document → **raw text** | `ocr-service__extract_text` |
 
-`invoice-processing__extract_invoice` handles the vision step internally (Claude vision + strict JSON schema in one call). Calling `ocr-service` before it is redundant and adds unnecessary latency. The rich `description` fields in both `capability.yaml` files — loaded verbatim into tool definitions at startup — make this routing deterministic without any code-level classifier.
+`invoice-processing__extract_invoice` handles the vision step internally (Claude vision + strict JSON schema in one call). Calling `ocr-service` before it is redundant and adds unnecessary latency. The rich `description` fields in both `capability.toml` files — loaded verbatim into tool definitions at startup — make this routing deterministic without any code-level classifier.
 
 ---
 
 ## 5. Other Top-Level Folders
 
-### [`wasm/`](../wasm)
-Reserved for WASM capability source crates targeting `wasm32-wasip1`.
+### `wasm/` (not yet created)
+Reserved for WASM capability source crates targeting `wasm32-wasip1`. Drop a crate here and build with `cargo build --target wasm32-wasip1`.
 
 ### [`scripts/`](../scripts)
 
@@ -532,7 +479,7 @@ curl http://localhost:9000/minio/health/live
 
 - **Multitenant-first:** JWT auth, tenant-prefixed paths/keys, Qdrant collection per tenant, plan-based rate limits, tenant-tagged spans.
 - **Zero-code extension:** YAML manifests in `capabilities/`; `ToolKind` enum + `ToolProvider` trait allow pluggable execution without touching the registry or agent loop; tool defs in stable `capability__tool` form.
-- **Precise tool descriptions drive correct capability selection:** Rich `description` fields in `capability.yaml` — loaded verbatim into Anthropic tool definitions — are the primary mechanism for deterministic routing between specialized and generic capabilities (e.g. `invoice-processing` vs `ocr-service`). No code-level classifier needed.
+- **Precise tool descriptions drive correct capability selection:** Rich `description` fields in `capability.toml` — loaded verbatim into Anthropic tool definitions — are the primary mechanism for deterministic routing between specialized and generic capabilities (e.g. `invoice-processing` vs `ocr-service`). No code-level classifier needed.
 - **Agent loop:** Anthropic `tool_use` with bounded rounds (≤5), accumulating usage on the request span. Thread-aware: loads history, injects summary, persists turns. Supports both blocking JSON and SSE streaming with live `tool_call_start` / `tool_call_result` events.
 - **Persistent memory:** `ThreadStore` trait + `QdrantThreadStore` (Qdrant as doc store); one collection per tenant; auto-summarisation via background task when message count crosses threshold.
 - **ToolProvider + ToolProviderFactory traits:** `ToolProvider` (`manifest()`, `invoke()`, `invoke_typed<I,O>`, `tool_definitions()`) implemented by `BuiltinProvider`, `McpProvider`, `WasmProvider`, `InvoiceProvider`, `ContractProvider`, `OcrProvider`. `ToolProviderFactory` (`supports(kind, name)`, `create(card)`) implemented by `BuiltinFactory`, `McpFactory`, `WasmFactory`, `ChainFactory`. `ToolRegistry::with_default_factories()` pre-registers all four. Adding a new capability kind requires one new provider file + one factory struct — zero changes to the registry, executor, or agent loop.
@@ -572,7 +519,7 @@ conusai-platform/
 ├── docker-compose.yml               # qdrant, minio, gateway, jaeger, otel-collector
 ├── start.sh                         # orchestration entrypoint
 ├── rust-toolchain.toml              # stable + wasm32-wasip1
-├── docs/                            # arch.md, plan.md, tenant.md, verify.md, frontend.md, ui-design.md, adr/
+├── docs/                            # arch.md, plan.md, tenant.md, verify.md, ui-design.md, adr/
 │
 ├── crates/
 │   ├── common/        src/{lib,error,config/mod,telemetry,http_client,mcp,wasm,limits,path_safety,eval,
@@ -608,19 +555,19 @@ conusai-platform/
 │   └── invoice-cli/   src/main.rs
 │
 ├── capabilities/
-│   ├── file-storage/        capability.yaml         (mcp)
-│   ├── google-workspace/    capability.yaml         (mcp)
-│   ├── contract-processing/ capability.yaml         (chain)
-│   ├── invoice-processing/  capability.yaml         (chain)
-│   ├── ocr-service/         capability.yaml         (chain)
-│   ├── template-wasm/       capability.yaml + .wasm (wasm)
+│   ├── file-storage/        capability.toml         (mcp)
+│   ├── google-workspace/    capability.toml         (mcp)
+│   ├── contract-processing/ capability.toml         (chain)
+│   ├── invoice-processing/  capability.toml         (chain)
+│   ├── ocr-service/         capability.toml         (chain)
+│   ├── template-wasm/       capability.toml + .wasm (wasm)
 │   └── template/                                    (boilerplate)
 │
 ├── evals/
 │   ├── src/{main,config,report,
-│   │        runners/{mod,invoice,threads,ocr_quality},
+│   │        runners/{mod,invoice,ocr_quality},
 │   │        scorers/mod}.rs
-│   └── datasets/{invoice,threads,ocr_quality}.jsonl
+│   └── datasets/{invoice,ocr_quality}.jsonl
 │
 ├── wasm/                            # WASM capability sources (reserved)
 ├── scripts/
@@ -630,10 +577,8 @@ conusai-platform/
     ├── arch.md                      # this document — master index
     ├── plan.md                      # workspace implementation plan + phase status
     ├── tenant.md                    # multitenancy design
-    ├── verify.md                    # end-to-end verification plan
-    ├── frontend.md                  # frontend implementation + sidebar redesign
+    ├── verify/verify.md             # end-to-end verification plan
     ├── ui-design.md                 # design tokens + component recipes
-    ├── improvements.md              # historical v0.3 roadmap (superseded)
     └── adr/
         └── 005-workspace-access-control.md
 ```

@@ -1,0 +1,61 @@
+name = "file-storage"
+version = "0.1.0"
+description = "S3-compatible object storage (MinIO/AWS S3). Upload, download, list, delete objects and generate presigned URLs."
+kind = "mcp"
+tags = ["storage", "s3", "files"]
+
+[[tools]]
+name = "upload_file"
+description = "Upload a file to object storage and return its key."
+
+[tools.input_schema]
+type = "object"
+required = ["local_path", "key"]
+
+[tools.input_schema.properties.local_path]
+type = "string"
+
+[tools.input_schema.properties.key]
+type = "string"
+
+[tools.input_schema.properties.bucket]
+type = "string"
+
+[[tools]]
+name = "download_file"
+description = "Download a file from object storage to a local path."
+
+[tools.input_schema]
+type = "object"
+required = ["key", "local_path"]
+
+[tools.input_schema.properties.key]
+type = "string"
+
+[tools.input_schema.properties.local_path]
+type = "string"
+
+[tools.input_schema.properties.bucket]
+type = "string"
+
+[[tools]]
+name = "presigned_url"
+description = "Generate a presigned URL for temporary public access to an object."
+
+[tools.input_schema]
+type = "object"
+required = ["key"]
+
+[tools.input_schema.properties.key]
+type = "string"
+
+[tools.input_schema.properties.expires_secs]
+type = "integer"
+default = 3600
+
+[tools.input_schema.properties.bucket]
+type = "string"
+
+[config]
+endpoint = "${S3_ENDPOINT}"
+bucket = "${S3_BUCKET}"

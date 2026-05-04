@@ -1,0 +1,20 @@
+{% extends "super_admin/layout.html" %}
+{% block content %}
+<a href="/super-admin" class="back-link">← Capabilities</a>
+<div class="page-header">
+  <h1>New Capability</h1>
+</div>
+{% if let Some(err) = error %}
+<div class="flash flash--error">{{ err }}</div>
+{% endif %}
+<form method="post" action="/super-admin/new">
+  <div class="form-field">
+    <label for="manifest">capability.toml</label>
+    <textarea id="manifest" name="manifest_toml" rows="20" spellcheck="false" autocomplete="off">{{ manifest_toml }}</textarea>
+  </div>
+  <div style="display:flex;gap:.75rem;">
+    <button type="submit" class="btn btn--primary">Create Capability</button>
+    <a href="/super-admin" class="btn btn--ghost">Cancel</a>
+  </div>
+</form>
+{% endblock %}

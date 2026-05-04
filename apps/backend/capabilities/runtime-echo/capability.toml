@@ -1,0 +1,23 @@
+name = "runtime-echo"
+version = "0.1.0"
+description = "A runtime-registered echo capability"
+kind = "chain"
+tags = ["echo", "runtime"]
+
+[[tools]]
+name = "echo"
+description = "Echo the input back"
+
+[tools.input_schema]
+type = "object"
+required = ["message"]
+
+[tools.input_schema.properties.message]
+type = "string"
+description = "Text to echo back"
+
+[chain]
+model = "claude-opus-4-7"
+system_prompt = "You are an echo tool. Repeat back exactly what the user says."
+prompt_template = "Echo: {{input.query}}"
+max_tokens = 128
