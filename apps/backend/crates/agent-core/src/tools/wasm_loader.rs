@@ -1,5 +1,4 @@
 use super::card::CapabilityCard;
-use anyhow::Context;
 use serde_json::{Value, json};
 use wasmtime::{Engine, Linker, Module, Store};
 
@@ -27,17 +26,14 @@ impl WasmToolLoader {
         let linker: Linker<()> = Linker::new(&self.engine);
         let instance = linker
             .instantiate(&mut store, &module)
-            .context("WASM instantiation failed")
-            .map_err(|e| common::error::ConusAiError::Wasm(e.to_string()))?;
+            .map_err(|e| common::error::ConusAiError::Wasm(format!("WASM instantiation failed: {e}")))?;
 
         let func = instance
             .get_typed_func::<(), i32>(&mut store, func_name)
-            .context(format!("exported fn '{func_name}' not found"))
-            .map_err(|e| common::error::ConusAiError::Wasm(e.to_string()))?;
+            .map_err(|e| common::error::ConusAiError::Wasm(format!("exported fn '{func_name}' not found: {e}")))?;
 
         func.call(&mut store, ())
-            .context("WASM call failed")
-            .map_err(|e| common::error::ConusAiError::Wasm(e.to_string()))
+            .map_err(|e| common::error::ConusAiError::Wasm(format!("WASM call failed: {e}")))
     }
 
     /// Invoke a WASM tool and return a JSON result.

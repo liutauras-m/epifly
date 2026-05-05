@@ -58,12 +58,14 @@ impl AppState {
 
         let qdrant_url =
             std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".into());
+        let qdrant_grpc_url =
+            std::env::var("QDRANT_GRPC_URL").unwrap_or_else(|_| "http://localhost:6334".into());
 
         let file_store = init_file_store();
-        let thread_store: Arc<dyn ThreadStore> = Arc::new(QdrantThreadStore::new(&qdrant_url));
-        let audit_store: Arc<dyn AuditStore> = Arc::new(QdrantAuditStore::new(&qdrant_url));
+        let thread_store: Arc<dyn ThreadStore> = Arc::new(QdrantThreadStore::new(&qdrant_grpc_url));
+        let audit_store: Arc<dyn AuditStore> = Arc::new(QdrantAuditStore::new(&qdrant_grpc_url));
         let workspace_store: Arc<dyn WorkspaceStore> =
-            Arc::new(QdrantWorkspaceStore::new(&qdrant_url));
+            Arc::new(QdrantWorkspaceStore::new(&qdrant_grpc_url));
 
         let workspace_content: Arc<dyn WorkspaceContentStore> = match &file_store {
             Some(fs) => Arc::new(MinioWorkspaceContent::new(Arc::clone(fs))),

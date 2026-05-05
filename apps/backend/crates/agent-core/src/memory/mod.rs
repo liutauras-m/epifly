@@ -1,7 +1,7 @@
 pub mod context_builder;
 pub mod minio_workspace_content;
 pub mod qdrant_audit;
-pub(crate) mod qdrant_helpers;
+pub mod qdrant_helpers;
 pub mod qdrant_store;
 pub mod qdrant_workspace_store;
 pub mod truncator;

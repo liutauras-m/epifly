@@ -51,9 +51,9 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 COPY --from=builder /build/target/release/agent-gateway /app/agent-gateway
-COPY capabilities/ /app/capabilities/
-COPY crates/agent-gateway/assets/ /app/ui-assets/
-COPY crates/agent-gateway/templates/ /app/ui-templates/
+COPY apps/backend/capabilities/ /app/capabilities/
+COPY apps/backend/crates/agent-gateway/assets/ /app/ui-assets/
+COPY apps/backend/crates/agent-gateway/templates/ /app/ui-templates/
 
 ENV CONUSAI_SERVER__HOST=0.0.0.0
 ENV CONUSAI_SERVER__PORT=8080

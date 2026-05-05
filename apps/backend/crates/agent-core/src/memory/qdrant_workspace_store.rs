@@ -1,31 +1,41 @@
 /// QdrantWorkspaceStore — index store for WorkspaceNode (folders, conversations, files).
 ///
-/// Mirrors QdrantThreadStore exactly: HTTP REST, 4-dim zero vectors, keyword payload indexes.
 /// One collection per tenant: `workspaces_{tenant_id}`.
+/// Vectors are 4-dim zeros; Qdrant is used as a document store + keyword/text search engine.
 ///
 /// Access control: every read filters on `tenant_id` AND (owner_id == U OR shared_with ∋ U).
 /// Non-owners receive NotFound — existence is never leaked.
-use super::qdrant_helpers::{QdrantClient, point_id, zero_vec};
+use super::qdrant_helpers::{VECTOR_DIM, payload_to_json, point_id};
 use async_trait::async_trait;
 use chrono::Utc;
 use common::error::ConusAiError;
 use common::memory::store::WorkspaceStore;
 use common::memory::workspace::{NodeKind, WorkspaceNode, join_virtual_path, validate_name};
 use common::metrics;
+use qdrant_client::Qdrant;
+use qdrant_client::qdrant::{
+    Condition, CreateCollectionBuilder, CreateFieldIndexCollectionBuilder, DeletePointsBuilder,
+    Distance, FieldType, Filter, GetPointsBuilder, MinShould, PointStruct, ScrollPointsBuilder,
+    SetPayloadPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder,
+};
 use serde_json::{Value, json};
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{Span, info, instrument, warn};
 use ulid::Ulid;
 
 pub struct QdrantWorkspaceStore {
-    qdrant: QdrantClient,
+    client: Arc<Qdrant>,
 }
 
 impl QdrantWorkspaceStore {
-    pub fn new(qdrant_url: impl Into<String>) -> Self {
-        Self {
-            qdrant: QdrantClient::new(qdrant_url),
-        }
+    pub fn new(grpc_url: impl Into<String>) -> Self {
+        let client = Arc::new(
+            Qdrant::from_url(&grpc_url.into())
+                .build()
+                .expect("qdrant-client build failed"),
+        );
+        Self { client }
     }
 
     fn collection(&self, tenant_id: &str) -> String {
@@ -34,36 +44,85 @@ impl QdrantWorkspaceStore {
 
     async fn ensure_collection(&self, tenant_id: &str) -> anyhow::Result<()> {
         let col = self.collection(tenant_id);
-        self.qdrant
-            .ensure_collection(
-                &col,
-                &["tenant_id", "owner_id", "parent_id", "kind", "shared_with"],
-                &["name", "content_text"],
+        if self.client.collection_exists(&col).await? {
+            return Ok(());
+        }
+        self.client
+            .create_collection(
+                CreateCollectionBuilder::new(&col)
+                    .vectors_config(VectorParamsBuilder::new(VECTOR_DIM as u64, Distance::Cosine)),
             )
-            .await
+            .await?;
+        for field in &["tenant_id", "owner_id", "parent_id", "kind", "shared_with"] {
+            let _ = self
+                .client
+                .create_field_index(CreateFieldIndexCollectionBuilder::new(
+                    &col,
+                    *field,
+                    FieldType::Keyword,
+                ))
+                .await;
+        }
+        tracing::info!(collection = col.as_str(), "created Qdrant collection");
+        Ok(())
     }
 
     async fn upsert_point(&self, tenant_id: &str, point: Value) -> anyhow::Result<()> {
-        self.qdrant
-            .upsert_point(&self.collection(tenant_id), point)
-            .await
+        let col = self.collection(tenant_id);
+        let pid: u64 = point["id"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("missing point id"))?;
+        let vector: Vec<f32> = point["vector"]
+            .as_array()
+            .map(|a| a.iter().map(|v| v.as_f64().unwrap_or(0.0) as f32).collect())
+            .unwrap_or_else(|| vec![0.0_f32; VECTOR_DIM]);
+        let payload: qdrant_client::Payload = point["payload"]
+            .clone()
+            .try_into()
+            .map_err(|e| anyhow::anyhow!("payload conversion: {e:?}"))?;
+        self.client
+            .upsert_points(
+                UpsertPointsBuilder::new(&col, vec![PointStruct::new(pid, vector, payload)])
+                    .wait(true),
+            )
+            .await?;
+        Ok(())
     }
 
     async fn scroll_filter(
         &self,
         tenant_id: &str,
-        filter: Value,
+        filter: Filter,
         limit: usize,
     ) -> anyhow::Result<Vec<Value>> {
-        self.qdrant
-            .scroll_filter(&self.collection(tenant_id), filter, limit)
-            .await
+        let col = self.collection(tenant_id);
+        let resp = self
+            .client
+            .scroll(
+                ScrollPointsBuilder::new(&col)
+                    .filter(filter)
+                    .limit(limit as u32)
+                    .with_payload(true)
+                    .with_vectors(false),
+            )
+            .await?;
+        Ok(resp
+            .result
+            .into_iter()
+            .map(|p| json!({ "payload": payload_to_json(p.payload) }))
+            .collect())
     }
 
     async fn delete_point_by_ulid(&self, tenant_id: &str, node_id: Ulid) -> anyhow::Result<()> {
-        self.qdrant
-            .delete_point(&self.collection(tenant_id), point_id(&node_id.to_string()))
-            .await
+        let col = self.collection(tenant_id);
+        let pid = point_id(&node_id.to_string());
+        self.client
+            .delete_points(
+                DeletePointsBuilder::new(&col)
+                    .points(Filter::must([Condition::has_id([pid])])),
+            )
+            .await?;
+        Ok(())
     }
 
     async fn patch_payload(
@@ -72,13 +131,18 @@ impl QdrantWorkspaceStore {
         node_id: Ulid,
         fields: Value,
     ) -> anyhow::Result<()> {
-        self.qdrant
-            .patch_payload(
-                &self.collection(tenant_id),
-                point_id(&node_id.to_string()),
-                fields,
+        let col = self.collection(tenant_id);
+        let pid = point_id(&node_id.to_string());
+        let payload: qdrant_client::Payload = fields
+            .try_into()
+            .map_err(|e| anyhow::anyhow!("patch payload conversion: {e:?}"))?;
+        self.client
+            .set_payload(
+                SetPayloadPointsBuilder::new(&col, payload)
+                    .points_selector(Filter::must([Condition::has_id([pid])])),
             )
-            .await
+            .await?;
+        Ok(())
     }
 
     fn node_from_payload(p: &Value) -> Option<WorkspaceNode> {
@@ -130,7 +194,7 @@ impl QdrantWorkspaceStore {
         };
         json!({
             "id": point_id(&node.id.to_string()),
-            "vector": zero_vec(),
+            "vector": vec![0.0_f32; VECTOR_DIM],
             "payload": {
                 "id": node.id.to_string(),
                 "tenant_id": node.tenant_id,
@@ -149,27 +213,35 @@ impl QdrantWorkspaceStore {
         })
     }
 
-    fn access_filter(tenant_id: &str, user_id: &str, extra: Vec<Value>) -> Value {
-        let mut must = vec![json!({"key": "tenant_id", "match": {"value": tenant_id}})];
+    fn access_filter(tenant_id: &str, user_id: &str, extra: Vec<Condition>) -> Filter {
+        let mut must = vec![Condition::matches("tenant_id", tenant_id.to_string())];
         must.extend(extra);
-        json!({
-            "must": must,
-            "min_should": {
-                "conditions": [
-                    {"key": "owner_id", "match": {"value": user_id}},
-                    {"key": "shared_with", "match": {"value": user_id}}
+        Filter {
+            must,
+            min_should: Some(MinShould {
+                min_count: 1,
+                conditions: vec![
+                    Condition::matches("owner_id", user_id.to_string()),
+                    Condition::matches("shared_with", user_id.to_string()),
                 ],
-                "min_count": 1
-            }
-        })
+            }),
+            ..Default::default()
+        }
     }
 
     /// Lazily ensure text indexes exist on collections that pre-date this feature.
     async fn ensure_text_indexes(&self, tenant_id: &str) {
         let col = self.collection(tenant_id);
-        self.qdrant
-            .add_text_indexes(&col, &["name", "content_text"])
-            .await;
+        for field in &["name", "content_text"] {
+            let _ = self
+                .client
+                .create_field_index(CreateFieldIndexCollectionBuilder::new(
+                    &col,
+                    *field,
+                    FieldType::Text,
+                ))
+                .await;
+        }
     }
 
     /// Fetch a node directly by point_id (no access check — internal use only).
@@ -181,7 +253,17 @@ impl QdrantWorkspaceStore {
         self.ensure_collection(tenant_id).await?;
         let col = self.collection(tenant_id);
         let pid = point_id(&node_id.to_string());
-        let raw = self.qdrant.get_point(&col, pid).await?;
+        let resp = self
+            .client
+            .get_points(
+                GetPointsBuilder::new(&col, vec![pid.into()])
+                    .with_payload(true)
+                    .with_vectors(false),
+            )
+            .await?;
+        let raw = resp.result.into_iter().next().map(|p| {
+            json!({ "payload": payload_to_json(p.payload) })
+        });
         Ok(raw.as_ref().and_then(Self::node_from_payload))
     }
 }
@@ -260,7 +342,7 @@ impl WorkspaceStore for QdrantWorkspaceStore {
             Some(pid) => pid.to_string(),
             None => String::new(),
         };
-        let extra = vec![json!({"key": "parent_id", "match": {"value": parent_val}})];
+        let extra = vec![Condition::matches("parent_id", parent_val)];
         let filter = Self::access_filter(tenant_id, user_id, extra);
 
         let points = self.scroll_filter(tenant_id, filter, 500).await?;
@@ -369,17 +451,13 @@ impl WorkspaceStore for QdrantWorkspaceStore {
         // Worklist-based recursive delete (avoids deep async recursion)
         let mut worklist: Vec<Ulid> = vec![node_id];
         while let Some(current_id) = worklist.pop() {
-            let col = self.collection(tenant_id);
             let children = self
-                .qdrant
                 .scroll_filter(
-                    &col,
-                    json!({
-                        "must": [
-                            {"key": "tenant_id", "match": {"value": tenant_id}},
-                            {"key": "parent_id", "match": {"value": current_id.to_string()}}
-                        ]
-                    }),
+                    tenant_id,
+                    Filter::must([
+                        Condition::matches("tenant_id", tenant_id.to_string()),
+                        Condition::matches("parent_id", current_id.to_string()),
+                    ]),
                     500,
                 )
                 .await
@@ -520,40 +598,38 @@ impl WorkspaceStore for QdrantWorkspaceStore {
         let query_lower = query.to_lowercase();
         let tokens: Vec<&str> = query_lower.split_whitespace().collect();
 
-        let token_conditions: Vec<Value> = tokens
+        // Build per-token conditions: each token must match name or content_text
+        let token_conditions: Vec<Condition> = tokens
             .iter()
             .map(|token| {
-                json!({
-                    "should": [
-                        {"key": "name",         "match": {"text": *token}},
-                        {"key": "content_text", "match": {"text": *token}}
-                    ]
-                })
+                Condition::from(Filter::should([
+                    Condition::matches_text("name", token.to_string()),
+                    Condition::matches_text("content_text", token.to_string()),
+                ]))
             })
             .collect();
 
-        let mut must = vec![json!({"key": "tenant_id", "match": {"value": tenant_id}})];
+        let mut must = vec![Condition::matches("tenant_id", tenant_id.to_string())];
         must.extend(token_conditions);
 
-        let filter = json!({
-            "must": must,
-            "min_should": {
-                "conditions": [
-                    {"key": "owner_id", "match": {"value": user_id}},
-                    {"key": "shared_with", "match": {"value": user_id}}
+        let filter = Filter {
+            must,
+            min_should: Some(MinShould {
+                min_count: 1,
+                conditions: vec![
+                    Condition::matches("owner_id", user_id.to_string()),
+                    Condition::matches("shared_with", user_id.to_string()),
                 ],
-                "min_count": 1
-            }
-        });
+            }),
+            ..Default::default()
+        };
 
         let labels = [
             metrics::kv("operation", "scroll"),
             metrics::kv("collection", col.as_str()),
         ];
         let t0 = Instant::now();
-        // Use the shared reqwest client via qdrant.scroll_filter — but we need the raw response
-        // to detect failures and fall back gracefully, so we call it and handle the error.
-        let res = self.qdrant.scroll_filter(&col, filter, limit).await;
+        let res = self.scroll_filter(tenant_id, filter, limit).await;
         metrics::qdrant_duration_ms().record(t0.elapsed().as_secs_f64() * 1000.0, &labels);
 
         match res {
@@ -608,15 +684,17 @@ impl WorkspaceStore for QdrantWorkspaceStore {
             metrics::kv("collection", col.as_str()),
         ];
         let t0 = Instant::now();
+        let payload: qdrant_client::Payload = json!({
+            "content_text": snippet,
+            "last_modified": Utc::now().to_rfc3339()
+        })
+        .try_into()
+        .map_err(|e| anyhow::anyhow!("index payload conversion: {e:?}"))?;
         let res = self
-            .qdrant
-            .patch_payload(
-                &col,
-                pid,
-                json!({
-                    "content_text": snippet,
-                    "last_modified": Utc::now().to_rfc3339()
-                }),
+            .client
+            .set_payload(
+                SetPayloadPointsBuilder::new(&col, payload)
+                    .points_selector(Filter::must([Condition::has_id([pid])])),
             )
             .await;
         metrics::qdrant_duration_ms().record(t0.elapsed().as_secs_f64() * 1000.0, &labels);

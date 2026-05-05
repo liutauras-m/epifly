@@ -55,8 +55,8 @@ services:
   # ── Agent Gateway ─────────────────────────────────────────────────────────
   agent-gateway:
     build:
-      context: ./apps/backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/backend/Dockerfile
       target: gateway
     container_name: conusai-gateway
     depends_on:
@@ -73,6 +73,7 @@ services:
         required: false
     environment:
       QDRANT_URL: "http://conusai-qdrant:6333"
+      QDRANT_GRPC_URL: "http://conusai-qdrant:6334"
       MINIO_ENDPOINT: "http://conusai-minio:9000"
       MINIO_BUCKET: "conusai"
       MINIO_ACCESS_KEY: "minioadmin"

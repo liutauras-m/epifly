@@ -1,8 +1,45 @@
 # ConusAI Platform — Architecture & Functionality
 
-> **v0.3 — 2026-05-05** — Scheduled jobs (`ScheduledJob` cron trait), background tasks (`BackgroundJob` + `JobExecutor`), `TranscribeVideoCapability`, admin job REST API, SSE task polling. New `crates/jobs` workspace member. See [v0.2 rename table](#v02-breaking-renames) below.
+> **v0.3.1 — 2026-05-06** — Qdrant gRPC migration (qdrant-client 1.x), wasmtime 44 Component Model, wasm32-wasip2 target. All three Qdrant stores now use typed filters via `qdrant-client` gRPC on port 6334 (`QDRANT_GRPC_URL`). REST health-check on port 6333 (`QDRANT_URL`) is unchanged.
 
 A production-grade multitenant AI agent platform. The monorepo contains a **Rust + Rig** backend (`apps/backend/`) and WASM/MCP capabilities. The built-in **Foundry UI** (served by the gateway at `GET /`) provides workspace management, agent chat, file upload, and invoice extraction without a separate frontend app.
+
+---
+
+## v0.3.1 Additions (2026-05-06)
+
+### Qdrant gRPC migration
+
+All three persistent stores now use `qdrant-client` 1.x gRPC instead of custom REST helpers:
+
+| Store | Collection pattern |
+|---|---|
+| `QdrantThreadStore` | `threads_{tenant_id}` |
+| `QdrantWorkspaceStore` | `workspaces_{tenant_id}` |
+| `QdrantAuditStore` | `audit_{tenant_id}` |
+
+Typed filter builder API:
+- `Filter::must([Condition::matches("field", value)])` for keyword match
+- `Filter::should([...])` for OR conditions
+- `Filter { must, min_should: Some(MinShould { min_count: 1, conditions }), ..Default::default() }` for access control
+- `Condition::matches_text("field", query)` for full-text search
+- `Condition::has_id([pid])` for point-ID filter (used in delete/patch)
+
+### Capability search (search.rs)
+
+Uses `qdrant-client` gRPC for `ensure_collection()`, `upsert_points()`, and `search_points()`. Falls back to local substring matching if Qdrant is unreachable.
+
+### WASM / wasmtime 44
+
+- Target: `wasm32-wasip2`
+- `WasmToolLoader` updated for wasmtime 44 API (no `.context()` on wasmtime errors)
+
+### Environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `QDRANT_URL` | `http://localhost:6333` | Qdrant REST — health checks in jobs crate |
+| `QDRANT_GRPC_URL` | `http://localhost:6334` | Qdrant gRPC — all three stores + capability search |
 
 ---
 

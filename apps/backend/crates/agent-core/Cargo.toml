@@ -11,6 +11,7 @@ license.workspace    = true
 common        = { path = "../common" }
 tokio.workspace       = true
 rig-core.workspace    = true
+rig-qdrant.workspace  = true
 qdrant-client.workspace = true
 serde.workspace       = true
 serde_json.workspace  = true

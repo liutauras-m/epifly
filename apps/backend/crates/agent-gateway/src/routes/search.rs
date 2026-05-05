@@ -11,6 +11,11 @@ use axum::{
     Extension, Json,
     extract::{Query, State},
 };
+use qdrant_client::Qdrant;
+use qdrant_client::qdrant::{
+    CreateCollectionBuilder, Distance, PointStruct, SearchPointsBuilder, UpsertPointsBuilder,
+    VectorParamsBuilder,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -41,7 +46,8 @@ pub async fn search(
     Query(query): Query<SearchQuery>,
 ) -> Json<Value> {
     let limit = query.limit.unwrap_or(5).min(20) as usize;
-    let qdrant_url = std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".into());
+    let grpc_url =
+        std::env::var("QDRANT_GRPC_URL").unwrap_or_else(|_| "http://localhost:6334".into());
     let collection = tenant.0.qdrant_collection("capabilities");
 
     // Collect cards once (outside lock)
@@ -50,15 +56,23 @@ pub async fn search(
         reg.all_enabled().cloned().collect()
     };
 
+    let client = match Qdrant::from_url(&grpc_url).build() {
+        Ok(c) => Arc::new(c),
+        Err(e) => {
+            warn!(error = %e, "Qdrant client build failed; falling back to local search");
+            return Json(local_search(&tenant.0.tenant_id, &query.q, &cards, limit));
+        }
+    };
+
     // Ensure the Qdrant collection is seeded for this tenant
-    if let Err(e) = ensure_collection(&qdrant_url, &collection, &cards).await {
+    if let Err(e) = ensure_collection(&client, &collection, &cards).await {
         warn!(error = %e, collection, "Qdrant seed failed; falling back to local search");
         return Json(local_search(&tenant.0.tenant_id, &query.q, &cards, limit));
     }
 
     // Vector search
     let q_vec = text_to_vec(&query.q);
-    match qdrant_search(&qdrant_url, &collection, q_vec, limit as u64).await {
+    match qdrant_search(&client, &collection, q_vec, limit as u64).await {
         Ok(results) => Json(json!({
             "tenant_id": tenant.0.tenant_id,
             "query": query.q,
@@ -76,55 +90,42 @@ pub async fn search(
 
 /// Create the collection if absent and upsert all capability vectors.
 async fn ensure_collection(
-    base: &str,
+    client: &Qdrant,
     collection: &str,
     cards: &[agent_core::tools::card::CapabilityCard],
 ) -> anyhow::Result<()> {
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()?;
-
-    // Check existence
-    let check = http
-        .get(format!("{base}/collections/{collection}"))
-        .send()
-        .await?;
-
-    if check.status() == 404 {
-        // Create collection
-        http.put(format!("{base}/collections/{collection}"))
-            .json(&json!({
-                "vectors": { "size": VECTOR_DIMS, "distance": "Cosine" }
-            }))
-            .send()
+    if !client.collection_exists(collection).await? {
+        client
+            .create_collection(
+                CreateCollectionBuilder::new(collection).vectors_config(
+                    VectorParamsBuilder::new(VECTOR_DIMS as u64, Distance::Cosine),
+                ),
+            )
             .await?;
-
         info!(collection, "Qdrant collection created");
     }
 
     // Upsert all capability embeddings
-    let points: Vec<Value> = cards
-        .iter()
-        .enumerate()
-        .map(|(i, card)| {
-            let embedding_text = card.manifest.embedding_text();
-            json!({
-                "id": i + 1,
-                "vector": text_to_vec(&embedding_text),
-                "payload": {
+    if !cards.is_empty() {
+        let points: Vec<PointStruct> = cards
+            .iter()
+            .enumerate()
+            .map(|(i, card)| {
+                let embedding_text = card.manifest.embedding_text();
+                let payload: qdrant_client::Payload = json!({
                     "name":        card.manifest.name,
                     "description": card.manifest.description,
                     "kind":        format!("{:?}", card.manifest.kind),
                     "tags":        card.manifest.tags,
-                }
+                })
+                .try_into()
+                .expect("payload conversion");
+                PointStruct::new((i + 1) as u64, text_to_vec(&embedding_text), payload)
             })
-        })
-        .collect();
+            .collect();
 
-    if !points.is_empty() {
-        http.put(format!("{base}/collections/{collection}/points"))
-            .json(&json!({ "points": points }))
-            .send()
+        client
+            .upsert_points(UpsertPointsBuilder::new(collection, points))
             .await?;
     }
 
@@ -132,43 +133,28 @@ async fn ensure_collection(
 }
 
 async fn qdrant_search(
-    base: &str,
+    client: &Qdrant,
     collection: &str,
     vector: Vec<f32>,
     limit: u64,
 ) -> anyhow::Result<Vec<Value>> {
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()?;
-
-    let resp = http
-        .post(format!("{base}/collections/{collection}/points/search"))
-        .json(&json!({
-            "vector": vector,
-            "limit": limit,
-            "with_payload": true
-        }))
-        .send()
+    let resp = client
+        .search_points(
+            SearchPointsBuilder::new(collection, vector, limit).with_payload(true),
+        )
         .await?;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Qdrant search returned {status}: {body}");
-    }
-
-    let body: Value = resp.json().await?;
-    let hits = body["result"]
-        .as_array()
-        .unwrap_or(&vec![])
+    let hits = resp
+        .result
         .iter()
         .map(|r| {
+            let p = agent_core::memory::qdrant_helpers::payload_to_json(r.payload.clone());
             json!({
-                "name":        r["payload"]["name"],
-                "description": r["payload"]["description"],
-                "kind":        r["payload"]["kind"],
-                "tags":        r["payload"]["tags"],
-                "score":       r["score"]
+                "name":        p["name"],
+                "description": p["description"],
+                "kind":        p["kind"],
+                "tags":        p["tags"],
+                "score":       r.score
             })
         })
         .collect();
@@ -235,3 +221,5 @@ pub fn text_to_vec(text: &str) -> Vec<f32> {
         })
         .collect()
 }
+
+

@@ -7,14 +7,22 @@
 ///
 /// Vectors are 4-dim zeros; Qdrant is used purely as a document store here.
 /// Payload filtering (match/must) drives all queries.
-use super::qdrant_helpers::{QdrantClient, point_id, zero_vec};
+use super::qdrant_helpers::{VECTOR_DIM, payload_to_json, point_id};
 use async_trait::async_trait;
 use chrono::Utc;
 use common::limits::{MAX_MESSAGES_BEFORE_SUMMARY, MAX_MESSAGES_PER_THREAD};
 use common::memory::store::ThreadStore;
 use common::memory::thread::{Message, Thread};
 use common::types::ThreadId;
+use qdrant_client::Qdrant;
+use qdrant_client::qdrant::{
+    Condition, CreateCollectionBuilder, DeletePointsBuilder, Distance,
+    FieldType, CreateFieldIndexCollectionBuilder, Filter, GetPointsBuilder,
+    PointStruct, ScrollPointsBuilder, SetPayloadPointsBuilder,
+    UpsertPointsBuilder, VectorParamsBuilder,
+};
 use serde_json::{Value, json};
+use std::sync::Arc;
 use tracing::{info, instrument, warn};
 use ulid::Ulid;
 
@@ -38,21 +46,26 @@ mod tests {
 
     #[test]
     fn collection_name_namespaced_by_tenant() {
-        let store = QdrantThreadStore::new("http://localhost:6333");
+        let store = QdrantThreadStore::new("http://localhost:6334");
         assert_eq!(store.collection("acme"), "threads_acme");
         assert_eq!(store.collection("beta"), "threads_beta");
     }
 }
 
 pub struct QdrantThreadStore {
-    qdrant: QdrantClient,
+    client: Arc<Qdrant>,
+    url: String,
 }
 
 impl QdrantThreadStore {
-    pub fn new(qdrant_url: impl Into<String>) -> Self {
-        Self {
-            qdrant: QdrantClient::new(qdrant_url),
-        }
+    pub fn new(grpc_url: impl Into<String>) -> Self {
+        let url = grpc_url.into();
+        let client = Arc::new(
+            Qdrant::from_url(&url)
+                .build()
+                .expect("qdrant-client build failed"),
+        );
+        Self { client, url }
     }
 
     fn collection(&self, tenant_id: &str) -> String {
@@ -61,29 +74,77 @@ impl QdrantThreadStore {
 
     async fn ensure_collection(&self, tenant_id: &str) -> anyhow::Result<()> {
         let col = self.collection(tenant_id);
-        self.qdrant
-            .ensure_collection(&col, &["type", "thread_id", "tenant_id"], &[])
-            .await
+        if self.client.collection_exists(&col).await? {
+            return Ok(());
+        }
+        self.client
+            .create_collection(
+                CreateCollectionBuilder::new(&col)
+                    .vectors_config(VectorParamsBuilder::new(VECTOR_DIM as u64, Distance::Cosine)),
+            )
+            .await?;
+        for field in &["type", "thread_id", "tenant_id"] {
+            let _ = self
+                .client
+                .create_field_index(CreateFieldIndexCollectionBuilder::new(
+                    &col,
+                    *field,
+                    FieldType::Keyword,
+                ))
+                .await;
+        }
+        tracing::info!(collection = col.as_str(), "created Qdrant collection");
+        Ok(())
     }
 
     async fn upsert_point(&self, tenant_id: &str, point: Value) -> anyhow::Result<()> {
-        self.qdrant
-            .upsert_point(&self.collection(tenant_id), point)
-            .await
+        let col = self.collection(tenant_id);
+        let pid: u64 = point["id"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("missing point id"))?;
+        let vector: Vec<f32> = point["vector"]
+            .as_array()
+            .map(|a| a.iter().map(|v| v.as_f64().unwrap_or(0.0) as f32).collect())
+            .unwrap_or_else(|| vec![0.0_f32; VECTOR_DIM]);
+        let payload: qdrant_client::Payload = point["payload"]
+            .clone()
+            .try_into()
+            .map_err(|e| anyhow::anyhow!("payload conversion: {e:?}"))?;
+        self.client
+            .upsert_points(
+                UpsertPointsBuilder::new(&col, vec![PointStruct::new(pid, vector, payload)])
+                    .wait(true),
+            )
+            .await?;
+        Ok(())
     }
 
     async fn scroll_filter(
         &self,
         tenant_id: &str,
-        filter: Value,
+        filter: Filter,
         limit: usize,
     ) -> anyhow::Result<Vec<Value>> {
-        self.qdrant
-            .scroll_filter(&self.collection(tenant_id), filter, limit)
-            .await
+        let col = self.collection(tenant_id);
+        let resp = self
+            .client
+            .scroll(
+                ScrollPointsBuilder::new(&col)
+                    .filter(filter)
+                    .limit(limit as u32)
+                    .with_payload(true)
+                    .with_vectors(false),
+            )
+            .await?;
+        Ok(resp
+            .result
+            .into_iter()
+            .map(|p| json!({ "payload": payload_to_json(p.payload) }))
+            .collect())
     }
 
-    fn thread_from_payload(payload: &Value) -> Option<Thread> {
+    fn thread_from_payload(p: &Value) -> Option<Thread> {
+        let payload = &p["payload"];
         Some(Thread {
             id: payload["thread_id"].as_str()?.parse::<ThreadId>().ok()?,
             tenant_id: payload["tenant_id"].as_str()?.to_owned(),
@@ -102,7 +163,8 @@ impl QdrantThreadStore {
         })
     }
 
-    fn message_from_payload(payload: &Value) -> Option<Message> {
+    fn message_from_payload(p: &Value) -> Option<Message> {
+        let payload = &p["payload"];
         Some(Message {
             role: payload["role"].as_str()?.to_owned(),
             content: payload["content"].as_str()?.to_owned(),
@@ -217,7 +279,7 @@ impl ThreadStore for QdrantThreadStore {
 
         let point = json!({
             "id": point_id(&thread_id),
-            "vector": zero_vec(),
+            "vector": vec![0.0_f32; VECTOR_DIM],
             "payload": {
                 "type": "thread",
                 "thread_id": thread_id,
@@ -247,19 +309,15 @@ impl ThreadStore for QdrantThreadStore {
         let points = self
             .scroll_filter(
                 tenant_id,
-                json!({
-                    "must": [
-                        {"key": "type",      "match": {"value": "thread"}},
-                        {"key": "thread_id", "match": {"value": thread_id}}
-                    ]
-                }),
+                Filter::must([
+                    Condition::matches("type", "thread".to_string()),
+                    Condition::matches("thread_id", thread_id.to_string()),
+                ]),
                 1,
             )
             .await?;
 
-        Ok(points
-            .first()
-            .and_then(|p| Self::thread_from_payload(&p["payload"])))
+        Ok(points.first().and_then(Self::thread_from_payload))
     }
 
     #[instrument(skip(self), fields(tenant_id, thread_id))]
@@ -269,12 +327,10 @@ impl ThreadStore for QdrantThreadStore {
         let mut points = self
             .scroll_filter(
                 tenant_id,
-                json!({
-                    "must": [
-                        {"key": "type",      "match": {"value": "message"}},
-                        {"key": "thread_id", "match": {"value": thread_id}}
-                    ]
-                }),
+                Filter::must([
+                    Condition::matches("type", "message".to_string()),
+                    Condition::matches("thread_id", thread_id.to_string()),
+                ]),
                 MAX_MESSAGES_PER_THREAD,
             )
             .await?;
@@ -284,7 +340,7 @@ impl ThreadStore for QdrantThreadStore {
 
         Ok(points
             .iter()
-            .filter_map(|p| Self::message_from_payload(&p["payload"]))
+            .filter_map(Self::message_from_payload)
             .collect())
     }
 
@@ -307,7 +363,7 @@ impl ThreadStore for QdrantThreadStore {
         let msg_key = format!("{thread_id}:msg:{seq}");
         let msg_point = json!({
             "id": point_id(&msg_key),
-            "vector": zero_vec(),
+            "vector": vec![0.0_f32; VECTOR_DIM],
             "payload": {
                 "type": "message",
                 "thread_id": thread_id,
@@ -323,7 +379,7 @@ impl ThreadStore for QdrantThreadStore {
         // Update thread metadata
         let thread_point = json!({
             "id": point_id(thread_id),
-            "vector": zero_vec(),
+            "vector": vec![0.0_f32; VECTOR_DIM],
             "payload": {
                 "type": "thread",
                 "thread_id": thread_id,
@@ -344,7 +400,7 @@ impl ThreadStore for QdrantThreadStore {
             tenant_id.to_owned(),
             thread_id.to_owned(),
             new_count,
-            self.qdrant.base_url.clone(),
+            self.url.clone(),
         );
 
         Ok(())
@@ -362,12 +418,10 @@ impl ThreadStore for QdrantThreadStore {
         let points = self
             .scroll_filter(
                 tenant_id,
-                json!({
-                    "must": [
-                        {"key": "type",      "match": {"value": "thread"}},
-                        {"key": "tenant_id", "match": {"value": tenant_id}}
-                    ]
-                }),
+                Filter::must([
+                    Condition::matches("type", "thread".to_string()),
+                    Condition::matches("tenant_id", tenant_id.to_string()),
+                ]),
                 // Fetch more when cursor is set so we can trim
                 if after.is_some() { limit + 500 } else { limit },
             )
@@ -375,7 +429,7 @@ impl ThreadStore for QdrantThreadStore {
 
         let mut threads: Vec<Thread> = points
             .iter()
-            .filter_map(|p| Self::thread_from_payload(&p["payload"]))
+            .filter_map(Self::thread_from_payload)
             .collect();
 
         // Newest first
@@ -405,7 +459,7 @@ impl ThreadStore for QdrantThreadStore {
 
         let point = json!({
             "id": point_id(thread_id),
-            "vector": zero_vec(),
+            "vector": vec![0.0_f32; VECTOR_DIM],
             "payload": {
                 "type": "thread",
                 "thread_id": thread_id,
@@ -433,7 +487,7 @@ impl ThreadStore for QdrantThreadStore {
 
         let point = json!({
             "id": point_id(thread_id),
-            "vector": zero_vec(),
+            "vector": vec![0.0_f32; VECTOR_DIM],
             "payload": {
                 "type": "thread",
                 "thread_id": thread_id,
@@ -448,4 +502,13 @@ impl ThreadStore for QdrantThreadStore {
         });
         self.upsert_point(tenant_id, point).await
     }
+}
+
+// Suppress "field `client` is never read" when the gRPC client's methods are
+// accessed only through `Arc<Qdrant>` ergonomics.
+#[allow(dead_code)]
+fn _assert_send_sync()
+where
+    QdrantThreadStore: Send + Sync,
+{
 }

@@ -1,15 +1,15 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/common",
-    "crates/agent-core",
-    "crates/jobs",
-    "crates/agent-gateway",
-    "evals",
+    "apps/backend/crates/common",
+    "apps/backend/crates/agent-core",
+    "apps/backend/crates/jobs",
+    "apps/backend/crates/agent-gateway",
+    "apps/backend/evals",
 ]
 
 [workspace.package]
-version      = "0.1.0"
+version      = "0.3.0"
 edition      = "2024"
 rust-version = "1.88"
 authors      = ["Liutauras Medziunas <info@conusai.com>"]
@@ -23,6 +23,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 
 # AI / Rig
 rig-core     = { version = "0.36" }
+rig-qdrant   = { version = "0.2" }
 
 # Vector DB
 qdrant-client = { version = "1" }
@@ -55,9 +56,9 @@ opentelemetry-prometheus   = { version = "0.27" }
 prometheus                 = { version = "0.13" }
 tracing-opentelemetry      = { version = "0.28" }
 
-# WASM
-wasmtime     = { version = "29", features = ["component-model"] }
-wasmtime-wasi = { version = "29" }
+# WASM — upgraded to wasmtime 44 + Component Model (wasip2)
+wasmtime     = { version = "44", features = ["component-model"] }
+wasmtime-wasi = { version = "44" }
 
 # Auth / Crypto
 jsonwebtoken = { version = "9" }
