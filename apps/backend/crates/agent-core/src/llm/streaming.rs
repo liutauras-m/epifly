@@ -33,7 +33,10 @@ pub fn openai_sse_to_stream(
                         let finish_reason = v["choices"][0]["finish_reason"]
                             .as_str()
                             .map(str::to_string);
-                        Some(Ok(LlmChunk { delta, finish_reason }))
+                        Some(Ok(LlmChunk {
+                            delta,
+                            finish_reason,
+                        }))
                     })
                     .collect()
             }

@@ -1,45 +1,60 @@
 # ConusAI Platform — Architecture & Functionality
 
-> **v0.3.1 — 2026-05-06** — Qdrant gRPC migration (qdrant-client 1.x), wasmtime 44 Component Model, wasm32-wasip2 target. All three Qdrant stores now use typed filters via `qdrant-client` gRPC on port 6334 (`QDRANT_GRPC_URL`). REST health-check on port 6333 (`QDRANT_URL`) is unchanged.
+> **v0.3.1** — Postgres-only vector storage, workspace indexer, realtime WebSocket service, local embedding support (`fastembed`), `rig-postgres` integration. All persistent stores (threads, workspaces, audit, vectors) are backed by a single Postgres database (TimescaleDB pg17 + pgvector). No Qdrant dependency exists in the codebase.
 
 A production-grade multitenant AI agent platform. The monorepo contains a **Rust + Rig** backend (`apps/backend/`) and WASM/MCP capabilities. The built-in **Foundry UI** (served by the gateway at `GET /`) provides workspace management, agent chat, file upload, and invoice extraction without a separate frontend app.
 
 ---
 
-## v0.3.1 Additions (2026-05-06)
+## v0.3.1 Additions
 
-### Qdrant gRPC migration
+### Postgres-backed stores (replacing in-memory stubs)
 
-All three persistent stores now use `qdrant-client` 1.x gRPC instead of custom REST helpers:
+All three persistent stores are Postgres-backed via `sqlx`:
 
-| Store | Collection pattern |
+| Store | Trait | Backend table(s) |
+|---|---|---|
+| `PostgresThreadStore` | `ThreadStore` | `threads`, `messages` |
+| `PostgresWorkspaceStore` | `WorkspaceStore` | `workspace_nodes`, `content_embeddings` |
+| `PostgresAuditStore` | `AuditStore` | `audit_events` |
+
+A `PgVectorStore` (`agent_core::vector_store`) backs semantic capability search using the `capability_embeddings` table with a DiskANN vector index (cosine distance, 1536 dims).
+
+### Workspace indexer (`agent_core::indexing`)
+
+| File | Purpose |
 |---|---|
-| `QdrantThreadStore` | `threads_{tenant_id}` |
-| `QdrantWorkspaceStore` | `workspaces_{tenant_id}` |
-| `QdrantAuditStore` | `audit_{tenant_id}` |
+| `coco_indexer.rs` | `WorkspaceIndexer` — crawls workspace filesystem, chunks content, generates embeddings, upserts to `content_embeddings` via pgvector |
+| `embedding_service.rs` | `EmbeddingService` trait; `OpenAiEmbeddingService` (default, `text-embedding-3-small`, 1536 dims); `NoopEmbeddingService` (test mode) |
+| `local_embedding_service.rs` | `LocalEmbeddingService` — feature-gated (`local-embeddings`), uses `fastembed` 5 for on-device embeddings |
+| `real_fs_watcher.rs` | `RealFsWatcher` — watches filesystem for changes, triggers re-indexing at configurable intervals |
 
-Typed filter builder API:
-- `Filter::must([Condition::matches("field", value)])` for keyword match
-- `Filter::should([...])` for OR conditions
-- `Filter { must, min_should: Some(MinShould { min_count: 1, conditions }), ..Default::default() }` for access control
-- `Condition::matches_text("field", query)` for full-text search
-- `Condition::has_id([pid])` for point-ID filter (used in delete/patch)
+On startup: if `WORKSPACES_ROOT` is set, `main.rs` spawns an initial index pass then starts `RealFsWatcher`. Embedding backend selected via `EMBEDDING_BACKEND` env (`local` → `LocalEmbeddingService`, `openai` → `OpenAiEmbeddingService`, default → `NoopEmbeddingService`).
 
-### Capability search (search.rs)
+### Realtime service (`agent_core::realtime`)
 
-Uses `qdrant-client` gRPC for `ensure_collection()`, `upsert_points()`, and `search_points()`. Falls back to local substring matching if Qdrant is unreachable.
+`RealtimeService` — broadcast service for workspace change events via WebSocket. `WorkspaceChangeEvent` is fanned out to connected subscribers. Exposed at `GET /api/realtime/workspace` (Bearer JWT protected).
 
 ### WASM / wasmtime 44
 
-- Target: `wasm32-wasip2`
-- `WasmToolLoader` updated for wasmtime 44 API (no `.context()` on wasmtime errors)
+- Target: `wasm32-wasip1` (per `rust-toolchain.toml`)
+- `WasmToolLoader` wraps wasmtime 44 API
 
-### Environment variables
+### New `AppState` fields (v0.3.1)
 
-| Variable | Default | Purpose |
+| Field | Type | Purpose |
 |---|---|---|
-| `QDRANT_URL` | `http://localhost:6333` | Qdrant REST — health checks in jobs crate |
-| `QDRANT_GRPC_URL` | `http://localhost:6334` | Qdrant gRPC — all three stores + capability search |
+| `pool` | `Option<PgPool>` | Shared Postgres connection pool |
+| `embedding_service` | `Arc<dyn EmbeddingService>` | Embedding backend for indexing and search |
+| `vector_store` | `Arc<PgVectorStore>` | Postgres pgvector ANN store |
+| `realtime_service` | `Option<Arc<RealtimeService>>` | WebSocket broadcast service |
+
+### New REST endpoint (v0.3.1)
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/realtime/workspace` | Bearer JWT | WebSocket — workspace change event stream |
+| `GET` | `/v1/threads/{id}/messages` | Bearer JWT | Retrieve messages for a thread |
 
 ---
 
@@ -96,11 +111,13 @@ Uses `qdrant-client` gRPC for `ensure_collection()`, `upsert_points()`, and `sea
 | Edition | Rust 2024 | — |
 | WASM target | `wasm32-wasip1` | — |
 | AI framework | `rig-core` | 0.36 |
+| Rig Postgres | `rig-postgres` | 0.2.5 |
 | HTTP framework | `axum` | 0.8 (+ `axum-extra` 0.10) |
 | Async runtime | `tokio` | 1 (full features) |
-| Vector DB | Qdrant REST (via `reqwest`) | v1.13.6 |
+| Vector DB | Postgres + pgvector / DiskANN (via `sqlx`) | pg17 + pgvector |
 | Object storage | `object_store` | 0.11 (aws feature) |
-| WASM runtime | `wasmtime` + `wasmtime-wasi` | 29 |
+| WASM runtime | `wasmtime` + `wasmtime-wasi` | 44 |
+| Embeddings (optional) | `fastembed` | 5 (feature-gated: `local-embeddings`) |
 | Auth | `jsonwebtoken` | 9 |
 | Templates | `askama` | 0.12 |
 | OpenAPI | `utoipa` + `utoipa-swagger-ui` | 5 / 9 |
@@ -122,7 +139,7 @@ Uses `qdrant-client` gRPC for `ensure_collection()`, `upsert_points()`, and `sea
 
 ```
 conusai-platform/
-├── docker-compose.yml          # qdrant, minio, gateway, jaeger, otel-collector
+├── docker-compose.yml          # postgres, minio, gateway, jaeger, otel-collector
 ├── Makefile
 ├── start.sh / stop.sh          # orchestration helpers
 ├── apps/
@@ -153,7 +170,7 @@ conusai-platform/
 
 | Service | Image | Ports | Profiles | Purpose |
 |---|---|---|---|---|
-| `qdrant` | `qdrant/qdrant:v1.13.6` | 6333 (REST), 6334 (gRPC) | infra, full | Vector DB — document store + semantic search |
+| `postgres` | `timescale/timescaledb-ha:pg17` | 5432 | infra, full | Primary DB — threads, workspaces, audit, pgvector embeddings |
 | `minio` | `quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z` | 9000 (S3), 9001 (Console) | infra, full | S3-compatible object storage |
 | `minio-init` | (same) | — | full | Creates bucket `conusai` on first start |
 | `agent-gateway` | (built locally) | 8080 | full | HTTP API + UI gateway |
@@ -161,9 +178,9 @@ conusai-platform/
 | `otel-collector` | `otel/opentelemetry-collector-contrib:0.123.0` | 4317 (gRPC), 4318 (HTTP) | observability, full | OTLP receiver / Jaeger exporter |
 
 - **Profiles:** `infra` (core services), `full` (everything), `observability` (tracing stack).
-- **Volumes:** `qdrant_data:/qdrant/storage`, `minio_data:/data`, `./capabilities:/app/capabilities:ro`.
+- **Volumes:** `postgres_data:/var/lib/postgresql/data`, `minio_data:/data`, `./capabilities:/app/capabilities:ro`, `./workspaces:/app/workspaces:rw`.
 - **MinIO dev creds:** `minioadmin` / `minioadmin`.
-- All services declare healthchecks; `agent-gateway` depends on `qdrant` (healthy) and `minio-init` (completed).
+- All services declare healthchecks; `agent-gateway` depends on `postgres` (healthy) and `minio-init` (completed).
 
 ### Dockerfile — 4-stage cargo-chef build
 
@@ -181,7 +198,7 @@ Runtime image: `libssl3`, `ca-certificates`, `curl`; exposes 8080; HEALTHCHECK v
 ```toml
 channel = "stable"               # Rust 1.88
 targets = ["wasm32-wasip1"]      # WASM capability builds
-components = ["rustfmt", "clippy", "rust-src"]
+components = ["rustfmt", "clippy", "rust-src", "rust-analyzer"]
 ```
 
 ### Documentation files
@@ -200,22 +217,23 @@ components = ["rustfmt", "clippy", "rust-src"]
 
 **Purpose:** foundational types and newtypes, unified error hierarchy, HTTP error envelope, telemetry bootstrap, MCP JSON-RPC 2.0 types, WASM loader, layered config, path safety, audit log trait, memory store traits + in-memory implementations, OpenTelemetry metric helpers.
 
-**Key dependencies:** `tokio`, `serde`/`serde_json`, `figment`, `thiserror`/`anyhow`, `tracing`, `tracing-subscriber`, `opentelemetry` 0.27, `opentelemetry_sdk`, `opentelemetry-otlp`, `opentelemetry-prometheus`, `prometheus`, `tracing-opentelemetry`, `wasmtime` 29, `reqwest` 0.13, `uuid`, `chrono`, `ulid`, `async-trait`, `axum`, `utoipa`.
+**Key dependencies:** `tokio`, `serde`/`serde_json`, `figment`, `thiserror`/`anyhow`, `tracing`, `tracing-subscriber`, `opentelemetry` 0.27, `opentelemetry_sdk`, `opentelemetry-otlp`, `opentelemetry-prometheus`, `prometheus`, `tracing-opentelemetry`, `wasmtime` 44, `reqwest` 0.13, `uuid`, `chrono`, `ulid`, `async-trait`, `axum`, `utoipa`.
 
 | File | Purpose |
 |---|---|
 | `src/lib.rs` | Re-exports all modules; `prelude` with `Result`, `ConusAiError`. |
 | `src/types.rs` | Typed ID newtypes — ULID-backed `ThreadId`, `NodeId`; string-backed `TenantId`, `UserId`, `ToolId`. All `serde(transparent)`. |
-| `src/error.rs` | `ConusAiError` enum: `Config`, `Tool`, `Wasm`, `WasmRuntime(String)`, `Mcp`, `Rig(String)`, `Qdrant(String)`, `Storage`, `Validation`, `NotFound`, `Api { status, message }`, `Io`, `Other`. HTTP error envelope: `ErrorEnvelope { error: ApiErrorBody }` + `ApiErrorKind` discriminated union (`Authentication`, `RateLimit { retry_after }`, `NotFound`, `Validation { field }`, `Agent`, `Internal { request_id }`). `HttpError` builder with `IntoResponse`. All schemas registered via `utoipa::ToSchema`. |
-| `src/config/mod.rs` | `AppConfig { server, qdrant, capabilities_dir, telemetry, llm }`. `LlmConfig { default, aliases: HashMap<String, LlmAliasConfig>, providers: LlmProvidersConfig }`. `AnthropicProviderConfig { api_key_env, base_url, api_version }`. Default aliases: `opus → anthropic/claude-opus-4-7`, `haiku → anthropic/claude-haiku-4-5-20251001`. Loaded via `figment` (TOML + env override with `CONUSAI_` prefix). |
+| `src/error.rs` | `ConusAiError` enum: `Config`, `Tool`, `Wasm`, `WasmRuntime(String)`, `Mcp`, `Rig(String)`, `Storage`, `Validation`, `NotFound`, `Api { status, message }`, `Io`, `Other`. HTTP error envelope: `ErrorEnvelope { error: ApiErrorBody }` + `ApiErrorKind` discriminated union (`Authentication`, `RateLimit { retry_after }`, `NotFound`, `Validation { field }`, `Agent`, `Internal { request_id }`). `HttpError` builder with `IntoResponse`. All schemas registered via `utoipa::ToSchema`. |
+| `src/config/mod.rs` | `AppConfig { server, capabilities_dir, telemetry, llm }`. `LlmConfig { default, aliases: HashMap<String, LlmAliasConfig>, providers: LlmProvidersConfig }`. `AnthropicProviderConfig { api_key_env, base_url, api_version }`. Default aliases: `opus → anthropic/claude-opus-4-7`, `haiku → anthropic/claude-haiku-4-5-20251001`. Loaded via `figment` (TOML + env override with `CONUSAI_` prefix). |
 | `src/telemetry.rs` | `TelemetryGuard` (RAII shutdown). `init(service_name, log_level) -> (TelemetryGuard, prometheus::Registry)`. JSON `tracing-subscriber` + optional OTLP trace/metrics export. Single `SdkMeterProvider` with Prometheus + OTLP `PeriodicReader` (avoids duplicate-registry panic). |
 | `src/http_client.rs` | `build_client()` → `reqwest::Client` (60 s timeout, UA `conusai-platform/0.1`). |
 | `src/mcp.rs` | `JsonRpcRequest` / `JsonRpcResponse` / `JsonRpcError` (JSON-RPC 2.0). |
 | `src/wasm.rs` | `WasmLoader` wrapping `wasmtime::Engine`: `load_bytes`, `load_file`, `new_store`. |
+| `src/db.rs` | `create_pool(database_url) -> PgPool`. `PostgresPool` type alias for `sqlx::PgPool`. Shared Postgres connection pool construction. |
 | `src/limits.rs` | `MAX_PROMPT_TOKENS=128k`, `MAX_RESPONSE_TOKENS=16k`, `MAX_CAPABILITY_SIZE_BYTES=50 MB`, `MAX_WASM_SIZE_BYTES=10 MB`, `REQUEST_TIMEOUT_SECS=120`, `MAX_CONCURRENT_AGENTS=64`, `MAX_MESSAGES_PER_THREAD=10_000`, `MAX_MESSAGES_BEFORE_SUMMARY=50`. |
 | `src/path_safety.rs` | `safe_join(root, rel)` — rejects path components containing `..`. `join_under_tenant(root, tenant_id, rel)`. |
 | `src/audit.rs` | `AuditEvent { id (ULID), tenant_id, timestamp, action, tool?, status, duration_ms?, metadata }`. `AuditStore` async trait: `append`, `list(tenant, limit)`. |
-| `src/metrics.rs` | OTel metric definitions: `tool_invocations`, `tool_errors`, `tool_duration_ms` on meter `conusai.agent`; `qdrant_duration_ms`, `qdrant_errors` on meter `conusai.storage`; `llm_requests`, `llm_input_tokens`, `llm_output_tokens`. `record_error(span, err)`. `kv(k, v)` convenience constructor. |
+| `src/metrics.rs` | OTel metric definitions: `tool_invocations`, `tool_errors`, `tool_duration_ms` on meter `conusai.agent`; `storage_duration_ms`, `storage_errors` on meter `conusai.storage`; `llm_requests`, `llm_input_tokens`, `llm_output_tokens`. `record_error(span, err)`. `kv(k, v)` convenience constructor. |
 | `src/memory/thread.rs` | `Thread { id (ThreadId/ULID), tenant_id, title, created_at, last_active, message_count, summary, metadata }`. `Message { role, content, tool_calls, timestamp, seq }`. `ToolCall { id, name, input, output }`. |
 | `src/memory/workspace.rs` | `NodeKind { Folder, Conversation, File }`. `WorkspaceNode { id (ULID), tenant_id, owner_id, parent_id, kind, name, virtual_path, last_modified, shared_with, metadata }`. Helpers: `new_folder`, `new_conversation`, `validate_name` (rejects empty/>255/`/`/`\`/`..`/leading `.`; enforces `.md` for conversations), `join_virtual_path`, `effective_user_id` (maps `None` → `"__dev__"`). |
 | `src/memory/store.rs` | `ThreadStore` trait: `create`, `get`, `messages`, `append`, `list(after cursor)`, `set_summary`, `set_title`. `WorkspaceStore` trait: `create_folder`, `create_conversation`, `list_accessible_children`, `get_accessible_node`, `get_ancestors`, `move_node`, `delete_node`, `share_node`, `unshare_node`, `bump_last_modified`, `search_nodes`, `index_content`, `bind_thread`. `WorkspaceContentStore` trait: `read`, `write`, `delete`. All take `tenant_id: &str` + `user_id: &str`. |
@@ -227,9 +245,9 @@ components = ["rustfmt", "clippy", "rust-src"]
 
 ### 4.2 `crates/agent-core` — Agent Runtime
 
-**Purpose:** LLM abstraction layer, Rig integration, tool registry + discovery, tool execution (MCP, WASM, chain, native), tenant context, conversation service, invoice/contract/OCR pipelines, Qdrant-backed stores, MinIO workspace content, workspace context builder, prompt templating, agent hooks, super-admin capability CRUD.
+**Purpose:** LLM abstraction layer, Rig integration, tool registry + discovery, tool execution (MCP, WASM, chain, native), tenant context, conversation service, invoice/contract/OCR pipelines, Postgres-backed stores (thread, workspace, audit, vector), MinIO workspace content, workspace indexer + embedding service, realtime broadcast service, workspace context builder, prompt templating, agent hooks, super-admin capability CRUD.
 
-**Key dependencies:** all `common` deps + `rig-core` 0.36, `schemars` 0.8, `base64` 0.22, `sha2`, `blake3`, `bon` 3, `object_store` 0.11.
+**Key dependencies:** all `common` deps + `rig-core` 0.36, `rig-postgres` 0.2.5, `schemars` 0.8, `base64` 0.22, `sha2`, `blake3`, `bon` 3, `object_store` 0.11.
 
 #### LLM abstraction layer (`src/llm/`)
 
@@ -256,7 +274,7 @@ Single source of truth for all model access. No route, chain, or memory module c
 
 | File | Purpose |
 |---|---|
-| `context/tenant.rs` | `UserRole { User, Admin, SuperAdmin }` (default `User`). `PlanTier { Free, Pro, Enterprise }` with `max_tokens()` (4k/16k/128k), `max_turns()` (3/8/20), `rate_limit_rpm()` (10/60/600), `default_alias()` (`haiku`/`opus`/`opus`). `TenantContext { tenant_id, user_id, plan, role, workspace_root, preferred_model? }` with `tenant_root()`, `safe_path(rel)`, `storage_prefix()`, `qdrant_collection(kind)`, `system_prompt()`, `span_fields()`. `TenantClaims { sub, tenant_id, plan, role, exp }` for JWT decode. |
+| `context/tenant.rs` | `UserRole { User, Admin, SuperAdmin }` (default `User`). `PlanTier { Free, Pro, Enterprise }` with `max_tokens()` (4k/16k/128k), `max_turns()` (3/8/20), `rate_limit_rpm()` (10/60/600), `default_alias()` (`haiku`/`opus`/`opus`). `TenantContext { tenant_id, user_id, plan, role, workspace_root, preferred_model? }` with `tenant_root()`, `safe_path(rel)`, `storage_prefix()`, `system_prompt()`, `span_fields()`. `TenantClaims { sub, tenant_id, plan, role, exp }` for JWT decode. |
 | `context/conversation.rs` | `ConversationService` async trait: `create(tenant, node_id?)`, `append_message`, `load_history`, `resolve_for_node` (lazy thread binding), `list(tenant, limit, after)`, `get`. `DefaultConversationService { thread_store, workspace_store }` — coordinates thread create + `WorkspaceStore::bind_thread`. |
 | `context/mod.rs` | `ConversationContext { id: Uuid, system_prompt?, history: Vec<HistoryEntry> }` with `push_user`, `push_assistant`, `to_rig_messages()`. |
 
@@ -305,17 +323,37 @@ The `PromptTemplate` type lives in `common::prompt::template` and is re-exported
 
 | File | Purpose |
 |---|---|
-| `memory/qdrant_helpers.rs` | `QdrantClient { http, base_url }`. `point_id(key) -> u64` (SHA-256 first 8 bytes LE). `zero_vec()` (4-dim placeholder). Methods: `ensure_collection`, `upsert_point`, `scroll_filter`, `patch_payload`, `delete_point`, `get_point`. All instrumented with OTel metrics. |
-| `memory/qdrant_store.rs` | `QdrantThreadStore` implements `ThreadStore`. Collection `threads_{tenant_id}`. Background auto-summarisation (Claude Haiku) when `message_count % MAX_MESSAGES_BEFORE_SUMMARY == 0`. All 7 trait methods `#[instrument]`. |
-| `memory/qdrant_workspace_store.rs` | `QdrantWorkspaceStore` implements `WorkspaceStore`. Collection `workspaces_{tenant_id}`. Keyword indexes: `tenant_id`, `owner_id`, `parent_id`, `kind`, `shared_with`. Text indexes: `name`, `content_text` (word tokeniser, lowercase, min 2/max 128 token len). Access filter: `tenant_id == X AND (owner_id == U OR shared_with ∋ U)` using `min_should` struct form. `get_accessible_node` → `NotFound` (never `Forbidden`). `delete_node` worklist. `search_nodes` per-token `text_match` with substring fallback. `index_content` truncates to 32 KB at UTF-8 boundary. `patch_payload` for targeted field updates. |
+| `memory/postgres_thread_store.rs` | `PostgresThreadStore` implements `ThreadStore`. Tables: `threads`, `messages`. Background auto-summarisation when `message_count % MAX_MESSAGES_BEFORE_SUMMARY == 0`. All methods `#[instrument]`. |
+| `memory/postgres_workspace_store.rs` | `PostgresWorkspaceStore` implements `WorkspaceStore`. Tables: `workspace_nodes`, `content_embeddings`. Access filter: `tenant_id = X AND (owner_id = U OR shared_with @> ARRAY[U])`. `search_nodes` uses full-text + substring fallback. `index_content` stores content chunks as embeddings. |
+| `memory/postgres_audit_store.rs` | `PostgresAuditStore` implements `AuditStore`. Table: `audit_events`. `list` returns newest-first with optional cursor. |
 | `memory/minio_workspace_content.rs` | `MinioWorkspaceContent` implements `WorkspaceContentStore` via `Arc<dyn ObjectStore>`. Keys: `tenants/{tenant_id}/workspaces/{virtual_path}`. `read` returns `""` on `NotFound`. `delete` is best-effort. |
 | `memory/context_builder.rs` | `ContextBuilder { store, content, truncator: Arc<dyn ContextTruncator> }`. `build_for_node(tenant, node_id, max_chars)` — walks ancestors, loads `CONTEXT.md` / `README.md` from MinIO per folder, loads conversation body; joins with `\n\n---\n\n`; delegates truncation to injected `ContextTruncator`; prefixes `# Workspace context\n`. `with_truncator(t)` builder for custom strategies. Never errors hard. Used by `routes/agent.rs` with `max_chars = 6000`. |
 | `memory/truncator.rs` | `ContextTruncator` strategy trait: `truncate(sections, max_chars)`. `OldestFirstTruncator` (default) — removes sections from the front until budget fits; preserves last section. Pluggable: inject any `Arc<dyn ContextTruncator>` for alternate RAG policies. |
-| `memory/qdrant_audit.rs` | `QdrantAuditStore` implements `AuditStore`. Collection `audit_{tenant_id}`. `list` uses `order_by: { key: "timestamp", direction: "desc" }`. |
 
-**Public re-exports** (via `lib.rs`): `Agent`, `AgentBuilder`, `TracingHook`, `PermissionHook`, `map_rig_error`, `ContractData`, `ContractParty`, `ContractPipeline`, `ExtractionPipeline`, `InvoiceData`, `InvoiceLineItem`, `InvoicePipeline`, `PromptChainCapability`, `ConversationService`, `DefaultConversationService`, `PlanTier`, `TenantClaims`, `TenantContext`, `UserRole`, `CapabilityCard`, `ContextBuilder`, `ContextTruncator`, `OldestFirstTruncator`, `MinioWorkspaceContent`, `QdrantAuditStore`, `QdrantThreadStore`, `QdrantWorkspaceStore`, `AdminLimits`, `CapabilitySummary`, `CreateCapabilityRequest`, `CapabilityAdmin`, `TestInvokeRequest`, `TestInvokeResponse`, `UpdateCapabilityRequest`, `build_admin`, `builtin_tool_card`, `ToolDiscovery`, `CapabilityFactory`, `ToolRegistry`, `FilesystemStore`, `RegisteredToolState`, `RegisteredToolStore`, `RegisteredToolValidationError`, `RegisteredToolValidator`, `ValidationReport`, `LlmBinding`, `LlmChunk`, `LlmError`, `CompletionProvider`, `LlmRegistry`, `LlmRequest`, `LlmResponse`, `LlmStream`, `LlmUsage`.
+#### Indexing subsystem (`src/indexing/`)
 
-**Tests (8):** registry register/get/tag-search; manifest embedding text; nonexistent-dir handling; WASM `ping` execution; `QdrantThreadStore` point-id determinism + collection namespacing.
+| File | Purpose |
+|---|---|
+| `indexing/coco_indexer.rs` | `WorkspaceIndexer` — crawls workspace filesystem, chunks content, generates embeddings, upserts to `content_embeddings` table with pgvector |
+| `indexing/embedding_service.rs` | `EmbeddingService` trait; `OpenAiEmbeddingService` (default, `text-embedding-3-small`, EMBEDDING_DIMS=1536); `NoopEmbeddingService` (test mode) |
+| `indexing/local_embedding_service.rs` | `LocalEmbeddingService` — feature-gated (`local-embeddings`), uses `fastembed` 5 crate for on-device inference |
+| `indexing/real_fs_watcher.rs` | `RealFsWatcher` — watches filesystem for changes, triggers incremental re-indexing |
+
+#### Realtime subsystem (`src/realtime/`)
+
+| File | Purpose |
+|---|---|
+| `realtime/` | `RealtimeService` — tokio broadcast channel service for `WorkspaceChangeEvent`. Gateway holds `Option<Arc<RealtimeService>>`; `None` in test mode. |
+
+#### Vector store (`src/vector_store/`)
+
+| File | Purpose |
+|---|---|
+| `vector_store/postgres.rs` | `PgVectorStore` — cosine ANN search over `capability_embeddings` and `content_embeddings` tables via direct `sqlx` queries. `CapabilityHit`, `ContentHit` result types. `PgVectorStore::new(pool)` / `PgVectorStore::noop()` (test mode). `vec_to_pg(v)` serialises `f32` slice to Postgres vector literal. |
+
+**Public re-exports** (via `lib.rs`): `Agent`, `AgentBuilder`, `TracingHook`, `PermissionHook`, `map_rig_error`, `ContractData`, `ContractParty`, `ContractPipeline`, `ExtractionPipeline`, `InvoiceData`, `InvoiceLineItem`, `InvoicePipeline`, `PromptChainCapability`, `ConversationService`, `DefaultConversationService`, `PlanTier`, `TenantClaims`, `TenantContext`, `UserRole`, `CapabilityCard`, `ContextBuilder`, `ContextTruncator`, `OldestFirstTruncator`, `MinioWorkspaceContent`, `PostgresAuditStore`, `PostgresThreadStore`, `PostgresWorkspaceStore`, `PgVectorStore`, `EmbeddingService`, `WorkspaceIndexer`, `RealtimeService`, `AdminLimits`, `CapabilitySummary`, `CreateCapabilityRequest`, `CapabilityAdmin`, `TestInvokeRequest`, `TestInvokeResponse`, `UpdateCapabilityRequest`, `build_admin`, `builtin_tool_card`, `ToolDiscovery`, `CapabilityFactory`, `ToolRegistry`, `FilesystemStore`, `RegisteredToolState`, `RegisteredToolStore`, `RegisteredToolValidationError`, `RegisteredToolValidator`, `ValidationReport`, `LlmBinding`, `LlmChunk`, `LlmError`, `CompletionProvider`, `LlmRegistry`, `LlmRequest`, `LlmResponse`, `LlmStream`, `LlmUsage`.
+
+**Tests (8):** registry register/get/tag-search; manifest embedding text; nonexistent-dir handling; WASM `ping` execution; `PostgresThreadStore` pool construction + query; `PgVectorStore::noop()` returns empty results.
 
 ---
 
@@ -330,12 +368,12 @@ The `PromptTemplate` type lives in `common::prompt::template` and is re-exported
 | File | Purpose |
 |---|---|
 | `src/job.rs` | `TaskState { Queued, Running, Completed, Failed }`. `TaskStatus { id, job_name, state, created/updated_at, result?, error? }`. `ScheduledJob` async trait: `name`, `cron`, `enabled` (default `true`), `run(ctx)`. `BackgroundJob` async trait: `name`, `run(input, ctx)`. |
-| `src/context.rs` | `JobContext { audit_store, qdrant_url, minio_endpoint?, bucket? }`. Cheap to `Clone` (all `Arc`). Shared across all job invocations. |
+| `src/context.rs` | `JobContext { audit_store, minio_endpoint?, bucket? }`. Cheap to `Clone` (all `Arc`). Shared across all job invocations. |
 | `src/registry.rs` | `JobRegistry { scheduled: Vec<Arc<dyn ScheduledJob>>, background: HashMap<String, Arc<dyn BackgroundJob>>, ctx }`. `register_scheduled`, `register_background`. |
 | `src/scheduler.rs` | `JobSchedulerService::start(registry)` — iterates `registered_jobs()`, creates a `tokio_cron_scheduler::Job` per enabled job, wires `Arc<JobContext>` into each async closure, starts scheduler. |
 | `src/executor.rs` | `JobExecutor { tasks: RwLock<HashMap<Uuid, TaskStatus>>, channels: RwLock<HashMap<Uuid, Sender<TaskEvent>>> }`. `enqueue(job_name, input)` → `task_id`; spawns `tokio::spawn` that calls `BackgroundJob::run`, updates state, broadcasts `TaskEvent`. `get_status`, `list_tasks`, `subscribe` (SSE). |
 | `src/admin.rs` | `JobAdmin { registry, executor }`. `list_jobs() -> Vec<JobSummary>`, `get_job(name)`, `run_now(name, input) -> Uuid`, `list_tasks(limit)`, `get_task(id)`. |
-| `src/jobs/capability_health_check.rs` | `CapabilityHealthCheckJob` — cron `"0 */5 * * * *"`. Pings Qdrant `/healthz` and MinIO `/minio/health/live`. Logs warnings on failure. |
+| `src/jobs/capability_health_check.rs` | `CapabilityHealthCheckJob` — cron `"0 */5 * * * *"`. Pings MinIO `/minio/health/live`. Logs warnings on failure. |
 | `src/jobs/audit_log_cleanup.rs` | `AuditLogCleanupJob` — cron `"0 0 2 * * *"`. Reads `AUDIT_RETENTION_DAYS` (default 30). Placeholder — logs intent; full `delete_before` trait method is a future PR. |
 | `src/jobs/video_transcription.rs` | `VideoTranscriptionJob` — downloads file from MinIO, calls OpenAI Whisper API (`OPENAI_API_KEY`), or returns a placeholder transcript. Output: `{ file_id, tenant_id, transcript, chars }`. |
 
@@ -355,7 +393,11 @@ The `PromptTemplate` type lives in `common::prompt::template` and is re-exported
 
 #### `src/state.rs`
 
-`AppState { registry, rate_limiter, llm, file_store, presigned_tokens, thread_store, audit_store, workspace_store, workspace_content, conversation_service, tool_admin, **job_registry**, **job_executor**, **job_admin** }`.
+`AppState { registry, rate_limiter, llm, file_store: Option<Arc<dyn ObjectStore>>, presigned_tokens, thread_store, audit_store, workspace_store, workspace_content, conversation_service, tool_admin, job_registry, job_executor, job_admin, pool: Option<PgPool>, embedding_service: Arc<dyn EmbeddingService>, vector_store: Arc<PgVectorStore>, realtime_service: Option<Arc<RealtimeService>> }`.
+
+`AppState::from_env()`: `PgPool` → `LlmRegistry` → `ToolRegistry` (with discovery) → MinIO file store → `PostgresThreadStore` → `PostgresAuditStore` → `EmbeddingService` (`EMBEDDING_BACKEND`: `"local"` → `LocalEmbeddingService`, `"openai"` → `OpenAiEmbeddingService`, default → `NoopEmbeddingService`) → `PgVectorStore` → `PostgresWorkspaceStore` → `MinioWorkspaceContent` or `NoopWorkspaceContent` → `DefaultConversationService` → `JobContext/JobRegistry/JobExecutor/JobAdmin` → `RealtimeService`.
+
+`AppState::with_in_memory_stores()`: `pool=None`, `file_store=None`, `NoopEmbeddingService`, `PgVectorStore::noop()`, `realtime_service=None`.
 
 `build_job_registry(ctx)` — pre-registers `CapabilityHealthCheckJob`, `AuditLogCleanupJob` (scheduled) and `VideoTranscriptionJob` (background).
 
@@ -381,8 +423,8 @@ The `PromptTemplate` type lives in `common::prompt::template` and is re-exported
 #### Routes (`src/routes/`)
 
 **Router assembly:**
-- `public_router()` — `/health`, `GET /v1/files/{token}`, `POST /v1/auth/login`, `GET /docs`, `GET /openapi.json`
-- `protected_router()` — all `/v1/*` and `/mcp` routes behind full middleware stack
+- `public_router()` — `/health`, `POST /v1/auth/login`, `GET /docs`, `GET /openapi.json`
+- `protected_router()` — all `/v1/*`, `/mcp`, and `/api/realtime/*` routes behind full middleware stack
 - `admin_router()` — `/admin/*` routes behind `require_super_admin_jwt`
 - `ui_router()` — `/`, `/login`, `/logout`, `/ui/*`, `/super-admin/*`
 - `GET /metrics` — Prometheus text exposition (no auth)
@@ -395,12 +437,15 @@ The `PromptTemplate` type lives in `common::prompt::template` and is re-exported
 | `routes/chat.rs` | `POST /v1/chat/completions` | OpenAI-compatible chat. Blocking: returns `ChatResponse`. Streaming: SSE with OpenAI delta chunks. Rate-limited; `max_tokens` clamped by plan. |
 | `routes/agent.rs` | `POST /v1/agent/completions` | Thread-aware tool-calling loop. Blocking + streaming (`"stream": true`) modes. Thread resolution: explicit `thread_id` wins; else workspace node `metadata.thread_id` (lazy `bind_thread`). History load + summary injection + `ContextBuilder` preamble (6000 chars). Anthropic `tool_use` rounds (≤ `max_turns`, capped by plan). Streaming: SSE OpenAI chunks + `tool_call_start` / `tool_call_result` events. After every turn: `WorkspaceStore::index_content` (last 30 msgs). `gen_ai.*` span attributes. Returns `thread_id` in response. |
 | `routes/capabilities.rs` | `GET /v1/capabilities` | Lists all enabled capabilities (name, version, description, kind, tags, tools). |
-| `routes/search.rs` | `GET /v1/capabilities/search?q=&limit=` | 64-dim deterministic hash embeddings. On first call per tenant: creates `capabilities_{tenant_id}` + upserts all vectors. Subsequent: Qdrant vector search. Falls back to local substring match on failure. `limit` default 5, max 20. |
+| `routes/search.rs` | `GET /v1/capabilities/search?q=&limit=` | Semantic search via Postgres pgvector ANN. On each request, capability cards are upserted into `capability_embeddings` (hash-based change detection). Query is embedded and top-N retrieved via cosine ANN. Falls back to local substring match on failure. `limit` default 5, max 20. Returns `{source: "vector"}` on fast path. |
 | `routes/mcp.rs` | `POST /mcp` | JSON-RPC 2.0. Methods: `initialize`, `tools/list`, `tools/call` (`capability__tool` slug split). |
-| `routes/files.rs` | `POST /v1/files`, `GET /v1/files/{token}` | Multipart upload to MinIO at `tenants/{tenant_id}/{uuid}/{filename}`; returns 1-h TTL download token. Public token-gated streaming download. |
+| `routes/files.rs` | `POST /v1/files`, `GET /v1/files/{token}` | Multipart upload to MinIO at `tenants/{tenant_id}/{uuid}/{filename}`; returns 1-h TTL download token. Bearer-JWT-protected token-gated streaming download. |
 | `routes/audit.rs` | `GET /v1/audit?limit=` | Lists `AuditEvent`s newest-first. Default 50, max 500. Returns `{events, count}`. |
-| `routes/workspaces.rs` | 9 workspace routes | `create` (validates name → 400, writes empty `.md` to MinIO for conversations), `tree` (immediate children), `search` (text_match + substring fallback, limit default 40 max 200), `get_node`, `delete_node` (recursive + MinIO cleanup), `get_content` / `patch_content` (MinIO read/write + `index_content`), `move_node` (patch_payload), `share_node` / `unshare_node` (owner-only, patch_payload). |
-| `routes/admin_capabilities.rs` | 10 admin routes | `list`, `get_one`, `get_manifest`, `create`, `update`, `set_enabled` (`{enabled: bool}`), `delete_one`, `reload_one`, `reload_all`, `validate` (returns `ValidationResponse { valid, errors, warnings }`), `test_invoke` (`{capability, tool, input}` → JSON result). All require `super_admin` JWT role. |
+| `routes/workspaces.rs` | workspace routes | `create`, `tree`, `search`, `get_node`, `delete_node`, `get_content`, `patch_content`, `move_node` (POST), `share_node` (POST), `unshare_node` (POST `/v1/workspaces/{id}/unshare`). |
+| `routes/threads.rs` | `GET /v1/threads/{id}/messages` | Returns paginated message list for a thread. |
+| `routes/realtime.rs` | `GET /api/realtime/workspace` | WebSocket upgrade; broadcasts `WorkspaceChangeEvent` to the caller via `RealtimeService`. |
+| `routes/admin_capabilities.rs` | 11 admin routes | `list`, `get_one`, `get_manifest`, `create`, `update`, `set_enabled`, `delete_one`, `reload_one`, `reload_all`, `validate`, `test_invoke`. All require `super_admin` JWT role. |
+| `routes/admin_jobs.rs` | 4 admin routes | `list_jobs` (`GET /admin/jobs`), `get_job` (`GET /admin/jobs/{name}`), `run_now` (`POST /admin/jobs/{name}/run`), `list_tasks` (`GET /admin/tasks`). All require `super_admin` JWT role. |
 
 **OpenAPI** — `ApiDoc` with `#[derive(OpenApi)]`. Security schemes: `bearer_auth` (HS256 JWT), `api_key_auth` (X-API-Key header), `cookie_auth` (conusai_session cookie). Swagger UI at `/docs`; spec JSON at `/openapi.json`.
 
@@ -485,6 +530,7 @@ output_schema = { ... }          # optional JSON Schema for response validation
 | `invoice-processing/` | chain | `extract_invoice`, `validate_invoice` | `InvoicePipeline`; default model `claude-opus-4-7`; max 20 MB; png/jpeg/jpg/pdf. |
 | `contract-processing/` | chain | `extract_contract`, `summarise_contract` | `ContractPipeline`. |
 | `ocr-service/` | chain | `extract_text` | `OcrProvider`; default model `claude-sonnet-4-6`. |
+| `runtime-echo/` | chain | echo | Minimal chain capability for runtime testing. |
 | `template-wasm/` | wasm | `ping` | Loads `capability.wasm`; exports `ping() -> i32 = 42`. |
 
 ### Capability selection: `invoice-processing` vs `ocr-service`
@@ -508,11 +554,12 @@ Rich `description` fields in `capability.toml` are loaded verbatim into Anthropi
 | `CONUSAI_WORKSPACE_ROOT` | `/tmp/conusai/workspaces` | Tenant workspace root (native tools) |
 | `CONUSAI_UI_ASSETS` | (auto-detected) | Override UI assets directory |
 | `CONUSAI_UI_TENANT_ID` | `dev` | Tenant ID used by the UI session |
-| `CONUSAI_TEST_MODE` | — | `1` → all stores in-memory; no Qdrant/MinIO |
+| `CONUSAI_TEST_MODE` | — | `1` → all stores in-memory; no Postgres/MinIO |
 | `CONUSAI_MAX_CAPABILITIES` | `64` | Admin limit: max registered capabilities |
 | `CONUSAI_MAX_MANIFEST_BYTES` | `65536` | Admin limit: max manifest size |
 | `CONUSAI_MAX_WASM_BYTES` | `8388608` | Admin limit: max WASM binary size (8 MiB) |
-| `QDRANT_URL` | `http://localhost:6333` | Qdrant REST base URL |
+| `DATABASE_URL` | — | Postgres connection string (e.g. `postgres://conusai:conusai@localhost:5432/conusai`) |
+| `EMBEDDING_BACKEND` | — | `openai` → `OpenAiEmbeddingService`; `local` → `LocalEmbeddingService` (fastembed); default → `NoopEmbeddingService` |
 | `MINIO_ENDPOINT` / `S3_ENDPOINT` | — | MinIO/S3 endpoint (enables file + workspace content stores) |
 | `MINIO_BUCKET` | `conusai` | Storage bucket |
 | `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | `minioadmin` | Dev credentials |
@@ -537,7 +584,7 @@ Rich `description` fields in `capability.toml` are loaded verbatim into Anthropi
 1. `tokio::main` → `common::telemetry::init("agent-gateway", "info")` — JSON logs + optional OTLP.
 2. `AppState::from_env()`:
    - `CONUSAI_TEST_MODE=1` → `with_in_memory_stores()` (no Docker needed).
-   - Otherwise: `build_llm_registry()` → `LlmRegistry`; `ToolRegistry::with_default_factories(llm)` pre-seeds four factories; `ToolDiscovery::from_env().discover_into(&mut registry)` loads capabilities; MinIO client via `AmazonS3Builder`; Qdrant stores.
+   - Otherwise: `PgPool` → `build_llm_registry()` → `LlmRegistry`; `ToolRegistry::with_default_factories(llm)` pre-seeds four factories; `ToolDiscovery::from_env().discover_into(&mut registry)` loads capabilities; MinIO client via `AmazonS3Builder`; `PostgresThreadStore`, `PostgresAuditStore`, `EmbeddingService`, `PgVectorStore`, `PostgresWorkspaceStore`, `MinioWorkspaceContent`, `RealtimeService`.
 3. `verify_llm_providers` — validates all LLM aliases at startup (warn-only).
 4. Router assembled: public + metrics + protected + admin + ui + assets.
 5. Layers applied (outermost first): CORS → `TraceLayer` → `inject_request_id` → `propagate_trace` → (per-router) `extract_api_key` → `extract_tenant` → `enforce_plan`.
@@ -567,13 +614,14 @@ HTTP request
               │                 ├─ ConversationService::append_message
               │                 └─ WorkspaceStore::index_content (last 30 msgs)
               ├─ /v1/capabilities            → capability list
-              ├─ /v1/capabilities/search     → Qdrant 64-dim hash vectors + fallback
+              ├─ /v1/capabilities/search     → Postgres pgvector ANN + fallback
               ├─ /mcp                        → JSON-RPC 2.0 dispatcher
               ├─ /v1/files                   → MinIO multipart upload
               ├─ /v1/audit                   → AuditStore::list
               └─ /v1/workspaces              → WorkspaceStore + WorkspaceContentStore
         ├─ admin_router (require_super_admin_jwt)
-        │     └─ /admin/capabilities/*       → RegisteredToolAdmin CRUD
+        │     ├─ /admin/capabilities/*       → RegisteredToolAdmin CRUD
+        │     └─ /admin/jobs/*, /admin/tasks  → JobAdmin
         └─ ui_router
               ├─ /                          → Foundry app shell (Askama)
               ├─ /login, /logout
@@ -592,26 +640,26 @@ HTTP request
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/health` | Status / version / capability count |
-| GET | `/v1/files/{token}` | Token-gated download (1 h TTL) |
 | POST | `/v1/auth/login` | Exchange credentials for HS256 JWT |
 | GET | `/docs` | Swagger UI |
 | GET | `/openapi.json` | OpenAPI 3.1 spec |
 | GET | `/metrics` | Prometheus text format |
 
-### Protected (JWT, API key, or session cookie)
+### Protected (Bearer JWT or `X-API-Key`)
 
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/v1/chat/completions` | OpenAI-compatible chat (SSE optional) |
 | POST | `/v1/agent/completions` | Tool-calling agent loop (blocking + SSE) |
 | GET | `/v1/capabilities` | List enabled capabilities |
-| GET | `/v1/capabilities/search?q=&limit=` | Semantic search (Qdrant + fallback) |
+| GET | `/v1/capabilities/search?q=&limit=` | Semantic capability search (Postgres pgvector ANN + fallback) |
 | POST | `/mcp` | MCP JSON-RPC 2.0 |
 | POST | `/v1/files` | Multipart upload (MinIO) |
+| GET | `/v1/files/{token}` | Token-gated streaming download (1 h TTL) |
 | GET | `/v1/audit?limit=` | Audit log (newest-first; default 50, max 500) |
 | POST | `/v1/workspaces` | Create folder or conversation |
 | GET | `/v1/workspaces/tree?parent_id=` | Immediate children visible to caller |
-| GET | `/v1/workspaces/search?q=&limit=` | Token text_match + substring fallback |
+| GET | `/v1/workspaces/search?q=&limit=` | Text search + substring fallback |
 | GET | `/v1/workspaces/{id}` | Single node (NotFound if not accessible) |
 | GET | `/v1/workspaces/{id}/content` | Read markdown body |
 | PATCH | `/v1/workspaces/{id}/content` | Save body → index_content |
@@ -619,6 +667,11 @@ HTTP request
 | POST | `/v1/workspaces/{id}/share` | Owner-only: add user to `shared_with` |
 | POST | `/v1/workspaces/{id}/unshare` | Owner-only: remove user from `shared_with` |
 | DELETE | `/v1/workspaces/{id}` | Recursive delete + MinIO cleanup |
+| GET | `/v1/tasks` | List background task statuses |
+| GET | `/v1/tasks/{id}` | Get single task status |
+| GET | `/v1/tasks/{id}/sse` | SSE stream for task lifecycle events |
+| GET | `/v1/threads/{id}/messages` | Paginated message list for a thread |
+| GET | `/api/realtime/workspace` | WebSocket — workspace change event stream |
 
 ### Super-admin (JWT with `role = super_admin`)
 
@@ -635,6 +688,10 @@ HTTP request
 | PATCH | `/admin/capabilities/{name}/enabled` | Toggle enabled (`{enabled: bool}`) |
 | DELETE | `/admin/capabilities/{name}` | Delete capability + filesystem cleanup |
 | POST | `/admin/capabilities/{name}/reload` | Hot-reload single capability |
+| GET | `/admin/jobs` | List all registered jobs |
+| GET | `/admin/jobs/{name}` | Get single job summary |
+| POST | `/admin/jobs/{name}/run` | Enqueue a background job immediately |
+| GET | `/admin/tasks` | List all task statuses (admin view) |
 
 ---
 
@@ -643,7 +700,7 @@ HTTP request
 - **Authentication:** HS256 JWT (`JWT_SECRET`) in production; API key (BLAKE3-hashed, `API_KEYS` env) as first-class auth method; HMAC-SHA256 session cookies for UI; dev fallback `X-Tenant-ID`.
 - **Authorization:** `UserRole { User, Admin, SuperAdmin }` in JWT claims + session cookie. Super-admin middleware enforces role on `/admin/*` and `/super-admin/*`.
 - **Path safety:** `safe_join` rejects `..` in all tenant FS access.
-- **Storage isolation:** MinIO keys under `tenants/{tenant_id}/`; Qdrant collection per tenant per kind.
+- **Storage isolation:** MinIO keys under `tenants/{tenant_id}/`; Postgres rows filtered by `tenant_id`; pgvector embeddings share tables but are namespaced by `tenant_id`.
 - **Workspace ACL:** private-by-default; per-node `shared_with`; non-owners receive `NotFound` (no existence leakage).
 - **API key security:** only BLAKE3 hash stored in env var; raw key never persisted.
 - **WASM sandboxing:** Wasmtime engine; `MAX_WASM_SIZE_BYTES = 10 MB`; only allowlisted exports invoked.
@@ -658,7 +715,7 @@ HTTP request
 - **Distributed tracing:** W3C `traceparent`/`tracestate` propagation; OTLP export to otel-collector → Jaeger.
 - **Metrics — OTel (OTLP + Prometheus):** Single `SdkMeterProvider` with both readers.
   - `conusai.agent` meter: `agent.tool.invocations`, `agent.tool.errors`, `agent.tool.duration_ms`, `agent.llm.requests`, `agent.llm.input_tokens`, `agent.llm.output_tokens`.
-  - `conusai.storage` meter: `qdrant.request.duration_ms`, `qdrant.request.errors`.
+  - `conusai.storage` meter: `storage.request.duration_ms`, `storage.request.errors`.
 - **Span attributes:** `tenant_id`, `plan`, `tool.cap`, `tool.name`, `error.type`, `gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `thread_id`.
 - **Prometheus endpoint:** `GET /metrics` (text/plain 0.0.4).
 - **Healthcheck:** `GET /health` → `{status, version, capabilities}`.
@@ -670,7 +727,7 @@ HTTP request
 ### Local development
 
 ```bash
-# Infrastructure only (Qdrant + MinIO)
+# Infrastructure only (Postgres + MinIO)
 ./start.sh infra
 
 # Full stack (infra + build + run gateway)
@@ -707,10 +764,10 @@ docker compose --profile full up -d
 ## 12. Tests & Quality
 
 - **common (22 tests):** path traversal rejection, safe joins, MCP serde, `ApiError` fields, limit invariants, thread/message/tool-call serde roundtrips, `WorkspaceNode` serde, every `validate_name` branch, `join_virtual_path`, `effective_user_id`.
-- **agent-core (8 tests):** registry register/get/tag-search; manifest embedding text; nonexistent-dir handling; WASM `ping` execution; `QdrantThreadStore` point-id determinism + collection namespacing.
-- **Total:** 30 lib tests (`cargo test --workspace`). Integration tests in `crates/agent-core/tests/` and `crates/agent-gateway/tests/` require live Qdrant.
+- **agent-core (8 tests):** registry register/get/tag-search; manifest embedding text; nonexistent-dir handling; WASM `ping` execution; `PostgresThreadStore` pool construction; `PgVectorStore::noop()` returns empty results.
+- **Total:** 30+ lib tests (`cargo test --workspace`). Integration tests in `crates/agent-core/tests/` and `crates/agent-gateway/tests/` require live Postgres + MinIO.
 - **Quality gates:** `cargo clippy --workspace -- -D warnings`, `cargo fmt --all`.
-- **Test mode:** `CONUSAI_TEST_MODE=1` replaces all Qdrant + MinIO stores with in-memory equivalents — no Docker required.
+- **Test mode:** `CONUSAI_TEST_MODE=1` replaces all Postgres + MinIO stores with in-memory equivalents — no Docker required.
 
 ---
 
@@ -723,8 +780,8 @@ docker compose --profile full up -d
 - **Typed ID newtypes:** `ThreadId`, `NodeId`, `TenantId`, `UserId`, `ToolId` — compile-time safety; `serde(transparent)` wire format.
 - **ConversationService:** single source of truth for thread lifecycle. Coordinates `ThreadStore` + `WorkspaceStore::bind_thread`.
 - **Multitenant isolation:** JWT/API-key auth; tenant-prefixed paths/keys/collections; plan-based token limits + rate limits + turn caps; `UserRole` RBAC; `safe_join` path safety.
-- **Persistent memory:** `QdrantThreadStore` (REST, 4-dim zero vectors, SHA-256→u64 IDs); auto-summarisation via Haiku background task.
-- **Workspace hierarchy:** folders + conversations as `.md` in MinIO; per-tenant Qdrant text index; private-by-default ACL; per-node thread binding; ContextBuilder ancestor context injection.
+- **Persistent memory:** `PostgresThreadStore` (sqlx, `threads`/`messages` tables); auto-summarisation via Haiku background task.
+- **Workspace hierarchy:** folders + conversations as `.md` in MinIO; Postgres `workspace_nodes` + `content_embeddings` tables; private-by-default ACL; per-node thread binding; ContextBuilder ancestor context injection.
 - **Observability by default:** structured JSON logs, OTel spans with W3C propagation, `#[instrument]` on every significant async method.
 - **Scheduled + background jobs (v0.3):** `ScheduledJob` trait (cron, `tokio-cron-scheduler`) + `BackgroundJob` trait (on-demand, `JobExecutor` in-memory tracker). `JobRegistry` wires both kinds with shared `JobContext`. `JobSchedulerService` spawns cron loop at startup. SSE polling at `GET /v1/tasks/{id}/sse`. In-memory only; Apalis/Postgres migration-ready (trait unchanged).
 
@@ -732,12 +789,12 @@ docker compose --profile full up -d
 
 ## 14. Status
 
-- **Version:** 0.3.0
+- **Version:** 0.3.1
 - **State:** operational, 100% verified end-to-end (per [verify.md](verify/verify.md)).
 
-**Implemented:** multitenancy (JWT + API key + session), `UserRole` (User/Admin/SuperAdmin), `LlmProvider` + `LlmRegistry` abstraction layer, `AnthropicProvider` via `rig-core` 0.36, data-driven `LlmChainTool` + `PromptTemplate`, `ConversationService` trait + `DefaultConversationService`, super-admin capability CRUD API + Foundry UI, invoice + contract + OCR pipelines, YAML/TOML capability discovery, `ToolKind::Chain` + four factories, OpenAI-compatible chat, SSE streaming, tool-calling agent loop (blocking + streaming), MCP JSON-RPC, Qdrant semantic capability search (64-dim), MinIO file storage, WASM execution (wasmtime 29), Google Workspace manifest, evals framework (invoice + OCR), Jaeger/OTLP tracing, per-tenant rate limiting, persistent thread memory (Qdrant) with auto-summarisation, `gen_ai.*` OTel span attributes, W3C traceparent propagation, native filesystem + cargo tools, cargo-chef Docker image, hierarchical workspace, append-only audit log, Prometheus metrics, OpenAPI + Swagger UI, request-ID correlation, typed ID newtypes, CORS, **scheduled jobs (`ScheduledJob` + `tokio-cron-scheduler`)**, **background tasks (`BackgroundJob` + `JobExecutor` + SSE polling)**, **`TranscribeVideoCapability`** (enqueues `VideoTranscriptionJob` → Whisper API), **`GET /v1/tasks`, `GET /v1/tasks/{id}/sse`**, **`/admin/jobs/*` REST API**.
+**Implemented:** multitenancy (JWT + API key + session), `UserRole` (User/Admin/SuperAdmin), `CompletionProvider` + `LlmRegistry` abstraction layer, `AnthropicProvider` via `rig-core` 0.36 + `rig-postgres` 0.2.5, data-driven `PromptChainCapability` + `PromptTemplate`, `ConversationService` trait + `DefaultConversationService`, super-admin capability CRUD API + Foundry UI, invoice + contract + OCR pipelines, YAML/TOML capability discovery, `ToolKind::Chain` + four factories, OpenAI-compatible chat, SSE streaming, tool-calling agent loop (blocking + streaming), MCP JSON-RPC, **Postgres pgvector semantic capability search**, MinIO file storage, WASM execution (wasmtime 44), Google Workspace manifest, evals framework (invoice + OCR), Jaeger/OTLP tracing, per-tenant rate limiting, **Postgres-backed thread/workspace/audit stores**, `gen_ai.*` OTel span attributes, W3C traceparent propagation, native filesystem + cargo tools, cargo-chef Docker image, hierarchical workspace + `content_embeddings`, append-only audit log, Prometheus metrics, OpenAPI + Swagger UI, request-ID correlation, typed ID newtypes, CORS, **scheduled jobs (`ScheduledJob` + `tokio-cron-scheduler`)**, **background tasks (`BackgroundJob` + `JobExecutor` + SSE polling)**, **`TranscribeVideoCapability`** (enqueues `VideoTranscriptionJob` → Whisper API), **`GET /v1/tasks`, `GET /v1/tasks/{id}/sse`, `GET /v1/threads/{id}/messages`, `GET /api/realtime/workspace`**, **`/admin/jobs/*` REST API**, **workspace indexer (`WorkspaceIndexer`, `EmbeddingService`, `RealFsWatcher`)**, **realtime WebSocket service (`RealtimeService`)**, **`runtime-echo` capability**.
 
-**Reserved / future:** `Docker` capability kind, external MCP server federation, real workspace vector embeddings (currently 4-dim placeholders), multi-instance deployment, audit retention/compaction, billing/quota enforcement, OIDC integration, multi-layer context budgeting, live document mode, agent-callable workspace toolkit, additional LLM providers (OpenAI, Ollama, Bedrock), Apalis/Postgres job persistence, whisper-rs local transcription.
+**Reserved / future:** `Docker` capability kind, external MCP server federation, multi-instance deployment, audit retention/compaction, billing/quota enforcement, OIDC integration, multi-layer context budgeting, live document mode, agent-callable workspace toolkit, additional LLM providers (OpenAI, Ollama, Bedrock), Apalis/Postgres job persistence, whisper-rs local transcription.
 
 ---
 
@@ -763,7 +820,7 @@ conusai-platform/
     │   ├── common/
     │   │   └── src/
     │   │       ├── lib.rs, types.rs, error.rs, config/mod.rs, telemetry.rs
-    │   │       ├── http_client.rs, mcp.rs, wasm.rs, limits.rs, path_safety.rs
+    │   │       ├── http_client.rs, mcp.rs, wasm.rs, db.rs, limits.rs, path_safety.rs
     │   │       ├── eval.rs, audit.rs, metrics.rs
     │   │       └── memory/{mod,thread,workspace,store,inmem}.rs
     │   │
@@ -775,8 +832,13 @@ conusai-platform/
     │   │       ├── context/{mod,tenant,conversation}.rs
     │   │       ├── prompt/{mod,template}.rs
     │   │       ├── chains/{mod,extraction,invoice,contract,llm_chain}.rs
-    │   │       ├── memory/{mod,qdrant_helpers,qdrant_store,qdrant_workspace_store,
-    │   │       │            minio_workspace_content,context_builder,qdrant_audit}.rs
+    │   │       ├── memory/{mod,postgres_thread_store,postgres_workspace_store,
+    │   │       │            postgres_audit_store,minio_workspace_content,context_builder,
+    │   │       │            truncator}.rs
+    │   │       ├── indexing/{mod,coco_indexer,embedding_service,local_embedding_service,
+    │   │       │             real_fs_watcher}.rs
+    │   │       ├── realtime/{mod,...}.rs
+    │   │       ├── vector_store/{mod,postgres}.rs
     │   │       └── tools/{mod,manifest,card,provider,registry,discovery,store,validator,
     │   │                  admin,embedding,executor,mcp_adapter,wasm_loader,
     │   │                  providers/{mod,chain,mcp,wasm,builtin},
@@ -787,7 +849,7 @@ conusai-platform/
     │       │   ├── main.rs, state.rs
     │       │   ├── mw/{mod,api_key,tenant,plan,admin,rate_limit,request_id,trace}.rs
     │       │   ├── routes/{mod,health,auth,chat,agent,capabilities,search,mcp,files,
-    │       │   │           audit,workspaces,admin_capabilities}.rs
+    │       │   │           audit,workspaces,threads,realtime,admin_capabilities,admin_jobs}.rs
     │       │   └── ui/{mod,routes,session,view,
     │       │           handlers/{mod,auth,app,chat,upload,invoice,super_admin}}.rs
     │       ├── assets/
@@ -814,5 +876,6 @@ conusai-platform/
         ├── contract-processing/ capability.toml (chain)
         ├── invoice-processing/  capability.toml (chain)
         ├── ocr-service/         capability.toml (chain)
+        ├── runtime-echo/        capability.toml (chain)
         └── template-wasm/       capability.toml + .wasm (wasm)
 ```

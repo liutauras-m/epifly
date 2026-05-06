@@ -4,15 +4,15 @@
 //! this provider instead of a bespoke Rust implementation.
 
 use crate::context::tenant::TenantContext;
-use crate::llm::types::{LlmRequest, LlmResponse};
 use crate::llm::LlmRegistry;
+use crate::llm::types::{LlmRequest, LlmResponse};
 use crate::prompt::PromptTemplate;
 use crate::tools::manifest::{LlmChainConfig, ToolManifest};
 use crate::tools::provider::CapabilityProvider;
 use async_trait::async_trait;
+use rig::OneOrMany;
 use rig::completion::Message;
 use rig::message::UserContent;
-use rig::OneOrMany;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tracing::{debug, instrument};
@@ -26,12 +26,19 @@ pub struct PromptChainCapability {
 
 impl PromptChainCapability {
     pub fn new(manifest: ToolManifest, llm: Arc<LlmRegistry>) -> anyhow::Result<Self> {
-        let cfg = manifest
-            .chain
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("PromptChainCapability: manifest '{}' has no [chain] section", manifest.name))?;
+        let cfg = manifest.chain.clone().ok_or_else(|| {
+            anyhow::anyhow!(
+                "PromptChainCapability: manifest '{}' has no [chain] section",
+                manifest.name
+            )
+        })?;
         let prompt = PromptTemplate::new(cfg.prompt_template.clone());
-        Ok(Self { manifest, cfg, prompt, llm })
+        Ok(Self {
+            manifest,
+            cfg,
+            prompt,
+            llm,
+        })
     }
 }
 
@@ -66,7 +73,9 @@ impl CapabilityProvider for PromptChainCapability {
         // Build LLM request.
         let mut messages = Vec::new();
         if let Some(sys) = &self.cfg.system_prompt {
-            messages.push(Message::System { content: sys.clone() });
+            messages.push(Message::System {
+                content: sys.clone(),
+            });
         }
         messages.push(Message::User {
             content: OneOrMany::one(UserContent::text(user_message)),
@@ -89,8 +98,8 @@ impl CapabilityProvider for PromptChainCapability {
             .map_err(|e| anyhow::anyhow!("PromptChainCapability: LLM call failed: {e}"))?;
 
         // Try to parse response as JSON; fall back to plain text.
-        let output: Value = serde_json::from_str(&content)
-            .unwrap_or_else(|_| json!({ "result": content }));
+        let output: Value =
+            serde_json::from_str(&content).unwrap_or_else(|_| json!({ "result": content }));
 
         // Optional output schema validation (best-effort — warn but don't fail).
         if let Some(_schema) = &self.cfg.output_schema {

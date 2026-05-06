@@ -1,6 +1,6 @@
 use super::card::CapabilityCard;
 use super::manifest::ToolManifest;
-use super::provider::{CapabilityProvider, CapabilityFactory};
+use super::provider::{CapabilityFactory, CapabilityProvider};
 use crate::llm::LlmRegistry;
 use std::collections::HashMap;
 use std::path::Path;
@@ -45,8 +45,8 @@ impl ToolRegistry {
     pub fn register_provider(&mut self, provider: Arc<dyn CapabilityProvider>) {
         let manifest = provider.manifest().clone();
         info!(name = %manifest.name, kind = ?manifest.kind, "registering tool provider");
-        let card = CapabilityCard::new(manifest, std::path::PathBuf::from("."))
-            .with_provider(provider);
+        let card =
+            CapabilityCard::new(manifest, std::path::PathBuf::from(".")).with_provider(provider);
         self.cards.insert(card.manifest.name.clone(), card);
     }
 
@@ -163,9 +163,13 @@ impl ToolRegistry {
         {
             let entry = entry.map_err(|e| common::error::ConusAiError::Tool(e.to_string()))?;
             let cap_dir = entry.path();
-            if !cap_dir.is_dir() { continue; }
+            if !cap_dir.is_dir() {
+                continue;
+            }
             let manifest_path = cap_dir.join("capability.toml");
-            if !manifest_path.exists() { continue; }
+            if !manifest_path.exists() {
+                continue;
+            }
 
             let state_enabled = read_state_enabled(&cap_dir);
 
@@ -194,9 +198,15 @@ impl ToolRegistry {
 
 fn read_state_enabled(cap_dir: &Path) -> bool {
     let state_path = cap_dir.join("state.json");
-    if !state_path.exists() { return true; }
-    let Ok(raw) = std::fs::read_to_string(&state_path) else { return true };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else { return true };
+    if !state_path.exists() {
+        return true;
+    }
+    let Ok(raw) = std::fs::read_to_string(&state_path) else {
+        return true;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return true;
+    };
     v["enabled"].as_bool().unwrap_or(true)
 }
 

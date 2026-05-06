@@ -26,7 +26,11 @@ impl LlmRegistry {
         aliases: HashMap<String, LlmBinding>,
         default: LlmBinding,
     ) -> Self {
-        Self { providers, aliases, default }
+        Self {
+            providers,
+            aliases,
+            default,
+        }
     }
 
     /// Build a registry from the parsed `[llm]` config section.
@@ -52,10 +56,13 @@ impl LlmRegistry {
             })
             .collect();
 
-        let default_binding = aliases
-            .get(&config.default)
-            .cloned()
-            .ok_or_else(|| LlmError::UnknownAlias { alias: config.default.clone() })?;
+        let default_binding =
+            aliases
+                .get(&config.default)
+                .cloned()
+                .ok_or_else(|| LlmError::UnknownAlias {
+                    alias: config.default.clone(),
+                })?;
 
         Ok(Self::new(providers_map, aliases, default_binding))
     }
@@ -71,7 +78,9 @@ impl LlmRegistry {
         tenant: Option<&TenantContext>,
     ) -> Result<LlmBinding, LlmError> {
         // 1. Tenant preferred model
-        if let (Some(_), Some(preferred)) = (tenant, tenant.and_then(|t| t.preferred_model.as_deref())) {
+        if let (Some(_), Some(preferred)) =
+            (tenant, tenant.and_then(|t| t.preferred_model.as_deref()))
+        {
             if let Some(binding) = self.aliases.get(preferred) {
                 return Ok(binding.clone());
             }
@@ -128,9 +137,12 @@ pub async fn verify_llm_providers(registry: &LlmRegistry) -> Result<(), LlmError
 
     // Verify every alias
     for (alias, binding) in &registry.aliases {
-        registry.providers.get(&binding.provider).ok_or_else(|| {
-            LlmError::UnknownAlias { alias: alias.clone() }
-        })?;
+        registry
+            .providers
+            .get(&binding.provider)
+            .ok_or_else(|| LlmError::UnknownAlias {
+                alias: alias.clone(),
+            })?;
         info!(alias, provider = %binding.provider, model = %binding.model, "LLM alias verified");
     }
 
@@ -170,7 +182,10 @@ mod tests {
 
         async fn stream(&self, req: LlmRequest) -> Result<LlmStream, LlmError> {
             use futures::stream;
-            let chunk = LlmChunk { delta: format!("mock:{}", req.model), finish_reason: Some("stop".into()) };
+            let chunk = LlmChunk {
+                delta: format!("mock:{}", req.model),
+                finish_reason: Some("stop".into()),
+            };
             Ok(Box::pin(stream::once(async move { Ok(chunk) })))
         }
     }
@@ -178,25 +193,39 @@ mod tests {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     fn make_registry(
-        providers: &[(&str, &str)], // (provider_name, model_for_alias entries)
+        providers: &[(&str, &str)],     // (provider_name, model_for_alias entries)
         aliases: &[(&str, &str, &str)], // (alias, provider, model)
         default_provider: &str,
         default_model: &str,
     ) -> LlmRegistry {
         let providers_map: HashMap<String, Arc<dyn CompletionProvider>> = providers
             .iter()
-            .map(|(name, _)| (name.to_string(), Arc::new(MockProvider) as Arc<dyn CompletionProvider>))
+            .map(|(name, _)| {
+                (
+                    name.to_string(),
+                    Arc::new(MockProvider) as Arc<dyn CompletionProvider>,
+                )
+            })
             .collect();
         let aliases_map: HashMap<String, LlmBinding> = aliases
             .iter()
             .map(|(alias, provider, model)| {
-                (alias.to_string(), LlmBinding { provider: provider.to_string(), model: model.to_string() })
+                (
+                    alias.to_string(),
+                    LlmBinding {
+                        provider: provider.to_string(),
+                        model: model.to_string(),
+                    },
+                )
             })
             .collect();
         LlmRegistry::new(
             providers_map,
             aliases_map,
-            LlmBinding { provider: default_provider.into(), model: default_model.into() },
+            LlmBinding {
+                provider: default_provider.into(),
+                model: default_model.into(),
+            },
         )
     }
 
@@ -212,8 +241,12 @@ mod tests {
     fn step1_tenant_preferred_alias_wins() {
         let reg = make_registry(
             &[("anthropic", "")],
-            &[("opus", "anthropic", "claude-opus-4-7"), ("haiku", "anthropic", "claude-haiku-4-5")],
-            "anthropic", "claude-haiku-4-5",
+            &[
+                ("opus", "anthropic", "claude-opus-4-7"),
+                ("haiku", "anthropic", "claude-haiku-4-5"),
+            ],
+            "anthropic",
+            "claude-haiku-4-5",
         );
         let t = tenant(PlanTier::Free, Some("opus"));
         let b = reg.resolve_binding("haiku", Some(&t)).unwrap();
@@ -225,7 +258,8 @@ mod tests {
         let reg = make_registry(
             &[("anthropic", "")],
             &[("haiku", "anthropic", "claude-haiku-4-5")],
-            "anthropic", "claude-haiku-4-5",
+            "anthropic",
+            "claude-haiku-4-5",
         );
         let t = tenant(PlanTier::Free, Some("claude-opus-4-6"));
         let b = reg.resolve_binding("haiku", Some(&t)).unwrap();
@@ -237,8 +271,12 @@ mod tests {
     fn step2_caller_alias_used_when_no_tenant_override() {
         let reg = make_registry(
             &[("anthropic", "")],
-            &[("opus", "anthropic", "claude-opus-4-7"), ("haiku", "anthropic", "claude-haiku-4-5")],
-            "anthropic", "claude-haiku-4-5",
+            &[
+                ("opus", "anthropic", "claude-opus-4-7"),
+                ("haiku", "anthropic", "claude-haiku-4-5"),
+            ],
+            "anthropic",
+            "claude-haiku-4-5",
         );
         let t = tenant(PlanTier::Free, None);
         let b = reg.resolve_binding("opus", Some(&t)).unwrap();
@@ -249,8 +287,12 @@ mod tests {
     fn step3_plan_default_alias_used_when_caller_unknown() {
         let reg = make_registry(
             &[("anthropic", "")],
-            &[("opus", "anthropic", "claude-opus-4-7"), ("haiku", "anthropic", "claude-haiku-4-5")],
-            "anthropic", "claude-opus-4-7",
+            &[
+                ("opus", "anthropic", "claude-opus-4-7"),
+                ("haiku", "anthropic", "claude-haiku-4-5"),
+            ],
+            "anthropic",
+            "claude-opus-4-7",
         );
         // Free plan → default_alias = "haiku"; caller passes unknown alias
         let t = tenant(PlanTier::Free, None);
@@ -263,7 +305,8 @@ mod tests {
         let reg = make_registry(
             &[("anthropic", "")],
             &[], // no aliases at all
-            "anthropic", "claude-haiku-4-5",
+            "anthropic",
+            "claude-haiku-4-5",
         );
         let b = reg.resolve_binding("anything", None).unwrap();
         assert_eq!(b.model, "claude-haiku-4-5");
@@ -274,7 +317,8 @@ mod tests {
         let reg = make_registry(
             &[("anthropic", "")],
             &[("opus", "openai", "gpt-4o")], // openai provider not registered
-            "anthropic", "claude-haiku-4-5",
+            "anthropic",
+            "claude-haiku-4-5",
         );
         let result = reg.resolve("opus", None);
         assert!(matches!(result, Err(LlmError::UnknownProvider(_))));
@@ -287,7 +331,8 @@ mod tests {
         let reg = make_registry(
             &[("anthropic", "")],
             &[("haiku", "anthropic", "claude-haiku-4-5")],
-            "anthropic", "claude-haiku-4-5",
+            "anthropic",
+            "claude-haiku-4-5",
         );
         assert!(verify_llm_providers(&reg).await.is_ok());
     }
@@ -297,7 +342,10 @@ mod tests {
         let reg = LlmRegistry::new(
             HashMap::new(), // no providers at all
             HashMap::new(),
-            LlmBinding { provider: "anthropic".into(), model: "claude-haiku-4-5".into() },
+            LlmBinding {
+                provider: "anthropic".into(),
+                model: "claude-haiku-4-5".into(),
+            },
         );
         assert!(verify_llm_providers(&reg).await.is_err());
     }

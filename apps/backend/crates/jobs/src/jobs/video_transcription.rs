@@ -29,10 +29,7 @@ impl BackgroundJob for VideoTranscriptionJob {
             .ok_or_else(|| anyhow::anyhow!("missing field: file_id"))?
             .to_owned();
 
-        let tenant_id = input["tenant_id"]
-            .as_str()
-            .unwrap_or("__dev__")
-            .to_owned();
+        let tenant_id = input["tenant_id"].as_str().unwrap_or("__dev__").to_owned();
 
         info!(file_id = %file_id, tenant_id = %tenant_id, "video-transcription: starting");
 
@@ -67,9 +64,7 @@ async fn transcribe_via_openai_whisper(
     ctx: &JobContext,
 ) -> anyhow::Result<String> {
     // Download the file bytes from MinIO/S3 if endpoint is configured.
-    let file_bytes = if let (Some(endpoint), Some(bucket)) =
-        (&ctx.minio_endpoint, &ctx.bucket)
-    {
+    let file_bytes = if let (Some(endpoint), Some(bucket)) = (&ctx.minio_endpoint, &ctx.bucket) {
         let url = format!("{}/{}/{}", endpoint, bucket, file_id);
         let client = reqwest::Client::new();
         let resp = client
@@ -83,12 +78,14 @@ async fn transcribe_via_openai_whisper(
     };
 
     // Call OpenAI Whisper transcription endpoint
-    let form = reqwest::multipart::Form::new().part(
-        "file",
-        reqwest::multipart::Part::bytes(file_bytes)
-            .file_name(file_id.to_owned())
-            .mime_str("audio/mpeg")?,
-    ).text("model", "whisper-1");
+    let form = reqwest::multipart::Form::new()
+        .part(
+            "file",
+            reqwest::multipart::Part::bytes(file_bytes)
+                .file_name(file_id.to_owned())
+                .mime_str("audio/mpeg")?,
+        )
+        .text("model", "whisper-1");
 
     let client = reqwest::Client::new();
     let resp = client

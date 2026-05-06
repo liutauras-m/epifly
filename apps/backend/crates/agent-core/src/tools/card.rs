@@ -42,5 +42,3 @@ impl CapabilityCard {
         self
     }
 }
-
-

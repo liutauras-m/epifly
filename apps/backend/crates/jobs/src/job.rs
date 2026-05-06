@@ -89,5 +89,3 @@ pub trait BackgroundJob: Send + Sync + 'static {
         ctx: Arc<JobContext>,
     ) -> anyhow::Result<serde_json::Value>;
 }
-
-

@@ -39,8 +39,7 @@ pub struct ContractPipeline {
 
 impl ContractPipeline {
     pub fn new() -> Self {
-        let client = anthropic::Client::from_env()
-            .expect("ANTHROPIC_API_KEY must be set");
+        let client = anthropic::Client::from_env().expect("ANTHROPIC_API_KEY must be set");
         Self {
             model: client.completion_model("claude-opus-4-7"),
             tenant: None,
@@ -48,8 +47,7 @@ impl ContractPipeline {
     }
 
     pub fn with_model(model_id: &str) -> Self {
-        let client = anthropic::Client::from_env()
-            .expect("ANTHROPIC_API_KEY must be set");
+        let client = anthropic::Client::from_env().expect("ANTHROPIC_API_KEY must be set");
         Self {
             model: client.completion_model(model_id),
             tenant: None,

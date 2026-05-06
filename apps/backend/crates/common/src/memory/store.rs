@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use ulid::Ulid;
 
 /// Pluggable persistent thread store.
-///
-/// Default implementation: `QdrantThreadStore` (agent-core crate).
-/// Future: Redis, SurrealDB, or in-memory (tests).
+//
+/// Implementations: `PostgresThreadStore` (agent-core crate) for production;
+/// `InMemoryThreadStore` for test mode.
 #[async_trait]
 pub trait ThreadStore: Send + Sync + 'static {
     /// Create a new thread, optionally seeding it with initial messages.
@@ -59,9 +59,10 @@ pub trait ThreadStore: Send + Sync + 'static {
     ) -> anyhow::Result<()>;
 }
 
-/// Persistent workspace node store backed by Qdrant.
+/// Persistent workspace node store backed by Postgres.
 ///
-/// Separation of concerns: metadata index only. Markdown body is in `WorkspaceContentStore`.
+/// Separation of concerns: node metadata + vector embeddings in Postgres;
+/// markdown body in `WorkspaceContentStore` (MinIO).
 #[async_trait]
 pub trait WorkspaceStore: Send + Sync + 'static {
     async fn create_folder(
@@ -135,8 +136,7 @@ pub trait WorkspaceStore: Send + Sync + 'static {
 
     async fn bump_last_modified(&self, tenant_id: &str, node_id: Ulid) -> anyhow::Result<()>;
 
-    /// Full-text search over node names AND content accessible to `user_id`.
-    /// Implementors should prefer Qdrant text_match; fall back to substring scan if needed.
+    /// Full-text search over node names AND virtual_path accessible to `user_id`.
     async fn search_nodes(
         &self,
         tenant_id: &str,
@@ -145,9 +145,19 @@ pub trait WorkspaceStore: Send + Sync + 'static {
         limit: usize,
     ) -> anyhow::Result<Vec<WorkspaceNode>>;
 
-    /// Store a content snippet in the Qdrant payload so it can be searched.
+    /// Semantic (embedding + ANN) search over content accessible to `user_id`.
+    /// Falls back to `search_nodes` if the store does not support embeddings.
+    async fn semantic_search_nodes(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+        query: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<WorkspaceNode>>;
+
+    /// Store a content snippet and persist its embedding so it can be searched.
     /// Called after each successful MinIO write in `patch_content`.
-    /// `content` will be truncated to a sane size before indexing.
+    /// `content` is chunked and truncated before indexing.
     async fn index_content(
         &self,
         tenant_id: &str,

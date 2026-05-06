@@ -1,18 +1,20 @@
 use crate::mw::RateLimiter;
-use agent_core::{
-    ConversationService, DefaultConversationService, LlmRegistry, MinioWorkspaceContent,
-    QdrantAuditStore, QdrantThreadStore, QdrantWorkspaceStore, CapabilityAdmin, ToolDiscovery,
-    ToolRegistry, build_admin,
-};
 use agent_core::llm::providers::anthropic::AnthropicProvider;
+use agent_core::{
+    CapabilityAdmin, ConversationService, DefaultConversationService, EmbeddingService,
+    LlmRegistry, MinioWorkspaceContent, NoopEmbeddingService, OpenAiEmbeddingService,
+    PgVectorStore, PostgresAuditStore, PostgresThreadStore, PostgresWorkspaceStore,
+    RealtimeService, ToolDiscovery, ToolRegistry, build_admin,
+};
 use common::audit::AuditStore;
 use common::memory::{
     InMemoryAuditStore, InMemoryThreadStore, InMemoryWorkspaceContent, InMemoryWorkspaceStore,
     ThreadStore, WorkspaceContentStore, WorkspaceStore,
 };
-use jobs::{JobAdmin, JobContext, JobExecutor, JobRegistry};
 use jobs::jobs::{AuditLogCleanupJob, CapabilityHealthCheckJob, VideoTranscriptionJob};
+use jobs::{JobAdmin, JobContext, JobExecutor, JobRegistry};
 use object_store::{ObjectStore, aws::AmazonS3Builder};
+use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
@@ -25,12 +27,13 @@ pub struct AppState {
     /// MinIO / S3-compatible file store (None if not configured)
     pub file_store: Option<Arc<dyn ObjectStore>>,
     /// In-memory map of download tokens → (object_key, issued_at, ttl, tenant_id)
-    pub presigned_tokens: Mutex<HashMap<String, (String, std::time::Instant, std::time::Duration, String)>>,
-    /// Persistent conversation memory backed by Qdrant (or in-memory in test mode)
+    pub presigned_tokens:
+        Mutex<HashMap<String, (String, std::time::Instant, std::time::Duration, String)>>,
+    /// Persistent conversation memory backed by Postgres (or in-memory in test mode)
     pub thread_store: Arc<dyn ThreadStore>,
-    /// Append-only audit log backed by Qdrant (or in-memory in test mode)
+    /// Append-only audit log backed by Postgres (or in-memory in test mode)
     pub audit_store: Arc<dyn AuditStore>,
-    /// Workspace node index — Qdrant (or in-memory in test mode)
+    /// Workspace node index — Postgres (or in-memory in test mode)
     pub workspace_store: Arc<dyn WorkspaceStore>,
     /// Workspace markdown body store — MinIO (or in-memory in test mode)
     pub workspace_content: Arc<dyn WorkspaceContentStore>,
@@ -44,28 +47,78 @@ pub struct AppState {
     pub job_executor: Arc<JobExecutor>,
     /// Super-admin job management facade.
     pub job_admin: Arc<JobAdmin>,
+    /// Postgres connection pool (exposed for health checks and direct queries).
+    /// `None` when running in test mode (`CONUSAI_TEST_MODE=1`).
+    pub pool: Option<PgPool>,
+    /// Embedding service for query and document vectorisation.
+    pub embedding_service: Arc<dyn EmbeddingService>,
+    /// ANN vector store backed by Postgres + pgvector.
+    pub vector_store: Arc<PgVectorStore>,
+    /// Realtime event service — `None` in test mode.
+    pub realtime_service: Option<Arc<RealtimeService>>,
 }
 
 impl AppState {
-    pub fn from_env() -> common::error::Result<Self> {
+    pub async fn from_env() -> common::error::Result<Self> {
         if std::env::var("CONUSAI_TEST_MODE").as_deref() == Ok("1") {
             return Self::with_in_memory_stores();
         }
+
+        let database_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://conusai:conusai@localhost:5432/conusai".into());
+
+        let pool = common::db::create_pool(&database_url)
+            .await
+            .map_err(|e| common::error::ConusAiError::Database(e.to_string()))?;
 
         let llm = Arc::new(build_llm_registry());
         let mut registry = ToolRegistry::with_default_factories(Arc::clone(&llm));
         ToolDiscovery::from_env().discover_into(&mut registry)?;
 
-        let qdrant_url =
-            std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".into());
-        let qdrant_grpc_url =
-            std::env::var("QDRANT_GRPC_URL").unwrap_or_else(|_| "http://localhost:6334".into());
-
         let file_store = init_file_store();
-        let thread_store: Arc<dyn ThreadStore> = Arc::new(QdrantThreadStore::new(&qdrant_grpc_url));
-        let audit_store: Arc<dyn AuditStore> = Arc::new(QdrantAuditStore::new(&qdrant_grpc_url));
-        let workspace_store: Arc<dyn WorkspaceStore> =
-            Arc::new(QdrantWorkspaceStore::new(&qdrant_grpc_url));
+        let thread_store: Arc<dyn ThreadStore> = Arc::new(PostgresThreadStore::new(pool.clone()));
+        let audit_store: Arc<dyn AuditStore> = Arc::new(PostgresAuditStore::new(pool.clone()));
+
+        let embedding_service: Arc<dyn EmbeddingService> = match std::env::var("EMBEDDING_BACKEND")
+            .as_deref()
+        {
+            Ok("local") => {
+                #[cfg(feature = "local-embeddings")]
+                {
+                    info!("embedding service: local fastembed");
+                    Arc::new(agent_core::LocalEmbeddingService::from_env()?)
+                }
+                #[cfg(not(feature = "local-embeddings"))]
+                {
+                    warn!(
+                        "EMBEDDING_BACKEND=local but feature local-embeddings not compiled — falling back to noop"
+                    );
+                    Arc::new(NoopEmbeddingService)
+                }
+            }
+            Ok("openai") | Err(_) => match OpenAiEmbeddingService::from_env() {
+                Ok(svc) => {
+                    info!("embedding service: OpenAI text-embedding-3-small");
+                    Arc::new(svc)
+                }
+                Err(e) => {
+                    warn!(error = %e, "embedding service unavailable — vector search disabled");
+                    Arc::new(NoopEmbeddingService)
+                }
+            },
+            Ok(other) => {
+                return Err(common::error::ConusAiError::Config(format!(
+                    "unknown EMBEDDING_BACKEND={other}"
+                )));
+            }
+        };
+        let vector_store = Arc::new(PgVectorStore::new(pool.clone()));
+
+        let workspace_store: Arc<dyn WorkspaceStore> = Arc::new(PostgresWorkspaceStore::new(
+            pool.clone(),
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_store),
+        ));
 
         let workspace_content: Arc<dyn WorkspaceContentStore> = match &file_store {
             Some(fs) => Arc::new(MinioWorkspaceContent::new(Arc::clone(fs))),
@@ -88,17 +141,19 @@ impl AppState {
         let minio_endpoint = std::env::var("MINIO_ENDPOINT")
             .or_else(|_| std::env::var("S3_ENDPOINT"))
             .ok();
-        let bucket = std::env::var("MINIO_BUCKET")
-            .unwrap_or_else(|_| "conusai".into());
+        let bucket = std::env::var("MINIO_BUCKET").unwrap_or_else(|_| "conusai".into());
         let job_ctx = Arc::new(JobContext::new(
             Arc::clone(&audit_store),
-            &qdrant_url,
+            Some(pool.clone()),
             minio_endpoint,
             Some(bucket),
         ));
         let job_registry = build_job_registry(job_ctx);
         let job_executor = JobExecutor::new(Arc::clone(&job_registry));
-        let job_admin = Arc::new(JobAdmin::new(Arc::clone(&job_registry), Arc::clone(&job_executor)));
+        let job_admin = Arc::new(JobAdmin::new(
+            Arc::clone(&job_registry),
+            Arc::clone(&job_executor),
+        ));
 
         Ok(Self {
             registry,
@@ -115,15 +170,19 @@ impl AppState {
             job_registry,
             job_executor,
             job_admin,
+            pool: Some(pool.clone()),
+            embedding_service,
+            vector_store,
+            realtime_service: Some(RealtimeService::new(pool)),
         })
     }
 
-    /// Build an `AppState` backed entirely by in-memory stores — no Qdrant or MinIO required.
+    /// Build an `AppState` backed entirely by in-memory stores — no Postgres or MinIO required.
     ///
     /// Activated when `CONUSAI_TEST_MODE=1` is set in the environment.  All data is lost on
     /// process exit.  Intended for integration tests and CI pipelines without Docker.
     pub fn with_in_memory_stores() -> common::error::Result<Self> {
-        info!("CONUSAI_TEST_MODE=1 — using in-memory stores (no Qdrant / MinIO)");
+        info!("CONUSAI_TEST_MODE=1 — using in-memory stores (no Postgres / MinIO)");
 
         let llm = Arc::new(build_llm_registry());
         let mut registry = ToolRegistry::with_default_factories(Arc::clone(&llm));
@@ -141,16 +200,13 @@ impl AppState {
         let registry = Arc::new(Mutex::new(registry));
         let tool_admin = Arc::new(build_admin(Arc::clone(&registry), Arc::clone(&audit_store)));
 
-        // Build job infrastructure (no Qdrant/MinIO in test mode)
-        let job_ctx = Arc::new(JobContext::new(
-            Arc::clone(&audit_store),
-            "http://localhost:6333",
-            None,
-            None,
-        ));
+        let job_ctx = Arc::new(JobContext::new(Arc::clone(&audit_store), None, None, None));
         let job_registry = build_job_registry(job_ctx);
         let job_executor = JobExecutor::new(Arc::clone(&job_registry));
-        let job_admin = Arc::new(JobAdmin::new(Arc::clone(&job_registry), Arc::clone(&job_executor)));
+        let job_admin = Arc::new(JobAdmin::new(
+            Arc::clone(&job_registry),
+            Arc::clone(&job_executor),
+        ));
 
         Ok(Self {
             registry,
@@ -167,6 +223,10 @@ impl AppState {
             job_registry,
             job_executor,
             job_admin,
+            pool: None,
+            embedding_service: Arc::new(NoopEmbeddingService),
+            vector_store: Arc::new(PgVectorStore::noop()),
+            realtime_service: None,
         })
     }
 }

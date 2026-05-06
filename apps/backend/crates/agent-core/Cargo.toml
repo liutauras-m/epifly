@@ -1,6 +1,6 @@
 [package]
 name        = "agent-core"
-description = "Agent runtime, capability registry, Rig pipeline integration, Qdrant embedding"
+description = "Agent runtime, capability registry, Rig pipeline integration, Postgres vector search"
 version.workspace    = true
 edition.workspace    = true
 rust-version.workspace = true
@@ -11,8 +11,7 @@ license.workspace    = true
 common        = { path = "../common" }
 tokio.workspace       = true
 rig-core.workspace    = true
-rig-qdrant.workspace  = true
-qdrant-client.workspace = true
+sqlx.workspace        = true
 serde.workspace       = true
 serde_json.workspace  = true
 toml.workspace        = true
@@ -35,3 +34,13 @@ wasmtime-wasi.workspace = true
 reqwest.workspace     = true
 object_store.workspace = true
 bytes.workspace        = true
+rig-postgres.workspace = true
+async-recursion        = { version = "1" }
+
+[features]
+default          = []
+local-embeddings = ["dep:fastembed"]
+
+[dependencies.fastembed]
+workspace = true
+optional  = true

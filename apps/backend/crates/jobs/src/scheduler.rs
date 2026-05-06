@@ -42,7 +42,11 @@ impl JobSchedulerService {
             })?;
 
             sched.add(cron_job).await?;
-            info!(job = job.name(), cron = job.cron(), "registered scheduled job");
+            info!(
+                job = job.name(),
+                cron = job.cron(),
+                "registered scheduled job"
+            );
         }
 
         sched.start().await?;

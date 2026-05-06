@@ -6,12 +6,11 @@
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
 use agent_core::{
-    CapabilitySummary, CreateCapabilityRequest, TestInvokeRequest, UpdateCapabilityRequest,
-    ValidationReport, RegisteredToolValidator,
+    CapabilitySummary, CreateCapabilityRequest, RegisteredToolValidator, TestInvokeRequest,
+    UpdateCapabilityRequest, ValidationReport,
 };
 use axum::{
-    Extension,
-    Json,
+    Extension, Json,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
@@ -72,7 +71,11 @@ pub async fn get_manifest(
     Path(name): Path<String>,
 ) -> impl IntoResponse {
     match state.tool_admin.get_manifest_toml(&name) {
-        Ok(toml) => (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/plain")], toml)
+        Ok(toml) => (
+            StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "text/plain")],
+            toml,
+        )
             .into_response(),
         Err(e) => (StatusCode::NOT_FOUND, e.to_string()).into_response(),
     }
@@ -110,7 +113,10 @@ pub async fn set_enabled(
     Path(name): Path<String>,
     Json(payload): Json<SetEnabledPayload>,
 ) -> impl IntoResponse {
-    match state.tool_admin.set_enabled(&name, payload.enabled, &tenant.0) {
+    match state
+        .tool_admin
+        .set_enabled(&name, payload.enabled, &tenant.0)
+    {
         Ok(summary) => Json(summary).into_response(),
         Err(e) => (StatusCode::NOT_FOUND, e.to_string()).into_response(),
     }

@@ -24,13 +24,17 @@ impl WasmToolLoader {
         let module = self.load(card)?;
         let mut store: Store<()> = Store::new(&self.engine, ());
         let linker: Linker<()> = Linker::new(&self.engine);
-        let instance = linker
-            .instantiate(&mut store, &module)
-            .map_err(|e| common::error::ConusAiError::Wasm(format!("WASM instantiation failed: {e}")))?;
+        let instance = linker.instantiate(&mut store, &module).map_err(|e| {
+            common::error::ConusAiError::Wasm(format!("WASM instantiation failed: {e}"))
+        })?;
 
         let func = instance
             .get_typed_func::<(), i32>(&mut store, func_name)
-            .map_err(|e| common::error::ConusAiError::Wasm(format!("exported fn '{func_name}' not found: {e}")))?;
+            .map_err(|e| {
+                common::error::ConusAiError::Wasm(format!(
+                    "exported fn '{func_name}' not found: {e}"
+                ))
+            })?;
 
         func.call(&mut store, ())
             .map_err(|e| common::error::ConusAiError::Wasm(format!("WASM call failed: {e}")))

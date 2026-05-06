@@ -32,10 +32,9 @@ pub enum ConusAiError {
     #[error("rig: {0}")]
     Rig(String),
 
-    /// Wraps Qdrant/reqwest errors from the vector-store helpers.
-    /// Convert with `ConusAiError::Qdrant(e.to_string())` at the call site.
-    #[error("qdrant: {0}")]
-    Qdrant(String),
+    /// Wraps sqlx database errors.
+    #[error("database error: {0}")]
+    Database(String),
 
     #[error("storage error: {0}")]
     Storage(String),
@@ -62,12 +61,27 @@ pub enum ConusAiError {
 #[derive(Debug, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ApiErrorKind {
-    Authentication { message: String },
-    RateLimit { message: String, retry_after: Option<u64> },
-    NotFound { resource: String },
-    Validation { field: String, message: String },
-    Agent { message: String },
-    Internal { message: String, request_id: Option<String> },
+    Authentication {
+        message: String,
+    },
+    RateLimit {
+        message: String,
+        retry_after: Option<u64>,
+    },
+    NotFound {
+        resource: String,
+    },
+    Validation {
+        field: String,
+        message: String,
+    },
+    Agent {
+        message: String,
+    },
+    Internal {
+        message: String,
+        request_id: Option<String>,
+    },
 }
 
 /// `{"error": {...}}` — the single error envelope shape for all HTTP responses.

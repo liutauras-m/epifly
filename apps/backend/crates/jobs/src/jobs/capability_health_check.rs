@@ -4,6 +4,7 @@
 use crate::context::JobContext;
 use crate::job::ScheduledJob;
 use async_trait::async_trait;
+use sqlx;
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -22,18 +23,18 @@ impl ScheduledJob for CapabilityHealthCheckJob {
     }
 
     async fn run(&self, ctx: Arc<JobContext>) -> anyhow::Result<()> {
-        // Verify Qdrant is reachable
-        let url = format!("{}/healthz", ctx.qdrant_url);
-        match reqwest::get(&url).await {
-            Ok(resp) if resp.status().is_success() => {
-                info!("capability-health-check: qdrant healthy");
+        // Verify Postgres is reachable when configured.
+        if let Some(pool) = &ctx.pool {
+            match sqlx::query("SELECT 1").execute(pool).await {
+                Ok(_) => {
+                    info!("capability-health-check: postgres healthy");
+                }
+                Err(e) => {
+                    warn!(error = %e, "capability-health-check: postgres unreachable");
+                }
             }
-            Ok(resp) => {
-                warn!(status = %resp.status(), "capability-health-check: qdrant unhealthy");
-            }
-            Err(e) => {
-                warn!(error = %e, "capability-health-check: qdrant unreachable");
-            }
+        } else {
+            info!("capability-health-check: postgres check skipped (test mode)");
         }
 
         // Verify MinIO / S3 is reachable (if configured)

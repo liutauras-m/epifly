@@ -74,10 +74,7 @@ impl ConversationService for DefaultConversationService {
         tenant: &TenantContext,
         node_id: Option<Ulid>,
     ) -> anyhow::Result<ThreadId> {
-        let thread = self
-            .thread_store
-            .create(&tenant.tenant_id, vec![])
-            .await?;
+        let thread = self.thread_store.create(&tenant.tenant_id, vec![]).await?;
 
         // Bind to workspace node lazily
         if let Some(nid) = node_id
@@ -126,10 +123,7 @@ impl ConversationService for DefaultConversationService {
             .workspace_store
             .get_accessible_node(
                 &tenant.tenant_id,
-                tenant
-                    .user_id
-                    .as_deref()
-                    .unwrap_or("__dev__"),
+                tenant.user_id.as_deref().unwrap_or("__dev__"),
                 node_id,
             )
             .await?;

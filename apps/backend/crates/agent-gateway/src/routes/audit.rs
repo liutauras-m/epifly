@@ -37,7 +37,11 @@ pub async fn list_audit(
     Query(q): Query<ListQuery>,
 ) -> impl IntoResponse {
     let limit = q.limit.min(500);
-    match state.audit_store.list(&tenant.tenant_id, limit, q.after.as_deref()).await {
+    match state
+        .audit_store
+        .list(&tenant.tenant_id, limit, q.after.as_deref())
+        .await
+    {
         Ok(events) => {
             let next_cursor = events.last().map(|e| e.id.clone());
             Json(serde_json::json!({

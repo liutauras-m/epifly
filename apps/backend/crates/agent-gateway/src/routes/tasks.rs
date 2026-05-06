@@ -3,8 +3,7 @@
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
 use axum::{
-    Extension,
-    Json,
+    Extension, Json,
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Sse, sse::Event},
@@ -24,7 +23,9 @@ pub struct ListQuery {
     #[serde(default = "default_limit")]
     limit: usize,
 }
-fn default_limit() -> usize { 50 }
+fn default_limit() -> usize {
+    50
+}
 
 pub async fn list_tasks(
     State(state): State<Arc<AppState>>,

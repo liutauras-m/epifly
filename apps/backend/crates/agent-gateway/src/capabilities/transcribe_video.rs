@@ -77,7 +77,10 @@ impl CapabilityProvider for TranscribeVideoCapability {
                     "tenant_id": tenant_id,
                 });
 
-                let task_id = self.executor.enqueue("video-transcription", payload).await?;
+                let task_id = self
+                    .executor
+                    .enqueue("video-transcription", payload)
+                    .await?;
 
                 Ok(json!({
                     "task_id": task_id,

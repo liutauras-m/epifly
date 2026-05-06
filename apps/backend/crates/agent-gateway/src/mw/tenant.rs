@@ -1,5 +1,5 @@
 use crate::state::AppState;
-use agent_core::{PlanTier, TenantClaims, TenantContext, UserRole};
+use agent_core::{PlanTier, TenantClaims, TenantContext};
 use axum::{
     extract::{Request, State},
     http::header,

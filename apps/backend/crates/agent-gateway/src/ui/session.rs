@@ -62,7 +62,7 @@ impl SessionUser {
             self.plan_tier(),
             workspace_root,
         );
-        ctx.role = agent_core::UserRole::from_str(&self.role);
+        ctx.role = self.role.parse().unwrap_or(agent_core::UserRole::User);
         ctx
     }
 }

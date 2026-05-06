@@ -82,8 +82,14 @@ impl Agent {
     pub async fn prompt(&self, text: &str) -> common::error::Result<String> {
         info!("agent prompt");
         let hook = TracingHook::new(
-            self.tenant.as_ref().map(|t| t.tenant_id.as_str()).unwrap_or("none"),
-            self.tenant.as_ref().map(|t| t.plan.to_string()).unwrap_or_default(),
+            self.tenant
+                .as_ref()
+                .map(|t| t.tenant_id.as_str())
+                .unwrap_or("none"),
+            self.tenant
+                .as_ref()
+                .map(|t| t.plan.to_string())
+                .unwrap_or_default(),
             None,
         );
         let max_turns = self

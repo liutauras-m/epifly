@@ -67,11 +67,7 @@ impl JobAdmin {
     }
 
     /// Enqueue a background job immediately.
-    pub async fn run_now(
-        &self,
-        name: &str,
-        input: serde_json::Value,
-    ) -> anyhow::Result<Uuid> {
+    pub async fn run_now(&self, name: &str, input: serde_json::Value) -> anyhow::Result<Uuid> {
         self.executor.enqueue(name, input).await
     }
 

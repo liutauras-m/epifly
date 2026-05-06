@@ -86,7 +86,11 @@ impl CompletionProvider for AnthropicProvider {
                                     }
                                 })
                                 .collect();
-                            if texts.is_empty() { None } else { Some(texts.join("\n")) }
+                            if texts.is_empty() {
+                                None
+                            } else {
+                                Some(texts.join("\n"))
+                            }
                         }
                         _ => None,
                     })
@@ -146,7 +150,11 @@ impl CompletionProvider for AnthropicProvider {
                                     }
                                 })
                                 .collect();
-                            if texts.is_empty() { None } else { Some(texts.join("\n")) }
+                            if texts.is_empty() {
+                                None
+                            } else {
+                                Some(texts.join("\n"))
+                            }
                         }
                         _ => None,
                     })
@@ -187,7 +195,6 @@ impl CompletionProvider for AnthropicProvider {
 
         Ok(Box::pin(mapped))
     }
-
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

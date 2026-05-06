@@ -1,5 +1,5 @@
 # ── Stage 1: cargo-chef planner ───────────────────────────────────────────────
-FROM rust:1.88-slim AS planner
+FROM rust:1.95-slim AS planner
 
 WORKDIR /build
 
@@ -10,7 +10,7 @@ COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 # ── Stage 2: cargo-chef cook (dependency cache layer) ─────────────────────────
-FROM rust:1.88-slim AS cacher
+FROM rust:1.95-slim AS cacher
 
 WORKDIR /build
 
@@ -22,10 +22,10 @@ RUN cargo install cargo-chef --locked
 
 COPY --from=planner /build/recipe.json recipe.json
 
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json --features agent-gateway/local-embeddings
 
 # ── Stage 3: build ────────────────────────────────────────────────────────────
-FROM rust:1.88-slim AS builder
+FROM rust:1.95-slim AS builder
 
 WORKDIR /build
 
@@ -39,10 +39,10 @@ COPY --from=cacher /usr/local/cargo /usr/local/cargo
 
 COPY . .
 
-RUN cargo build --release --bin agent-gateway
+RUN cargo build --release --bin agent-gateway --features agent-gateway/local-embeddings
 
 # ── Stage 4: runtime ──────────────────────────────────────────────────────────
-FROM debian:bookworm-slim AS gateway
+FROM ubuntu:24.04 AS gateway
 
 RUN apt-get update && apt-get install -y \
     libssl3 ca-certificates curl \

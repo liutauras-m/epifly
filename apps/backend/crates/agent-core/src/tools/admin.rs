@@ -8,12 +8,12 @@
 
 use super::card::CapabilityCard;
 use super::manifest::ToolManifest;
+use super::registry::ToolRegistry;
 use super::store::{FilesystemStore, RegisteredToolState, RegisteredToolStore};
 use super::validator::RegisteredToolValidator;
-use super::registry::ToolRegistry;
 use crate::context::tenant::TenantContext;
-use common::audit::{AuditEvent, AuditStore};
 use chrono::Utc;
+use common::audit::{AuditEvent, AuditStore};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
@@ -170,7 +170,10 @@ impl CapabilityAdmin {
         // Check capacity limit.
         let current_count = self.registry.lock().unwrap().len();
         if current_count >= self.limits.max_capabilities {
-            anyhow::bail!("max_capabilities limit ({}) reached", self.limits.max_capabilities);
+            anyhow::bail!(
+                "max_capabilities limit ({}) reached",
+                self.limits.max_capabilities
+            );
         }
 
         // Validate manifest size.
@@ -194,7 +197,8 @@ impl CapabilityAdmin {
 
         // Validate WASM if provided.
         if let Some(wasm) = &req.wasm_bytes {
-            let wasm_report = RegisteredToolValidator::validate_wasm(wasm, self.limits.max_wasm_bytes);
+            let wasm_report =
+                RegisteredToolValidator::validate_wasm(wasm, self.limits.max_wasm_bytes);
             if !wasm_report.ok() {
                 anyhow::bail!("{}", wasm_report.errors[0]);
             }
@@ -245,21 +249,30 @@ impl CapabilityAdmin {
         // Ensure name in manifest matches URL param.
         let manifest = ToolManifest::from_toml(&req.manifest_toml)?;
         if manifest.name != name {
-            anyhow::bail!("manifest name '{}' does not match capability name '{name}'", manifest.name);
+            anyhow::bail!(
+                "manifest name '{}' does not match capability name '{name}'",
+                manifest.name
+            );
         }
 
         self.store.write_manifest(name, &req.manifest_toml)?;
 
         // Refresh state timestamp.
-        let prev_state = self.store.read_state(name)?.unwrap_or_else(|| RegisteredToolState {
-            enabled: true,
-            created_at: Utc::now().to_rfc3339(),
-            updated_at: Utc::now().to_rfc3339(),
-        });
-        self.store.write_state(name, &RegisteredToolState {
-            updated_at: Utc::now().to_rfc3339(),
-            ..prev_state
-        })?;
+        let prev_state = self
+            .store
+            .read_state(name)?
+            .unwrap_or_else(|| RegisteredToolState {
+                enabled: true,
+                created_at: Utc::now().to_rfc3339(),
+                updated_at: Utc::now().to_rfc3339(),
+            });
+        self.store.write_state(
+            name,
+            &RegisteredToolState {
+                updated_at: Utc::now().to_rfc3339(),
+                ..prev_state
+            },
+        )?;
 
         let cap_dir = self.store.capability_dir(name);
         self.registry.lock().unwrap().reload_capability(&cap_dir)?;
@@ -283,18 +296,28 @@ impl CapabilityAdmin {
         }
 
         // Persist state.
-        let prev_state = self.store.read_state(name)?.unwrap_or_else(|| RegisteredToolState {
-            enabled,
-            created_at: Utc::now().to_rfc3339(),
-            updated_at: Utc::now().to_rfc3339(),
-        });
-        self.store.write_state(name, &RegisteredToolState {
-            enabled,
-            updated_at: Utc::now().to_rfc3339(),
-            ..prev_state
-        })?;
+        let prev_state = self
+            .store
+            .read_state(name)?
+            .unwrap_or_else(|| RegisteredToolState {
+                enabled,
+                created_at: Utc::now().to_rfc3339(),
+                updated_at: Utc::now().to_rfc3339(),
+            });
+        self.store.write_state(
+            name,
+            &RegisteredToolState {
+                enabled,
+                updated_at: Utc::now().to_rfc3339(),
+                ..prev_state
+            },
+        )?;
 
-        let action = if enabled { "capability.enable" } else { "capability.disable" };
+        let action = if enabled {
+            "capability.enable"
+        } else {
+            "capability.disable"
+        };
         self.emit_audit(actor, action, name, "ok");
         Ok(self.get(name).expect("just updated"))
     }
@@ -335,8 +358,9 @@ impl CapabilityAdmin {
     ) -> anyhow::Result<TestInvokeResponse> {
         let provider = {
             let reg = self.registry.lock().unwrap();
-            reg.get_provider(&req.tool_name)
-                .ok_or_else(|| anyhow::anyhow!("capability '{}' not found or no provider", req.tool_name))?
+            reg.get_provider(&req.tool_name).ok_or_else(|| {
+                anyhow::anyhow!("capability '{}' not found or no provider", req.tool_name)
+            })?
         };
 
         let start = std::time::Instant::now();
@@ -345,7 +369,10 @@ impl CapabilityAdmin {
             .await?;
         let duration_ms = start.elapsed().as_millis() as u64;
 
-        Ok(TestInvokeResponse { output, duration_ms })
+        Ok(TestInvokeResponse {
+            output,
+            duration_ms,
+        })
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -367,6 +394,5 @@ pub fn build_admin(
     audit: Arc<dyn AuditStore>,
 ) -> CapabilityAdmin {
     let store = Arc::new(FilesystemStore::from_env());
-    CapabilityAdmin::new(store, registry, audit)
-        .with_limits(AdminLimits::from_env())
+    CapabilityAdmin::new(store, registry, audit).with_limits(AdminLimits::from_env())
 }

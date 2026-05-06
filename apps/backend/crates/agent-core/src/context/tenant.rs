@@ -22,13 +22,15 @@ impl std::fmt::Display for UserRole {
     }
 }
 
-impl UserRole {
-    pub fn from_str(s: &str) -> Self {
-        match s {
+impl std::str::FromStr for UserRole {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
             "super_admin" => UserRole::SuperAdmin,
             "admin" => UserRole::Admin,
             _ => UserRole::User,
-        }
+        })
     }
 }
 
@@ -67,7 +69,7 @@ impl PlanTier {
         }
     }
 
-    pub fn qdrant_collection_prefix(&self) -> &'static str {
+    pub fn collection_prefix(&self) -> &'static str {
         "capabilities"
     }
 
@@ -137,8 +139,8 @@ impl TenantContext {
         format!("tenants/{}/", &*self.tenant_id)
     }
 
-    /// Qdrant collection name for this tenant.
-    pub fn qdrant_collection(&self, kind: &str) -> String {
+    /// Storage namespace prefix for this tenant (e.g. Postgres table prefix).
+    pub fn tenant_namespace(&self, kind: &str) -> String {
         format!("{}_{}", kind, &*self.tenant_id)
     }
 
@@ -146,8 +148,7 @@ impl TenantContext {
     pub fn system_prompt(&self) -> String {
         format!(
             "You are a helpful AI assistant for tenant {}. Plan tier: {}.",
-            &*self.tenant_id,
-            self.plan
+            &*self.tenant_id, self.plan
         )
     }
 

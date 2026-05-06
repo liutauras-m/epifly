@@ -2,16 +2,14 @@
 
 use crate::state::AppState;
 use crate::ui::session::SessionUser;
-use agent_core::{
-    CapabilitySummary, CreateCapabilityRequest, UpdateCapabilityRequest,
-};
+use agent_core::{CapabilitySummary, CreateCapabilityRequest, UpdateCapabilityRequest};
 use askama::Template;
 use axum::{
     Form,
     extract::{Path, State},
     response::{Html, IntoResponse, Redirect, Response},
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 
 // ── Template views ────────────────────────────────────────────────────────────
@@ -21,7 +19,6 @@ use std::sync::Arc;
 pub struct AdminListView {
     pub title: &'static str,
     pub user_name: String,
-    pub user_initials: String,
     pub capabilities: Vec<CapabilitySummary>,
     pub flash: Option<String>,
 }
@@ -31,7 +28,6 @@ pub struct AdminListView {
 pub struct AdminNewView {
     pub title: &'static str,
     pub user_name: String,
-    pub user_initials: String,
     pub error: Option<String>,
     pub manifest_toml: String,
 }
@@ -41,7 +37,6 @@ pub struct AdminNewView {
 pub struct AdminDetailView {
     pub title: &'static str,
     pub user_name: String,
-    pub user_initials: String,
     pub capability: CapabilitySummary,
     pub manifest_toml: String,
     pub error: Option<String>,
@@ -62,25 +57,18 @@ pub struct UpdateForm {
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
-pub async fn index(
-    State(state): State<Arc<AppState>>,
-    user: SessionUser,
-) -> Response {
+pub async fn index(State(state): State<Arc<AppState>>, user: SessionUser) -> Response {
     let capabilities = state.tool_admin.list();
     let view = AdminListView {
         title: "Super Admin",
         user_name: user.name.clone(),
-        user_initials: user.initials(),
         capabilities,
         flash: None,
     };
     Html(view.render().unwrap_or_else(|e| format!("<pre>{e}</pre>"))).into_response()
 }
 
-pub async fn new_form(
-    _state: State<Arc<AppState>>,
-    user: SessionUser,
-) -> Response {
+pub async fn new_form(_state: State<Arc<AppState>>, user: SessionUser) -> Response {
     let default_toml = r#"name = "my-capability"
 version = "0.1.0"
 description = "Describe what this capability does."
@@ -97,7 +85,6 @@ max_tokens = 2048
     let view = AdminNewView {
         title: "New Capability",
         user_name: user.name.clone(),
-        user_initials: user.initials(),
         error: None,
         manifest_toml: default_toml.to_string(),
     };
@@ -120,11 +107,14 @@ pub async fn create(
             let view = AdminNewView {
                 title: "New Capability",
                 user_name: user.name.clone(),
-                user_initials: user.initials(),
                 error: Some(e.to_string()),
                 manifest_toml: form.manifest_toml,
             };
-            Html(view.render().unwrap_or_else(|e2| format!("<pre>{e2}</pre>"))).into_response()
+            Html(
+                view.render()
+                    .unwrap_or_else(|e2| format!("<pre>{e2}</pre>")),
+            )
+            .into_response()
         }
     }
 }
@@ -137,11 +127,13 @@ pub async fn detail(
     let Some(capability) = state.tool_admin.get(&name) else {
         return (axum::http::StatusCode::NOT_FOUND, "Capability not found").into_response();
     };
-    let manifest_toml = state.tool_admin.get_manifest_toml(&name).unwrap_or_default();
+    let manifest_toml = state
+        .tool_admin
+        .get_manifest_toml(&name)
+        .unwrap_or_default();
     let view = AdminDetailView {
         title: "Capability Detail",
         user_name: user.name.clone(),
-        user_initials: user.initials(),
         capability,
         manifest_toml,
         error: None,
@@ -157,14 +149,18 @@ pub async fn update(
     Form(form): Form<UpdateForm>,
 ) -> Response {
     let tenant = user.tenant_context();
-    let req = UpdateCapabilityRequest { manifest_toml: form.manifest_toml.clone() };
+    let req = UpdateCapabilityRequest {
+        manifest_toml: form.manifest_toml.clone(),
+    };
     match state.tool_admin.update(&name, req, &tenant) {
         Ok(capability) => {
-            let manifest_toml = state.tool_admin.get_manifest_toml(&name).unwrap_or_default();
+            let manifest_toml = state
+                .tool_admin
+                .get_manifest_toml(&name)
+                .unwrap_or_default();
             let view = AdminDetailView {
                 title: "Capability Detail",
                 user_name: user.name.clone(),
-                user_initials: user.initials(),
                 capability,
                 manifest_toml,
                 error: None,
@@ -173,27 +169,33 @@ pub async fn update(
             Html(view.render().unwrap_or_else(|e| format!("<pre>{e}</pre>"))).into_response()
         }
         Err(e) => {
-            let capability = state.tool_admin.get(&name).unwrap_or_else(|| CapabilitySummary {
-                name: name.clone(),
-                version: "?".into(),
-                description: String::new(),
-                kind: "?".into(),
-                enabled: false,
-                tags: vec![],
-                last_error: None,
-                registered_at: String::new(),
-                updated_at: String::new(),
-            });
+            let capability = state
+                .tool_admin
+                .get(&name)
+                .unwrap_or_else(|| CapabilitySummary {
+                    name: name.clone(),
+                    version: "?".into(),
+                    description: String::new(),
+                    kind: "?".into(),
+                    enabled: false,
+                    tags: vec![],
+                    last_error: None,
+                    registered_at: String::new(),
+                    updated_at: String::new(),
+                });
             let view = AdminDetailView {
                 title: "Capability Detail",
                 user_name: user.name.clone(),
-                user_initials: user.initials(),
                 capability,
                 manifest_toml: form.manifest_toml,
                 error: Some(e.to_string()),
                 flash: None,
             };
-            Html(view.render().unwrap_or_else(|e2| format!("<pre>{e2}</pre>"))).into_response()
+            Html(
+                view.render()
+                    .unwrap_or_else(|e2| format!("<pre>{e2}</pre>")),
+            )
+            .into_response()
         }
     }
 }
@@ -205,7 +207,11 @@ pub async fn toggle_enabled(
 ) -> Response {
     let tenant = user.tenant_context();
     // Toggle current state.
-    let current = state.tool_admin.get(&name).map(|c| c.enabled).unwrap_or(false);
+    let current = state
+        .tool_admin
+        .get(&name)
+        .map(|c| c.enabled)
+        .unwrap_or(false);
     let _ = state.tool_admin.set_enabled(&name, !current, &tenant);
     Redirect::to(&format!("/super-admin/{name}")).into_response()
 }
@@ -230,10 +236,7 @@ pub async fn reload_cap(
     Redirect::to(&format!("/super-admin/{name}")).into_response()
 }
 
-pub async fn reload_all_caps(
-    State(state): State<Arc<AppState>>,
-    user: SessionUser,
-) -> Response {
+pub async fn reload_all_caps(State(state): State<Arc<AppState>>, user: SessionUser) -> Response {
     let tenant = user.tenant_context();
     let _ = state.tool_admin.reload_all(&tenant);
     Redirect::to("/super-admin").into_response()

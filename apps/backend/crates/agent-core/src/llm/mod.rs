@@ -25,6 +25,4 @@ pub mod types;
 pub use error::LlmError;
 pub use provider::CompletionProvider;
 pub use registry::{LlmRegistry, verify_llm_providers};
-pub use types::{
-    LlmBinding, LlmChunk, LlmRequest, LlmResponse, LlmStream, LlmUsage,
-};
+pub use types::{LlmBinding, LlmChunk, LlmRequest, LlmResponse, LlmStream, LlmUsage};

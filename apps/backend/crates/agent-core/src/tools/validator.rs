@@ -16,7 +16,11 @@ pub enum RegisteredToolValidationError {
     #[error("WASM module rejected: {0}")]
     WasmRejected(String),
     #[error("size limit exceeded: {what} = {actual} > {limit}")]
-    SizeLimit { what: &'static str, actual: usize, limit: usize },
+    SizeLimit {
+        what: &'static str,
+        actual: usize,
+        limit: usize,
+    },
     #[error("[chain] section required for kind=chain without a bespoke Rust provider")]
     MissingChainSection,
 }
@@ -41,9 +45,12 @@ impl RegisteredToolValidator {
         let mut r = ValidationReport::default();
         let valid = name.len() >= 2
             && name.len() <= 64
-            && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+            && name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
         if !valid {
-            r.errors.push(RegisteredToolValidationError::InvalidName(name.to_string()));
+            r.errors
+                .push(RegisteredToolValidationError::InvalidName(name.to_string()));
         }
         r
     }
@@ -52,7 +59,9 @@ impl RegisteredToolValidator {
     pub fn validate_manifest(toml: &str) -> ValidationReport {
         let mut r = ValidationReport::default();
         match ToolManifest::from_toml(toml) {
-            Err(e) => r.errors.push(RegisteredToolValidationError::ManifestParse(e.to_string())),
+            Err(e) => r
+                .errors
+                .push(RegisteredToolValidationError::ManifestParse(e.to_string())),
             Ok(m) => {
                 // Validate name.
                 let name_r = Self::validate_name(&m.name);
@@ -61,13 +70,13 @@ impl RegisteredToolValidator {
 
                 // Validate output_schema in [chain] if present.
                 if let Some(chain) = &m.chain {
-                    if let Some(schema) = &chain.output_schema {
-                        if !schema.is_object() {
-                            r.errors.push(RegisteredToolValidationError::InvalidSchema {
-                                field: "chain.output_schema".into(),
-                                message: "must be a JSON object (JSON Schema)".into(),
-                            });
-                        }
+                    if let Some(schema) = &chain.output_schema
+                        && !schema.is_object()
+                    {
+                        r.errors.push(RegisteredToolValidationError::InvalidSchema {
+                            field: "chain.output_schema".into(),
+                            message: "must be a JSON object (JSON Schema)".into(),
+                        });
                     }
                     if chain.prompt_template.trim().is_empty() {
                         r.errors.push(RegisteredToolValidationError::ManifestParse(
@@ -84,9 +93,10 @@ impl RegisteredToolValidator {
                         let allowed_hosts: Vec<&str> = allowed.split(',').map(str::trim).collect();
                         let allowed = allowed_hosts.iter().any(|h| endpoint.contains(h));
                         if !allowed {
-                            r.errors.push(RegisteredToolValidationError::McpEndpointDisallowed(
-                                endpoint.to_string(),
-                            ));
+                            r.errors
+                                .push(RegisteredToolValidationError::McpEndpointDisallowed(
+                                    endpoint.to_string(),
+                                ));
                         }
                     }
                 }

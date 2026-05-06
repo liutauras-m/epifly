@@ -4,7 +4,7 @@
 /// When streaming, emits OpenAI-compatible SSE chunks plus extra `tool_call_start` /
 /// `tool_call_result` event types so clients can follow tool execution in real-time.
 ///
-/// Pass `"thread_id": "<ulid>"` to load history from Qdrant and persist the turn.
+/// Pass `"thread_id": "<ulid>"` to load history from Postgres and persist the turn.
 /// Pass `"max_turns": N` to override the default tool-call rounds (capped by plan tier).
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;

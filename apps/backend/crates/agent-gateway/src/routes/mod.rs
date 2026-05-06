@@ -9,9 +9,9 @@ use utoipa::OpenApi;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa_swagger_ui::SwaggerUi;
 
-pub mod agent;
 mod admin_capabilities;
 mod admin_jobs;
+pub mod agent;
 mod audit;
 pub mod auth;
 mod capabilities;
@@ -19,6 +19,7 @@ pub mod chat;
 mod files;
 mod health;
 mod mcp;
+pub mod realtime;
 mod search;
 mod tasks;
 mod threads;
@@ -114,20 +115,47 @@ pub fn public_router() -> Router<Arc<AppState>> {
 
 /// Super-admin only routes (JWT-protected with role=super_admin).
 pub fn admin_router() -> Router<Arc<AppState>> {
-    use axum::middleware;
     use crate::mw::admin::require_super_admin_jwt;
+    use axum::middleware;
     Router::new()
         .route("/admin/capabilities", get(admin_capabilities::list))
         .route("/admin/capabilities", post(admin_capabilities::create))
-        .route("/admin/capabilities/reload", post(admin_capabilities::reload_all))
-        .route("/admin/capabilities/validate", post(admin_capabilities::validate))
-        .route("/admin/capabilities/test", post(admin_capabilities::test_invoke))
-        .route("/admin/capabilities/{name}", get(admin_capabilities::get_one))
-        .route("/admin/capabilities/{name}/manifest", get(admin_capabilities::get_manifest))
-        .route("/admin/capabilities/{name}", axum::routing::patch(admin_capabilities::update))
-        .route("/admin/capabilities/{name}/enabled", axum::routing::patch(admin_capabilities::set_enabled))
-        .route("/admin/capabilities/{name}", axum::routing::delete(admin_capabilities::delete_one))
-        .route("/admin/capabilities/{name}/reload", post(admin_capabilities::reload_one))
+        .route(
+            "/admin/capabilities/reload",
+            post(admin_capabilities::reload_all),
+        )
+        .route(
+            "/admin/capabilities/validate",
+            post(admin_capabilities::validate),
+        )
+        .route(
+            "/admin/capabilities/test",
+            post(admin_capabilities::test_invoke),
+        )
+        .route(
+            "/admin/capabilities/{name}",
+            get(admin_capabilities::get_one),
+        )
+        .route(
+            "/admin/capabilities/{name}/manifest",
+            get(admin_capabilities::get_manifest),
+        )
+        .route(
+            "/admin/capabilities/{name}",
+            axum::routing::patch(admin_capabilities::update),
+        )
+        .route(
+            "/admin/capabilities/{name}/enabled",
+            axum::routing::patch(admin_capabilities::set_enabled),
+        )
+        .route(
+            "/admin/capabilities/{name}",
+            axum::routing::delete(admin_capabilities::delete_one),
+        )
+        .route(
+            "/admin/capabilities/{name}/reload",
+            post(admin_capabilities::reload_one),
+        )
         // Job management
         .route("/admin/jobs", get(admin_jobs::list_jobs))
         .route("/admin/jobs/{name}", get(admin_jobs::get_job))
@@ -145,7 +173,7 @@ pub fn protected_router() -> Router<Arc<AppState>> {
         .route("/v1/agent/completions", post(agent::agent_completions))
         // Tool registry (path kept as /v1/capabilities for API compatibility)
         .route("/v1/capabilities", get(capabilities::list_capabilities))
-        // Semantic capability search (Qdrant-backed)
+        // Semantic capability search (Postgres pgvector ANN)
         .route("/v1/capabilities/search", get(search::search))
         // MCP JSON-RPC 2.0
         .route("/mcp", post(mcp::dispatch))
@@ -177,4 +205,6 @@ pub fn protected_router() -> Router<Arc<AppState>> {
         .route("/v1/tasks/{id}/sse", get(tasks::task_sse))
         // ── Threads ─────────────────────────────────────────────────────────
         .route("/v1/threads/{id}/messages", get(threads::get_messages))
+        // ── Realtime ────────────────────────────────────────────────────────
+        .route("/api/realtime/workspace", get(realtime::realtime_workspace))
 }

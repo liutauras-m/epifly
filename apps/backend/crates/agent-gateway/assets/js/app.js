@@ -516,7 +516,7 @@ document.querySelectorAll('[data-composer]').forEach((form) => {
     if (pendingAttachments.length) {
       const origin = window.location.origin;
       const lines = pendingAttachments
-        .map(a => `- ${a.filename} (image_path: ${origin}/v1/files/${a.id})`)
+        .map(a => `- ${a.filename} (image_path: ${origin}/ui/files/${a.id})`)
         .join('\n');
       prompt = `${val}\n\n[Attached files — pass image_path directly to invoice-processing__extract_invoice or ocr-service__extract_text]\n${lines}`;
     }

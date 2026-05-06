@@ -80,22 +80,22 @@ pub fn llm_output_tokens() -> Histogram<u64> {
         .build()
 }
 
-// ── Qdrant / storage metrics ──────────────────────────────────────────────────
+// ── Database metrics ──────────────────────────────────────────────────────────
 
-/// Histogram of Qdrant REST request durations.
-pub fn qdrant_duration_ms() -> Histogram<f64> {
+/// Histogram of database query durations.
+pub fn db_query_duration_ms() -> Histogram<f64> {
     opentelemetry::global::meter("conusai.storage")
-        .f64_histogram("qdrant.request.duration_ms")
-        .with_description("Qdrant REST request duration in milliseconds")
+        .f64_histogram("db.query.duration_ms")
+        .with_description("Postgres query duration in milliseconds")
         .with_unit("ms")
         .build()
 }
 
-/// Counter for Qdrant errors, labelled by operation.
-pub fn qdrant_errors() -> Counter<u64> {
+/// Counter for database errors, labelled by operation.
+pub fn db_errors() -> Counter<u64> {
     opentelemetry::global::meter("conusai.storage")
-        .u64_counter("qdrant.request.errors")
-        .with_description("Qdrant REST requests that returned an error")
+        .u64_counter("db.query.errors")
+        .with_description("Postgres queries that returned an error")
         .with_unit("errors")
         .build()
 }
