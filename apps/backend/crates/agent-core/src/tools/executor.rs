@@ -71,13 +71,23 @@ impl ToolExecutor {
 
 /// Shared helper used by `ToolExecutor::tool_definitions` and the default
 /// `CapabilityProvider::tool_definitions` impl.
+///
+/// # Name sanitisation
+/// Anthropic's tool-name constraint is `^[a-zA-Z0-9_-]{1,128}$`.
+/// Capability names can contain dots (e.g. `media.time.current-time`) which
+/// are not allowed.  We replace every `.` with `_` in the capability-name
+/// prefix so the combined `{cap}__{tool}` string is always valid.
+/// The inverse (replacing `_` → `.`) is applied in `SemanticCapabilityRouter::invoke`
+/// as a fallback when an exact registry lookup misses.
 pub fn tool_definitions_from_manifest(manifest: &ToolManifest) -> Vec<Value> {
+    // Replace dots so the name satisfies Anthropic's ^[a-zA-Z0-9_-]{1,128}$ constraint.
+    let safe_cap = manifest.name.replace('.', "_");
     manifest
         .tools
         .iter()
         .map(|t| {
             json!({
-                "name": format!("{}__{}", manifest.name, t.name),
+                "name": format!("{safe_cap}__{}", t.name),
                 "description": t.description,
                 "input_schema": t.input_schema
             })

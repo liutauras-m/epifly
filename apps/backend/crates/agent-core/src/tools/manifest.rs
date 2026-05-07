@@ -43,6 +43,9 @@ pub struct ToolManifest {
     /// Present when `kind = "chain"` and the capability is data-driven (no bespoke Rust).
     #[serde(default)]
     pub chain: Option<LlmChainConfig>,
+    /// Empty = global (all tenants). Non-empty = only these tenant IDs see this capability.
+    #[serde(default)]
+    pub tenant_scope: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -57,6 +60,9 @@ pub enum ToolKind {
     /// DB-backed, versioned prompt capability — no Rust rebuild required.
     #[serde(rename = "dynamic_prompt")]
     DynamicPrompt,
+    /// External MCP service registered via JSON (no TOML file on disk).
+    #[serde(rename = "remote_mcp")]
+    RemoteMcp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

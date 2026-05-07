@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod bridge;
 pub mod chains;
 pub mod context;
 pub mod indexing;
@@ -9,6 +10,7 @@ pub mod realtime;
 pub mod tools;
 pub mod vector_store;
 
+pub use bridge::ArtifactBridge;
 pub use agent::builder::{Agent, AgentBuilder};
 pub use agent::hooks::{PermissionHook, TracingHook};
 pub use agent::runtime::map_rig_error;

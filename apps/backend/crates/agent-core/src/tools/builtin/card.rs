@@ -73,6 +73,7 @@ pub fn builtin_tool_card() -> CapabilityCard {
             },
         ],
         chain: None,
+        tenant_scope: vec![],
     };
 
     CapabilityCard::new(manifest, std::path::PathBuf::from("."))

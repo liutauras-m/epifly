@@ -111,12 +111,28 @@ CREATE TABLE IF NOT EXISTS capability_specs (
     strategy      TEXT NOT NULL,
     payload       JSONB NOT NULL DEFAULT '{}',
     tags          TEXT[] NOT NULL DEFAULT '{}',
+    -- tenant_scope: empty = global; non-empty = only these tenant IDs can see this capability
+    tenant_scope  TEXT[] NOT NULL DEFAULT '{}',
     enabled       BOOL NOT NULL DEFAULT true,
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (namespace, tool_name)
 );
-CREATE INDEX IF NOT EXISTS capability_specs_ns_idx   ON capability_specs (namespace);
-CREATE INDEX IF NOT EXISTS capability_specs_tags_idx ON capability_specs USING gin (tags);
+CREATE INDEX IF NOT EXISTS capability_specs_ns_idx    ON capability_specs (namespace);
+CREATE INDEX IF NOT EXISTS capability_specs_tags_idx  ON capability_specs USING gin (tags);
+CREATE INDEX IF NOT EXISTS capability_specs_scope_idx ON capability_specs USING gin (tenant_scope);
+
+-- Async indexing queue for tool-output artifacts
+CREATE TABLE IF NOT EXISTS indexing_queue (
+    id           BIGSERIAL PRIMARY KEY,
+    node_id      TEXT NOT NULL,
+    object_key   TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    processed_at TIMESTAMPTZ,
+    error        TEXT,
+    UNIQUE (node_id)
+);
+CREATE INDEX IF NOT EXISTS indexing_queue_status_idx ON indexing_queue (status, created_at);
 
 CREATE OR REPLACE FUNCTION notify_capability_specs_changed() RETURNS trigger AS $$
 BEGIN

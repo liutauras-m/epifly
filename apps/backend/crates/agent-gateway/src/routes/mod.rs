@@ -108,6 +108,14 @@ pub fn public_router() -> Router<Arc<AppState>> {
         .route("/health", get(health::health))
         // Auth: exchange credentials for JWT
         .route("/v1/auth/login", post(auth::login))
+        // Self-registration for external capability services.
+        // Auth: if PLATFORM_ADMIN_TOKEN is set the request must carry
+        //   `Authorization: Bearer <token>`.  In dev (token unset) all
+        //   requests are accepted.
+        .route(
+            "/admin/capabilities/register",
+            post(admin_capabilities::register_capability),
+        )
         // OpenAPI spec (machine-readable) + Swagger UI
         // SwaggerUi registers GET /openapi.json itself, so we don't add a
         // separate route to avoid an "Overlapping method route" panic.

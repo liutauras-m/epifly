@@ -1,471 +1,995 @@
-# Plan: Generic, Extensible Agent System (v0.3.2)
+# ConusAI Platform — v0.3.3 Implementation Plan
+## Zero-Core-Touch Mode + Self-Registering Generic Agent Capabilities
 
-> **Goal:** Evolve the v0.3.1 agent into a **generic, prompt-driven, semantically-routed** system that supports **10,000+ stateless capabilities** (ERP, accounting, generic domain logic) with **zero breaking changes**.
->
-> **Strategy:** Build on the existing `CapabilityProvider` / `CapabilityFactory` / `PgVectorStore` foundation. Add three small composable layers — **semantic router**, **dynamic prompts**, **namespaces** — and wire them into `AgentBuilder` + the gateway, leaning on Rig 0.36 primitives wherever they exist.
->
-> **North-star principle:** *Never send 10k tools to the LLM.* Always semantic-prefilter to top-K (≤30) capabilities per turn.
->
-> **Effort budget:** 35–45 AI-hours (~220k–280k tokens). Phase 1 (6–8h), Phase 2 (12–15h), Phase 3 (8–10h), Phase 4 (6–8h), Phase 5–7 (3–4h).
+**Version:** v0.3.3  
+**Branch:** `feat/v0.3.3-zero-core-touch`  
+**Status:** Ready for AI implementation  
+**Goal:** Ship the infrastructure that lets any new capability self-register over HTTP — no Rust rebuild, no Cargo changes, no platform restart — and validate it with a live `current-time` MCP service.
 
 ---
 
-## 0. Current State Snapshot (verified in code)
+## Codebase Baseline (v0.3.2)
 
-Branch `feat/v0.3-rig-workspace-wasi`, commit `e666eae`:
+All of the following already exist and must NOT be changed unless a phase explicitly modifies them:
 
-| Layer | Status | Path |
-|---|---|---|
-| `CapabilityProvider` trait | ✅ | [apps/backend/crates/agent-core/src/tools/provider.rs](apps/backend/crates/agent-core/src/tools/provider.rs) |
-| `CapabilityFactory` trait + 4 factories (Mcp/Wasm/Chain/Builtin) | ✅ | [apps/backend/crates/agent-core/src/tools/providers/](apps/backend/crates/agent-core/src/tools/providers) |
-| `ToolRegistry` + `CapabilityCard` + filesystem store | ✅ | [apps/backend/crates/agent-core/src/tools/registry.rs](apps/backend/crates/agent-core/src/tools/registry.rs), [store.rs](apps/backend/crates/agent-core/src/tools/store.rs) |
-| `PromptChainCapability` (static templates from `capability.toml`) | ✅ | [apps/backend/crates/agent-core/src/chains/llm_chain.rs](apps/backend/crates/agent-core/src/chains/llm_chain.rs) |
-| `PgVectorStore` (`top_n_capabilities`, diskann) | ✅ | [apps/backend/crates/agent-core/src/vector_store/postgres.rs](apps/backend/crates/agent-core/src/vector_store/postgres.rs) |
-| `EmbeddingService` (OpenAI + local fastembed) | ✅ | [apps/backend/crates/agent-core/src/indexing/embedding_service.rs](apps/backend/crates/agent-core/src/indexing/embedding_service.rs) |
-| `CapabilityAdmin` HTTP CRUD + hot-reload + test-invoke | ✅ | [apps/backend/crates/agent-core/src/tools/admin.rs](apps/backend/crates/agent-core/src/tools/admin.rs), [admin_capabilities.rs](apps/backend/crates/agent-gateway/src/routes/admin_capabilities.rs) |
-| `capability_embeddings` table (vector(768) + diskann) | ✅ | [docker/init/02-schema.sql](docker/init/02-schema.sql) |
-| Rig 0.36 (`rig::completion`, `rig::providers::anthropic`, `rig-postgres`) | ✅ | [apps/backend/crates/agent-core/src/llm/providers/anthropic.rs](apps/backend/crates/agent-core/src/llm/providers/anthropic.rs), [vector_store/postgres.rs](apps/backend/crates/agent-core/src/vector_store/postgres.rs) |
-| `blake3`, `bon` workspace deps | ✅ | [Cargo.toml](Cargo.toml) lines 66, 90 |
-| Realtime PG `LISTEN/NOTIFY` | ✅ | [apps/backend/crates/agent-core/src/realtime/mod.rs](apps/backend/crates/agent-core/src/realtime/mod.rs) |
+| Component | Location | Status |
+|-----------|----------|--------|
+| `CapabilityProvider` trait | `agent-core/src/tools/provider.rs` | ✅ complete |
+| `CapabilityCard` | `agent-core/src/tools/card.rs` | ✅ complete |
+| `ToolRegistry` | `agent-core/src/tools/registry.rs` | ✅ complete |
+| `SemanticCapabilityRouter` | `agent-core/src/tools/semantic_router.rs` | ✅ complete |
+| `DynamicPromptCapability` | `agent-core/src/chains/dynamic_prompt.rs` | ✅ complete |
+| `CapabilitySpecFactory` | `agent-core/src/tools/providers/capability_spec.rs` | ✅ complete |
+| `PgVectorStore` | `agent-core/src/vector_store/postgres.rs` | ✅ complete |
+| `EmbeddingService` | `agent-core/src/indexing/embedding_service.rs` | ✅ complete |
+| `RealtimeService` | `agent-core/src/realtime/mod.rs` | ✅ LISTEN/NOTIFY wired |
+| `McpAdapter` / `McpProvider` | `agent-core/src/tools/providers/mcp.rs` | ✅ file-based only |
+| `/admin/capabilities/*` CRUD | `agent-gateway/src/routes/admin_capabilities.rs` | ✅ TOML/WASM |
+| `RouterQuotaLayer` | `agent-gateway/src/mw/router_quota.rs` | ✅ complete |
+| `AppState` | `agent-gateway/src/state.rs` | ✅ all fields |
+| DB migrations | `common/migrations/` | ✅ 7 migrations |
 
-### Gaps to close
+**What is missing (gaps this plan closes):**
 
-1. **No semantic router** — capabilities are looked up by exact flat name (`{cap}__{tool}`); the LLM sees all enabled tools every turn.
-2. **No dynamic prompts** — `PromptChainCapability` reads `capability.toml` once at registration; no DB-backed prompt loading or versioning.
-3. **No namespaces / tags surfaced for routing** — flat naming forbids `accounting.invoice.*`-style organisation.
-4. **`CapabilityFactory` is not bulk-friendly** — generating 8000 ERP cards from DB rows requires bespoke code today; no `load_batch`.
-5. **`AgentBuilder` is not wired to capabilities** — agent loop dispatches via the gateway, not via a builder API. Embedded users have no path.
-6. **`moka` not yet in workspace** — needed for the router cache (add it once in [Cargo.toml](Cargo.toml)).
+1. No `/admin/capabilities/register` endpoint accepting JSON manifests from external services
+2. No `RemoteMcpCapability` — dynamic MCP provider constructed from a JSON payload, not a TOML file
+3. No `tenant_scope` field — capabilities cannot be scoped to specific tenant IDs
+4. `RealtimeService` hot-reload not wired to `CapabilitySpecFactory::reload_one()` at startup
+5. No `ArtifactBridge` — tool outputs with file artifacts are not persisted to workspace nodes
+6. No `services/` directory — no example of a self-registering external capability
+7. `ToolKind` enum missing `RemoteMcp` variant
 
 ---
 
-## 1. Architecture (target v0.3.2)
+## Phase 0 — Readiness Verification (pre-flight, 0 new code)
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                       AgentBuilder                           │
-│  .with_semantic_router(SemanticCapabilityRouter)  ◄── new    │
-│  .with_namespaces([NamespaceFilter::Prefix("erp")])  ◄── new │
-└──────────────┬───────────────────────────────────────────────┘
-               │ build()  → wraps router as rig::ToolProvider
-               ▼
-┌──────────────────────────────────────────────────────────────┐
-│              SemanticCapabilityRouter (NEW)                  │
-│  1. embed(query) [moka-cached, blake3-keyed]                 │
-│  2. PgVectorStore.top_n_capabilities_filtered(emb, K, ns)    │
-│  3. namespace + tag filter (Exact | Prefix | AnyOf)          │
-│  4. expose top-K as Anthropic tool defs (rig ToolProvider)   │
-│  5. dispatch invoke() → ToolRegistry → Provider              │
-└────────┬─────────────────────────────────┬───────────────────┘
-         │                                 │
-         ▼                                 ▼
-┌──────────────────┐           ┌────────────────────────────────┐
-│  ToolRegistry    │           │  PgVectorStore                 │
-│  (existing)      │           │  capability_embeddings         │
-│  + bulk loader   │           │  + namespace + tags (NEW cols) │
-└────────┬─────────┘           └────────────────────────────────┘
-         │
-         ▼
-┌──────────────────────────────────────────────────────────────┐
-│  Providers (CapabilityProvider impls)                        │
-│  • BuiltinFactory       (Rust, deterministic)                │
-│  • WasmFactory          (sandboxed, deterministic)           │
-│  • McpFactory           (external services)                  │
-│  • ChainFactory         (PromptChainCapability — static)     │
-│  • DynamicPromptFactory (NEW — DB-backed prompts, versioned) │
-│  • CapabilitySpecFactory (NEW — bulk-generated, BulkCapabilityFactory) │
-└──────────────────────────────────────────────────────────────┘
+**Before starting** run these commands and confirm all pass:
+
+```bash
+# 1. Compile check
+cargo check -p agent-core -p agent-gateway
+
+# 2. Full test suite
+cargo test --workspace
+
+# 3. Docker infra up
+docker compose --profile infra up -d
+
+# 4. Run migrations
+make db-migrate
+
+# 5. Smoke-test admin route
+JWT=$(curl -s -X POST http://localhost:8080/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@test.local","password":"dev"}' | jq -r .token)
+curl -H "Authorization: Bearer $JWT" http://localhost:8080/admin/capabilities | jq length
 ```
 
-**Hybrid policy** (industry-standard 2026):
-- **Deterministic core** (double-entry, tax, ledger posting, reconciliation) → Rust/WASM providers.
-- **High-level workflows** (invoice → GL → approval → report) → `PromptChainCapability` + sub-agents.
-- **Domain rule changes** (new GL account, new tax jurisdiction) → DB row insert → `DynamicPromptCapability` reloads — **zero Rust rebuild, zero restart**.
-
-**Naming convention (final):** `SemanticCapabilityRouter` lives in `tools/semantic_router.rs`. Distinguishes from future `GraphCapabilityRouter` (orchestrator pattern) in v0.4.
+Expected: all tests pass, admin route returns array (possibly empty).
 
 ---
 
-## 2. Step-by-Step Implementation Plan
+## Phase 1 — `RemoteMcpCapability` + `ToolKind::RemoteMcp` (2 AI-hours)
 
-### Phase 1 — Namespaces & multi-tag filtering (foundation)
+**Principle:** External MCP services must be invokable without a TOML file on disk. The existing `McpProvider` reads its endpoint from `card.manifest.config["endpoint"]` which requires a file. We need a variant that stores all state in the DB row payload.
 
-**Why first:** Every later phase routes by namespace + tag. Doing this last forces rework.
+### 1.1 — Add `RemoteMcp` to `ToolKind` enum
 
-#### 1.1 Extend `ToolManifest` & `CapabilityCard`
+**File:** `apps/backend/crates/agent-core/src/tools/manifest.rs`
 
-- File: [apps/backend/crates/agent-core/src/tools/manifest.rs](apps/backend/crates/agent-core/src/tools/manifest.rs)
-  - Add `pub namespace: Option<String>` to `ToolManifest` (TOML field `namespace = "accounting.invoice"`).
-  - **Keep `tags: Vec<String>` (already present)** as the multi-namespace tagging mechanism; namespace is the single primary, tags are secondary axes — matches the `tags` column in `capability_specs`.
-  - Helper: `pub fn namespace(&self) -> &str { self.namespace.as_deref().unwrap_or("") }`.
-- File: [apps/backend/crates/agent-core/src/tools/card.rs](apps/backend/crates/agent-core/src/tools/card.rs)
-  - Re-export `card.namespace()` and `card.tags()`.
-- File: [apps/backend/crates/agent-core/src/tools/validator.rs](apps/backend/crates/agent-core/src/tools/validator.rs)
-  - Add `validate_namespace(&str)` with regex `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){0,5}$` (≤6 segments, slug-only). Call it from `validate_manifest`.
+Add to the `ToolKind` enum:
+```rust
+/// External MCP service registered via JSON (no TOML file on disk).
+#[serde(rename = "remote_mcp")]
+RemoteMcp,
+```
 
-#### 1.2 `NamespaceFilter` enum (canonical filter API)
+### 1.2 — Create `RemoteMcpCapability`
 
-- New file: `apps/backend/crates/agent-core/src/tools/namespace.rs`
-  ```rust
-  #[derive(Debug, Clone, Default)]
-  pub enum NamespaceFilter {
-      #[default]
-      Any,
-      Exact(String),
-      Prefix(String),                 // "accounting." matches "accounting.gl", "accounting.ap"
-      AnyOf(Vec<NamespaceFilter>),
-  }
-
-  impl NamespaceFilter {
-      pub fn to_sql_predicate(&self, col: &str, bind_offset: usize) -> (String, Vec<String>);
-      pub fn matches(&self, ns: &str) -> bool;
-  }
-  ```
-  Used by both `PgVectorStore` (SQL) and the in-memory cache layer.
-
-#### 1.3 Persist namespace + tags in DB
-
-- New migration `apps/backend/crates/common/migrations/20260507000000_capability_namespaces.up.sql`:
-  ```sql
-  ALTER TABLE capability_embeddings
-    ADD COLUMN namespace TEXT NOT NULL DEFAULT '',
-    ADD COLUMN tags      TEXT[] NOT NULL DEFAULT '{}';
-  CREATE INDEX cap_embed_ns_idx   ON capability_embeddings (namespace);
-  CREATE INDEX cap_embed_tags_idx ON capability_embeddings USING gin (tags);
-  ```
-- Mirror columns in [docker/init/02-schema.sql](docker/init/02-schema.sql).
-
-#### 1.4 Update embedding upsert + filtered query
-
-- File: [apps/backend/crates/agent-core/src/vector_store/postgres.rs](apps/backend/crates/agent-core/src/vector_store/postgres.rs)
-  - Extend `upsert_capability_embedding(..., namespace, tags)`.
-  - Add `top_n_capabilities_filtered(embedding, k, ns: &NamespaceFilter, tags_any: &[String]) -> Vec<CapabilityHit>`. Builds SQL via `NamespaceFilter::to_sql_predicate` and `tags && $N::text[]` for tag-any matching.
-  - Keep existing `top_n_capabilities(emb, k)` as a thin wrapper calling `_filtered(emb, k, &NamespaceFilter::Any, &[])`.
-- Update sync path triggered by `CapabilityAdmin::create/update/reload` to pass namespace + tags.
-
-#### 1.5 Lightweight namespace tree for admin UX
-
-- In `ToolRegistry`: maintain `namespace_index: indexmap::IndexMap<String, Vec<String>>` (segment → child segments), rebuilt on register/reload. Powers admin autocomplete (`GET /admin/capabilities/namespaces?prefix=acc`).
-
-**Acceptance:** Capability declaring `namespace = "accounting.invoice"` + `tags = ["v1","priority"]` round-trips through TOML → registry → DB; `top_n_capabilities_filtered(_, 20, &Prefix("accounting"), &["priority"])` returns it.
-
----
-
-### Phase 2 — `SemanticCapabilityRouter`
-
-#### 2.1 Define the router
-
-- New file: `apps/backend/crates/agent-core/src/tools/semantic_router.rs`
-  ```rust
-  use bon::Builder;
-
-  #[derive(Builder)]
-  pub struct SemanticRouterConfig {
-      #[builder(default = 20)]   pub top_k: usize,           // hard max 50
-      #[builder(default)]        pub namespace: NamespaceFilter,
-      #[builder(default)]        pub tags_any: Vec<String>,
-      #[builder(default = 0.65)] pub max_distance: f64,      // cosine; reject far hits
-      #[builder(default)]        pub include_always: Vec<String>,
-      #[builder(default = 60)]   pub cache_ttl_secs: u64,
-  }
-
-  pub struct SemanticCapabilityRouter {
-      registry: Arc<RwLock<ToolRegistry>>,
-      vector_store: Arc<PgVectorStore>,
-      embedder: Arc<dyn EmbeddingService>,
-      cfg: SemanticRouterConfig,
-      cache: moka::future::Cache<[u8; 32], Arc<Vec<CapabilityHit>>>,  // blake3 keys
-      metrics: Arc<RouterMetrics>,
-  }
-
-  impl SemanticCapabilityRouter {
-      pub async fn select(&self, query: &str, tenant: &TenantContext) -> Result<Vec<Arc<dyn CapabilityProvider>>>;
-      pub async fn tool_definitions(&self, query: &str, tenant: &TenantContext) -> Result<Vec<Value>>;
-      pub async fn invoke(&self, tool_name: &str, input: &Value, tenant: Option<&TenantContext>) -> Result<Value>;
-  }
-  ```
-
-#### 2.2 Cache key (collision-resistant)
+**New file:** `apps/backend/crates/agent-core/src/tools/providers/remote_mcp.rs`
 
 ```rust
-fn cache_key(tenant_id: &str, query: &str, cfg: &SemanticRouterConfig) -> [u8; 32] {
-    let mut h = blake3::Hasher::new();
-    h.update(tenant_id.as_bytes());
-    h.update(query.as_bytes());
-    h.update(&cfg.top_k.to_le_bytes());
-    // include namespace + tags + max_distance bytes
-    *h.finalize().as_bytes()
+//! `RemoteMcpCapability` — dynamically-registered MCP provider.
+//!
+//! Unlike `McpProvider` (file-based, kind=Mcp), this type is constructed
+//! entirely from a JSON registration payload and requires no TOML on disk.
+//! It is created by `CapabilityRegistrar::register_json()` and stored in
+//! `capability_specs` with strategy = "remote_mcp".
+
+use crate::context::tenant::TenantContext;
+use crate::tools::manifest::ToolManifest;
+use crate::tools::mcp_adapter::McpAdapter;
+use crate::tools::provider::CapabilityProvider;
+use async_trait::async_trait;
+use serde_json::Value;
+use std::sync::Arc;
+
+pub struct RemoteMcpCapability {
+    manifest: ToolManifest,
+    endpoint: String,
+}
+
+impl RemoteMcpCapability {
+    pub fn new(manifest: ToolManifest, endpoint: String) -> Arc<Self> {
+        Arc::new(Self { manifest, endpoint })
+    }
+}
+
+#[async_trait]
+impl CapabilityProvider for RemoteMcpCapability {
+    fn manifest(&self) -> &ToolManifest {
+        &self.manifest
+    }
+
+    async fn invoke(
+        &self,
+        tool_name: &str,
+        input: &Value,
+        _tenant: Option<&TenantContext>,
+    ) -> anyhow::Result<Value> {
+        let adapter = McpAdapter::new(&self.endpoint)
+            .map_err(|e| anyhow::anyhow!("MCP adapter error: {e}"))?;
+        adapter
+            .call_tool(tool_name, input.clone())
+            .await
+            .map_err(|e| anyhow::anyhow!("MCP call_tool error: {e}"))
+    }
 }
 ```
-Add `moka = { version = "0.12", features = ["future"] }` to workspace [Cargo.toml](Cargo.toml).
 
-#### 2.3 Rig integration — implement `ToolProvider`
-
-- Wrap `SemanticCapabilityRouter` with a `RigToolProviderAdapter` that implements rig 0.36's tool-resolution surface (the trait in `rig::completion::ToolDefinition` / `rig::tool` module — exact name confirmed at implementation time against the pinned `rig-core = "0.36"`).
-- Adapter responsibilities:
-  - `definitions(prompt) -> Vec<rig::completion::ToolDefinition>` calls `router.tool_definitions(prompt, tenant)`.
-  - `call(name, args) -> Result<String>` calls `router.invoke(name, &args, Some(&tenant))`.
-- This makes the router pluggable into both:
-  - Our hand-rolled gateway loop ([routes/agent.rs](apps/backend/crates/agent-gateway/src/routes/agent.rs)).
-  - Any future `rig::AgentBuilder::tools(adapter)` user.
-
-#### 2.4 Wire into the agent loop & builder
-
-- File: [apps/backend/crates/agent-gateway/src/routes/agent.rs](apps/backend/crates/agent-gateway/src/routes/agent.rs)
-  - Replace "list all enabled tools" with:
-    1. Read latest user message → `router.tool_definitions(msg, tenant).await?`.
-    2. Pass that subset to the LLM completion request.
-    3. On tool-call → `router.invoke(name, input, Some(&tenant)).await?`.
-- File: [apps/backend/crates/agent-gateway/src/state.rs](apps/backend/crates/agent-gateway/src/state.rs)
-  - Construct `Arc<SemanticCapabilityRouter>` once at boot; add to `AppState`.
-- File: [apps/backend/crates/agent-core/src/agent/builder.rs](apps/backend/crates/agent-core/src/agent/builder.rs)
-  - Add `with_semantic_router(Arc<SemanticCapabilityRouter>)`. Builder internally wires the adapter as **both** rig tool provider **and** context source — unifying gateway and embedded paths.
-
-#### 2.5 Tower middleware for quotas
-
-- New: `apps/backend/crates/agent-gateway/src/mw/router_quota.rs`
-  - Tower layer that reads `TenantContext` and enforces `max_tools_per_turn` / `max_invokes_per_turn` (default 25 / 10) before calling the router. Reuses existing tower stack — no new framework.
-
-**Acceptance:** Agent turn with 10k embeddings → trace shows ≤K tool definitions sent to Anthropic; p95 router overhead < 15 ms warm cache, < 25 ms cold.
-
----
-
-### Phase 3 — `DynamicPromptCapability`
-
-#### 3.1 Schema for DB-backed, versioned prompts
-
-- Migration `20260507000100_dynamic_prompts.up.sql`:
-  ```sql
-  CREATE TABLE dynamic_prompts (
-      capability_name TEXT NOT NULL,
-      version         INT  NOT NULL DEFAULT 1,
-      system_prompt   TEXT,
-      user_template   TEXT NOT NULL,        -- minijinja
-      few_shot        JSONB NOT NULL DEFAULT '[]',
-      output_schema   JSONB,
-      model           TEXT NOT NULL,
-      max_tokens      INT  NOT NULL DEFAULT 1024,
-      vision          BOOL NOT NULL DEFAULT false,
-      updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-      PRIMARY KEY (capability_name, version)
-  );
-  CREATE INDEX dyn_prompts_latest_idx ON dynamic_prompts (capability_name, version DESC);
-  ```
-  `(name, version)` PK preserves history for `?version=N` retrieval.
-
-#### 3.2 Extract shared chain executor
-
-- Refactor [apps/backend/crates/agent-core/src/chains/llm_chain.rs](apps/backend/crates/agent-core/src/chains/llm_chain.rs):
-  - Extract `pub async fn run_chain(cfg: &LlmChainConfig, ctx: &Value, llm: &LlmRegistry) -> Result<Value>` into new `apps/backend/crates/agent-core/src/chains/executor.rs`.
-  - `PromptChainCapability::invoke` → calls `executor::run_chain(&self.cfg, &ctx, &self.llm)`.
-
-#### 3.3 Provider
-
-- New file: `apps/backend/crates/agent-core/src/chains/dynamic_prompt.rs`
-  ```rust
-  pub struct DynamicPromptCapability {
-      manifest: ToolManifest,
-      llm: Arc<LlmRegistry>,
-      pool: PgPool,
-      cache: moka::future::Cache<String, Arc<LlmChainConfig>>,  // key = "{name}:{version}"
-  }
-
-  #[async_trait]
-  impl CapabilityProvider for DynamicPromptCapability {
-      async fn invoke(&self, _tool: &str, input: &Value, tenant: Option<&TenantContext>) -> Result<Value> {
-          let cfg = self.load_latest().await?;          // SELECT … ORDER BY version DESC LIMIT 1
-          let ctx = json!({ "input": input, "tenant": tenant });
-          executor::run_chain(&cfg, &ctx, &self.llm).await
-      }
-  }
-  ```
-
-#### 3.4 Factory + ToolKind
-
-- Extend `ToolKind` enum: add `DynamicPrompt`.
-- New file: `apps/backend/crates/agent-core/src/tools/providers/dynamic_prompt.rs` with `DynamicPromptFactory { pool, llm }`.
-- Register in `ToolRegistry::with_default_factories(...)`.
-
-#### 3.5 Admin endpoints
-
-- File: [admin_capabilities.rs](apps/backend/crates/agent-gateway/src/routes/admin_capabilities.rs):
-  - `PUT /admin/capabilities/:name/prompt` — INSERT new row with `version = max+1`. Triggers re-embed **only when `embedding_text()` changes** (delta optimisation).
-  - `GET /admin/capabilities/:name/prompt?version=N` — defaults to latest.
-  - `GET /admin/capabilities/:name/prompt/versions` — list versions.
-
-**Acceptance:** Edit a prompt via admin → next turn uses new prompt without restart; `?version=N` retrieves prior versions; cache invalidates on upsert.
-
----
-
-### Phase 4 — Bulk capability factory (domain-neutral, ERP-first vertical)
-
-#### 4.1 Source-of-truth table
-
-- Migration `20260507000200_capability_specs.up.sql`:
-  ```sql
-  CREATE TABLE capability_specs (
-      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      namespace     TEXT NOT NULL,                  -- e.g. erp.po, crm.lead, accounting.gl
-      tool_name     TEXT NOT NULL,
-      description   TEXT NOT NULL,
-      input_schema  JSONB NOT NULL,
-      output_schema JSONB,
-      strategy      TEXT NOT NULL,                  -- 'wasm' | 'prompt' | 'native'
-      payload       JSONB NOT NULL,                 -- prompt id, wasm hash, etc.
-      tags          TEXT[] NOT NULL DEFAULT '{}',
-      enabled       BOOL NOT NULL DEFAULT true,
-      updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-      UNIQUE (namespace, tool_name)
-  );
-
-  -- LISTEN/NOTIFY for hot reload
-  CREATE OR REPLACE FUNCTION notify_capability_specs_changed() RETURNS trigger AS $$
-  BEGIN
-      PERFORM pg_notify('capability_specs_changed',
-          json_build_object('namespace', NEW.namespace, 'tool_name', NEW.tool_name, 'op', TG_OP)::text);
-      RETURN NEW;
-  END $$ LANGUAGE plpgsql;
-  CREATE TRIGGER capability_specs_changed_trg
-      AFTER INSERT OR UPDATE OR DELETE ON capability_specs
-      FOR EACH ROW EXECUTE FUNCTION notify_capability_specs_changed();
-  ```
-
-#### 4.2 `BulkCapabilityFactory` trait (ergonomics for 10k loads)
-
-- File: [apps/backend/crates/agent-core/src/tools/provider.rs](apps/backend/crates/agent-core/src/tools/provider.rs):
-  ```rust
-  #[async_trait]
-  pub trait BulkCapabilityFactory: CapabilityFactory {
-      /// Load many capabilities efficiently (batched embeddings, single tx).
-      async fn load_batch(&self, into: &mut ToolRegistry) -> Result<usize>;
-  }
-  ```
-- `ToolRegistry::register_bulk_factory(...)` stores it for invocation by the gateway boot path.
-
-#### 4.3 `CapabilitySpecFactory`
-
-- New file: `apps/backend/crates/agent-core/src/tools/providers/capability_spec.rs`
-  ```rust
-  #[derive(bon::Builder)]
-  pub struct CapabilitySpecFactory {
-      pool: PgPool,
-      llm: Arc<LlmRegistry>,
-      embedder: Arc<dyn EmbeddingService>,
-      vector_store: Arc<PgVectorStore>,
-      #[builder(default = 256)] batch_size: usize,
-  }
-  ```
-- `load_batch`:
-  1. Stream `capability_specs WHERE enabled` in chunks of `batch_size`.
-  2. Map each row → `CapabilityCard` via `CapabilitySpecMapper` (generic over strategy: wasm | prompt | native).
-  3. Batch-call `embedder.embed_batch(...)` for the chunk.
-  4. Single `INSERT … ON CONFLICT (capability_id) DO UPDATE` into `capability_embeddings`.
-  5. Insert provider into the registry.
-
-#### 4.4 Hot-reload via `LISTEN/NOTIFY`
-
-- Use the existing realtime infrastructure ([apps/backend/crates/agent-core/src/realtime/mod.rs](apps/backend/crates/agent-core/src/realtime/mod.rs)) — already subscribes to PG NOTIFY.
-- Add channel handler `capability_specs_changed` → calls `factory.reload_one(namespace, tool_name)` which updates the registry **and** re-embeds just that row.
-
-**Acceptance:** Insert 10k rows → boot job populates `capability_embeddings` (10k rows) in < 30 s; subsequent NOTIFY → registry updates in < 200 ms; semantic top-20 query returns in < 15 ms.
-
----
-
-### Phase 5 — Observability & guardrails
-
-- **OpenTelemetry GenAI semantic conventions** (2026 standard):
-  - `gen_ai.tool.calls` (counter, label `gen_ai.tool.name`)
-  - `gen_ai.semantic_router.top_k` (histogram)
-  - `gen_ai.semantic_router.distance` (histogram)
-  - `gen_ai.semantic_router.cache_hit` (counter)
-- **Tracing spans**:
-  - `semantic_router.select` { tenant_id, namespace, top_k, hit_count, cache_hit, distance_min, distance_max }
-  - `semantic_router.invoke` { tool_name, capability_kind, outcome }
-  - `dynamic_prompt.load` { capability_name, version, cache_hit }
-- **Metrics** (extend [apps/backend/crates/common/src/metrics.rs](apps/backend/crates/common/src/metrics.rs)):
-  - `capability_router_select_seconds` (histogram, labels: namespace, hit_count_bucket).
-  - `capability_invoke_seconds` (histogram, labels: capability, kind, outcome).
-- **Quotas** (read from `TenantContext` — already plumbed):
-  - `max_tools_per_turn` (default 25), `max_invokes_per_turn` (default 10), enforced in tower middleware (Phase 2.5).
-  - When `TenantConfig` table arrives in v0.4, quotas are read from there.
-- **Audit**: extend `AuditEvent` (in [apps/backend/crates/agent-core/src/memory/postgres_audit_store.rs](apps/backend/crates/agent-core/src/memory/postgres_audit_store.rs)) with `selected_top_k: usize`, `selected_capabilities: Vec<String>`, `cache_hit: bool`.
-- **Two-level cache (deferred)**: moka L1 only for now. L2 Redis is Phase 5.5 if multi-pod gateway emerges.
-
----
-
-### Phase 6 — Tests
-
-| Test | Type | Path |
-|---|---|---|
-| Namespace TOML round-trip + validator rejects bad slugs | unit | `tools/manifest.rs`, `tools/validator.rs` |
-| `NamespaceFilter::to_sql_predicate` (Exact/Prefix/AnyOf) | unit | `tools/namespace.rs` |
-| `top_n_capabilities_filtered` SQL with namespace + tags | sqlx integration | `vector_store/postgres.rs` |
-| `SemanticCapabilityRouter::select` returns ≤K, respects filter, cache hit/miss | unit (in-mem store) | `tools/semantic_router.rs` |
-| Rig `ToolProvider` adapter conformance | unit | `tools/semantic_router.rs` |
-| Tower quota middleware rejects on over-limit | unit | `agent-gateway/src/mw/router_quota.rs` |
-| `DynamicPromptCapability::invoke` reads DB row, renders, calls LLM mock | integration | `chains/dynamic_prompt.rs` |
-| Dynamic prompt versioning: PUT bumps, GET ?version=N retrieves | gateway integration | `routes/admin_capabilities.rs` |
-| `BulkCapabilityFactory::load_batch` with 1k specs (testcontainers) | integration | `tools/providers/capability_spec.rs` |
-| LISTEN/NOTIFY hot-reload of one capability spec | integration | `tools/providers/capability_spec.rs` |
-| End-to-end: 5k synthetic ERP specs → agent turn → only top-K passed to Anthropic mock | gateway integration | `routes/agent.rs` |
-
-Run via `make test`. Add CI matrix entry: `cargo test -p agent-core --features local-embeddings`.
-
----
-
-### Phase 7 — Documentation & migration
-
-- Update [docs/arch.md](docs/arch.md) with the router diagram from §1.
-- Add ADR `docs/adr/0004-semantic-capability-router-and-dynamic-prompts.md` documenting:
-  - Top-K vs. all-tools trade-off.
-  - Static (`capability.toml`) vs. dynamic (DB) prompts.
-  - Hybrid Rust/WASM + prompt policy.
-  - Why Rig's `ToolProvider` adapter (one Rust path, two surfaces).
-- Backfill script `apps/backend/scripts/backfill_capability_namespaces.sql` — sets `namespace = ''` and `tags = '{}'` (the migration default already does this; script is a no-op safety net).
-- Update [docs/project-instructions.md](docs/project-instructions.md): *"Every new capability MUST declare `namespace` and SHOULD declare `tags`."*
-- New `docs/tasks/capability-pack.md`: how to author a capability spec row + WASM payload + prompt template (uses ERP as the worked example).
-
----
-
-## 3. Sequencing & Dependencies
-
-```
-Phase 1 (namespaces + filters) ──► Phase 2 (SemanticCapabilityRouter + Rig adapter) ──► Phase 5 (obs)
-                                              │
-                                              ├──► Phase 3 (DynamicPromptCapability)
-                                              │
-                                              └──► Phase 4 (BulkCapabilityFactory + ERP)
-                                                              │
-                                                              └──► Phase 6 (tests) ──► Phase 7 (docs)
+**Register in providers/mod.rs:**
+```rust
+pub mod remote_mcp;
 ```
 
-Phases 3 and 4 are independent and can be parallelised once Phase 2 is merged.
+### 1.3 — Add `remote_mcp` strategy to `CapabilitySpecFactory::row_to_provider`
 
-**Priority order:**
-1. Merge Phase 1 (smallest blast radius).
-2. Implement & merge `SemanticCapabilityRouter` with Rig `ToolProvider` integration.
-3. Parallel: `DynamicPromptCapability` + `CapabilitySpecFactory`.
-4. Full e2e test with 5k synthetic ERP specs before declaring v0.3.2 done.
+**File:** `apps/backend/crates/agent-core/src/tools/providers/capability_spec.rs`
+
+In `row_to_provider()`, add a new arm to the `match row.strategy.as_str()` block:
+
+```rust
+"remote_mcp" => (ToolKind::RemoteMcp, None),
+```
+
+And in the final provider construction match, add:
+```rust
+ToolKind::RemoteMcp => {
+    let endpoint = row.payload["endpoint"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("remote_mcp spec '{}' missing payload.endpoint", cap_name))?
+        .to_string();
+    providers::remote_mcp::RemoteMcpCapability::new(manifest, endpoint)
+}
+```
+
+**Tests to add** in the same file's `#[cfg(test)]` block:
+- `remote_mcp_provider_forwards_to_adapter` — mock endpoint, verify `invoke` calls `call_tool`
 
 ---
 
-## 4. Success Criteria
+## Phase 2 — `tenant_scope` for Capability-Level Tenant Isolation (2 AI-hours)
 
-1. **Scale:** 10,000 capabilities registered; `capability_embeddings` holds 10k rows; cold start < 30 s; warm router p95 < 15 ms.
-2. **Context budget:** LLM never receives > 4 KB of tool descriptions per turn (top-K=20, avg 200 chars/def).
-3. **Extensibility:** Adding a new ERP rule = `INSERT` into `capability_specs` (namespace `erp.*`) + (optional) `dynamic_prompts` row. No Rust rebuild, no restart.
-4. **Determinism preserved:** Money-moving primitives still implemented as WASM/Builtin providers, audited, schema-validated.
-5. **Backward compatible:** Existing `capability.toml` files work unchanged; `namespace` and `tags` are optional.
-6. **Rig-native:** `SemanticCapabilityRouter` is consumable via `rig::AgentBuilder::tools(adapter)` with no extra glue.
-7. **Observable:** Per-turn trace shows selected capabilities, distances, cache hits, and invoke outcomes; OTel GenAI conventions emitted.
+**Principle:** A capability should be visible only to the tenants it was registered for. `"global"` means all tenants. The filter must be applied at `SemanticCapabilityRouter::select()` time and at `/v1/capabilities` list time.
+
+### 2.1 — Migration: add `tenant_scope` to `capability_specs`
+
+**New file:** `apps/backend/crates/common/migrations/20260507000300_capability_tenant_scope.up.sql`
+
+```sql
+ALTER TABLE capability_specs
+    ADD COLUMN IF NOT EXISTS tenant_scope TEXT[] NOT NULL DEFAULT '{}';
+-- Empty array = global (visible to all tenants).
+-- Non-empty = visible only to listed tenant IDs.
+COMMENT ON COLUMN capability_specs.tenant_scope IS
+    'Empty = global. Non-empty = restrict to these tenant IDs.';
+
+CREATE INDEX IF NOT EXISTS capability_specs_scope_idx
+    ON capability_specs USING GIN (tenant_scope);
+```
+
+**Also update** `docker/init/02-schema.sql` to add `tenant_scope TEXT[] NOT NULL DEFAULT '{}'` to the `capability_specs` CREATE TABLE definition, plus the GIN index.
+
+### 2.2 — Add `tenant_scope` to `CapabilitySpecRow`
+
+**File:** `apps/backend/crates/agent-core/src/tools/providers/capability_spec.rs`
+
+Add to `CapabilitySpecRow`:
+```rust
+tenant_scope: Vec<String>,
+```
+
+### 2.3 — Add `tenant_scope` to `CapabilityCard` / `ToolManifest`
+
+**File:** `apps/backend/crates/agent-core/src/tools/manifest.rs`
+
+Add to `ToolManifest`:
+```rust
+/// Empty = global (all tenants). Non-empty = only these tenant IDs see this capability.
+#[serde(default)]
+pub tenant_scope: Vec<String>,
+```
+
+**File:** `apps/backend/crates/agent-core/src/tools/card.rs`
+
+Add helper to `CapabilityCard`:
+```rust
+/// Returns true if this capability is visible to `tenant_id`.
+/// An empty scope means global (always visible).
+pub fn is_visible_to(&self, tenant_id: &str) -> bool {
+    let scope = &self.manifest.tenant_scope;
+    scope.is_empty() || scope.iter().any(|t| t == tenant_id)
+}
+```
+
+### 2.4 — Enforce scope in `SemanticCapabilityRouter::select()`
+
+**File:** `apps/backend/crates/agent-core/src/tools/semantic_router.rs`
+
+After ANN hits are collected and distance-filtered, add a scope filter:
+```rust
+// Filter by tenant_scope if tenant is known.
+if let Some(t) = tenant {
+    let registry = self.registry.lock().unwrap();
+    cap_names.retain(|name| {
+        registry.get(name)
+            .map(|card| card.is_visible_to(&t.tenant_id))
+            .unwrap_or(false)
+    });
+}
+```
+
+Also enforce in `ToolRegistry::search_by_namespace()` — add `tenant_id: Option<&str>` parameter and filter cards by `is_visible_to`.
+
+### 2.5 — Enforce scope at `/v1/capabilities` list route
+
+**File:** `apps/backend/crates/agent-gateway/src/routes/` (capabilities listing handler)
+
+When building the list response, filter by `card.is_visible_to(&tenant.tenant_id)`.
+
+**Tests:**
+- Unit test in `card.rs`: `is_visible_to_global`, `is_visible_to_specific_tenant`, `is_not_visible_to_other_tenant`
+- Unit test in `semantic_router.rs`: `select_respects_tenant_scope`
 
 ---
 
-## 5. Out of Scope (deferred to v0.4)
+## Phase 3 — `POST /admin/capabilities/register` Self-Registration Endpoint (2 AI-hours)
 
-- Multi-tenant capability *isolation* (`tenant_capability_grants` table).
-- Capability *composition* DSL (declarative chains in YAML beyond `LlmChainConfig`).
-- Cross-encoder re-ranking after vector top-K (small ONNX model).
-- Auto-evaluation harness for prompt regressions (extend [apps/backend/evals](apps/backend/evals)).
-- L2 Redis cache for multi-pod gateway deployments.
-- `GraphCapabilityRouter` — orchestrator-style routing with explicit DAGs.
+**Principle:** External services call this endpoint with a JSON manifest on startup. No TOML file, no WASM binary, no disk access. The registration atomically: validates → persists to `capability_specs` → embeds → inserts into registry.
+
+### 3.1 — Request/Response types
+
+**File:** `apps/backend/crates/agent-gateway/src/routes/admin_capabilities.rs`
+
+Add new request type:
+```rust
+/// JSON manifest posted by external self-registering capability services.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct CapabilityRegisterRequest {
+    /// Unique ID, e.g. "media.time.current-time" — stored as capability_id.
+    pub capability_id: String,
+    /// Human name, used as tool_name in capability_specs.
+    pub name: String,
+    /// Dot-separated namespace, e.g. "media.time".
+    pub namespace: String,
+    pub description: String,
+    pub version: String,
+    /// Must be "remote_mcp" for self-registering MCP services.
+    pub kind: String,
+    /// MCP server endpoint URL (required when kind = "remote_mcp").
+    pub endpoint: Option<String>,
+    /// Tool definitions (name + description + JSON Schema).
+    pub tools: Vec<ToolDefJson>,
+    /// Empty = global. Non-empty = only these tenant IDs.
+    #[serde(default)]
+    pub tenant_scope: Vec<String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ToolDefJson {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+fn default_true() -> bool { true }
+```
+
+### 3.2 — Handler implementation
+
+Add route `POST /admin/capabilities/register` in `admin_capabilities.rs`:
+
+```rust
+pub async fn register_capability(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CapabilityRegisterRequest>,
+) -> Result<impl IntoResponse, HttpError>
+```
+
+**Implementation steps inside the handler:**
+
+1. **Validate** — `capability_id` must match pattern `^[a-z][a-z0-9._-]{1,127}$`; `kind` must be `"remote_mcp"` (only supported kind for self-registration); `endpoint` required when kind = `"remote_mcp"`; `tools` must be non-empty.
+2. **Upsert `capability_specs` row** — use `INSERT ... ON CONFLICT (namespace, tool_name) DO UPDATE` so re-registration is idempotent:
+   ```sql
+   INSERT INTO capability_specs
+       (id, namespace, tool_name, description, input_schema, output_schema,
+        strategy, payload, tags, tenant_scope, enabled)
+   VALUES ($1, $2, $3, $4, $5, NULL, 'remote_mcp',
+           jsonb_build_object('endpoint', $6), $7, $8, $9)
+   ON CONFLICT (namespace, tool_name)
+   DO UPDATE SET
+       description  = EXCLUDED.description,
+       payload      = EXCLUDED.payload,
+       tags         = EXCLUDED.tags,
+       tenant_scope = EXCLUDED.tenant_scope,
+       enabled      = EXCLUDED.enabled,
+       updated_at   = now()
+   RETURNING id
+   ```
+3. **Build provider** — call `CapabilitySpecFactory::row_to_provider()` with the synthesised row (no DB re-read needed — the row data is already in memory from step 2).
+4. **Embed + upsert vector** — call `state.embedding_service.embed_query(&embedding_text)` then `state.vector_store.upsert_capability_embedding_full(...)`.
+5. **Register in-process** — `state.registry.lock().unwrap().register(card.with_provider(provider))`.
+6. **Invalidate router cache** — `state.semantic_router.invalidate_all().await`.
+7. **Audit log** — `state.audit_store.append(AuditEvent::new("system", "capability.register").with_metadata(json!({...})))`.
+8. **Return** `201 Created` with `{ "capability_id": "...", "registered": true }`.
+
+### 3.3 — Wire route in router
+
+**File:** `apps/backend/crates/agent-gateway/src/routes/mod.rs`
+
+Add `register_capability` to the admin router alongside existing admin capability routes.
+
+### 3.4 — Tests
+
+Add integration test in `admin_capabilities.rs` `#[cfg(test)]` block:
+- `register_new_capability_201` — POST valid JSON, assert 201, assert registry contains the capability
+- `register_idempotent_on_conflict` — POST same capability_id twice, assert 200 on second call (not 409)
+- `register_rejects_unknown_kind` — POST with `kind = "unknown"`, assert 400
+- `register_rejects_missing_endpoint_for_remote_mcp` — no endpoint field, assert 400
+
+---
+
+## Phase 4 — `ArtifactBridge` (3 AI-hours)
+
+**Principle:** Tools return structured `ToolOutput` with an `artifacts` array. A post-invoke interceptor (not inside the tool) uploads artifacts to MinIO and creates `workspace_nodes` entries. Tools stay pure — they never touch storage directly.
+
+### 4.1 — `Artifact` and `ToolOutput` types in `common`
+
+**New file:** `apps/backend/crates/common/src/artifact.rs`
+
+```rust
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Artifact {
+    /// Filename including extension, e.g. "transcript_2026.txt".
+    pub name: String,
+    /// MIME type, e.g. "text/plain", "application/pdf".
+    pub mime_type: String,
+    /// Base64-encoded content for small files (< 1 MiB). Mutually exclusive with `source_url`.
+    #[serde(default)]
+    pub data: Option<String>,
+    /// Pre-signed or direct URL for large files. Mutually exclusive with `data`.
+    #[serde(default)]
+    pub source_url: Option<String>,
+    /// Domain-specific metadata (e.g. `{"duration": 184.5, "language": "en"}`).
+    #[serde(default)]
+    pub metadata: Value,
+}
+
+/// Canonical tool output envelope.
+/// All `CapabilityProvider::invoke()` implementations may return this as their JSON value.
+/// The `ArtifactBridge` detects `artifacts` and materialises them into the workspace.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ToolOutput {
+    /// Human-readable summary forwarded to the LLM as the tool result.
+    pub content: String,
+    /// Files produced by this tool invocation. May be empty.
+    #[serde(default)]
+    pub artifacts: Vec<Artifact>,
+    /// Any extra domain metadata. Not sent to the LLM.
+    #[serde(default)]
+    pub metadata: Value,
+}
+```
+
+**Register in `common/src/lib.rs`:** `pub mod artifact;`
+
+### 4.2 — `ArtifactBridge` implementation
+
+**New file:** `apps/backend/crates/agent-core/src/bridge/artifact_bridge.rs`
+
+```rust
+//! Post-invoke artifact materialisation bridge.
+//!
+//! Called after every `CapabilityProvider::invoke()` that returns a `ToolOutput`
+//! with non-empty `artifacts`. Uploads binaries to MinIO, creates `workspace_nodes`
+//! rows, and optionally triggers CocoIndex embedding for indexable MIME types.
+//!
+//! # SRP contract
+//! - Tools return `ToolOutput` — they never call object_store or workspace_store.
+//! - `ArtifactBridge` owns the upload + workspace node creation + index trigger.
+//! - `CapabilityProvider::invoke()` returns a raw `serde_json::Value`.
+//!   The caller (agent runtime) calls `ArtifactBridge::process_if_artifacts` after invoke.
+
+use common::artifact::{Artifact, ToolOutput};
+use common::memory::workspace::{WorkspaceNode, WorkspaceStore};
+use object_store::ObjectStore;
+use serde_json::json;
+use sqlx::PgPool;
+use std::sync::Arc;
+use tracing::{info, instrument, warn};
+use ulid::Ulid;
+
+/// MIME types that should be indexed after upload.
+const INDEXABLE_MIME_PREFIXES: &[&str] = &["text/", "application/pdf", "application/json"];
+
+pub struct ArtifactBridge {
+    pool: PgPool,
+    object_store: Arc<dyn ObjectStore>,
+    workspace_store: Arc<dyn WorkspaceStore>,
+}
+
+impl ArtifactBridge {
+    pub fn new(
+        pool: PgPool,
+        object_store: Arc<dyn ObjectStore>,
+        workspace_store: Arc<dyn WorkspaceStore>,
+    ) -> Arc<Self> {
+        Arc::new(Self { pool, object_store, workspace_store })
+    }
+
+    /// If `output` contains artifacts, materialise each one. Returns the output unchanged.
+    #[instrument(skip(self, output), fields(tool = tool_name, artifact_count = output.artifacts.len()))]
+    pub async fn process_if_artifacts(
+        &self,
+        tenant_id: &str,
+        user_id: Option<&str>,
+        tool_name: &str,
+        parent_node_id: Option<&str>,
+        output: &ToolOutput,
+    ) -> anyhow::Result<()> {
+        if output.artifacts.is_empty() {
+            return Ok(());
+        }
+        for artifact in &output.artifacts {
+            if let Err(e) = self.materialise(tenant_id, user_id, tool_name, parent_node_id, artifact).await {
+                warn!(error = %e, artifact = %artifact.name, "artifact materialisation failed — skipping");
+            }
+        }
+        Ok(())
+    }
+
+    async fn materialise(
+        &self,
+        tenant_id: &str,
+        user_id: Option<&str>,
+        tool_name: &str,
+        parent_node_id: Option<&str>,
+        artifact: &Artifact,
+    ) -> anyhow::Result<()> {
+        let node_id = Ulid::new().to_string();
+        let object_key = format!("{tenant_id}/{tool_name}/{node_id}/{}", artifact.name);
+
+        // Upload to object store if data is present.
+        if let Some(ref b64) = artifact.data {
+            use base64::Engine;
+            let bytes = base64::engine::general_purpose::STANDARD.decode(b64)?;
+            self.object_store
+                .put(&object_key.clone().into(), bytes.into())
+                .await?;
+        }
+
+        // Create workspace node.
+        let node = WorkspaceNode {
+            id: node_id.clone(),
+            tenant_id: tenant_id.to_string(),
+            owner_id: user_id.unwrap_or("system").to_string(),
+            parent_id: parent_node_id.map(str::to_string),
+            kind: "file".to_string(),
+            name: artifact.name.clone(),
+            virtual_path: format!("/outputs/{tool_name}/{}", artifact.name),
+            metadata: json!({
+                "mime_type": artifact.mime_type,
+                "tool":       tool_name,
+                "source":     "tool_output",
+                "object_key": object_key,
+                "artifact_metadata": artifact.metadata,
+            }),
+            ..Default::default()
+        };
+        self.workspace_store.create_node(&node).await?;
+
+        // Trigger indexing for text-like MIME types (async, best-effort).
+        if is_indexable(&artifact.mime_type) {
+            let pool = self.pool.clone();
+            let key = object_key.clone();
+            let id = node_id.clone();
+            tokio::spawn(async move {
+                if let Err(e) = trigger_index(pool, id, key).await {
+                    warn!(error = %e, "artifact index trigger failed");
+                }
+            });
+        }
+
+        info!(artifact = %artifact.name, node_id = %node_id, "artifact materialised");
+        Ok(())
+    }
+}
+
+fn is_indexable(mime: &str) -> bool {
+    INDEXABLE_MIME_PREFIXES.iter().any(|p| mime.starts_with(p))
+}
+
+async fn trigger_index(pool: PgPool, node_id: String, object_key: String) -> anyhow::Result<()> {
+    // Insert a pending indexing task — picked up by the indexer background task.
+    sqlx::query!(
+        "INSERT INTO indexing_queue (node_id, object_key, created_at)
+         VALUES ($1, $2, now())
+         ON CONFLICT (node_id) DO NOTHING",
+        node_id,
+        object_key,
+    )
+    .execute(&pool)
+    .await?;
+    Ok(())
+}
+```
+
+**New file:** `apps/backend/crates/agent-core/src/bridge/mod.rs`
+```rust
+pub mod artifact_bridge;
+pub use artifact_bridge::ArtifactBridge;
+```
+
+**Register in `agent-core/src/lib.rs`:** `pub mod bridge;`
+
+### 4.3 — DB migration: `indexing_queue` table
+
+**New file:** `apps/backend/crates/common/migrations/20260507000400_indexing_queue.up.sql`
+
+```sql
+CREATE TABLE IF NOT EXISTS indexing_queue (
+    id          BIGSERIAL PRIMARY KEY,
+    node_id     TEXT        NOT NULL,
+    object_key  TEXT        NOT NULL,
+    status      TEXT        NOT NULL DEFAULT 'pending',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    processed_at TIMESTAMPTZ,
+    error       TEXT,
+    UNIQUE (node_id)
+);
+CREATE INDEX IF NOT EXISTS indexing_queue_status_idx ON indexing_queue (status, created_at);
+```
+
+**Also add** to `docker/init/02-schema.sql`.
+
+### 4.4 — Wire `ArtifactBridge` into `AppState`
+
+**File:** `apps/backend/crates/agent-gateway/src/state.rs`
+
+Add field:
+```rust
+pub artifact_bridge: Option<Arc<ArtifactBridge>>,
+```
+
+Populate in `from_env()`: construct `ArtifactBridge::new(pool, file_store, workspace_store)` only when both Postgres and MinIO are configured.
+
+### 4.5 — Wire `ArtifactBridge` into the agent completion route
+
+**File:** `apps/backend/crates/agent-gateway/src/routes/agent.rs`
+
+After each tool invocation result is returned, attempt to parse it as `ToolOutput` and call `bridge.process_if_artifacts(...)`:
+
+```rust
+if let Some(ref bridge) = state.artifact_bridge {
+    if let Ok(tool_out) = serde_json::from_value::<common::artifact::ToolOutput>(raw_result.clone()) {
+        let _ = bridge.process_if_artifacts(
+            &tenant.tenant_id,
+            tenant.user_id.as_deref(),
+            &tool_name,
+            thread_node_id.as_deref(),
+            &tool_out,
+        ).await;
+    }
+}
+```
+
+The LLM still receives `raw_result` unchanged — `ArtifactBridge` runs as a side-effect.
+
+### 4.6 — Tests
+
+- `artifact_bridge_skips_empty_artifacts` — `process_if_artifacts` with no artifacts returns Ok and writes nothing
+- `artifact_bridge_creates_workspace_node` — mock `WorkspaceStore`, assert `create_node` called with correct fields
+- `artifact_bridge_non_indexable_mime_no_queue_entry` — verify `trigger_index` not called for `image/png`
+
+---
+
+## Phase 5 — Hot-Reload Wiring at Startup (1 AI-hour)
+
+**Problem:** `RealtimeService::subscribe_capability_spec_changes()` exists but nothing calls it at startup to feed `CapabilitySpecFactory::reload_one()`. The LISTEN/NOTIFY trigger fires correctly but the receiver is never consumed.
+
+**File:** `apps/backend/crates/agent-gateway/src/state.rs` (or `main.rs`)
+
+In `AppState::from_env()`, after constructing `realtime_service` and `capability_spec_factory`, spawn a background task:
+
+```rust
+if let (Some(rt), Some(factory)) = (&state.realtime_service, &state.capability_spec_factory) {
+    let mut rx = rt.subscribe_capability_spec_changes().await;
+    let factory = Arc::clone(factory);
+    let registry = Arc::clone(&state.registry);
+    tokio::spawn(async move {
+        while let Some((namespace, tool_name)) = rx.recv().await {
+            if let Err(e) = factory.reload_one(&registry, &namespace, &tool_name).await {
+                tracing::warn!(error = %e, namespace, tool_name, "hot-reload failed");
+            } else {
+                tracing::info!(namespace, tool_name, "capability hot-reloaded via LISTEN/NOTIFY");
+            }
+        }
+    });
+}
+```
+
+This ensures that a `capability_specs_changed` NOTIFY (from any INSERT/UPDATE/DELETE on `capability_specs` — including the new `/register` endpoint) propagates to the in-memory registry within milliseconds.
+
+**Tests:**
+- `hot_reload_task_picks_up_notify` — use `tokio::sync::mpsc` mock, verify `reload_one` called after message received
+
+---
+
+## Phase 6 — `services/current-time` Example Capability (2 AI-hours)
+
+This is the zero-core-touch validation service. It lives outside `apps/backend/` and requires **zero Rust changes** to add.
+
+### 6.1 — Directory structure
+
+```
+services/
+  current-time/
+    Dockerfile
+    main.py
+    requirements.txt
+```
+
+### 6.2 — `services/current-time/Dockerfile`
+
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+RUN pip install --no-cache-dir fastapi uvicorn mcp httpx
+COPY . .
+EXPOSE 8082
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8082"]
+```
+
+### 6.3 — `services/current-time/requirements.txt`
+
+```
+fastapi>=0.115
+uvicorn>=0.32
+mcp>=1.0
+httpx>=0.27
+```
+
+### 6.4 — `services/current-time/main.py`
+
+```python
+"""
+current-time MCP capability service.
+Zero-core-touch: self-registers at startup via POST /admin/capabilities/register.
+"""
+import asyncio
+import os
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+import httpx
+from fastapi import FastAPI
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("current-time")
+
+
+@mcp.tool()
+async def get_current_time(timezone: str = "UTC") -> dict:
+    """Returns the current ISO 8601 timestamp. Optional IANA timezone name."""
+    try:
+        tz = ZoneInfo(timezone)
+    except ZoneInfoNotFoundError:
+        return {"error": f"Unknown timezone: {timezone!r}"}
+    now = datetime.now(tz)
+    return {
+        "content": f"Current time in {timezone}: {now.isoformat()}",
+        "artifacts": [],
+        "metadata": {"timezone": timezone, "timestamp": now.isoformat()},
+    }
+
+
+app = FastAPI(title="current-time MCP service")
+mcp.mount(app)
+
+
+# ── Self-registration ──────────────────────────────────────────────────────────
+
+MANIFEST = {
+    "capability_id": "media.time.current-time",
+    "name": "current-time",
+    "namespace": "media.time",
+    "description": "Returns current server time with optional IANA timezone support.",
+    "version": "1.0.0",
+    "kind": "remote_mcp",
+    "endpoint": os.getenv("CONUSAI_SERVICE_URL", "http://current-time:8082") + "/mcp",
+    "tools": [
+        {
+            "name": "get_current_time",
+            "description": "Returns ISO 8601 timestamp for a given IANA timezone (default UTC).",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "timezone": {"type": "string", "description": "IANA timezone, e.g. 'Europe/Helsinki'"}
+                },
+            },
+        }
+    ],
+    "tenant_scope": os.getenv("CONUSAI_TENANT_SCOPE", "").split(",")
+        if os.getenv("CONUSAI_TENANT_SCOPE") else [],
+    "enabled": True,
+    "tags": ["time", "utility"],
+}
+
+
+async def register_with_retry(max_retries: int = 10, delay: float = 3.0) -> None:
+    platform_url = os.environ["CONUSAI_PLATFORM_URL"]
+    token = os.environ["CONUSAI_PLATFORM_TOKEN"]
+    url = f"{platform_url}/admin/capabilities/register"
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    url,
+                    json=MANIFEST,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                resp.raise_for_status()
+                print(f"[current-time] registered: {resp.json()}")
+                return
+        except Exception as exc:
+            print(f"[current-time] registration attempt {attempt}/{max_retries} failed: {exc}")
+            if attempt < max_retries:
+                await asyncio.sleep(delay)
+
+    print("[current-time] WARNING: all registration attempts failed — service running unregistered")
+
+
+@app.on_event("startup")
+async def on_startup() -> None:
+    asyncio.create_task(register_with_retry())
+```
+
+### 6.5 — docker-compose.yml additions
+
+**File:** `docker-compose.yml`
+
+Add the `current-time` service to the existing compose file (no other changes):
+
+```yaml
+  current-time:
+    build:
+      context: ./services/current-time
+    restart: unless-stopped
+    environment:
+      CONUSAI_PLATFORM_URL: "http://agent-gateway:8080"
+      CONUSAI_PLATFORM_TOKEN: "${PLATFORM_ADMIN_TOKEN}"
+      CONUSAI_SERVICE_URL: "http://current-time:8082"
+      # CONUSAI_TENANT_SCOPE: "tenant-abc,tenant-xyz"  # uncomment to scope
+    ports:
+      - "8082:8082"
+    profiles: [full]
+    depends_on:
+      agent-gateway:
+        condition: service_healthy
+```
+
+Also add `PLATFORM_ADMIN_TOKEN=` to `.env.example` with a comment explaining it is a super-admin JWT.
+
+---
+
+## Phase 7 — Eval Coverage (1 AI-hour)
+
+**File:** `apps/backend/evals/src/` (add new eval dataset + scorer)
+
+### 7.1 — Semantic registration eval
+
+**New file:** `apps/backend/evals/datasets/capability_registration.jsonl`
+
+```jsonl
+{"query": "what time is it in Helsinki", "expected_capabilities": ["media.time.current-time"]}
+{"query": "current timestamp UTC", "expected_capabilities": ["media.time.current-time"]}
+{"query": "what day of the week is it", "expected_capabilities": ["media.time.current-time"]}
+```
+
+### 7.2 — Eval runner addition
+
+**File:** `apps/backend/evals/src/main.rs`
+
+Add a `capability_routing` eval case that:
+1. Registers `current-time` via the new `/register` endpoint against a test AppState
+2. For each query in the dataset, calls `semantic_router.select(query, None)`
+3. Asserts `expected_capabilities` ⊆ returned names
+4. Reports recall@K score
+
+---
+
+## Phase 8 — Verification & Validation (1 AI-hour)
+
+### 8.1 — Full test suite
+
+```bash
+cargo test --workspace
+```
+
+All 59 existing tests must still pass. New tests added in Phases 1–5 must also pass.
+
+### 8.2 — Clippy clean
+
+```bash
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+Zero warnings.
+
+### 8.3 — End-to-end smoke test
+
+```bash
+# Start infrastructure
+docker compose --profile infra up -d
+make db-migrate
+
+# Start full stack
+docker compose --profile full up -d
+
+# Wait for gateway health
+until curl -sf http://localhost:8080/health; do sleep 1; done
+
+# Get super-admin JWT
+TOKEN=$(curl -s -X POST http://localhost:8080/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@test.local","password":"dev"}' | jq -r .token)
+
+# Verify current-time auto-registered
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/v1/capabilities/search?q=current+time" \
+  | jq '.[0].name'
+# Expected: "current-time"
+
+# Invoke via agent completions
+curl -s -X POST http://localhost:8080/v1/agent/completions \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"claude-opus-4-7","messages":[{"role":"user","content":"What time is it in Helsinki?"}]}' \
+  | jq '.choices[0].message.content'
+# Expected: string containing ISO timestamp
+```
+
+### 8.4 — Tenant scope smoke test
+
+```bash
+# Register with explicit tenant scope
+curl -s -X POST http://localhost:8080/admin/capabilities/register \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "capability_id": "test.scoped-tool",
+    "name": "scoped-tool",
+    "namespace": "test",
+    "description": "Only visible to tenant-abc",
+    "version": "1.0.0",
+    "kind": "remote_mcp",
+    "endpoint": "http://localhost:9999/mcp",
+    "tools": [{"name": "run", "description": "run", "input_schema": {"type": "object"}}],
+    "tenant_scope": ["tenant-abc"]
+  }'
+
+# Search as tenant-xyz → should NOT see scoped-tool
+curl -s -H "Authorization: Bearer $TOKEN_TENANT_XYZ" \
+  "http://localhost:8080/v1/capabilities/search?q=scoped+tool" \
+  | jq 'length'
+# Expected: 0
+```
+
+---
+
+## Phase 9 — Release & Tag (0.5 AI-hours)
+
+```bash
+# Final lint + build
+make verify
+cargo build --release --bin agent-gateway
+
+# Bump workspace version in Cargo.toml: 0.3.1 → 0.3.3
+sed -i '' 's/^version = "0.3.1"/version = "0.3.3"/' Cargo.toml
+
+# Commit
+git add -A
+git commit -m "feat(v0.3.3): zero-core-touch mode, self-registering capabilities
+
+- RemoteMcpCapability + ToolKind::RemoteMcp
+- POST /admin/capabilities/register for external service self-registration
+- tenant_scope field on capability_specs (global or per-tenant visibility)
+- ArtifactBridge: tool output files → MinIO + workspace nodes
+- indexing_queue table for async text artifact indexing
+- Hot-reload loop: LISTEN/NOTIFY → CapabilitySpecFactory::reload_one wired at startup
+- services/current-time: Python MCP self-registering example
+- docker-compose: current-time service under [full] profile
+- Evals: capability_routing dataset + recall@K scorer
+- Migration: tenant_scope, indexing_queue"
+
+git tag v0.3.3
+```
+
+---
+
+## Implementation Order & Dependencies
+
+```
+Phase 1 (RemoteMcpCapability)
+    ↓
+Phase 2 (tenant_scope) ← independent of Phase 1 but both needed for Phase 3
+    ↓
+Phase 3 (register endpoint) ← requires Phases 1 + 2
+    ↓
+Phase 4 (ArtifactBridge)   ← independent, can run parallel to Phase 2
+Phase 5 (hot-reload wiring) ← independent, can run parallel to Phase 2
+    ↓
+Phase 6 (services/current-time) ← requires Phase 3
+    ↓
+Phase 7 (evals)   ← requires Phase 3 + 6
+Phase 8 (verify)  ← requires all prior phases
+Phase 9 (release) ← requires Phase 8
+```
+
+---
+
+## File Change Summary
+
+| File | Action | Phase |
+|------|--------|-------|
+| `agent-core/src/tools/manifest.rs` | Add `RemoteMcp` to `ToolKind`, `tenant_scope` to `ToolManifest` | 1, 2 |
+| `agent-core/src/tools/providers/remote_mcp.rs` | **New** — `RemoteMcpCapability` | 1 |
+| `agent-core/src/tools/providers/mod.rs` | Register `remote_mcp` module | 1 |
+| `agent-core/src/tools/providers/capability_spec.rs` | Add `remote_mcp` strategy, `tenant_scope` row field | 1, 2 |
+| `agent-core/src/tools/card.rs` | Add `is_visible_to(tenant_id)` | 2 |
+| `agent-core/src/tools/semantic_router.rs` | Enforce `tenant_scope` filter in `select()` | 2 |
+| `agent-core/src/bridge/mod.rs` | **New** | 4 |
+| `agent-core/src/bridge/artifact_bridge.rs` | **New** — `ArtifactBridge` | 4 |
+| `agent-core/src/lib.rs` | `pub mod bridge` | 4 |
+| `agent-core/src/realtime/mod.rs` | No changes | — |
+| `agent-gateway/src/routes/admin_capabilities.rs` | Add `register_capability` handler + request types | 3 |
+| `agent-gateway/src/routes/mod.rs` | Register new route | 3 |
+| `agent-gateway/src/state.rs` | Add `artifact_bridge` field, spawn hot-reload task | 4, 5 |
+| `agent-gateway/src/routes/agent.rs` | Wire `ArtifactBridge` after tool invocation | 4 |
+| `common/src/artifact.rs` | **New** — `Artifact` + `ToolOutput` | 4 |
+| `common/src/lib.rs` | `pub mod artifact` | 4 |
+| `common/migrations/20260507000300_capability_tenant_scope.up.sql` | **New** | 2 |
+| `common/migrations/20260507000400_indexing_queue.up.sql` | **New** | 4 |
+| `docker/init/02-schema.sql` | Add `tenant_scope`, `indexing_queue` | 2, 4 |
+| `docker-compose.yml` | Add `current-time` service | 6 |
+| `.env.example` | Add `PLATFORM_ADMIN_TOKEN` | 6 |
+| `services/current-time/Dockerfile` | **New** | 6 |
+| `services/current-time/main.py` | **New** | 6 |
+| `services/current-time/requirements.txt` | **New** | 6 |
+| `evals/datasets/capability_registration.jsonl` | **New** | 7 |
+| `evals/src/main.rs` | Add capability routing eval | 7 |
+| `Cargo.toml` | Bump version to 0.3.3 | 9 |
+
+**Total new files:** 10  
+**Modified files:** 14  
+**New migrations:** 2  
+**Estimated AI-hours:** 14  
+**Estimated tokens:** ~90k

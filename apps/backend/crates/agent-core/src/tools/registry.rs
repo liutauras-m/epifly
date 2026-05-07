@@ -313,6 +313,7 @@ mod tests {
             tags,
             namespace: None,
             chain: None,
+            tenant_scope: vec![],
         };
         CapabilityCard::new(manifest, std::path::PathBuf::from("/tmp"))
     }
@@ -374,6 +375,7 @@ mod tests {
             tags: vec![],
             namespace: if ns.is_empty() { None } else { Some(ns.into()) },
             chain: None,
+            tenant_scope: vec![],
         };
         CapabilityCard::new(manifest, std::path::PathBuf::from("/tmp"))
     }

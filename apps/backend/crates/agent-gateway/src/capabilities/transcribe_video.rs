@@ -45,6 +45,7 @@ impl TranscribeVideoCapability {
             tags: vec!["audio".into(), "video".into(), "transcription".into()],
             namespace: None,
             chain: None,
+            tenant_scope: vec![],
         };
 
         Self { manifest, executor }

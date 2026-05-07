@@ -200,6 +200,17 @@ impl SemanticCapabilityRouter {
             .map(|h| h.capability_id)
             .collect();
 
+        // Enforce tenant_scope — filter out capabilities not visible to this tenant.
+        if let Some(t) = tenant {
+            let registry = self.registry.lock().unwrap();
+            cap_names.retain(|name| {
+                registry
+                    .get(name)
+                    .map(|card| card.is_visible_to(&t.tenant_id))
+                    .unwrap_or(true) // if card not in registry yet, let it through
+            });
+        }
+
         // Always-include overrides (prepended, deduped).
         for always in &self.cfg.include_always {
             if !cap_names.contains(always) {
@@ -315,8 +326,21 @@ impl SemanticCapabilityRouter {
         let (cap_name, tool_name) = parse_tool_name(full_tool_name)?;
         let provider = {
             let registry = self.registry.lock().unwrap();
+            // 1. Exact lookup (covers TOML capabilities like `runtime-echo`).
+            // 2. Dot-restore fallback: Anthropic tool names cannot contain dots, so
+            //    `tool_definitions_from_manifest` replaces `.` → `_` in the capability
+            //    prefix.  When the LLM echoes the sanitised name back we scan the registry
+            //    for the capability whose original name sanitises to `cap_name`.
+            //    (A naïve `replace('_', '.')` fails when the name contains real underscores,
+            //    e.g. `media_time_get_current_time` ≠ `media.time.get.current.time`.)
             registry
                 .get_provider(cap_name)
+                .or_else(|| {
+                    registry
+                        .all()
+                        .find(|card| card.manifest.name.replace('.', "_") == cap_name)
+                        .and_then(|card| registry.get_provider(&card.manifest.name))
+                })
                 .ok_or_else(|| anyhow::anyhow!("no provider for capability '{cap_name}'"))?
         };
 
@@ -635,6 +659,7 @@ mod tests {
                 tags: vec![],
                 namespace: None,
                 chain: None,
+                tenant_scope: vec![],
             };
             let card = crate::tools::card::CapabilityCard::new(
                 manifest.clone(),

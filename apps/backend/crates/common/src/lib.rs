@@ -1,3 +1,4 @@
+pub mod artifact;
 pub mod audit;
 pub mod config;
 pub mod db;

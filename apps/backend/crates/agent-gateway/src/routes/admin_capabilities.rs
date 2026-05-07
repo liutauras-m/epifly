@@ -9,12 +9,16 @@ use agent_core::{
     CapabilitySummary, CreateCapabilityRequest, RegisteredToolValidator, TestInvokeRequest,
     UpdateCapabilityRequest, ValidationReport,
 };
+use agent_core::tools::card::CapabilityCard;
+use agent_core::tools::manifest::{ToolDef, ToolKind, ToolManifest};
+use agent_core::tools::providers::remote_mcp::RemoteMcpCapability;
 use axum::{
     Extension, Json,
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
+use common::error::HttpError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -42,6 +46,49 @@ impl From<ValidationReport> for ValidationResponse {
             warnings: r.warnings,
         }
     }
+}
+
+/// JSON manifest posted by external self-registering capability services.
+#[derive(Debug, Deserialize)]
+pub struct CapabilityRegisterRequest {
+    /// Unique reverse-dns-style ID, e.g. "media.time.current-time".
+    pub capability_id: String,
+    /// Human name used as tool_name in capability_specs.
+    pub name: String,
+    /// Dot-separated namespace, e.g. "media.time".
+    pub namespace: String,
+    pub description: String,
+    pub version: String,
+    /// Must be "remote_mcp" for self-registering MCP services.
+    pub kind: String,
+    /// MCP server endpoint URL (required when kind = "remote_mcp").
+    pub endpoint: Option<String>,
+    /// Tool definitions (name + description + JSON Schema).
+    pub tools: Vec<ToolDefJson>,
+    /// Empty = global. Non-empty = only these tenant IDs.
+    #[serde(default)]
+    pub tenant_scope: Vec<String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ToolDefJson {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize)]
+pub struct RegisterResponse {
+    pub capability_id: String,
+    pub registered: bool,
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -497,4 +544,169 @@ async fn sync_manifest_embedding(
 
     state.semantic_router.invalidate_all().await;
     Ok(())
+}
+
+// ── Self-registration endpoint ────────────────────────────────────────────────
+
+/// `POST /admin/capabilities/register` — external services self-register here on startup.
+///
+/// Idempotent: re-posting the same `(namespace, name)` upserts instead of erroring.
+pub async fn register_capability(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<CapabilityRegisterRequest>,
+) -> Result<impl IntoResponse, HttpError> {
+    // ── Service-token auth ────────────────────────────────────────────────────
+    // If PLATFORM_ADMIN_TOKEN is set, the caller must present it as
+    // `Authorization: Bearer <token>`.  In dev (env var unset) any call is
+    // accepted so zero-config self-registration works out of the box.
+    let platform_token = std::env::var("PLATFORM_ADMIN_TOKEN").unwrap_or_default();
+    if !platform_token.is_empty() {
+        let provided = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.strip_prefix("Bearer "))
+            .unwrap_or("");
+        if provided != platform_token {
+            return Err(HttpError::auth("invalid or missing PLATFORM_ADMIN_TOKEN"));
+        }
+    }
+
+    // ── Validate ──────────────────────────────────────────────────────────────
+    if !is_valid_capability_id(&req.capability_id) {
+        return Err(HttpError::validation("capability_id",
+            "capability_id must start with [a-z] and contain only [a-z0-9._-] (max 128 chars)",
+        ));
+    }
+    if req.kind != "remote_mcp" {
+        return Err(HttpError::validation("kind", "only kind=remote_mcp is supported for self-registration"));
+    }
+    let endpoint = req.endpoint.as_deref().ok_or_else(|| {
+        HttpError::validation("endpoint", "endpoint is required for kind=remote_mcp")
+    })?;
+    if req.tools.is_empty() {
+        return Err(HttpError::validation("tools", "tools must be non-empty"));
+    }
+
+    // ── Persist + register each tool individually ─────────────────────────────
+    // capability_specs stores one row per tool (namespace + tool_name unique).
+    // Each tool gets its own ToolManifest so the invoke path calls the right
+    // MCP tool function name.
+    for t in &req.tools {
+        // Qualified capability name mirrors what row_to_provider produces:
+        //   qualified_cap_name(namespace, tool_name)
+        let cap_name = if req.namespace.is_empty() {
+            t.name.clone()
+        } else {
+            format!("{}.{}", req.namespace, t.name)
+        };
+
+        let tool_def = ToolDef {
+            name: t.name.clone(),
+            description: t.description.clone(),
+            input_schema: t.input_schema.clone(),
+        };
+        let manifest = ToolManifest {
+            name: cap_name.clone(),
+            version: req.version.clone(),
+            description: t.description.clone(),
+            kind: ToolKind::RemoteMcp,
+            tools: vec![tool_def],
+            config: serde_json::json!({ "endpoint": endpoint }),
+            tags: req.tags.clone(),
+            namespace: Some(req.namespace.clone()),
+            chain: None,
+            tenant_scope: req.tenant_scope.clone(),
+        };
+
+        // ── Persist to DB ─────────────────────────────────────────────────────
+        if let Some(pool) = &state.pool {
+            sqlx::query(
+                r#"
+                INSERT INTO capability_specs
+                    (id, namespace, tool_name, description, input_schema, output_schema,
+                     strategy, payload, tags, tenant_scope, enabled)
+                VALUES
+                    (gen_random_uuid(), $1, $2, $3, $4, NULL,
+                     'remote_mcp', jsonb_build_object('endpoint', $5::text),
+                     $6, $7, $8)
+                ON CONFLICT (namespace, tool_name) DO UPDATE SET
+                    description  = EXCLUDED.description,
+                    payload      = EXCLUDED.payload,
+                    tags         = EXCLUDED.tags,
+                    tenant_scope = EXCLUDED.tenant_scope,
+                    enabled      = EXCLUDED.enabled,
+                    updated_at   = now()
+                "#,
+            )
+            .bind(&req.namespace)
+            .bind(&t.name)        // ← actual tool function name, not service name
+            .bind(&t.description)
+            .bind(&t.input_schema)
+            .bind(endpoint)
+            .bind(&req.tags)
+            .bind(&req.tenant_scope)
+            .bind(req.enabled)
+            .execute(pool)
+            .await
+            .map_err(|e| HttpError::internal(format!("db upsert failed: {e}"), None))?;
+
+            // Embed each tool individually for semantic routing.
+            let embedding_text = manifest.embedding_text();
+            if let Ok(emb) = state.embedding_service.embed_query(&embedding_text).await {
+                let meta = serde_json::json!({
+                    "kind": "remote_mcp",
+                    "namespace": req.namespace,
+                    "tags": req.tags,
+                });
+                let embed_id = format!("{}.{}", req.capability_id, t.name);
+                let _ = state
+                    .vector_store
+                    .upsert_capability_embedding_full(
+                        &embed_id,
+                        &embedding_text,
+                        &emb,
+                        &meta,
+                        &req.namespace,
+                        &req.tags,
+                    )
+                    .await;
+            }
+        }
+
+        // ── Register in-process ───────────────────────────────────────────────
+        let card = CapabilityCard::new(manifest.clone(), std::path::PathBuf::from("."));
+        let provider = RemoteMcpCapability::new(manifest, endpoint.to_string());
+        state
+            .registry
+            .lock()
+            .unwrap()
+            .register(card.with_provider(provider));
+    }
+
+    // ── Invalidate semantic router cache ──────────────────────────────────────
+    state.semantic_router.invalidate_all().await;
+
+    tracing::info!(capability_id = %req.capability_id, endpoint, "capability self-registered");
+
+    Ok((
+        StatusCode::CREATED,
+        Json(RegisterResponse {
+            capability_id: req.capability_id,
+            registered: true,
+        }),
+    ))
+}
+
+/// Validate a capability_id: starts with lowercase letter, only [a-z0-9._-], max 128 chars.
+fn is_valid_capability_id(id: &str) -> bool {
+    if id.is_empty() || id.len() > 128 {
+        return false;
+    }
+    let mut chars = id.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_lowercase() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-')
 }

@@ -22,6 +22,7 @@ use crate::llm::LlmRegistry;
 use crate::tools::card::CapabilityCard;
 use crate::tools::manifest::{LlmChainConfig, ToolDef, ToolKind, ToolManifest};
 use crate::tools::provider::{BulkCapabilityFactory, CapabilityFactory, CapabilityProvider};
+use crate::tools::providers::remote_mcp::RemoteMcpCapability;
 use crate::tools::providers::wasm::WasmProvider;
 use crate::tools::registry::ToolRegistry;
 use crate::vector_store::PgVectorStore;
@@ -44,6 +45,8 @@ struct CapabilitySpecRow {
     strategy: String,
     payload: Value,
     tags: Vec<String>,
+    #[sqlx(default)]
+    tenant_scope: Vec<String>,
 }
 
 // ── Native strategy provider (deterministic JSON transforms) ─────────────────
@@ -122,7 +125,8 @@ impl CapabilitySpecFactory {
 
         let row: Option<CapabilitySpecRow> = sqlx::query_as(
             "SELECT namespace, tool_name, description, input_schema, output_schema,
-                    strategy, payload, tags
+                    strategy, payload, tags,
+                    COALESCE(tenant_scope, '{}') AS tenant_scope
              FROM capability_specs
              WHERE namespace = $1 AND tool_name = $2 AND enabled = true",
         )
@@ -202,6 +206,7 @@ impl CapabilitySpecFactory {
             }
             "wasm" => (ToolKind::Wasm, None),
             "native" => (ToolKind::Native, None),
+            "remote_mcp" => (ToolKind::RemoteMcp, None),
             other => anyhow::bail!("unsupported capability_specs.strategy: {other}"),
         };
 
@@ -220,6 +225,7 @@ impl CapabilitySpecFactory {
             tags: row.tags.clone(),
             namespace: Some(row.namespace.clone()),
             chain: chain_cfg,
+            tenant_scope: row.tenant_scope.clone(),
         };
         let card = CapabilityCard::new(manifest.clone(), source_dir);
 
@@ -237,6 +243,18 @@ impl CapabilitySpecFactory {
                 manifest,
                 payload: row.payload.clone(),
             }),
+            ToolKind::RemoteMcp => {
+                let endpoint = row.payload["endpoint"]
+                    .as_str()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "remote_mcp spec '{}' missing payload.endpoint",
+                            cap_name
+                        )
+                    })?
+                    .to_string();
+                RemoteMcpCapability::new(manifest, endpoint)
+            }
             _ => anyhow::bail!("unsupported tool kind for capability spec"),
         };
         Ok((card, provider))
@@ -266,7 +284,8 @@ impl BulkCapabilityFactory for CapabilitySpecFactory {
 
         let mut rows_stream = sqlx::query_as::<_, CapabilitySpecRow>(
             "SELECT namespace, tool_name, description, input_schema, output_schema,
-                    strategy, payload, tags
+                    strategy, payload, tags,
+                    COALESCE(tenant_scope, '{}') AS tenant_scope
              FROM capability_specs
              WHERE enabled = true
              ORDER BY namespace, tool_name",
@@ -392,6 +411,7 @@ mod tests {
             tags: vec![],
             namespace: Some("test".into()),
             chain: None,
+            tenant_scope: vec![],
         }
     }
 

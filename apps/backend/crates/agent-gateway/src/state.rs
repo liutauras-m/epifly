@@ -1,11 +1,12 @@
 use crate::mw::{RateLimiter, RouterQuotaConfig};
 use agent_core::llm::providers::anthropic::AnthropicProvider;
 use agent_core::{
-    BulkCapabilityFactory, CapabilityAdmin, CapabilitySpecFactory, ConversationService,
-    DefaultConversationService, EmbeddingService, LlmRegistry, MinioWorkspaceContent,
-    NamespaceFilter, NoopEmbeddingService, OpenAiEmbeddingService, PgVectorStore,
-    PostgresAuditStore, PostgresThreadStore, PostgresWorkspaceStore, RealtimeService,
-    SemanticCapabilityRouter, SemanticRouterConfig, ToolDiscovery, ToolRegistry, build_admin,
+    ArtifactBridge, BulkCapabilityFactory, CapabilityAdmin, CapabilitySpecFactory,
+    ConversationService, DefaultConversationService, EmbeddingService, LlmRegistry,
+    MinioWorkspaceContent, NamespaceFilter, NoopEmbeddingService, OpenAiEmbeddingService,
+    PgVectorStore, PostgresAuditStore, PostgresThreadStore, PostgresWorkspaceStore,
+    RealtimeService, SemanticCapabilityRouter, SemanticRouterConfig, ToolDiscovery, ToolRegistry,
+    build_admin,
 };
 use common::audit::AuditStore;
 use common::memory::{
@@ -63,6 +64,8 @@ pub struct AppState {
     pub router_quota: RouterQuotaConfig,
     /// Optional capability-spec bulk/reload factory (present only with Postgres mode).
     pub capability_spec_factory: Option<Arc<CapabilitySpecFactory>>,
+    /// Post-invoke artifact bridge — uploads tool file outputs to MinIO + workspace nodes.
+    pub artifact_bridge: Option<Arc<ArtifactBridge>>,
 }
 
 impl AppState {
@@ -193,6 +196,41 @@ impl AppState {
             Arc::clone(&job_executor),
         ));
 
+        // ── ArtifactBridge (Phase 4) ──────────────────────────────────────────
+        let artifact_bridge = file_store.as_ref().map(|fs| {
+            ArtifactBridge::new(pool.clone(), Arc::clone(fs))
+        });
+
+        // ── Hot-reload wiring (Phase 5) ───────────────────────────────────────
+        // Consume LISTEN/NOTIFY events and call reload_one on the in-process registry.
+        let realtime_service = RealtimeService::new(pool.clone());
+        {
+            let rt = Arc::clone(&realtime_service);
+            let factory = Arc::clone(&capability_spec_factory);
+            let reg = Arc::clone(&registry);
+            let router = Arc::clone(&semantic_router);
+            tokio::spawn(async move {
+                let mut rx = rt.subscribe_capability_spec_changes().await;
+                while let Some((namespace, tool_name)) = rx.recv().await {
+                    match factory.reload_one(&reg, &namespace, &tool_name).await {
+                        Ok(()) => {
+                            tracing::info!(
+                                namespace, tool_name,
+                                "capability hot-reloaded via LISTEN/NOTIFY"
+                            );
+                            router.invalidate_all().await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e, namespace, tool_name,
+                                "hot-reload failed"
+                            );
+                        }
+                    }
+                }
+            });
+        }
+
         Ok(Self {
             registry,
             rate_limiter: RateLimiter::new(),
@@ -211,10 +249,11 @@ impl AppState {
             pool: Some(pool.clone()),
             embedding_service,
             vector_store,
-            realtime_service: Some(RealtimeService::new(pool)),
+            realtime_service: Some(realtime_service),
             semantic_router,
             router_quota: RouterQuotaConfig::from_env(),
             capability_spec_factory: Some(capability_spec_factory),
+            artifact_bridge,
         })
     }
 
@@ -280,6 +319,7 @@ impl AppState {
             semantic_router,
             router_quota: RouterQuotaConfig::default(),
             capability_spec_factory: None,
+            artifact_bridge: None,
         })
     }
 }

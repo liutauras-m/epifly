@@ -95,6 +95,24 @@ services:
     restart: unless-stopped
     profiles: ["full"]
 
+  # ── current-time: self-registering MCP capability service ────────────────
+  current-time:
+    build:
+      context: ./services/current-time
+    container_name: conusai-current-time
+    restart: unless-stopped
+    environment:
+      CONUSAI_PLATFORM_URL: "http://conusai-gateway:8080"
+      CONUSAI_PLATFORM_TOKEN: "${PLATFORM_ADMIN_TOKEN:-}"
+      CONUSAI_SERVICE_URL: "http://conusai-current-time:8082"
+      # CONUSAI_TENANT_SCOPE: "tenant-abc,tenant-xyz"  # uncomment to scope to specific tenants
+    ports:
+      - "8082:8082"
+    profiles: ["full"]
+    depends_on:
+      agent-gateway:
+        condition: service_started
+
   # ── Observability ─────────────────────────────────────────────────────────
   jaeger:
     image: jaegertracing/all-in-one:1.58

@@ -84,7 +84,7 @@ echo "✅ MinIO ready"
 # ── Build agent-gateway (if running full profile) ─────────────────────────────
 if [ "$PROFILE" = "full" ]; then
   echo "▶ Building agent-gateway..."
-  cargo build --release --bin agent-gateway
+  cargo build --release --bin agent-gateway --features agent-gateway/local-embeddings
   echo "✅ Build complete — gateway running in Docker"
 fi
 
