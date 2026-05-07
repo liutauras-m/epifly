@@ -1,10 +1,11 @@
-use crate::mw::RateLimiter;
+use crate::mw::{RateLimiter, RouterQuotaConfig};
 use agent_core::llm::providers::anthropic::AnthropicProvider;
 use agent_core::{
-    CapabilityAdmin, ConversationService, DefaultConversationService, EmbeddingService,
-    LlmRegistry, MinioWorkspaceContent, NoopEmbeddingService, OpenAiEmbeddingService,
-    PgVectorStore, PostgresAuditStore, PostgresThreadStore, PostgresWorkspaceStore,
-    RealtimeService, ToolDiscovery, ToolRegistry, build_admin,
+    BulkCapabilityFactory, CapabilityAdmin, CapabilitySpecFactory, ConversationService,
+    DefaultConversationService, EmbeddingService, LlmRegistry, MinioWorkspaceContent,
+    NamespaceFilter, NoopEmbeddingService, OpenAiEmbeddingService, PgVectorStore,
+    PostgresAuditStore, PostgresThreadStore, PostgresWorkspaceStore, RealtimeService,
+    SemanticCapabilityRouter, SemanticRouterConfig, ToolDiscovery, ToolRegistry, build_admin,
 };
 use common::audit::AuditStore;
 use common::memory::{
@@ -56,6 +57,12 @@ pub struct AppState {
     pub vector_store: Arc<PgVectorStore>,
     /// Realtime event service — `None` in test mode.
     pub realtime_service: Option<Arc<RealtimeService>>,
+    /// Semantic capability router — pre-filters tools to top-K per turn.
+    pub semantic_router: Arc<SemanticCapabilityRouter>,
+    /// Effective per-turn router limits (tools exposed + tool invokes).
+    pub router_quota: RouterQuotaConfig,
+    /// Optional capability-spec bulk/reload factory (present only with Postgres mode).
+    pub capability_spec_factory: Option<Arc<CapabilitySpecFactory>>,
 }
 
 impl AppState {
@@ -72,8 +79,6 @@ impl AppState {
             .map_err(|e| common::error::ConusAiError::Database(e.to_string()))?;
 
         let llm = Arc::new(build_llm_registry());
-        let mut registry = ToolRegistry::with_default_factories(Arc::clone(&llm));
-        ToolDiscovery::from_env().discover_into(&mut registry)?;
 
         let file_store = init_file_store();
         let thread_store: Arc<dyn ThreadStore> = Arc::new(PostgresThreadStore::new(pool.clone()));
@@ -114,6 +119,40 @@ impl AppState {
         };
         let vector_store = Arc::new(PgVectorStore::new(pool.clone()));
 
+        let mut registry_raw =
+            ToolRegistry::with_all_factories(Arc::clone(&llm), Some(pool.clone()));
+        ToolDiscovery::from_env().discover_into(&mut registry_raw)?;
+
+        // Bulk-load capability specs (best-effort; startup continues on failure).
+        let capability_spec_factory = Arc::new(CapabilitySpecFactory::new(
+            pool.clone(),
+            Arc::clone(&llm),
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_store),
+        ));
+        match capability_spec_factory.load_batch(&mut registry_raw).await {
+            Ok(loaded) => info!(loaded, "capability-spec bulk load complete"),
+            Err(e) => warn!(error = %e, "capability-spec bulk load failed; continuing startup"),
+        }
+
+        let registry = Arc::new(Mutex::new(registry_raw));
+
+        // Build semantic router (top-K = 20, 60s cache TTL by default).
+        let router_cfg = SemanticRouterConfig {
+            top_k: std::env::var("SEMANTIC_ROUTER_TOP_K")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(20),
+            namespace: NamespaceFilter::Any,
+            ..Default::default()
+        };
+        let semantic_router = SemanticCapabilityRouter::new(
+            Arc::clone(&registry),
+            Arc::clone(&vector_store),
+            Arc::clone(&embedding_service),
+            router_cfg,
+        );
+
         let workspace_store: Arc<dyn WorkspaceStore> = Arc::new(PostgresWorkspaceStore::new(
             pool.clone(),
             Arc::clone(&embedding_service),
@@ -134,7 +173,6 @@ impl AppState {
                 workspace_store: Arc::clone(&workspace_store),
             });
 
-        let registry = Arc::new(Mutex::new(registry));
         let tool_admin = Arc::new(build_admin(Arc::clone(&registry), Arc::clone(&audit_store)));
 
         // Build job infrastructure
@@ -174,6 +212,9 @@ impl AppState {
             embedding_service,
             vector_store,
             realtime_service: Some(RealtimeService::new(pool)),
+            semantic_router,
+            router_quota: RouterQuotaConfig::from_env(),
+            capability_spec_factory: Some(capability_spec_factory),
         })
     }
 
@@ -200,6 +241,15 @@ impl AppState {
         let registry = Arc::new(Mutex::new(registry));
         let tool_admin = Arc::new(build_admin(Arc::clone(&registry), Arc::clone(&audit_store)));
 
+        let embedding_service: Arc<dyn EmbeddingService> = Arc::new(NoopEmbeddingService);
+        let vector_store = Arc::new(PgVectorStore::noop());
+        let semantic_router = SemanticCapabilityRouter::new(
+            Arc::clone(&registry),
+            Arc::clone(&vector_store),
+            Arc::clone(&embedding_service),
+            SemanticRouterConfig::default(),
+        );
+
         let job_ctx = Arc::new(JobContext::new(Arc::clone(&audit_store), None, None, None));
         let job_registry = build_job_registry(job_ctx);
         let job_executor = JobExecutor::new(Arc::clone(&job_registry));
@@ -224,9 +274,12 @@ impl AppState {
             job_executor,
             job_admin,
             pool: None,
-            embedding_service: Arc::new(NoopEmbeddingService),
-            vector_store: Arc::new(PgVectorStore::noop()),
+            embedding_service,
+            vector_store,
             realtime_service: None,
+            semantic_router,
+            router_quota: RouterQuotaConfig::default(),
+            capability_spec_factory: None,
         })
     }
 }

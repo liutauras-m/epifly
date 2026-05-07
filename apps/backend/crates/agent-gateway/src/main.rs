@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer, ExposeHeaders};
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
-use tracing::info;
+use tracing::{info, warn};
 
 mod capabilities;
 mod mw;
@@ -111,6 +111,26 @@ async fn main() -> Result<()> {
     let state = Arc::new(AppState::from_env().await?);
     let loaded = state.registry.lock().unwrap().len();
     info!(capabilities = loaded, "capability registry loaded");
+
+    // Wire capability-spec realtime hot-reload channel (Postgres mode only).
+    if let (Some(realtime), Some(spec_factory)) = (
+        state.realtime_service.clone(),
+        state.capability_spec_factory.clone(),
+    ) {
+        let registry = Arc::clone(&state.registry);
+        tokio::spawn(async move {
+            let mut rx = realtime.subscribe_capability_spec_changes().await;
+            while let Some((namespace, tool_name)) = rx.recv().await {
+                if let Err(e) = spec_factory
+                    .reload_one(&registry, &namespace, &tool_name)
+                    .await
+                {
+                    warn!(error = %e, namespace, tool_name, "capability-spec hot-reload failed");
+                }
+            }
+        });
+        info!("capability-spec realtime hot-reload listener started");
+    }
 
     // Register dynamic capabilities that depend on runtime services (e.g. JobExecutor).
     {

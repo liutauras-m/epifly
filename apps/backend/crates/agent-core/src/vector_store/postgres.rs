@@ -4,6 +4,7 @@
 /// configuration and filter plumbing.  Executes direct `sqlx` queries against our
 /// custom table schemas (`capability_embeddings`, `content_embeddings`) because
 /// those schemas differ from rig-postgres's built-in document table format.
+use crate::tools::namespace::NamespaceFilter;
 use chrono::{DateTime, Utc};
 use rig_postgres::{PgSearchFilter, PgVectorDistanceFunction};
 use serde_json::Value;
@@ -18,6 +19,8 @@ pub struct CapabilityHit {
     pub metadata: Value,
     /// Cosine distance [0, 2]; lower is better.
     pub distance: f64,
+    pub namespace: String,
+    pub tags: Vec<String>,
 }
 
 pub struct ContentHit {
@@ -98,11 +101,25 @@ impl PgVectorStore {
     // ── Capability search ─────────────────────────────────────────────────
 
     /// ANN search over `capability_embeddings` returning the closest `limit` hits.
+    /// Thin wrapper: no namespace/tag restriction.
     #[instrument(skip(self, embedding), fields(limit))]
     pub async fn top_n_capabilities(
         &self,
         embedding: &[f32],
         limit: usize,
+    ) -> anyhow::Result<Vec<CapabilityHit>> {
+        self.top_n_capabilities_filtered(embedding, limit, &NamespaceFilter::Any, &[])
+            .await
+    }
+
+    /// ANN search over `capability_embeddings` with optional namespace + tag-any filtering.
+    #[instrument(skip(self, embedding, ns_filter, tags_any), fields(limit))]
+    pub async fn top_n_capabilities_filtered(
+        &self,
+        embedding: &[f32],
+        limit: usize,
+        ns_filter: &NamespaceFilter,
+        tags_any: &[String],
     ) -> anyhow::Result<Vec<CapabilityHit>> {
         let pool = self
             .pool
@@ -110,20 +127,41 @@ impl PgVectorStore {
             .ok_or_else(|| anyhow::anyhow!("vector store not available in test mode"))?;
         let emb = vec_to_pg(embedding);
         let op = self.distance_op();
+
+        // Build namespace predicate dynamically.
+        // Fixed binds: $1 = embedding, $2 = limit. Namespace binds start at $3.
+        let (ns_sql, ns_vals) = ns_filter.to_sql_predicate("namespace", 3);
+        let mut bind_offset = 3 + ns_vals.len();
+
+        // Tags-any predicate: tags && $N::text[]
+        let tags_sql = if tags_any.is_empty() {
+            String::new()
+        } else {
+            let s = format!(" AND tags && ${bind_offset}::text[]");
+            bind_offset += 1;
+            s
+        };
+        let _ = bind_offset; // suppress unused warning
+
         let sql = format!(
-            r#"SELECT capability_id, content, metadata,
+            r#"SELECT capability_id, content, metadata, namespace, tags,
                       (embedding {op} $1::vector)::float8 AS distance
                FROM capability_embeddings
                WHERE embedding IS NOT NULL
+                 AND {ns_sql}{tags_sql}
                ORDER BY embedding {op} $1::vector
                LIMIT $2"#
         );
 
-        let rows = sqlx::query(&sql)
-            .bind(&emb)
-            .bind(limit as i64)
-            .fetch_all(pool)
-            .await?;
+        let mut q = sqlx::query(&sql).bind(&emb).bind(limit as i64);
+        for val in &ns_vals {
+            q = q.bind(val);
+        }
+        if !tags_any.is_empty() {
+            q = q.bind(tags_any);
+        }
+
+        let rows = q.fetch_all(pool).await?;
 
         rows.into_iter()
             .map(|r| {
@@ -132,6 +170,8 @@ impl PgVectorStore {
                     content: r.try_get("content")?,
                     metadata: r.try_get::<Value, _>("metadata")?,
                     distance: r.try_get("distance")?,
+                    namespace: r.try_get("namespace").unwrap_or_default(),
+                    tags: r.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
                 })
             })
             .collect()
@@ -145,24 +185,43 @@ impl PgVectorStore {
         embedding: &[f32],
         metadata: &Value,
     ) -> anyhow::Result<()> {
+        self.upsert_capability_embedding_full(capability_id, content, embedding, metadata, "", &[])
+            .await
+    }
+
+    /// Upsert with explicit namespace and tags.
+    pub async fn upsert_capability_embedding_full(
+        &self,
+        capability_id: &str,
+        content: &str,
+        embedding: &[f32],
+        metadata: &Value,
+        namespace: &str,
+        tags: &[String],
+    ) -> anyhow::Result<()> {
         let pool = self
             .pool
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("vector store not available in test mode"))?;
         let emb = vec_to_pg(embedding);
         sqlx::query(
-            r#"INSERT INTO capability_embeddings (capability_id, content, embedding, metadata, updated_at)
-               VALUES ($1, $2, $3::vector, $4, now())
+            r#"INSERT INTO capability_embeddings
+                   (capability_id, content, embedding, metadata, namespace, tags, updated_at)
+               VALUES ($1, $2, $3::vector, $4, $5, $6, now())
                ON CONFLICT (capability_id) DO UPDATE
                  SET content    = EXCLUDED.content,
                      embedding  = EXCLUDED.embedding,
                      metadata   = EXCLUDED.metadata,
+                     namespace  = EXCLUDED.namespace,
+                     tags       = EXCLUDED.tags,
                      updated_at = now()"#,
         )
         .bind(capability_id)
         .bind(content)
         .bind(&emb)
         .bind(metadata)
+        .bind(namespace)
+        .bind(tags)
         .execute(pool)
         .await?;
         Ok(())

@@ -37,6 +37,16 @@ impl CapabilityCard {
         }
     }
 
+    /// Primary namespace (empty string if unnamespaced).
+    pub fn namespace(&self) -> &str {
+        self.manifest.namespace()
+    }
+
+    /// Secondary tags for filtering.
+    pub fn tags(&self) -> &[String] {
+        &self.manifest.tags
+    }
+
     pub fn with_provider(mut self, provider: Arc<dyn CapabilityProvider>) -> Self {
         self.provider = Some(provider);
         self

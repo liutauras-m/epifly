@@ -23,6 +23,8 @@ pub enum RegisteredToolValidationError {
     },
     #[error("[chain] section required for kind=chain without a bespoke Rust provider")]
     MissingChainSection,
+    #[error("invalid namespace '{0}': must match ^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){{0,5}}$")]
+    InvalidNamespace(String),
 }
 
 #[derive(Debug, Default)]
@@ -40,6 +42,34 @@ impl ValidationReport {
 pub struct RegisteredToolValidator;
 
 impl RegisteredToolValidator {
+    /// Validate a namespace string (dot-separated slugs, up to 6 segments).
+    pub fn validate_namespace(ns: &str) -> ValidationReport {
+        let mut r = ValidationReport::default();
+        if ns.is_empty() {
+            return r; // empty namespace is allowed (unnamespaced capability)
+        }
+        // Each segment: starts with [a-z], followed by [a-z0-9_]*
+        let valid = ns.split('.').count() <= 6
+            && ns.split('.').all(|seg| {
+                !seg.is_empty()
+                    && seg
+                        .chars()
+                        .next()
+                        .map(|c| c.is_ascii_lowercase())
+                        .unwrap_or(false)
+                    && seg
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            });
+        if !valid {
+            r.errors
+                .push(RegisteredToolValidationError::InvalidNamespace(
+                    ns.to_string(),
+                ));
+        }
+        r
+    }
+
     /// Validate a capability name (slug).
     pub fn validate_name(name: &str) -> ValidationReport {
         let mut r = ValidationReport::default();
@@ -67,6 +97,11 @@ impl RegisteredToolValidator {
                 let name_r = Self::validate_name(&m.name);
                 r.errors.extend(name_r.errors);
                 r.warnings.extend(name_r.warnings);
+
+                // Validate namespace if present.
+                let ns_r = Self::validate_namespace(m.namespace());
+                r.errors.extend(ns_r.errors);
+                r.warnings.extend(ns_r.warnings);
 
                 // Validate output_schema in [chain] if present.
                 if let Some(chain) = &m.chain {
@@ -175,5 +210,34 @@ prompt_template = "Summarise: {{input.text}}"
     fn bad_manifest_parse() {
         let r = RegisteredToolValidator::validate_manifest("not valid toml {{{{");
         assert!(!r.ok());
+    }
+
+    #[test]
+    fn valid_namespace_simple() {
+        assert!(RegisteredToolValidator::validate_namespace("").ok());
+        assert!(RegisteredToolValidator::validate_namespace("erp").ok());
+        assert!(RegisteredToolValidator::validate_namespace("erp.po").ok());
+        assert!(RegisteredToolValidator::validate_namespace("erp.po.create_order").ok());
+    }
+
+    #[test]
+    fn invalid_namespace_uppercase() {
+        assert!(!RegisteredToolValidator::validate_namespace("ERP.po").ok());
+    }
+
+    #[test]
+    fn invalid_namespace_too_many_segments() {
+        // 7 segments — exceeds limit of 6.
+        assert!(!RegisteredToolValidator::validate_namespace("a.b.c.d.e.f.g").ok());
+    }
+
+    #[test]
+    fn invalid_namespace_empty_segment() {
+        assert!(!RegisteredToolValidator::validate_namespace("erp..po").ok());
+    }
+
+    #[test]
+    fn invalid_namespace_starts_with_digit() {
+        assert!(!RegisteredToolValidator::validate_namespace("1erp").ok());
     }
 }

@@ -73,7 +73,7 @@ Branch `feat/v0.3-rig-workspace-wasi`, commit `e666eae`:
 │  • McpFactory           (external services)                  │
 │  • ChainFactory         (PromptChainCapability — static)     │
 │  • DynamicPromptFactory (NEW — DB-backed prompts, versioned) │
-│  • ErpCapabilityFactory (NEW — bulk-generated, BulkCapabilityFactory) │
+│  • CapabilitySpecFactory (NEW — bulk-generated, BulkCapabilityFactory) │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -96,7 +96,7 @@ Branch `feat/v0.3-rig-workspace-wasi`, commit `e666eae`:
 
 - File: [apps/backend/crates/agent-core/src/tools/manifest.rs](apps/backend/crates/agent-core/src/tools/manifest.rs)
   - Add `pub namespace: Option<String>` to `ToolManifest` (TOML field `namespace = "accounting.invoice"`).
-  - **Keep `tags: Vec<String>` (already present)** as the multi-namespace tagging mechanism; namespace is the single primary, tags are secondary axes — matches the `tags` column in `erp_capability_specs`.
+  - **Keep `tags: Vec<String>` (already present)** as the multi-namespace tagging mechanism; namespace is the single primary, tags are secondary axes — matches the `tags` column in `capability_specs`.
   - Helper: `pub fn namespace(&self) -> &str { self.namespace.as_deref().unwrap_or("") }`.
 - File: [apps/backend/crates/agent-core/src/tools/card.rs](apps/backend/crates/agent-core/src/tools/card.rs)
   - Re-export `card.namespace()` and `card.tags()`.
@@ -297,15 +297,15 @@ Add `moka = { version = "0.12", features = ["future"] }` to workspace [Cargo.tom
 
 ---
 
-### Phase 4 — Bulk capability factory (ERP generator)
+### Phase 4 — Bulk capability factory (domain-neutral, ERP-first vertical)
 
 #### 4.1 Source-of-truth table
 
-- Migration `20260507000200_erp_capability_specs.up.sql`:
+- Migration `20260507000200_capability_specs.up.sql`:
   ```sql
-  CREATE TABLE erp_capability_specs (
+  CREATE TABLE capability_specs (
       id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      namespace     TEXT NOT NULL,
+      namespace     TEXT NOT NULL,                  -- e.g. erp.po, crm.lead, accounting.gl
       tool_name     TEXT NOT NULL,
       description   TEXT NOT NULL,
       input_schema  JSONB NOT NULL,
@@ -319,15 +319,15 @@ Add `moka = { version = "0.12", features = ["future"] }` to workspace [Cargo.tom
   );
 
   -- LISTEN/NOTIFY for hot reload
-  CREATE OR REPLACE FUNCTION notify_erp_specs_changed() RETURNS trigger AS $$
+  CREATE OR REPLACE FUNCTION notify_capability_specs_changed() RETURNS trigger AS $$
   BEGIN
-      PERFORM pg_notify('erp_specs_changed',
+      PERFORM pg_notify('capability_specs_changed',
           json_build_object('namespace', NEW.namespace, 'tool_name', NEW.tool_name, 'op', TG_OP)::text);
       RETURN NEW;
   END $$ LANGUAGE plpgsql;
-  CREATE TRIGGER erp_specs_changed_trg
-      AFTER INSERT OR UPDATE OR DELETE ON erp_capability_specs
-      FOR EACH ROW EXECUTE FUNCTION notify_erp_specs_changed();
+  CREATE TRIGGER capability_specs_changed_trg
+      AFTER INSERT OR UPDATE OR DELETE ON capability_specs
+      FOR EACH ROW EXECUTE FUNCTION notify_capability_specs_changed();
   ```
 
 #### 4.2 `BulkCapabilityFactory` trait (ergonomics for 10k loads)
@@ -342,12 +342,12 @@ Add `moka = { version = "0.12", features = ["future"] }` to workspace [Cargo.tom
   ```
 - `ToolRegistry::register_bulk_factory(...)` stores it for invocation by the gateway boot path.
 
-#### 4.3 `ErpCapabilityFactory`
+#### 4.3 `CapabilitySpecFactory`
 
-- New file: `apps/backend/crates/agent-core/src/tools/providers/erp.rs`
+- New file: `apps/backend/crates/agent-core/src/tools/providers/capability_spec.rs`
   ```rust
   #[derive(bon::Builder)]
-  pub struct ErpCapabilityFactory {
+  pub struct CapabilitySpecFactory {
       pool: PgPool,
       llm: Arc<LlmRegistry>,
       embedder: Arc<dyn EmbeddingService>,
@@ -356,8 +356,8 @@ Add `moka = { version = "0.12", features = ["future"] }` to workspace [Cargo.tom
   }
   ```
 - `load_batch`:
-  1. Stream `erp_capability_specs WHERE enabled` in chunks of `batch_size`.
-  2. Map each row → `CapabilityCard` via `CapabilitySpecMapper` (generic over strategy: wasm | prompt | native — enables non-ERP reuse).
+  1. Stream `capability_specs WHERE enabled` in chunks of `batch_size`.
+  2. Map each row → `CapabilityCard` via `CapabilitySpecMapper` (generic over strategy: wasm | prompt | native).
   3. Batch-call `embedder.embed_batch(...)` for the chunk.
   4. Single `INSERT … ON CONFLICT (capability_id) DO UPDATE` into `capability_embeddings`.
   5. Insert provider into the registry.
@@ -365,7 +365,7 @@ Add `moka = { version = "0.12", features = ["future"] }` to workspace [Cargo.tom
 #### 4.4 Hot-reload via `LISTEN/NOTIFY`
 
 - Use the existing realtime infrastructure ([apps/backend/crates/agent-core/src/realtime/mod.rs](apps/backend/crates/agent-core/src/realtime/mod.rs)) — already subscribes to PG NOTIFY.
-- Add channel handler `erp_specs_changed` → calls `factory.reload_one(namespace, tool_name)` which updates the registry **and** re-embeds just that row.
+- Add channel handler `capability_specs_changed` → calls `factory.reload_one(namespace, tool_name)` which updates the registry **and** re-embeds just that row.
 
 **Acceptance:** Insert 10k rows → boot job populates `capability_embeddings` (10k rows) in < 30 s; subsequent NOTIFY → registry updates in < 200 ms; semantic top-20 query returns in < 15 ms.
 
@@ -405,8 +405,8 @@ Add `moka = { version = "0.12", features = ["future"] }` to workspace [Cargo.tom
 | Tower quota middleware rejects on over-limit | unit | `agent-gateway/src/mw/router_quota.rs` |
 | `DynamicPromptCapability::invoke` reads DB row, renders, calls LLM mock | integration | `chains/dynamic_prompt.rs` |
 | Dynamic prompt versioning: PUT bumps, GET ?version=N retrieves | gateway integration | `routes/admin_capabilities.rs` |
-| `BulkCapabilityFactory::load_batch` with 1k specs (testcontainers) | integration | `tools/providers/erp.rs` |
-| LISTEN/NOTIFY hot-reload of one ERP spec | integration | `tools/providers/erp.rs` |
+| `BulkCapabilityFactory::load_batch` with 1k specs (testcontainers) | integration | `tools/providers/capability_spec.rs` |
+| LISTEN/NOTIFY hot-reload of one capability spec | integration | `tools/providers/capability_spec.rs` |
 | End-to-end: 5k synthetic ERP specs → agent turn → only top-K passed to Anthropic mock | gateway integration | `routes/agent.rs` |
 
 Run via `make test`. Add CI matrix entry: `cargo test -p agent-core --features local-embeddings`.
@@ -423,7 +423,7 @@ Run via `make test`. Add CI matrix entry: `cargo test -p agent-core --features l
   - Why Rig's `ToolProvider` adapter (one Rust path, two surfaces).
 - Backfill script `apps/backend/scripts/backfill_capability_namespaces.sql` — sets `namespace = ''` and `tags = '{}'` (the migration default already does this; script is a no-op safety net).
 - Update [docs/project-instructions.md](docs/project-instructions.md): *"Every new capability MUST declare `namespace` and SHOULD declare `tags`."*
-- New `docs/tasks/erp-capability-pack.md`: how to author an ERP spec row + WASM payload + prompt template.
+- New `docs/tasks/capability-pack.md`: how to author a capability spec row + WASM payload + prompt template (uses ERP as the worked example).
 
 ---
 
@@ -444,7 +444,7 @@ Phases 3 and 4 are independent and can be parallelised once Phase 2 is merged.
 **Priority order:**
 1. Merge Phase 1 (smallest blast radius).
 2. Implement & merge `SemanticCapabilityRouter` with Rig `ToolProvider` integration.
-3. Parallel: `DynamicPromptCapability` + `ErpCapabilityFactory`.
+3. Parallel: `DynamicPromptCapability` + `CapabilitySpecFactory`.
 4. Full e2e test with 5k synthetic ERP specs before declaring v0.3.2 done.
 
 ---
@@ -453,7 +453,7 @@ Phases 3 and 4 are independent and can be parallelised once Phase 2 is merged.
 
 1. **Scale:** 10,000 capabilities registered; `capability_embeddings` holds 10k rows; cold start < 30 s; warm router p95 < 15 ms.
 2. **Context budget:** LLM never receives > 4 KB of tool descriptions per turn (top-K=20, avg 200 chars/def).
-3. **Extensibility:** Adding a new ERP rule = `INSERT` into `erp_capability_specs` + (optional) `dynamic_prompts` row. No Rust rebuild, no restart.
+3. **Extensibility:** Adding a new ERP rule = `INSERT` into `capability_specs` (namespace `erp.*`) + (optional) `dynamic_prompts` row. No Rust rebuild, no restart.
 4. **Determinism preserved:** Money-moving primitives still implemented as WASM/Builtin providers, audited, schema-validated.
 5. **Backward compatible:** Existing `capability.toml` files work unchanged; `namespace` and `tags` are optional.
 6. **Rig-native:** `SemanticCapabilityRouter` is consumable via `rig::AgentBuilder::tools(adapter)` with no extra glue.

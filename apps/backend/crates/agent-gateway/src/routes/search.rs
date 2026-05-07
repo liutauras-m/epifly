@@ -103,9 +103,10 @@ async fn refresh_capability_embeddings(
 ) -> anyhow::Result<()> {
     for card in cards {
         let content = format!(
-            "{} {} {}",
+            "{} {} {} {}",
             card.manifest.name,
             card.manifest.description,
+            card.namespace(),
             card.manifest.tags.join(" ")
         );
 
@@ -147,12 +148,20 @@ async fn refresh_capability_embeddings(
         let metadata = json!({
             "kind":         format!("{:?}", card.manifest.kind),
             "tags":         card.manifest.tags,
+            "namespace":    card.namespace(),
             "content_hash": content_hash,
         });
 
         if let Err(e) = state
             .vector_store
-            .upsert_capability_embedding(&card.manifest.name, &content, &embedding, &metadata)
+            .upsert_capability_embedding_full(
+                &card.manifest.name,
+                &content,
+                &embedding,
+                &metadata,
+                card.namespace(),
+                card.tags(),
+            )
             .await
         {
             warn!(capability = %card.manifest.name, error = %e, "capability embedding upsert failed");

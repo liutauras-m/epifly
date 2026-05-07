@@ -132,6 +132,10 @@ Three router groups — `public_router`, `protected_router` (tenant middleware),
 | PATCH | `/admin/capabilities/{name}/enabled` | Enable/disable capability |
 | DELETE | `/admin/capabilities/{name}` | Delete capability |
 | POST | `/admin/capabilities/{name}/reload` | Reload single capability |
+| PUT | `/admin/capabilities/{name}/prompt` | Create a new dynamic prompt version |
+| GET | `/admin/capabilities/{name}/prompt?version=N` | Get dynamic prompt (latest or pinned) |
+| GET | `/admin/capabilities/{name}/prompt/versions` | List all prompt versions |
+| GET | `/admin/capabilities/namespaces?prefix=X` | Browse namespace tree |
 | GET | `/admin/jobs` | List all registered jobs |
 | GET | `/admin/jobs/{name}` | Get single job summary |
 | POST | `/admin/jobs/{name}/run` | Enqueue a background job immediately |
@@ -144,4 +148,33 @@ Three router groups — `public_router`, `protected_router` (tenant middleware),
 ## Architecture Decisions
 
 - [ADR 0003 - Unified Postgres + CocoIndex](docs/adr/0003-unified-postgres-cocoindex.md)
+- [ADR 0004 - Semantic Capability Router & Dynamic Prompts](docs/adr/0004-semantic-capability-router-and-dynamic-prompts.md)
+
+## v0.3.2 New Concepts
+
+### Semantic Capability Router
+
+`SemanticCapabilityRouter` replaces "send all enabled tools to the LLM". At every agent turn it:
+1. Embeds the user query.
+2. ANN-searches `capability_embeddings` (pgvector DiskANN, cosine) with namespace + tag filters.
+3. Returns the top-K (default 20, max 50) providers whose distance ≤ 0.65.
+4. Results are moka-cached for 60 s (blake3 key = tenant + query + config).
+
+Wire into `AgentBuilder`: `builder.with_semantic_router(router)`.
+
+### Namespaces
+
+`ToolManifest.namespace` is a dot-separated slug (`erp.po`, `accounting.gl`). Use `NamespaceFilter` variants (`Any`, `Exact`, `Prefix`, `AnyOf`) for routing and SQL filtering. Validated by `RegisteredToolValidator::validate_namespace`.
+
+### Dynamic Prompts (`ToolKind::DynamicPrompt`)
+
+Capabilities backed by versioned rows in `dynamic_prompts`. Push new versions via `PUT /admin/capabilities/{name}/prompt` without a deploy. The factory is `DynamicPromptFactory`; the provider is `DynamicPromptCapability`.
+
+### Bulk ERP Factory
+
+`CapabilitySpecFactory` implements `BulkCapabilityFactory`. Call `registry.run_bulk_load()` at boot to stream all enabled rows from `capability_specs` and embed them in 256-row batches. Hot-reload via `RealtimeService::subscribe_capability_spec_changes()` + `LISTEN capability_specs_changed`.
+
+### Tower Quota Middleware
+
+`RouterQuotaLayer` on `POST /v1/agent/completions` injects `RouterQuotaConfig` into request extensions. Read `max_tools_per_turn` and `max_invokes_per_turn` from extensions in the agent handler to enforce hard caps. Configured via `CONUSAI_MAX_TOOLS_PER_TURN` / `CONUSAI_MAX_INVOKES_PER_TURN` env vars.
 

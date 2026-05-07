@@ -1,6 +1,6 @@
 # ConusAI Platform — Architecture & Functionality
 
-> **v0.3.1** — Postgres-only vector storage, workspace indexer, realtime WebSocket service, local embedding support (`fastembed`), `rig-postgres` integration. All persistent stores (threads, workspaces, audit, vectors) are backed by a single Postgres database (TimescaleDB pg17 + pgvector). No Qdrant dependency exists in the codebase.
+> **v0.3.2** — Semantic capability router, namespace + tag partitioning, dynamic prompts, bulk capability-spec factory, OTel GenAI metrics, Tower quota middleware. All persistent stores remain Postgres-only.
 
 A production-grade multitenant AI agent platform. The monorepo contains a **Rust + Rig** backend (`apps/backend/`) and WASM/MCP capabilities. The built-in **Foundry UI** (served by the gateway at `GET /`) provides workspace management, agent chat, file upload, and invoice extraction without a separate frontend app.
 
@@ -55,6 +55,110 @@ On startup: if `WORKSPACES_ROOT` is set, `main.rs` spawns an initial index pass 
 |---|---|---|---|
 | `GET` | `/api/realtime/workspace` | Bearer JWT | WebSocket — workspace change event stream |
 | `GET` | `/v1/threads/{id}/messages` | Bearer JWT | Retrieve messages for a thread |
+
+---
+
+## v0.3.2 Additions
+
+### Semantic Capability Router (`agent_core::tools::semantic_router`)
+
+```
+User message
+    │
+    ▼
+SemanticCapabilityRouter::select(query, tenant)
+    │  ┌─────────────────────────────────────┐
+    │  │ 1. blake3 cache-key lookup (moka)   │
+    │  │ 2. embed query (EmbeddingService)   │
+    │  │ 3. ANN search (PgVectorStore top-K) │
+    │  │ 4. namespace + tag filter           │
+    │  │ 5. distance threshold (≤ 0.65)      │
+    │  │ 6. include_always overrides         │
+    │  └─────────────────────────────────────┘
+    │
+    ▼
+Vec<Arc<dyn CapabilityProvider>>  (top-K, ≤ 50)
+    │
+    ▼
+Tool definitions → Anthropic / LLM
+```
+
+Key types:
+| Symbol | Location | Purpose |
+|---|---|---|
+| `SemanticCapabilityRouter` | `tools/semantic_router.rs` | Core router; cache + ANN |
+| `SemanticRouterConfig` | same | top_k, max_distance, namespace, tags_any, cache_ttl |
+| `RouterMetrics` | same | Atomic counters (cache_hits, total_selects, etc.) |
+| `NamespaceFilter` | `tools/namespace.rs` | Any / Exact / Prefix / AnyOf |
+
+### Namespace & Tag Partitioning
+
+`ToolManifest` now has `namespace: Option<String>` (dot-separated, e.g. `erp.po`) and `tags: Vec<String>`. The `ToolRegistry` maintains a hierarchical `namespace_index: HashMap<String, Vec<String>>` for fast admin autocomplete (`namespace_children(prefix)`).
+
+Validator enforces: dot-separated ASCII slug segments `[a-z][a-z0-9_]*`, ≤ 6 segments, empty string = unnamespaced.
+
+**New DB columns:**
+- `capability_embeddings.namespace TEXT NOT NULL DEFAULT ''`
+- `capability_embeddings.tags TEXT[] NOT NULL DEFAULT '{}'`
+- Indexes: `cap_embed_ns_idx`, `cap_embed_tags_idx` (GIN)
+
+Migration: `20260507000000_capability_namespaces.up.sql`
+
+### Dynamic Prompts (`agent_core::chains::dynamic_prompt`)
+
+DB-backed versioned prompt storage. `ToolKind::DynamicPrompt` capabilities load their `LlmChainConfig` (model, prompt_template, system_prompt, etc.) from the `dynamic_prompts` table at runtime. Supports:
+- `load_latest()` — fetches highest version row
+- `with_pinned_version(n)` — pins to specific version
+- `invalidate()` — clears moka cache entry
+- 60s TTL moka cache per capability name + version
+
+Migration: `20260507000100_dynamic_prompts.up.sql`
+
+**New admin endpoints:**
+| Method | Path | Description |
+|---|---|---|
+| `PUT` | `/admin/capabilities/{name}/prompt` | Upsert prompt version |
+| `GET` | `/admin/capabilities/{name}/prompt?version=N` | Fetch prompt (latest or pinned) |
+| `GET` | `/admin/capabilities/{name}/prompt/versions` | List all versions |
+| `GET` | `/admin/capabilities/namespaces?prefix=X` | Browse namespace tree |
+
+### Bulk Capability-Spec Factory (`agent_core::tools::providers::capability_spec`)
+
+`CapabilitySpecFactory` implements `BulkCapabilityFactory` — streams rows from `capability_specs` in chunks of 256, batch-embeds descriptions, upserts to `capability_embeddings`, and registers `CapabilityProvider` instances into `ToolRegistry`. Domain partitioning is via `namespace` (e.g. `erp.po`, `crm.lead`, `accounting.gl`); the factory itself is domain-neutral. Supports hot-reload via Postgres `LISTEN capability_specs_changed` (trigger on all mutations).
+
+`ToolRegistry` gains:
+- `register_bulk_factory(factory)` — register a `BulkCapabilityFactory`
+- `run_bulk_load()` — run all registered factories (boot time)
+
+Migration: `20260507000200_capability_specs.up.sql`
+
+### OTel GenAI Metrics
+
+New metrics in `common::metrics`:
+| Metric | Type | Description |
+|---|---|---|
+| `gen_ai.semantic_router.cache_hit` | Counter | Cache hits |
+| `gen_ai.semantic_router.top_k` | Histogram | Capabilities selected per turn |
+| `gen_ai.semantic_router.distance` | Histogram | Cosine distance of top-1 hit |
+| `gen_ai.tool.calls` | Counter | Total tool calls dispatched |
+| `capability_router_select_seconds` | Histogram | Router select latency |
+| `capability_invoke_seconds` | Histogram | Capability invocation latency |
+
+### Tower Quota Middleware (`agent_gateway::mw::router_quota`)
+
+`RouterQuotaLayer` wraps the `/v1/agent/completions` route, injecting `RouterQuotaConfig` into request extensions for per-turn tool/invoke budget enforcement.
+
+Env vars: `CONUSAI_MAX_TOOLS_PER_TURN` (default 25), `CONUSAI_MAX_INVOKES_PER_TURN` (default 10).
+
+### New `AppState` fields (v0.3.2)
+
+| Field | Type | Purpose |
+|---|---|---|
+| `semantic_router` | `Arc<SemanticCapabilityRouter>` | Pre-filters tools to top-K per turn |
+
+### Realtime Capability-Spec Hot-reload
+
+`RealtimeService::subscribe_capability_spec_changes()` returns an unbounded channel receiver for `(namespace, tool_name)` tuples. The caller spawns a task that calls `CapabilitySpecFactory::reload_one(registry, ns, tool_name)` on each notification.
 
 ---
 

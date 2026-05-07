@@ -35,8 +35,11 @@ pub use tools::admin::{
 pub use tools::builtin_tool_card;
 pub use tools::card::CapabilityCard;
 pub use tools::discovery::ToolDiscovery;
-pub use tools::provider::CapabilityFactory;
+pub use tools::namespace::NamespaceFilter;
+pub use tools::provider::{BulkCapabilityFactory, CapabilityFactory};
+pub use tools::providers::capability_spec::CapabilitySpecFactory;
 pub use tools::registry::ToolRegistry;
+pub use tools::semantic_router::{RouterMetrics, SemanticCapabilityRouter, SemanticRouterConfig};
 pub use tools::store::{FilesystemStore, RegisteredToolState, RegisteredToolStore};
 pub use tools::validator::{
     RegisteredToolValidationError, RegisteredToolValidator, ValidationReport,

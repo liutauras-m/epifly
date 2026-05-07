@@ -89,6 +89,11 @@ futures      = { version = "0.3" }
 async-trait  = { version = "0.1" }
 bon          = { version = "3" }
 
+# Caching
+moka         = { version = "0.12", features = ["future"] }
+
+# indexmap for deterministic namespace index
+
 # CLI args
 clap         = { version = "4", features = ["derive"] }
 

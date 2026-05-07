@@ -1,7 +1,8 @@
+use crate::mw::RouterQuotaLayer;
 use crate::state::AppState;
 use axum::{
     Router,
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
 };
 use std::sync::Arc;
 use utoipa::Modify;
@@ -156,6 +157,20 @@ pub fn admin_router() -> Router<Arc<AppState>> {
             "/admin/capabilities/{name}/reload",
             post(admin_capabilities::reload_one),
         )
+        // Dynamic prompt management
+        .route(
+            "/admin/capabilities/{name}/prompt",
+            put(admin_capabilities::upsert_prompt).get(admin_capabilities::get_prompt),
+        )
+        .route(
+            "/admin/capabilities/{name}/prompt/versions",
+            get(admin_capabilities::list_prompt_versions),
+        )
+        // Namespace browser
+        .route(
+            "/admin/capabilities/namespaces",
+            get(admin_capabilities::list_namespaces),
+        )
         // Job management
         .route("/admin/jobs", get(admin_jobs::list_jobs))
         .route("/admin/jobs/{name}", get(admin_jobs::get_job))
@@ -170,7 +185,11 @@ pub fn protected_router() -> Router<Arc<AppState>> {
         // OpenAI-compatible chat
         .route("/v1/chat/completions", post(chat::completions))
         // Agent with tool calling + optional thread memory
+        // Wrapped with RouterQuotaLayer to enforce per-turn tool/invoke caps.
         .route("/v1/agent/completions", post(agent::agent_completions))
+        .route_layer(RouterQuotaLayer::new(
+            crate::mw::router_quota::RouterQuotaConfig::from_env(),
+        ))
         // Tool registry (path kept as /v1/capabilities for API compatibility)
         .route("/v1/capabilities", get(capabilities::list_capabilities))
         // Semantic capability search (Postgres pgvector ANN)

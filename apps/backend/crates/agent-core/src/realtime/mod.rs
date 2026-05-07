@@ -27,10 +27,14 @@ type TenantSender = broadcast::Sender<WorkspaceChangeEvent>;
 /// One `PgListener` loop is started per `RealtimeService` instance; it fans out
 /// to per-tenant broadcast channels so each WS client only receives events for
 /// its own tenant.
+type SpecReloadTx = Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<(String, String)>>>>;
+
 pub struct RealtimeService {
     pool: PgPool,
     /// per-tenant broadcast senders; created lazily on first subscription.
     channels: Arc<RwLock<HashMap<String, TenantSender>>>,
+    /// optional sender for capability_specs_changed events (namespace, tool_name).
+    spec_reload_tx: SpecReloadTx,
 }
 
 impl RealtimeService {
@@ -38,9 +42,20 @@ impl RealtimeService {
         let svc = Arc::new(Self {
             pool,
             channels: Arc::new(RwLock::new(HashMap::new())),
+            spec_reload_tx: Arc::new(RwLock::new(None)),
         });
         svc.clone().spawn_listener();
         svc
+    }
+
+    /// Register a channel that receives `(namespace, tool_name)` tuples whenever
+    /// a `capability_specs_changed` notification arrives.
+    pub async fn subscribe_capability_spec_changes(
+        &self,
+    ) -> tokio::sync::mpsc::UnboundedReceiver<(String, String)> {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        *self.spec_reload_tx.write().await = Some(tx);
+        rx
     }
 
     /// Subscribe to workspace changes for `tenant_id`.
@@ -79,22 +94,41 @@ impl RealtimeService {
     async fn run_listener_loop(&self) -> anyhow::Result<()> {
         let mut listener = sqlx::postgres::PgListener::connect_with(&self.pool).await?;
         listener.listen("workspace_changes").await?;
-        info!("realtime listener connected to workspace_changes channel");
+        listener.listen("capability_specs_changed").await?;
+        info!(
+            "realtime listener connected to workspace_changes + capability_specs_changed channels"
+        );
 
         loop {
             let notification = listener.recv().await?;
             let payload = notification.payload();
-            match serde_json::from_str::<WorkspaceChangeEvent>(payload) {
-                Ok(event) => {
-                    let channels = self.channels.read().await;
-                    if let Some(tx) = channels.get(&event.tenant_id) {
-                        // Ignore errors from a full channel or no receivers.
-                        let _ = tx.send(event);
+            let channel = notification.channel();
+            match channel {
+                "workspace_changes" => {
+                    match serde_json::from_str::<WorkspaceChangeEvent>(payload) {
+                        Ok(event) => {
+                            let channels = self.channels.read().await;
+                            if let Some(tx) = channels.get(&event.tenant_id) {
+                                let _ = tx.send(event);
+                            }
+                        }
+                        Err(e) => {
+                            warn!(error = %e, payload, "failed to deserialise workspace_changes payload");
+                        }
                     }
                 }
-                Err(e) => {
-                    warn!(error = %e, payload, "failed to deserialise workspace_changes payload");
+                "capability_specs_changed" => {
+                    // Forward to registered capability-spec reload handlers.
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) {
+                        let ns = v["namespace"].as_str().unwrap_or("").to_string();
+                        let tn = v["tool_name"].as_str().unwrap_or("").to_string();
+                        let tx_guard = self.spec_reload_tx.read().await;
+                        if let Some(tx) = tx_guard.as_ref() {
+                            let _ = tx.send((ns, tn));
+                        }
+                    }
                 }
+                _ => {}
             }
         }
     }

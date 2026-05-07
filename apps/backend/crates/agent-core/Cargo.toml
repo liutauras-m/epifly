@@ -36,6 +36,8 @@ object_store.workspace = true
 bytes.workspace        = true
 rig-postgres.workspace = true
 async-recursion        = { version = "1" }
+moka.workspace         = true
+blake3.workspace       = true
 
 [features]
 default          = []

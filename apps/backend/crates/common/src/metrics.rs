@@ -105,3 +105,58 @@ pub fn db_errors() -> Counter<u64> {
 pub fn kv(k: &'static str, v: impl Into<String>) -> KeyValue {
     KeyValue::new(k, v.into())
 }
+
+// ── Semantic router metrics (OTel GenAI conventions) ─────────────────────────
+
+/// Counter: cache hits in the semantic router.
+pub fn semantic_router_cache_hits() -> Counter<u64> {
+    opentelemetry::global::meter("conusai.agent")
+        .u64_counter("gen_ai.semantic_router.cache_hit")
+        .with_description("Semantic router embedding cache hits")
+        .with_unit("hits")
+        .build()
+}
+
+/// Histogram: top-K size returned by the semantic router.
+pub fn semantic_router_top_k() -> Histogram<u64> {
+    opentelemetry::global::meter("conusai.agent")
+        .u64_histogram("gen_ai.semantic_router.top_k")
+        .with_description("Number of capabilities selected by the semantic router per turn")
+        .with_unit("capabilities")
+        .build()
+}
+
+/// Histogram: cosine distance of best (closest) hit.
+pub fn semantic_router_distance() -> Histogram<f64> {
+    opentelemetry::global::meter("conusai.agent")
+        .f64_histogram("gen_ai.semantic_router.distance")
+        .with_description("Cosine distance of the top-1 capability hit (lower = closer)")
+        .build()
+}
+
+/// Counter: total tool calls tracked by the GenAI semantic conventions.
+pub fn gen_ai_tool_calls() -> Counter<u64> {
+    opentelemetry::global::meter("conusai.agent")
+        .u64_counter("gen_ai.tool.calls")
+        .with_description("Total tool calls dispatched via the semantic router")
+        .with_unit("calls")
+        .build()
+}
+
+/// Histogram: semantic router select latency.
+pub fn capability_router_select_seconds() -> Histogram<f64> {
+    opentelemetry::global::meter("conusai.agent")
+        .f64_histogram("capability_router_select_seconds")
+        .with_description("Time to resolve top-K capabilities in the semantic router")
+        .with_unit("s")
+        .build()
+}
+
+/// Histogram: capability invoke latency.
+pub fn capability_invoke_seconds() -> Histogram<f64> {
+    opentelemetry::global::meter("conusai.agent")
+        .f64_histogram("capability_invoke_seconds")
+        .with_description("Time to invoke a capability provider")
+        .with_unit("s")
+        .build()
+}

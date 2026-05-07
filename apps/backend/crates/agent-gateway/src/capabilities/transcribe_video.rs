@@ -43,6 +43,7 @@ impl TranscribeVideoCapability {
             }],
             config: serde_json::Value::Null,
             tags: vec!["audio".into(), "video".into(), "transcription".into()],
+            namespace: None,
             chain: None,
         };
 

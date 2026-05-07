@@ -8,7 +8,7 @@
 //!   when it fetches an image URL to pass to an LLM tool.
 
 use crate::state::AppState;
-use crate::ui::session::{verify as verify_session, COOKIE_NAME};
+use crate::ui::session::{COOKIE_NAME, verify as verify_session};
 use axum::{
     body::Body,
     extract::{Path, State},
@@ -35,9 +35,7 @@ pub async fn ui_download(
     };
 
     // Optionally resolve the session user for tenant-ownership checks.
-    let session_user = jar
-        .get(COOKIE_NAME)
-        .and_then(|c| verify_session(c.value()));
+    let session_user = jar.get(COOKIE_NAME).and_then(|c| verify_session(c.value()));
 
     let object_key = {
         let tokens = state.presigned_tokens.lock().unwrap();
@@ -52,7 +50,10 @@ pub async fn ui_download(
         if let Some(ref u) = session_user {
             let tid = u.tenant_context().tenant_id;
             if stored_tid != tid.as_str() {
-                return err(StatusCode::FORBIDDEN, "token does not belong to your tenant");
+                return err(
+                    StatusCode::FORBIDDEN,
+                    "token does not belong to your tenant",
+                );
             }
         }
         key.clone()
