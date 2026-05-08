@@ -27,3 +27,11 @@ Cargo.lock
 # Coverage
 /lcov.info
 /tarpaulin-report.html
+
+# Node / pnpm
+node_modules/
+pnpm-lock.yaml
+
+# SvelteKit build artifacts
+.svelte-kit/
+build/

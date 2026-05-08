@@ -3,7 +3,6 @@ use axum::{Router, extract::State, http::StatusCode, response::IntoResponse, rou
 use prometheus::Encoder;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
-use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::info;
 
@@ -43,9 +42,6 @@ async fn main() -> Result<()> {
     let loaded = state.registry.lock().unwrap().len();
     info!(capabilities = loaded, "capability registry loaded");
 
-    let assets_dir =
-        std::env::var("CONUSAI_UI_ASSETS").unwrap_or_else(|_| "crates/agent-gateway/assets".into());
-
     let app = Router::new()
         .merge(routes::public_router())
         // Prometheus metrics — no auth required (restrict via network/proxy in prod)
@@ -62,7 +58,6 @@ async fn main() -> Result<()> {
                 .layer(axum::middleware::from_fn(mw::trace::propagate_trace)),
         )
         .merge(ui::ui_router())
-        .nest_service("/assets", ServeDir::new(&assets_dir))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(Arc::clone(&state));

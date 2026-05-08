@@ -1,18 +1,16 @@
-//! UI router — auth, app shell, chat stream, upload.
+//! UI API router — session-authenticated JSON/SSE endpoints.
+//! HTML is served by the SvelteKit frontend; this module provides only the backend API.
 
 use crate::state::AppState;
-use crate::ui::handlers::{app, auth, chat, invoice, upload};
+use crate::ui::handlers::{chat, invoice, upload};
 use axum::{
     Router,
-    routing::{get, post},
+    routing::post,
 };
 use std::sync::Arc;
 
 pub fn ui_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/", get(app::index))
-        .route("/login", get(auth::login_get).post(auth::login_post))
-        .route("/logout", get(auth::logout))
         .route("/ui/stream", post(chat::ui_stream))
         .route("/ui/upload", post(upload::ui_upload))
         .route("/ui/extract-invoice", post(invoice::ui_extract_invoice))
