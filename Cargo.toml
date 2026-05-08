@@ -90,8 +90,6 @@ clap         = { version = "4", features = ["derive"] }
 # Colored output
 colored      = { version = "2" }
 
-# Server-side templates
-askama       = { version = "0.12" }
 
 [profile.release]
 opt-level     = 3

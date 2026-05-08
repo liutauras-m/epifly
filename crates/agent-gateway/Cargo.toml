@@ -41,7 +41,5 @@ hmac.workspace        = true
 base64.workspace      = true
 object_store.workspace = true
 chrono.workspace      = true
-askama.workspace      = true
-axum-extra            = { version = "0.10", features = ["cookie", "multipart"] }
+axum-extra            = { version = "0.10", features = ["cookie"] }
 async-trait.workspace = true
-time                  = "0.3"

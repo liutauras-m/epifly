@@ -2,13 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "conusai-gateway",
-      "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", "set -a && source .env.local && set +a && unset JWT_SECRET && CONUSAI_SERVER__PORT=\"${PORT:-8088}\" cargo run -p agent-gateway"],
-      "port": 8088,
-      "env": {
-        "RUST_LOG": "info,agent_gateway=debug"
-      }
+      "name": "web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "web", "exec", "vite", "dev", "--port", "5173"],
+      "port": 5173
     }
   ]
 }
