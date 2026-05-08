@@ -836,20 +836,16 @@ curl -sf -H "Authorization: Bearer $TOKEN" \
 
 Append-only audit events backed by Qdrant collection `audit_{tenant_id}` ([`memory/qdrant_audit.rs`](../crates/agent-core/src/memory/qdrant_audit.rs), [`routes/audit.rs`](../crates/agent-gateway/src/routes/audit.rs)).
 
-```bash
-# Generate some traffic to populate audit events (server-side appends are wired
-# into mutating routes; see common::audit::AuditEvent + AuditStore).
-curl -sf -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/capabilities >/dev/null
-curl -sf -X POST http://localhost:8080/v1/workspaces \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"kind":"folder","name":"AuditTest","parent_id":null}' >/dev/null
+> **⚠️ Known gap (2026-05-08):** `AuditStore::append()` is defined and the `GET /v1/audit` endpoint works, but no gateway route currently calls `append()`. The audit collection stays empty until callers are wired in. Work is tracked — do not mark this phase green until at least one route writes an audit event.
 
-# Query — newest first, capped at 500
+```bash
+# Verify the endpoint responds (will return count=0 until wired):
 curl -sf -H "Authorization: Bearer $TOKEN" \
   "http://localhost:8080/v1/audit?limit=20" | python3 -m json.tool
+# Expected: {"events":[],"count":0}
 ```
 
-Response shape:
+Response shape (once wired):
 ```json
 {
   "events": [
@@ -868,7 +864,7 @@ Response shape:
 }
 ```
 
-✅ **Pass**: results ordered by `timestamp` desc (Qdrant `order_by`), payload deserialized into `AuditEvent`. The collection is created on first `append()`. Retention is **unbounded today** — Qdrant points are never expired by the gateway; deferred until a retention ADR lands.
+⚠️ **Partial**: `GET /v1/audit` returns `{"events":[],"count":0}` — endpoint reachable, shape correct, but no route writes audit events yet. Retention is **unbounded today** — deferred until a retention ADR lands.
 
 ---
 
@@ -876,8 +872,10 @@ Response shape:
 
 Browser-driven verification of the SvelteKit sidebar at [`apps/web/src/routes/+page.svelte`](../apps/web/src/routes/+page.svelte).
 
+> **Status (2026-05-08):** Sidebar structure renders correctly. Recents and Capabilities load via SSR but return empty when `JWT_SECRET` is set (session-cookie auth rejected on `/v1/*`). Workspace tree is a **stub** (`aria-busy="true"`, skeleton div) — not yet wired to `GET /v1/workspaces/tree`. Items marked ⚠️ below are pending implementation.
+
 ```bash
-# Backend
+# Backend — unset JWT_SECRET so /v1/* accepts session cookie
 unset JWT_SECRET
 cargo run -p agent-gateway       # → :8080
 
@@ -887,15 +885,18 @@ pnpm --filter web dev            # → :5173
 
 Manual checklist (use Chrome, preview tools, or Playwright):
 
-- [ ] `GET http://localhost:5173/` while logged out → 302 to `/login`. Submit name + plan → 302 to `/`.
-- [ ] Sidebar sections rendered (top-to-bottom): **WORKSPACE** header with `+` icon-button → search input → workspace tree → **RECENTS** → **CAPABILITIES** → user chip footer.
-- [ ] **No** legacy `New chat`, `Search` nav item, brand monogram, or `Chats / Projects / Code / Customize / Design / More` rows.
-- [ ] Sidebar scrolls internally when the tree overflows (`.ws-section` is `flex: 1 1 0; overflow: hidden;` and `.ws-tree` has `overflow-y: auto`).
-- [ ] Type `inv` in the search input → `/v1/workspaces/search?q=inv` fires (Vite proxies to `:8080`) after a 220 ms debounce; matches render in `.ws-search-results` panel with `<mark>` highlight.
-- [ ] Click a conversation → URL updates to `?ws=<id>`; hard refresh restores selection (folder ancestors expand lazily).
-- [ ] Send a message in the composer → DevTools shows `POST /ui/stream` (proxied) with body `{"message":"…","thread_id":…,"workspace_node_id":"<id>"}`.
-- [ ] After response, `GET /v1/workspaces/{id}` shows `metadata.thread_id` populated; subsequent searches for words from the conversation text return that node.
-- [ ] Theme toggle (sun/moon icon in top bar), `Cmd/Ctrl-Enter` to send, paperclip → file picker, drag-and-drop file onto the composer, and `prefers-reduced-motion` respect remain intact.
+- ✅ `GET http://localhost:5173/` while logged out → 302 to `/login`. Submit name + plan → 302 to `/`.
+- ✅ Sidebar sections rendered (top-to-bottom): **WORKSPACE** header with `+` icon-button → search input → workspace tree area → **RECENTS** → **CAPABILITIES** → user chip footer.
+- ✅ **No** legacy `New chat`, `Search` nav item, brand monogram, or `Chats / Projects / Code / Customize / Design / More` rows.
+- ✅ Sidebar scrolls internally when the tree overflows (`.ws-section` is `flex: 1 1 0; overflow: hidden;` and `.ws-tree` has `overflow-y: auto`).
+- ⚠️ **RECENTS** loads from `GET /v1/threads?limit=20` via SSR — returns empty when JWT required; works with `unset JWT_SECRET`.
+- ⚠️ **CAPABILITIES** loads from `GET /v1/capabilities` via SSR — returns empty when JWT required; works with `unset JWT_SECRET`.
+- ⚠️ **WORKSPACE TREE** — stub only; `#workspace-tree` renders a skeleton. Wiring `GET /v1/workspaces/tree` + tree component is pending.
+- ⚠️ Type `inv` in the search input → `/v1/workspaces/search?q=inv` fires after debounce — not yet implemented client-side.
+- ⚠️ Click a conversation → URL updates to `?ws=<id>` — not yet implemented (tree stub).
+- ✅ Send a message in the composer → DevTools shows `POST /ui/stream` (proxied) → SSE response renders in chat.
+- ⚠️ After response, `metadata.thread_id` populated on workspace node — pending workspace tree wiring.
+- ✅ Theme toggle (sun/moon icon in top bar) works; `Cmd/Ctrl-Enter` to send works.
 
 The session cookie is set by SvelteKit's form action and verified by the Rust gateway (`/ui/*` requests include `Cookie: conusai_session=...`); both use the same HMAC key from the `UI_SESSION_KEY` env var.
 

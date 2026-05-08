@@ -10,10 +10,10 @@ use chrono::Utc;
 use common::error::ConusAiError;
 use common::memory::store::WorkspaceStore;
 use common::memory::workspace::{NodeKind, WorkspaceNode, join_virtual_path, validate_name};
+use common::metrics;
 use reqwest::Client;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use common::metrics;
 use std::time::Instant;
 use tracing::{Span, info, instrument, warn};
 use ulid::Ulid;
@@ -111,10 +111,18 @@ impl QdrantWorkspaceStore {
     async fn upsert_point(&self, tenant_id: &str, point: Value) -> anyhow::Result<()> {
         let col = self.collection(tenant_id);
         Span::current().record("db.collection", col.as_str());
-        let labels = [metrics::kv("operation", "upsert"), metrics::kv("collection", col.as_str())];
+        let labels = [
+            metrics::kv("operation", "upsert"),
+            metrics::kv("collection", col.as_str()),
+        ];
         let t0 = Instant::now();
         let url = format!("{}/collections/{}/points", self.base_url, col);
-        let res = self.http.put(&url).json(&json!({ "points": [point] })).send().await?;
+        let res = self
+            .http
+            .put(&url)
+            .json(&json!({ "points": [point] }))
+            .send()
+            .await?;
         metrics::qdrant_duration_ms().record(t0.elapsed().as_secs_f64() * 1000.0, &labels);
         if !res.status().is_success() {
             let body = res.text().await.unwrap_or_default();
@@ -134,7 +142,10 @@ impl QdrantWorkspaceStore {
     ) -> anyhow::Result<Vec<Value>> {
         let col = self.collection(tenant_id);
         Span::current().record("db.collection", col.as_str());
-        let labels = [metrics::kv("operation", "scroll"), metrics::kv("collection", col.as_str())];
+        let labels = [
+            metrics::kv("operation", "scroll"),
+            metrics::kv("collection", col.as_str()),
+        ];
         let t0 = Instant::now();
         let url = format!("{}/collections/{}/points/scroll", self.base_url, col);
         let res = self
@@ -151,18 +162,29 @@ impl QdrantWorkspaceStore {
             anyhow::bail!("workspace scroll failed: {body}");
         }
         let body: Value = res.json().await?;
-        Ok(body["result"]["points"].as_array().cloned().unwrap_or_default())
+        Ok(body["result"]["points"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default())
     }
 
     #[instrument(skip(self), fields(db.system = "qdrant", db.operation = "delete", db.collection = tracing::field::Empty, error.type = tracing::field::Empty))]
     async fn delete_point(&self, tenant_id: &str, node_id: Ulid) -> anyhow::Result<()> {
         let col = self.collection(tenant_id);
         Span::current().record("db.collection", col.as_str());
-        let labels = [metrics::kv("operation", "delete"), metrics::kv("collection", col.as_str())];
+        let labels = [
+            metrics::kv("operation", "delete"),
+            metrics::kv("collection", col.as_str()),
+        ];
         let t0 = Instant::now();
         let url = format!("{}/collections/{}/points/delete", self.base_url, col);
         let pid = point_id(&node_id.to_string());
-        let res = self.http.post(&url).json(&json!({ "points": [pid] })).send().await?;
+        let res = self
+            .http
+            .post(&url)
+            .json(&json!({ "points": [pid] }))
+            .send()
+            .await?;
         metrics::qdrant_duration_ms().record(t0.elapsed().as_secs_f64() * 1000.0, &labels);
         if !res.status().is_success() {
             let body = res.text().await.unwrap_or_default();
@@ -496,11 +518,16 @@ impl WorkspaceStore for QdrantWorkspaceStore {
         node.last_modified = Utc::now();
 
         // Use patch_payload so content_text is not clobbered.
-        self.patch_payload(tenant_id, node_id, json!({
-            "parent_id": node.parent_id.map(|u| u.to_string()).unwrap_or_default(),
-            "virtual_path": new_virtual_path,
-            "last_modified": node.last_modified.to_rfc3339(),
-        })).await?;
+        self.patch_payload(
+            tenant_id,
+            node_id,
+            json!({
+                "parent_id": node.parent_id.map(|u| u.to_string()).unwrap_or_default(),
+                "virtual_path": new_virtual_path,
+                "last_modified": node.last_modified.to_rfc3339(),
+            }),
+        )
+        .await?;
         Ok(node)
     }
 
@@ -577,10 +604,15 @@ impl WorkspaceStore for QdrantWorkspaceStore {
         }
         node.last_modified = Utc::now();
         // Use patch_payload so content_text is not clobbered.
-        self.patch_payload(tenant_id, node_id, json!({
-            "shared_with": node.shared_with,
-            "last_modified": node.last_modified.to_rfc3339(),
-        })).await?;
+        self.patch_payload(
+            tenant_id,
+            node_id,
+            json!({
+                "shared_with": node.shared_with,
+                "last_modified": node.last_modified.to_rfc3339(),
+            }),
+        )
+        .await?;
         Ok(node)
     }
 
@@ -603,10 +635,15 @@ impl WorkspaceStore for QdrantWorkspaceStore {
         node.shared_with.retain(|u| u != with_user_id);
         node.last_modified = Utc::now();
         // Use patch_payload so content_text is not clobbered.
-        self.patch_payload(tenant_id, node_id, json!({
-            "shared_with": node.shared_with,
-            "last_modified": node.last_modified.to_rfc3339(),
-        })).await?;
+        self.patch_payload(
+            tenant_id,
+            node_id,
+            json!({
+                "shared_with": node.shared_with,
+                "last_modified": node.last_modified.to_rfc3339(),
+            }),
+        )
+        .await?;
         Ok(node)
     }
 
@@ -632,19 +669,29 @@ impl WorkspaceStore for QdrantWorkspaceStore {
         node.last_modified = Utc::now();
 
         // Use patch_payload so content_text is not clobbered.
-        self.patch_payload(tenant_id, node_id, json!({
-            "metadata": node.metadata,
-            "last_modified": node.last_modified.to_rfc3339(),
-        })).await?;
+        self.patch_payload(
+            tenant_id,
+            node_id,
+            json!({
+                "metadata": node.metadata,
+                "last_modified": node.last_modified.to_rfc3339(),
+            }),
+        )
+        .await?;
         Ok(node)
     }
 
     #[instrument(skip(self), fields(tenant_id, %node_id))]
     async fn bump_last_modified(&self, tenant_id: &str, node_id: Ulid) -> anyhow::Result<()> {
         if self.get_raw(tenant_id, node_id).await?.is_some() {
-            self.patch_payload(tenant_id, node_id, json!({
-                "last_modified": Utc::now().to_rfc3339(),
-            })).await?;
+            self.patch_payload(
+                tenant_id,
+                node_id,
+                json!({
+                    "last_modified": Utc::now().to_rfc3339(),
+                }),
+            )
+            .await?;
         } else {
             warn!(%node_id, "bump_last_modified: node not found, skipping");
         }
@@ -685,9 +732,7 @@ impl WorkspaceStore for QdrantWorkspaceStore {
             })
             .collect();
 
-        let mut must = vec![
-            json!({"key": "tenant_id", "match": {"value": tenant_id}}),
-        ];
+        let mut must = vec![json!({"key": "tenant_id", "match": {"value": tenant_id}})];
         must.extend(token_conditions);
 
         let filter = json!({
@@ -724,7 +769,9 @@ impl WorkspaceStore for QdrantWorkspaceStore {
             metrics::qdrant_errors().add(1, &labels);
             // If the text index isn't ready yet, fall back to fetching all and filtering locally.
             warn!(error = %body, "Qdrant text search failed; falling back to substring scan");
-            return self.search_nodes_fallback(tenant_id, user_id, query, limit).await;
+            return self
+                .search_nodes_fallback(tenant_id, user_id, query, limit)
+                .await;
         }
 
         let body: Value = res.json().await?;
@@ -737,7 +784,9 @@ impl WorkspaceStore for QdrantWorkspaceStore {
 
         // If Qdrant returns nothing (e.g. index not yet built), fall back.
         if nodes.is_empty() && !query.is_empty() {
-            return self.search_nodes_fallback(tenant_id, user_id, query, limit).await;
+            return self
+                .search_nodes_fallback(tenant_id, user_id, query, limit)
+                .await;
         }
 
         Ok(nodes)
@@ -825,7 +874,10 @@ impl QdrantWorkspaceStore {
             .filter(|p| {
                 let payload = &p["payload"];
                 let name = payload["name"].as_str().unwrap_or("").to_lowercase();
-                let content = payload["content_text"].as_str().unwrap_or("").to_lowercase();
+                let content = payload["content_text"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_lowercase();
                 name.contains(&q) || content.contains(&q)
             })
             .filter_map(Self::node_from_payload)

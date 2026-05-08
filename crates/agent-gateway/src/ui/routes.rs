@@ -3,10 +3,7 @@
 
 use crate::state::AppState;
 use crate::ui::handlers::{chat, invoice, upload};
-use axum::{
-    Router,
-    routing::post,
-};
+use axum::{Router, routing::post};
 use std::sync::Arc;
 
 pub fn ui_router() -> Router<Arc<AppState>> {

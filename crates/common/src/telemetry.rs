@@ -48,8 +48,7 @@ impl Drop for TelemetryGuard {
 /// Build the OTel `Resource` from env + hard-coded semantic convention attrs.
 fn build_resource(service_name: &str) -> Resource {
     let svc_name = std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| service_name.to_owned());
-    let deploy_env =
-        std::env::var("DEPLOY_ENV").unwrap_or_else(|_| "development".to_owned());
+    let deploy_env = std::env::var("DEPLOY_ENV").unwrap_or_else(|_| "development".to_owned());
 
     let mut attrs = vec![
         KeyValue::new("service.name", svc_name),
@@ -60,9 +59,9 @@ fn build_resource(service_name: &str) -> Resource {
     ];
 
     // Add hostname as instance ID when available.
-    if let Ok(h) = std::env::var("HOSTNAME").or_else(|_| {
-        std::fs::read_to_string("/etc/hostname").map(|s| s.trim().to_owned())
-    }) {
+    if let Ok(h) = std::env::var("HOSTNAME")
+        .or_else(|_| std::fs::read_to_string("/etc/hostname").map(|s| s.trim().to_owned()))
+    {
         attrs.push(KeyValue::new("service.instance.id", h));
     }
 

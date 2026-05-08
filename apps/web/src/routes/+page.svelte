@@ -329,7 +329,7 @@
 					{/if}
 				</svg>
 			</button>
-			<a href="/logout" class="icon-btn" aria-label="Logout">
+			<a href="/logout" class="icon-btn" aria-label="Logout" data-sveltekit-reload>
 				<svg class="icon" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
 					<path d="M7 3H3v12h4M12 6l4 3-4 3M6 9h10"/>
 				</svg>

@@ -40,8 +40,7 @@ impl SessionUser {
     pub fn tenant_context(&self) -> TenantContext {
         let workspace_root = std::env::var("CONUSAI_WORKSPACE_ROOT")
             .unwrap_or_else(|_| "/tmp/conusai/workspaces".into());
-        let tenant_id =
-            std::env::var("CONUSAI_UI_TENANT_ID").unwrap_or_else(|_| "dev".into());
+        let tenant_id = std::env::var("CONUSAI_UI_TENANT_ID").unwrap_or_else(|_| "dev".into());
         TenantContext::new(
             tenant_id,
             Some(self.name.clone()),

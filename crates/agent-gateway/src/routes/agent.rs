@@ -21,13 +21,13 @@ use axum::{
 use chrono::Utc;
 use common::memory::thread::Message;
 use common::memory::workspace::effective_user_id;
+use common::metrics;
 use futures::StreamExt;
 use serde_json::{Value, json};
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use common::metrics;
 use tracing::{Span, info, instrument, warn};
 use ulid::Ulid as _Ulid;
 use uuid::Uuid;
