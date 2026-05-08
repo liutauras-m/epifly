@@ -1,6 +1,9 @@
-//! Mock session: HMAC-signed cookie carrying name + plan + expiry.
+//! HMAC-signed cookie verifier for `/ui/*` endpoints.
 //!
-//! In production, swap for OIDC; templates and routes don't change.
+//! The cookie is **issued by the SvelteKit app at `apps/web`** (see
+//! `apps/web/src/lib/server/session.ts`). This module only verifies it on
+//! incoming requests so the kept `/ui/stream`, `/ui/upload`, and
+//! `/ui/extract-invoice` handlers can authenticate.
 
 use agent_core::{PlanTier, TenantContext};
 use axum::{
@@ -16,7 +19,6 @@ use sha2::Sha256;
 use std::sync::OnceLock;
 
 pub const COOKIE_NAME: &str = "conusai_session";
-const TTL_SECS: i64 = 24 * 3600;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -28,31 +30,6 @@ pub struct SessionUser {
 }
 
 impl SessionUser {
-    pub fn first_name(&self) -> &str {
-        self.name.split_whitespace().next().unwrap_or(&self.name)
-    }
-    pub fn initials(&self) -> String {
-        self.name
-            .split_whitespace()
-            .filter_map(|w| w.chars().next())
-            .take(2)
-            .collect::<String>()
-            .to_uppercase()
-    }
-    pub fn slug(&self) -> String {
-        self.name
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() {
-                    c.to_ascii_lowercase()
-                } else {
-                    '-'
-                }
-            })
-            .collect::<String>()
-            .trim_matches('-')
-            .to_string()
-    }
     pub fn plan_tier(&self) -> PlanTier {
         match self.plan.as_str() {
             "pro" => PlanTier::Pro,
@@ -63,10 +40,6 @@ impl SessionUser {
     pub fn tenant_context(&self) -> TenantContext {
         let workspace_root = std::env::var("CONUSAI_WORKSPACE_ROOT")
             .unwrap_or_else(|_| "/tmp/conusai/workspaces".into());
-        // Single shared tenant in UI/dev mode so /v1/* (extract_tenant default = "dev")
-        // and /ui/* (SessionUser-derived) share workspaces, threads, and ACL space.
-        // In production, /v1/* requires JWT and tenant_id comes from claims; /ui/* is
-        // not exposed there, so this fallback is dev-only.
         let tenant_id =
             std::env::var("CONUSAI_UI_TENANT_ID").unwrap_or_else(|_| "dev".into());
         TenantContext::new(
@@ -85,21 +58,6 @@ fn key() -> &'static [u8] {
             .unwrap_or_else(|_| "conusai-foundry-dev-secret-change-me-32b".into())
             .into_bytes()
     })
-}
-
-pub fn sign(name: &str, plan: &str) -> String {
-    let now = chrono::Utc::now().timestamp();
-    let payload = SessionUser {
-        name: name.to_string(),
-        plan: plan.to_string(),
-        exp: now + TTL_SECS,
-    };
-    let json = serde_json::to_vec(&payload).unwrap();
-    let payload_b64 = B64.encode(&json);
-    let mut mac = HmacSha256::new_from_slice(key()).expect("HMAC key");
-    mac.update(payload_b64.as_bytes());
-    let sig = B64.encode(mac.finalize().into_bytes());
-    format!("{payload_b64}.{sig}")
 }
 
 pub fn verify(cookie_value: &str) -> Option<SessionUser> {

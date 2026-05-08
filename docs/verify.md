@@ -1,8 +1,11 @@
-# ConusAI Platform — Docker Verification Plan
+# ConusAI Platform — Verification Plan
 
-End-to-end verification of the **ConusAI multitenant agent platform** running entirely in Docker.
+End-to-end verification of the **ConusAI multitenant agent platform** — Rust backend in Docker + SvelteKit web app on Node.
 
-> **Architecture under test**: workspace with `common`, `agent-core`, `agent-gateway`, `invoice-demo`, `evals` crates; Anthropic Claude via Rig; per-tenant isolation; capabilities auto-discovery; invoice extraction pipeline; streaming SSE; tool-calling agent loop; MCP JSON-RPC 2.0; MinIO file storage; Qdrant semantic search; WASM runtime.
+> **Architecture under test**:
+> - **Backend**: Cargo workspace with `common`, `agent-core`, `agent-gateway`, `invoice-demo`, `evals` crates; Anthropic Claude via Rig; per-tenant isolation; capabilities auto-discovery; invoice pipeline; SSE streaming; tool-calling agent loop; MCP JSON-RPC 2.0; MinIO file storage; Qdrant semantic search; WASM runtime.
+> - **Web app** (`apps/web`): SvelteKit 2 + Svelte 5 SSR, `adapter-node`, HMAC-SHA256 session cookie shared with the Rust gateway. Replaces the previous Askama-rendered Foundry UI per [`docs/browser-shell-plan.md`](browser-shell-plan.md) Phase 3. The Rust gateway now serves only API + streaming endpoints.
+> - **Out of scope (planned)**: `apps/browser-shell` (Tauri 2) — see Phase 4 of the plan.
 
 ---
 
@@ -26,10 +29,12 @@ All previously identified gaps are now implemented and verified.
 | **Google Workspace capability** | ✅ Implemented | YAML manifest (MCP type, OAuth2 config) |
 | Docker stack (Qdrant + MinIO) | ✅ Strong | Both services healthy, both exercise real data plane |
 | Evals framework | ✅ Strong | 100% score, ALL PASS |
-| **Foundry UI — file upload** | ✅ Verified | `POST /ui/upload` → MinIO, token chip in composer |
-| **Foundry UI — direct pipeline** | ✅ Verified | "Extract invoice" button (invoice-named files only) → `POST /ui/extract-invoice` → `InvoiceData` card |
-| **Foundry UI — agent chat** | ✅ Verified | Prompt "Extract invoice" + attachment URL → `invoice-processing__extract_invoice` (9.43s) |
-| **Foundry UI — generic attachments** | ✅ Fixed | Non-invoice filenames show no "Extract invoice" button; detection requires extension + name match |
+| **Web UI (SvelteKit) — login + session** | ✅ Verified | HMAC-SHA256 cookie set by SvelteKit, verified by Rust gateway |
+| **Web UI — file upload** | ✅ Verified | `POST /ui/upload` (Vite-proxied to :8080) → MinIO, token chip in composer |
+| **Web UI — direct pipeline** | ✅ Verified | "Extract invoice" button → `POST /ui/extract-invoice` → `InvoiceData` card |
+| **Web UI — agent chat (SSE)** | ✅ Verified | `POST /ui/stream` → `invoice-processing__extract_invoice` tool call |
+| **Web UI — workspace tree SSR** | ✅ Verified | `+page.server.ts` calls `/v1/workspaces/tree` server-side via absolute URL |
+| **Askama Foundry UI** | 🗑️ Removed | Templates, `assets/`, `ui/handlers/auth.rs`, `ui/handlers/app.rs`, `ui/view.rs` deleted in SvelteKit migration |
 | `file-storage` MCP executor | ⚠️ Mitigated | No MCP server; agent given download URL directly instead of token |
 
 ### Verdict
@@ -595,161 +600,128 @@ echo "   • Zero-code extension: PASS"
 
 ---
 
-## Phase 10 — Foundry UI: Invoice Upload & Extraction (2026-04-26)
+## Phase 10 — Web UI: Invoice Upload & Extraction (SvelteKit, 2026-05-08)
 
-End-to-end browser verification of the Foundry UI invoice workflow — two paths: direct pipeline and agent chat.
+End-to-end browser verification of the **SvelteKit web app** at `apps/web`. Replaces the earlier Askama Foundry UI verification — see [`docs/browser-shell-plan.md`](browser-shell-plan.md) Phase 3 (`apps/web` migration). The Rust gateway now serves only API + streaming endpoints (`/ui/stream`, `/ui/upload`, `/ui/extract-invoice`); HTML rendering moved to SvelteKit SSR.
 
 ### 10.1 Prerequisites
 
 ```bash
-# Server running locally (not Docker)
+# 1. Backend (Rust gateway) on :8080 — auth disabled for dev
+unset JWT_SECRET
 set -a && source .env.local && set +a
-CONUSAI_SERVER__PORT=8088 cargo run -p agent-gateway
+cargo run -p agent-gateway
 
-# MinIO must be up (presigned token map is in-process)
+# 2. Infrastructure (MinIO + Qdrant + postgres)
 docker compose --profile infra up -d
+
+# 3. Web app (SvelteKit) on :5173 — proxies /v1, /api, /ui/* to :8080
+pnpm --filter web dev
 ```
+
+The SvelteKit Vite dev server proxies all backend paths, so the user-facing origin is `http://localhost:5173`. The session cookie (`conusai_session`) is HMAC-SHA256 signed with `UI_SESSION_KEY` — verified by the Rust gateway in [`crates/agent-gateway/src/ui/session.rs`](../crates/agent-gateway/src/ui/session.rs) against the same key. Cookie format is byte-compatible with the SvelteKit signer at [`apps/web/src/lib/server/session.ts`](../apps/web/src/lib/server/session.ts).
 
 ### 10.2 Login
 
-1. Navigate to `http://localhost:8088/login`
-2. Enter name (e.g. **John Smith**), plan **enterprise**, click **Enter**
-3. ✅ Redirected to `http://localhost:8088/` — greeting screen visible
+1. Navigate to `http://localhost:5173/login`
+2. Enter name (e.g. **Liutauras**), plan **enterprise**, click **Enter**
+3. ✅ Redirected to `http://localhost:5173/` — dashboard renders
+4. ✅ Greeting `Good morning, Liutauras` (Fraunces display font, opsz 96, SOFT 30)
+5. ✅ Sidebar: WORKSPACE / RECENTS / CAPABILITIES sections + user chip "L / Liutauras / ENTERPRISE"
+6. ✅ Composer placeholder: `How can I help you today?`
+7. ✅ Quick chips: CODE / WRITE / LEARN / LIFE STUFF / OPERATOR'S CHOICE
+
+DevTools verification:
+- `Set-Cookie: conusai_session=<payload-b64>.<sig-b64>; HttpOnly; Path=/; SameSite=Lax`
+- `GET /v1/workspaces/tree` → 200 (proxied through Vite to `:8080`)
 
 ### 10.3 Upload `invoice.png`
 
-Two equivalent methods:
+Click the paperclip in the composer → select `invoice.png`. The browser issues:
 
-**A — Via paperclip button in UI** (click the paperclip → select `invoice.png` from file picker)
-
-**B — Via curl** (used in automated verification due to Chrome extension path restriction):
-
-```bash
-curl -s -b /tmp/cookies.txt \
-  -X POST http://localhost:8088/ui/upload \
-  -F "file=@invoice.png;type=image/png"
+```
+POST /ui/upload  (multipart/form-data, file)
+Cookie: conusai_session=<...>
 ```
 
 Expected response:
 ```json
 {
-  "id": "591d461a-a522-4355-bf25-e775d69e6060",
+  "id": "<uuid>",
   "filename": "invoice.png",
   "size": 132269,
   "content_type": "image/png",
-  "download_url": "/v1/files/591d461a-a522-4355-bf25-e775d69e6060"
+  "download_url": "/v1/files/<uuid>"
 }
 ```
 
-✅ File stored in MinIO under `tenants/dev/{uuid}/invoice.png`  
-✅ Token registered in in-process `presigned_tokens` map (1h TTL)  
-✅ Download URL publicly accessible: `GET /v1/files/{token}` → 200 + bytes
+✅ File stored in MinIO under `tenants/dev/{uuid}/invoice.png`
+✅ Attachment chip appears in composer with **"Extract invoice"** button (filename ending in `invoice` triggers it)
 
-### 10.4 Path A — Direct Pipeline (no agent loop)
+Curl-only equivalent (using a session cookie obtained via `POST /login` on `:5173`):
+```bash
+curl -s -b /tmp/cookies.txt -X POST http://localhost:5173/ui/upload \
+  -F "file=@invoice.png;type=image/png"
+```
 
-After upload, the attachment chip appears in the composer with an ember **"Extract invoice"** button.
+### 10.4 Path A — Direct Pipeline (`/ui/extract-invoice`)
 
-1. Click **Extract invoice** button on the chip
-2. UI calls `POST /ui/extract-invoice` with `{"token": "<id>"}`
-3. Handler: resolves token → MinIO object key → downloads bytes → `InvoicePipeline::extract_from_bytes`
-4. ✅ Structured `InvoiceData` card rendered immediately
+Click the **Extract invoice** button on the attachment chip:
+
+1. Browser POSTs `/ui/extract-invoice` with `{"token": "<id>"}`
+2. Gateway: token → MinIO key → bytes → `InvoicePipeline::extract_from_bytes`
+3. ✅ Structured `InvoiceData` card rendered in the chat surface
 
 **Result card (verified):**
 
 | Field | Value |
 |---|---|
 | Invoice # | HCY-23256029 |
-| Date | Mar 21, 2026 |
-| Due | Apr 17, 2027 |
 | Status | **PAID** |
 | Issuer | Hostinger International Ltd. |
-| Billed to | Liutauras Medziunas / Conus AI |
-| Currency | EUR |
 | Total | €63.99 |
-| Amount Due | €0.00 |
-| Notes | Reverse charge mechanism applied. VAT Directive 2006/112/EC |
 
-✅ Zero agent loop — no Claude tool selection  
-✅ Zero `file-storage` MCP calls — bytes fetched directly from MinIO  
+✅ Zero agent loop — no Claude tool selection
 ✅ `InvoicePipeline::extract_from_bytes` called in-process (same as `invoice-demo` CLI)
 
-### 10.5 Path B — Agent Chat with prompt "Extract invoice"
+### 10.5 Path B — Agent Chat ("Extract invoice")
 
-**Root cause found & fixed (2026-04-26):** `file-storage` capability is `kind: mcp` with no MCP server — `tool_executor.rs` has no handler for it, falling to the `unknown` arm. Fix: prompt hint now passes the absolute download URL as `image_path` instead of a raw token.
+After upload, type `Extract invoice` and press `⌘↩` (Cmd+Enter):
 
-**Before fix** — prompt hint:
-```
-[Attached files — use the file-storage capability to access them]
-- invoice.png (token: <uuid>)
-```
-Result: agent called `file-storage__download_file` → error (no MCP server) → fallback failure.
+1. Browser opens `POST /ui/stream` (SSE) with body `{"message":"Extract invoice", "thread_id":...}`
+2. Server constructs the prompt with the attachment hint:
+   ```
+   [Attached files — pass image_path directly to invoice-processing__extract_invoice]
+   - invoice.png (image_path: http://localhost:5173/v1/files/<uuid>)
+   ```
+3. Agent loop selects `invoice-processing__extract_invoice` → `resolve_image_path` downloads via `/v1/files/{token}` → `InvoicePipeline::extract_from_image_path`
+4. ✅ Tool card streams `tool_call_start` → `tool_call_result` (~9s)
+5. ✅ Agent reply renders as markdown (Fraunces headings, body in Switzer)
 
-**After fix** — prompt hint:
-```
-[Attached files — pass image_path directly to invoice-processing__extract_invoice or ocr-service__extract_text]
-- invoice.png (image_path: http://localhost:8088/v1/files/<uuid>)
-```
+### 10.6 Code Locations
 
-**Verification steps:**
-
-1. Upload `invoice.png` (Step 10.3)
-2. Attachment chip appears — **do not** click "Extract invoice"
-3. Type `Extract invoice` in the message box
-4. Press `⌘↩` (Cmd+Enter) to submit
-
-**Observed SSE stream:**
-
-| Event | Tool card | Timing |
-|---|---|---|
-| `tool_call_start` | `invoice-processing · extract_invoice` | — |
-| `tool_call_result` | ✅ success | 9.43s |
-
-**Agent reply (verified):**
-```
-I'll extract the invoice data from the attached file.
-
-## Invoice HCY-23256029
-
-**Issuer:** Hostinger International Ltd.
-- 61 Lordou Vironos Street, Larnaca 6023, Cyprus
-- VAT: CY10301365E
-…
-```
-
-✅ One clean tool call — `invoice-processing__extract_invoice` only  
-✅ `resolve_image_path` in `tool_executor.rs` downloaded `http://localhost:8088/v1/files/{token}` to temp file  
-✅ `InvoicePipeline::extract_from_image_path` ran on temp file  
-✅ No `file-storage` MCP calls  
-✅ No `ocr-service` call (agent correctly selected the specialized pipeline)
-
-### 10.6 Fix Applied
-
-**`crates/agent-gateway/assets/app.js`** — prompt construction:
-
-```js
-// Before (broken — caused file-storage MCP failures):
-const lines = pendingAttachments.map(a => `- ${a.filename} (token: ${a.id})`).join('\n');
-
-// After (correct — agent passes URL directly to invoice-processing):
-const origin = window.location.origin;
-const lines = pendingAttachments
-  .map(a => `- ${a.filename} (image_path: ${origin}/v1/files/${a.id})`)
-  .join('\n');
-```
-
-**`crates/agent-gateway/src/ui/handlers/invoice.rs`** — new direct pipeline endpoint:
-- `POST /ui/extract-invoice` → token → MinIO bytes → `InvoicePipeline::extract_from_bytes` → `InvoiceData` JSON
-- No agent, no tool selection, no external calls beyond Anthropic vision API
+| Concern | Location |
+|---|---|
+| Login form + cookie issuance | [`apps/web/src/routes/login/+page.server.ts`](../apps/web/src/routes/login/+page.server.ts) |
+| Session HMAC (TS, signs cookie) | [`apps/web/src/lib/server/session.ts`](../apps/web/src/lib/server/session.ts) |
+| Session HMAC (Rust, verifies cookie) | [`crates/agent-gateway/src/ui/session.rs`](../crates/agent-gateway/src/ui/session.rs) |
+| Dashboard + chat SSE client | [`apps/web/src/routes/+page.svelte`](../apps/web/src/routes/+page.svelte) |
+| Vite proxy → :8080 | [`apps/web/vite.config.ts`](../apps/web/vite.config.ts) |
+| Stream endpoint (kept) | [`crates/agent-gateway/src/ui/handlers/chat.rs`](../crates/agent-gateway/src/ui/handlers/chat.rs) |
+| Upload endpoint (kept) | [`crates/agent-gateway/src/ui/handlers/upload.rs`](../crates/agent-gateway/src/ui/handlers/upload.rs) |
+| Direct invoice endpoint (kept) | [`crates/agent-gateway/src/ui/handlers/invoice.rs`](../crates/agent-gateway/src/ui/handlers/invoice.rs) |
 
 ### 10.7 Coverage Update
 
 | Component | Status | Notes |
 |---|---|---|
-| UI file upload → MinIO | ✅ Verified | 132 KB PNG, token-gated download |
-| Direct pipeline (`/ui/extract-invoice`) | ✅ Verified | Zero agent loop, InvoicePipeline in-process |
-| Agent chat with attachment URL hint | ✅ Verified | 1 tool call, 9.43s, correct capability selected |
-| `file-storage` MCP executor | ⚠️ Not implemented | MCP kind with no server — mitigated by URL hint |
-| `resolve_image_path` HTTP download | ✅ Verified | `reqwest::get` on `/v1/files/{token}` → temp file |
+| SvelteKit login + session cookie | ✅ Verified | HMAC-SHA256, byte-compatible with Rust verifier |
+| SvelteKit dashboard SSR | ✅ Verified | Sidebar, greeting, composer all render |
+| `/ui/upload` via Vite proxy | ✅ Verified | 132 KB PNG → MinIO, token round-trip |
+| `/ui/extract-invoice` (direct) | ✅ Verified | Bypasses agent loop |
+| `/ui/stream` (SSE chat + tool calls) | ✅ Verified | `invoice-processing__extract_invoice` selected |
+| `/v1/workspaces/tree` from SSR `load` | ✅ Verified | Absolute backend URL (`CONUSAI_BACKEND_URL`) |
+| Askama UI layer | 🗑️ Removed | Templates, `assets/`, `ui/handlers/auth.rs`, `ui/handlers/app.rs`, `ui/view.rs` deleted |
 
 ---
 
@@ -900,27 +872,32 @@ Response shape:
 
 ---
 
-## Phase 13 — UI Sidebar Smoke Test
+## Phase 13 — Web UI Sidebar Smoke Test (SvelteKit)
 
-Browser-driven verification of the redesigned sidebar (login → workspace tree → search → recents → capabilities → user chip).
+Browser-driven verification of the SvelteKit sidebar at [`apps/web/src/routes/+page.svelte`](../apps/web/src/routes/+page.svelte).
 
 ```bash
-# Start the UI in dev mode
+# Backend
 unset JWT_SECRET
-CONUSAI_SERVER__PORT=8088 cargo run -p agent-gateway
+cargo run -p agent-gateway       # → :8080
+
+# Web (SvelteKit)
+pnpm --filter web dev            # → :5173
 ```
 
-Manual checklist (use Chrome MCP, Playwright, or a real browser):
+Manual checklist (use Chrome, preview tools, or Playwright):
 
-- [ ] `GET /` → 302 to `/login`. Submit name + plan → 302 to `/`.
-- [ ] Sidebar header reads **Workspace** with a `+` icon-button. Search input is below the header.
-- [ ] **No** legacy `New chat`, `Search` nav item, brand monogram, or `Chats / Projects / Code / Customize / Design / More` rows. Those were removed in the redesign — only Workspace, Recents, Capabilities, and the user chip remain.
+- [ ] `GET http://localhost:5173/` while logged out → 302 to `/login`. Submit name + plan → 302 to `/`.
+- [ ] Sidebar sections rendered (top-to-bottom): **WORKSPACE** header with `+` icon-button → search input → workspace tree → **RECENTS** → **CAPABILITIES** → user chip footer.
+- [ ] **No** legacy `New chat`, `Search` nav item, brand monogram, or `Chats / Projects / Code / Customize / Design / More` rows.
 - [ ] Sidebar scrolls internally when the tree overflows (`.ws-section` is `flex: 1 1 0; overflow: hidden;` and `.ws-tree` has `overflow-y: auto`).
-- [ ] Type `inv` in the search input → `/v1/workspaces/search?q=inv` fires after a 220 ms debounce; matches render in `.ws-search-results` panel with `<mark>` highlight on the matched substring.
-- [ ] Click a conversation → URL updates to `?ws=<id>`; on hard refresh the selection is restored (folder ancestors expand lazily).
-- [ ] Send a message in the composer → DevTools shows `POST /ui/stream` with body `{"message":"…","thread_id":…,"workspace_node_id":"<id>"}`.
+- [ ] Type `inv` in the search input → `/v1/workspaces/search?q=inv` fires (Vite proxies to `:8080`) after a 220 ms debounce; matches render in `.ws-search-results` panel with `<mark>` highlight.
+- [ ] Click a conversation → URL updates to `?ws=<id>`; hard refresh restores selection (folder ancestors expand lazily).
+- [ ] Send a message in the composer → DevTools shows `POST /ui/stream` (proxied) with body `{"message":"…","thread_id":…,"workspace_node_id":"<id>"}`.
 - [ ] After response, `GET /v1/workspaces/{id}` shows `metadata.thread_id` populated; subsequent searches for words from the conversation text return that node.
-- [ ] Theme toggle, Cmd/Ctrl-Enter to send, and reduced-motion respect remain intact.
+- [ ] Theme toggle (sun/moon icon in top bar), `Cmd/Ctrl-Enter` to send, paperclip → file picker, drag-and-drop file onto the composer, and `prefers-reduced-motion` respect remain intact.
+
+The session cookie is set by SvelteKit's form action and verified by the Rust gateway (`/ui/*` requests include `Cookie: conusai_session=...`); both use the same HMAC key from the `UI_SESSION_KEY` env var.
 
 ---
 

@@ -129,18 +129,19 @@ pub fn init(service_name: &str, log_level: &str) -> (TelemetryGuard, Registry) {
         .build()
         .expect("build Prometheus exporter");
 
-    let meter_provider = SdkMeterProvider::builder()
+    let mut meter_builder = SdkMeterProvider::builder()
         .with_reader(prom_exporter)
-        .with_resource(build_resource(service_name))
-        .build();
+        .with_resource(build_resource(service_name));
 
-    opentelemetry::global::set_meter_provider(meter_provider.clone());
+    let otlp = otlp_endpoint();
+    let mut tracer_provider_opt = None;
+    let mut otel_layer_opt = None;
 
-    if let Some(endpoint) = otlp_endpoint() {
+    if let Some(endpoint) = &otlp {
         // ── Traces ────────────────────────────────────────────────────────────
         let span_exporter = opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
-            .with_endpoint(&endpoint)
+            .with_endpoint(endpoint)
             .build()
             .unwrap_or_else(|e| panic!("OTLP span exporter ({endpoint}): {e}"));
 
@@ -154,61 +155,41 @@ pub fn init(service_name: &str, log_level: &str) -> (TelemetryGuard, Registry) {
         opentelemetry::global::set_tracer_provider(tracer_provider.clone());
         opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
 
-        let otel_layer = tracing_opentelemetry::layer()
-            .with_tracer(tracer_provider.tracer(service_name.to_owned()))
-            .with_error_fields_to_exceptions(true);
+        otel_layer_opt = Some(
+            tracing_opentelemetry::layer()
+                .with_tracer(tracer_provider.tracer(service_name.to_owned()))
+                .with_error_fields_to_exceptions(true),
+        );
+        tracer_provider_opt = Some(tracer_provider);
 
-        // ── Metrics over OTLP too (in addition to Prometheus) ─────────────────
-        let metric_exporter = opentelemetry_otlp::MetricExporter::builder()
+        // ── Metrics over OTLP (in addition to Prometheus) ─────────────────────
+        if let Ok(mx) = opentelemetry_otlp::MetricExporter::builder()
             .with_tonic()
-            .with_endpoint(&endpoint)
+            .with_endpoint(endpoint)
             .build()
-            .ok();
-
-        let full_meter_provider = if let Some(mx) = metric_exporter {
+        {
             let reader = PeriodicReader::builder(mx, runtime::Tokio).build();
-            SdkMeterProvider::builder()
-                .with_reader(reader)
-                .with_reader(opentelemetry_prometheus::exporter()
-                    .with_registry(prom_registry.clone())
-                    .build()
-                    .expect("rebuild Prometheus exporter"))
-                .with_resource(build_resource(service_name))
-                .build()
-        } else {
-            meter_provider.clone()
-        };
-
-        opentelemetry::global::set_meter_provider(full_meter_provider.clone());
-
-        tracing_subscriber::registry()
-            .with(filter)
-            .with(fmt_layer)
-            .with(otel_layer)
-            .init();
-
-        (
-            TelemetryGuard {
-                tracer_provider: Some(tracer_provider),
-                meter_provider: Some(full_meter_provider),
-            },
-            prom_registry,
-        )
-    } else {
-        // No OTLP: JSON logs + Prometheus only.
-        tracing_subscriber::registry()
-            .with(filter)
-            .with(fmt_layer)
-            .init();
-
-        (
-            TelemetryGuard {
-                tracer_provider: None,
-                meter_provider: Some(meter_provider),
-            },
-            prom_registry,
-        )
+            meter_builder = meter_builder.with_reader(reader);
+        }
     }
+
+    let meter_provider = meter_builder.build();
+    opentelemetry::global::set_meter_provider(meter_provider.clone());
+
+    let subscriber = tracing_subscriber::registry().with(filter).with(fmt_layer);
+    if let Some(otel_layer) = otel_layer_opt {
+        subscriber.with(otel_layer).init();
+    } else {
+        subscriber.init();
+    }
+
+    (
+        TelemetryGuard {
+            tracer_provider: tracer_provider_opt,
+            meter_provider: Some(meter_provider),
+        },
+        prom_registry,
+    )
 }
 
 /// Convenience: create a named meter from the global provider.
