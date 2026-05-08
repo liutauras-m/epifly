@@ -52,13 +52,10 @@ WORKDIR /app
 
 COPY --from=builder /build/target/release/agent-gateway /app/agent-gateway
 COPY capabilities/ /app/capabilities/
-COPY crates/agent-gateway/assets/ /app/ui-assets/
-COPY crates/agent-gateway/templates/ /app/ui-templates/
 
 ENV CONUSAI_SERVER__HOST=0.0.0.0
 ENV CONUSAI_SERVER__PORT=8080
 ENV CONUSAI_CAPABILITIES_DIR=/app/capabilities
-ENV CONUSAI_UI_ASSETS=/app/ui-assets
 
 EXPOSE 8080
 
