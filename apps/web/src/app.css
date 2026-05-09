@@ -486,23 +486,7 @@ body::after {
 .toolbar-btn .icon { width: 15px; height: 15px; stroke-width: 1.5; }
 .toolbar-spacer { flex: 1; }
 
-.model-pill {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 4px 10px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-full);
-  cursor: pointer;
-  transition: border-color var(--dur-1) var(--ease-out),
-              color var(--dur-1) var(--ease-out),
-              background var(--dur-1) var(--ease-out);
-}
-.model-pill:hover { border-color: var(--ember); color: var(--ink); background: var(--ember-soft); }
-.model-pill .chevron { width: 10px; height: 10px; stroke-width: 1.5; }
+
 
 /* Send: hidden when no content, springs in when content appears */
 .send-btn {

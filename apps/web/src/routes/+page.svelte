@@ -728,7 +728,6 @@
 				<input id="file-input" type="file" hidden multiple
 					onchange={(e) => { const files = e.currentTarget.files; if (files?.length) uploadFiles([...files]); e.currentTarget.value = ''; }}>
 				<div class="toolbar-spacer"></div>
-				<span class="model-pill">Opus 4.7</span>
 				<button type="submit" class="send-btn" aria-label="Send" disabled={inFlight}>
 					<svg class="icon" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round">
 						<line x1="7" y1="12" x2="7" y2="2"/><polyline points="3,6 7,2 11,6"/>
