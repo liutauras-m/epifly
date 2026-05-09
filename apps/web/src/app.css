@@ -365,6 +365,30 @@ body::after {
   animation: rise var(--dur-4) var(--ease-out) 0.22s forwards;
 }
 
+/* Presence dot — inline beside the user's name. Reads as
+   "I see you, I'm here, ready to talk." Sits at the cap-height of the
+   serif headline so it visually anchors to the name without competing
+   with it. Fades in slightly after the headline so it feels like the
+   AI is *noticing* you. */
+.greeting-presence {
+  display: inline-flex;
+  align-items: center;
+  /* Lift to optical centre of the cap-height (≈55% of font-size) */
+  vertical-align: 0.42em;
+  margin-left: 0.32em;
+  opacity: 0;
+  animation: rise var(--dur-4) var(--ease-out) 0.9s forwards;
+}
+.greeting-presence .sonar.sonar-sm {
+  width: 22px; height: 22px;
+  margin-left: 0;
+}
+.greeting-presence .sonar-core {
+  width: 8px; height: 8px;
+}
+.greeting-presence .sonar-r1 { width: 14px; height: 14px; }
+.greeting-presence .sonar-r2 { width: 22px; height: 22px; }
+
 /* Sigil: scale in + persistent gentle breathe */
 @keyframes sigil-enter {
   0%   { opacity: 0; transform: scale(0.72) rotate(-8deg); filter: blur(4px); }
@@ -990,14 +1014,6 @@ body::after {
   overflow: visible;
   pointer-events: none;
   animation: sonar-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-.greeting-waiting {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 56px;
-  pointer-events: none;
-  animation: sonar-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.3s both;
 }
 @keyframes sonar-enter {
   from { opacity: 0; transform: translateY(5px); }

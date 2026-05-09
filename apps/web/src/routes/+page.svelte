@@ -646,14 +646,12 @@
 			<section class="greeting-screen">
 				<div class="greeting">
 					<img class="sigil" src="/images/favicon.png" alt="" aria-hidden="true">
-					<h1 class="greeting-text">Good {data.user ? '' : ''}morning, {data.user?.firstName ?? 'there'}</h1>
+					<h1 class="greeting-text">
+						Good {data.user ? '' : ''}morning, {data.user?.firstName ?? 'there'}<span class="greeting-presence">{@render sonarDot(true)}</span>
+					</h1>
 				</div>
 
 				{@render composer()}
-
-				<div class="greeting-waiting">
-					{@render sonarDot()}
-				</div>
 
 				<div class="chips">
 					{#each [['Code','Help me write code that '],['Write','Help me write '],['Learn','Teach me about '],['Life stuff','Help me with '],["Operator's choice",'Pick the best approach for ']] as [label, prompt]}
