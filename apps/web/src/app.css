@@ -891,59 +891,73 @@ body::after {
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ── Writing dot — ConusAI favicon radar ripple (slower, meditative) ── */
-.writing-dot {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 18px; height: 18px;
+/* ── Sonar-ping dot — single component, used in all contexts ─────────────────
+   .sonar          full-size standalone (greeting, chat-end, thinking)
+   .sonar.sonar-sm inline variant (alongside streaming text)
+   ─────────────────────────────────────────────────────────────────────────── */
+.sonar {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px; height: 56px;
+  flex-shrink: 0;
+}
+/* Inline/small: sits alongside text */
+.sonar.sonar-sm {
+  width: 22px; height: 22px;
   vertical-align: middle;
   margin-left: 6px;
-  flex-shrink: 0;
-  /* Whole dot has its own gentle breath */
-  animation: wd-breath 3.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
-.wd-core {
-  width: 5px; height: 5px;
+
+/* Core dot */
+.sonar-core {
+  width: 10px; height: 10px;
   border-radius: 50%;
-  background: var(--ember);
+  background: var(--ember-2);
   position: relative; z-index: 1;
-  box-shadow: 0 0 6px var(--ember-glow);
-  animation: wd-core 2.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  animation: sonar-beat 2s ease-in-out infinite;
 }
-.wd-ring {
+.sonar-sm .sonar-core {
+  width: 6px; height: 6px;
+}
+@keyframes sonar-beat {
+  0%, 100% { opacity: 0.65; transform: scale(1); }
+  50%       { opacity: 1.00; transform: scale(1.15); }
+}
+
+/* Rings — centred via translate so they always expand from the core */
+.sonar-ring {
   position: absolute;
+  top: 50%; left: 50%;
   border-radius: 50%;
   border: 1.5px solid var(--ember);
-  animation: wd-ring-out 2.8s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0);
 }
-.wd-r1 { width: 10px; height: 10px; animation-delay: 0s; }
-.wd-r2 { width: 18px; height: 18px; animation-delay: 1.0s; }
+.sonar-r1 {
+  width: 28px; height: 28px;
+  animation: sonar-ping 2.2s ease-out 0s infinite;
+}
+.sonar-r2 {
+  width: 48px; height: 48px;
+  animation: sonar-ping 2.2s ease-out 0.8s infinite;
+}
+.sonar-sm .sonar-r1 { width: 14px; height: 14px; }
+.sonar-sm .sonar-r2 { width: 22px; height: 22px; }
+@keyframes sonar-ping {
+  0%   { transform: translate(-50%, -50%) scale(0.2); opacity: 0.75; }
+  75%  { transform: translate(-50%, -50%) scale(1);   opacity: 0; }
+  100% { transform: translate(-50%, -50%) scale(1);   opacity: 0; }
+}
 
-@keyframes wd-breath {
-  0%, 100% { transform: scale(1); }
-  50%       { transform: scale(1.04); }
-}
-@keyframes wd-core {
-  0%, 100% { transform: scale(1);    opacity: 1; }
-  50%       { transform: scale(0.7);  opacity: 0.55; }
-}
-@keyframes wd-ring-out {
-  0%   { transform: scale(0.3); opacity: 0.9; }
-  60%  { transform: scale(0.95); opacity: 0.2; }
-  100% { transform: scale(1);   opacity: 0; }
-}
-
-/* Thinking mode: even slower, more contemplative */
-.thinking-dot .wd-core { animation-duration: 3.2s; }
-.thinking-dot .wd-r1   { animation-duration: 3.2s; opacity: 0.65; }
-.thinking-dot .wd-r2   { animation-duration: 3.2s; animation-delay: 1.4s; opacity: 0.45; }
 .message.ai.error::before { background: var(--rust); }
 .message.ai.error { color: var(--ink-2); }
 .message.ai.error .ai-text::before { content: "⚠  "; color: var(--rust); }
 
-/* ── Thinking indicator ── */
+/* ── Thinking message — dot sits in the AI message row ── */
 .message.ai.thinking {
-  padding: 10px 0 10px var(--s-5);
+  padding: 4px 0 4px var(--s-5);
 }
 .message.ai.thinking::before {
   background: var(--ember);
@@ -967,16 +981,7 @@ body::after {
   0%, 100% { transform: translateY(0);    opacity: 0.35; }
   45%      { transform: translateY(-5px); opacity: 1;    }
 }
-/* ── Chat-end waiting dot ─────────────────────────────────────────────────────
-   Placed as the last item inside .messages (inline flow), so it sits directly
-   below the last AI message — left-aligned, clearly visible, immediately
-   communicating "I'm here, waiting for you."
-   Core: 9px, always ≥70% opacity. Two rings expand outward on a 2.4s cycle.
-   ─────────────────────────────────────────────────────────────────────────── */
-/* ── Chat-end waiting dot ─────────────────────────────────────────────────────
-   Minimalist sonar-ping. A single centred wrapper positions the rings
-   exactly on the core so all three layers share the same origin point.
-   ─────────────────────────────────────────────────────────────────────────── */
+/* ── Sonar-ping placement containers ─────────────────────────────────────── */
 .chat-end-dot {
   display: flex;
   align-items: center;
@@ -984,7 +989,7 @@ body::after {
   height: 56px;
   overflow: visible;
   pointer-events: none;
-  animation: ced-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: sonar-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .greeting-waiting {
   display: flex;
@@ -992,61 +997,11 @@ body::after {
   justify-content: center;
   height: 56px;
   pointer-events: none;
-  animation: ced-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.3s both;
+  animation: sonar-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.3s both;
 }
-@keyframes ced-enter {
+@keyframes sonar-enter {
   from { opacity: 0; transform: translateY(5px); }
   to   { opacity: 1; transform: translateY(0); }
-}
-
-/* Centering wrapper — rings use top/left 50% + translate so they always
-   expand from the exact centre of the core dot */
-.ced-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
-  flex-shrink: 0;
-}
-
-/* Core dot */
-.ced-core {
-  width: 10px; height: 10px;
-  border-radius: 50%;
-  background: var(--ember-2);
-  position: relative; z-index: 1;
-  flex-shrink: 0;
-  animation: ced-core-beat 2s ease-in-out infinite;
-}
-@keyframes ced-core-beat {
-  0%, 100% { opacity: 0.65; transform: scale(1); }
-  50%       { opacity: 1.00; transform: scale(1.15); }
-}
-
-/* Rings — anchored to centre of wrapper */
-.ced-ring {
-  position: absolute;
-  top: 50%; left: 50%;
-  border-radius: 50%;
-  border: 1.5px solid var(--ember);
-  opacity: 0;
-  /* start collapsed at centre */
-  transform: translate(-50%, -50%) scale(0);
-}
-.ced-r1 {
-  width: 28px; height: 28px;
-  animation: ced-ping 2.2s ease-out 0s infinite;
-}
-.ced-r2 {
-  width: 48px; height: 48px;
-  animation: ced-ping 2.2s ease-out 0.8s infinite;
-}
-@keyframes ced-ping {
-  0%   { transform: translate(-50%, -50%) scale(0.2); opacity: 0.75; }
-  75%  { transform: translate(-50%, -50%) scale(1);   opacity: 0; }
-  100% { transform: translate(-50%, -50%) scale(1);   opacity: 0; }
 }
 
 .composer-bottom {

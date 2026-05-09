@@ -651,12 +651,8 @@
 
 				{@render composer()}
 
-				<div class="greeting-waiting" aria-hidden="true">
-					<span class="ced-wrap">
-						<span class="ced-ring ced-r1"></span>
-						<span class="ced-ring ced-r2"></span>
-						<span class="ced-core"></span>
-					</span>
+				<div class="greeting-waiting">
+					{@render sonarDot()}
 				</div>
 
 				<div class="chips">
@@ -676,11 +672,7 @@
 					{#each messages as msg, i (i)}
 						{#if msg.role === 'thinking'}
 							<div class="message ai thinking">
-								<span class="writing-dot thinking-dot" aria-label="Thinking" role="status">
-									<span class="wd-ring wd-r1"></span>
-									<span class="wd-ring wd-r2"></span>
-									<span class="wd-core"></span>
-								</span>
+								{@render sonarDot()}
 							</div>
 						{:else if msg.role === 'user'}
 							<div class="message user">{msg.text}</div>
@@ -694,11 +686,7 @@
 							<div class="message ai" class:streaming={msg.streaming}>
 								{#if msg.streaming && msg.words}
 									<span class="ai-text" aria-live="polite">{#each msg.words as w (w.id)}<span class="tok">{w.t}</span>{/each}</span>
-									<span class="writing-dot" aria-label="Writing" role="status">
-										<span class="wd-ring wd-r1"></span>
-										<span class="wd-ring wd-r2"></span>
-										<span class="wd-core"></span>
-									</span>
+									{@render sonarDot(true)}
 								{:else}
 									<span class="ai-text">{msg.text}</span>
 								{/if}
@@ -723,12 +711,8 @@
 
 					<!-- Waiting dot — appears directly after last message when idle -->
 					{#if !inFlight}
-						<div class="chat-end-dot" aria-hidden="true">
-							<span class="ced-wrap">
-								<span class="ced-ring ced-r1"></span>
-								<span class="ced-ring ced-r2"></span>
-								<span class="ced-core"></span>
-							</span>
+						<div class="chat-end-dot">
+							{@render sonarDot()}
 						</div>
 					{/if}
 				</div>
@@ -740,6 +724,15 @@
 		{/if}
 	</main>
 </div>
+
+<!-- ── Sonar-ping dot — single component used everywhere ─────────────────── -->
+{#snippet sonarDot(sm: boolean = false)}
+	<span class="sonar" class:sonar-sm={sm} role="status" aria-label="Waiting">
+		<span class="sonar-ring sonar-r1"></span>
+		<span class="sonar-ring sonar-r2"></span>
+		<span class="sonar-core"></span>
+	</span>
+{/snippet}
 
 <!-- ── Composer snippet ────────────────────────────────────────────────────── -->
 {#snippet composer()}
