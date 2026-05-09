@@ -372,33 +372,18 @@ body::after {
    AI is *noticing* you. */
 /* Living period — inline inside the headline, at text baseline.
    Reads as a sentence-ending period. The core breathes like ink on paper. */
+/* Inline placement inside the greeting headline — no size overrides,
+   just positioning so the dot reads as end-of-sentence punctuation */
 .greeting-presence {
   display: inline-flex;
-  align-items: flex-end;       /* anchor to baseline of parent text */
+  align-items: flex-end;
   vertical-align: baseline;
-  margin-left: 0.06em;
-  margin-bottom: 0.12em;       /* optical nudge to sit on the baseline */
+  margin-left: 0.08em;
+  margin-bottom: 0.1em;
   opacity: 0;
   animation: rise var(--dur-4) var(--ease-out) 0.9s forwards;
 }
-.greeting-presence .sonar.sonar-sm {
-  width: 20px; height: 20px;
-  margin-left: 0;
-}
-/* Period-sized core: ink colour, no glow — reads as punctuation */
-.greeting-presence .sonar-core {
-  width: 7px; height: 7px;
-  background: var(--ember-2);
-  animation: period-beat 2.8s ease-in-out infinite;
-}
-@keyframes period-beat {
-  0%, 100% { opacity: 0.9;  transform: scale(1); }
-  50%       { opacity: 0.35; transform: scale(0.75); }
-}
-/* Rings: very faint teal — alive but barely there */
-.greeting-presence .sonar-ring { border-color: var(--ember); }
-.greeting-presence .sonar-r1 { width: 14px; height: 14px; }
-.greeting-presence .sonar-r2 { width: 20px; height: 20px; }
+.greeting-presence .sonar-sm { margin-left: 0; }
 
 /* Sigil: scale in + persistent gentle breathe */
 @keyframes sigil-enter {
@@ -926,42 +911,47 @@ body::after {
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ── Sonar-ping dot — single component, used in all contexts ─────────────────
-   .sonar          full-size standalone (greeting, chat-end, thinking)
-   .sonar.sonar-sm inline variant (alongside streaming text)
+/* ── Sonar-ping dot ───────────────────────────────────────────────────────────
+   One component, one core size (8px), one animation — used everywhere.
+
+   .sonar       standalone wrapper (thinking row, chat-end row)
+   .sonar-sm    inline wrapper (next to streaming text, greeting period)
+
+   Core is always 8px. Rings scale proportionally.
+   Animation: 2.6s premium ease — slow breath with clean radar rings.
    ─────────────────────────────────────────────────────────────────────────── */
+
+/* Wrappers — only control space for rings to expand into */
 .sonar {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 56px; height: 56px;
+  width: 48px; height: 48px;
   flex-shrink: 0;
 }
-/* Inline/small: sits alongside text */
 .sonar.sonar-sm {
-  width: 22px; height: 22px;
+  width: 28px; height: 28px;
   vertical-align: middle;
   margin-left: 6px;
 }
 
-/* Core dot */
+/* ── Core: 8px, always — the one canonical dot size ── */
 .sonar-core {
-  width: 10px; height: 10px;
+  width: 8px; height: 8px;
   border-radius: 50%;
   background: var(--ember-2);
   position: relative; z-index: 1;
-  animation: sonar-beat 2s ease-in-out infinite;
-}
-.sonar-sm .sonar-core {
-  width: 6px; height: 6px;
+  flex-shrink: 0;
+  animation: sonar-beat 2.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 @keyframes sonar-beat {
-  0%, 100% { opacity: 0.65; transform: scale(1); }
-  50%       { opacity: 1.00; transform: scale(1.15); }
+  0%,  100% { opacity: 0.70; transform: scale(1);    }
+  45%        { opacity: 1.00; transform: scale(1.12); }
+  55%        { opacity: 1.00; transform: scale(1.12); }
 }
 
-/* Rings — centred via translate so they always expand from the core */
+/* ── Rings: centred on core via translate(-50%,-50%) ── */
 .sonar-ring {
   position: absolute;
   top: 50%; left: 50%;
@@ -970,20 +960,23 @@ body::after {
   opacity: 0;
   transform: translate(-50%, -50%) scale(0);
 }
+/* Full wrapper ring sizes */
 .sonar-r1 {
-  width: 28px; height: 28px;
-  animation: sonar-ping 2.2s ease-out 0s infinite;
+  width: 22px; height: 22px;
+  animation: sonar-ping 2.6s cubic-bezier(0.2, 0, 0.1, 1) 0s infinite;
 }
 .sonar-r2 {
-  width: 48px; height: 48px;
-  animation: sonar-ping 2.2s ease-out 0.8s infinite;
+  width: 40px; height: 40px;
+  animation: sonar-ping 2.6s cubic-bezier(0.2, 0, 0.1, 1) 1.0s infinite;
 }
-.sonar-sm .sonar-r1 { width: 14px; height: 14px; }
-.sonar-sm .sonar-r2 { width: 22px; height: 22px; }
+/* Small wrapper: rings scale proportionally to wrapper */
+.sonar-sm .sonar-r1 { width: 16px; height: 16px; }
+.sonar-sm .sonar-r2 { width: 26px; height: 26px; }
+
 @keyframes sonar-ping {
-  0%   { transform: translate(-50%, -50%) scale(0.2); opacity: 0.75; }
-  75%  { transform: translate(-50%, -50%) scale(1);   opacity: 0; }
-  100% { transform: translate(-50%, -50%) scale(1);   opacity: 0; }
+  0%   { transform: translate(-50%, -50%) scale(0.1); opacity: 0.80; }
+  70%  { transform: translate(-50%, -50%) scale(1);   opacity: 0.05; }
+  100% { transform: translate(-50%, -50%) scale(1);   opacity: 0;    }
 }
 
 .message.ai.error::before { background: var(--rust); }
