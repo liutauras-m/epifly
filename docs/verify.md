@@ -950,6 +950,73 @@ Implementation of [`docs/web/plan.md`](web/plan.md) Phases 1–4 verified in-bro
 
 ---
 
+## Phase 15 — Frontend Architecture Gap Fixes (2026-05-09)
+
+Implementation of remaining items from [`docs/web/plan.md`](web/plan.md) identified in gap audit.
+
+### 15.1 — WorkspaceTree component extraction ✅
+
+| Check | Status |
+|---|---|
+| `src/lib/workspace/WorkspaceTree.svelte` created — owns all workspace state via runes context | ✅ |
+| `src/lib/workspace/context.svelte.ts` — `createWorkspaceContext()` with `$state` for tree, childMap, expanded, selectedId, search; exposed via `setContext`/`getContext` | ✅ |
+| `src/lib/workspace/dialogs/ConfirmDialog.svelte` — replaces native `confirm()` | ✅ |
+| `src/lib/workspace/dialogs/MoveDialog.svelte` — replaces native `prompt()` for destination | ✅ |
+| `src/lib/workspace/dialogs/NewNodeDialog.svelte` — replaces native `prompt()` for node creation | ✅ |
+| `src/lib/workspace/dialogs/ShareDialog.svelte` — full share/unshare UI using `workspacesApi.shareNode`/`unshareNode` | ✅ |
+| `{#if …}` conditions on all four dialogs are correct (not contradictory/dead-code) | ✅ |
+| No `prompt()` / `confirm()` anywhere under `apps/web/src/` | ✅ |
+
+### 15.2 — `autoGrow` Svelte action ✅
+
+| Check | Status |
+|---|---|
+| `src/lib/ui/actions.ts` — `autoGrow(node, maxHeight=240)` adds `input` listener + MutationObserver; returns `{ destroy }` | ✅ |
+| `use:autoGrow` wired to textarea in `+page.svelte` | ✅ |
+| No imperative `grow()` function call remaining in `+page.svelte` | ✅ |
+
+### 15.3 — Session adapter pattern ✅
+
+| Check | Status |
+|---|---|
+| `SessionAdapter` interface with `issue(name, plan)` / `verify(cookie)` in `session.ts` | ✅ |
+| `LocalHmacAdapter` — default dev/prod HMAC-SHA256 implementation | ✅ |
+| `BackendJwtAdapter` — activated purely by `BACKEND_AUTH_LOGIN_URL` env var; zero call-site changes | ✅ |
+| `resolveAdapter()` + `sessionAdapter` singleton exported | ✅ |
+| Missing `UI_SESSION_KEY` in production mode throws (not just logs) | ✅ |
+
+### 15.4 — Vitest unit test suite ✅
+
+```bash
+pnpm --filter web test
+```
+
+Expected:
+```
+ ✓ src/tests/sse-parser.test.ts  (5 tests)
+ ✓ src/tests/reconnect.test.ts   (4 tests)
+ Test Files  2 passed (2)
+      Tests  9 passed (9)
+```
+
+| Test file | Coverage |
+|---|---|
+| `sse-parser.test.ts` | text deltas, tool events, `thread_id`, partial chunks, malformed JSON |
+| `reconnect.test.ts` | recover after 1 failure, recover after 2 failures, exhausts backoff (throws), `reconnect: false` throws immediately |
+
+- Uses `vi.useFakeTimers()` + `vi.advanceTimersByTimeAsync()` — tests complete in < 250ms total
+- `vitest` pinned to `^2.1.9` (no `2.2.0` stable release exists)
+
+### 15.5 — Share API methods ✅
+
+| Check | Status |
+|---|---|
+| `workspacesApi.shareNode(fetch, id, userId)` — `POST /v1/workspaces/{id}/share` | ✅ |
+| `workspacesApi.unshareNode(fetch, id, userId)` — `POST /v1/workspaces/{id}/unshare` | ✅ |
+| `ShareDialog.svelte` uses both methods; updates `sharedWith` list from response | ✅ |
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
