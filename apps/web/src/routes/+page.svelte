@@ -794,7 +794,9 @@
 	{#if node.kind === 'folder'}
 		<div class="ws-folder" style="--depth:{depth}">
 			<button class="ws-node ws-node-folder" class:ws-node-expanded={expandedFolders.has(node.id)}
-				onclick={() => toggleFolder(node)} aria-expanded={expandedFolders.has(node.id)}>
+				class:ws-node-selected={selectedNodeId === node.id}
+				onclick={() => { selectedNodeId = node.id; goto(`?ws=${node.id}`, { replaceState: true, keepFocus: true, noScroll: true }); toggleFolder(node); }}
+				aria-expanded={expandedFolders.has(node.id)}>
 				<span class="ws-node-chevron">{expandedFolders.has(node.id) ? '▾' : '▸'}</span>
 				<span class="ws-node-icon">📁</span>
 				<span class="ws-node-name">{node.name}</span>
