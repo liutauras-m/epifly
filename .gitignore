@@ -1,5 +1,5 @@
 # Rust
-/target/
+**/target/
 **/*.rs.bk
 Cargo.lock
 
@@ -12,6 +12,10 @@ Cargo.lock
 .vscode/
 *.iml
 
+# Claude local files
+.claude/settings.local.json
+.claude/worktrees/
+
 # macOS
 .DS_Store
 
@@ -20,6 +24,10 @@ Cargo.lock
 
 # WASM build artifacts
 /wasm/*.wasm
+
+# Capability runtime state
+capabilities/*/state.json
+apps/backend/capabilities/*/state.json
 
 # Docker volumes
 /data/

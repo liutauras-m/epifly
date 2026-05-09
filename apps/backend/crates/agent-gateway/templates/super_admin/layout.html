@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+{% include "shared/head.html" %}
+<title>Super Admin — ConusAI</title>
+<style>
+  .admin-layout{display:flex;min-height:100vh;background:var(--bg);}
+  .admin-sidebar{width:220px;min-height:100vh;background:var(--surface);border-right:1px solid var(--border);padding:1.5rem 1rem;display:flex;flex-direction:column;gap:1rem;}
+  .admin-main{flex:1;padding:2rem;}
+  .admin-brand{font-family:var(--font-mono);font-size:.75rem;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:.5rem;}
+  .admin-nav a{display:block;padding:.5rem .75rem;border-radius:6px;color:var(--text);text-decoration:none;font-size:.875rem;}
+  .admin-nav a:hover,.admin-nav a.active{background:var(--teal-dim);color:var(--teal);}
+  .admin-user{margin-top:auto;font-size:.75rem;color:var(--muted);}
+  .admin-user strong{display:block;color:var(--text);}
+  .back-link{color:var(--muted);text-decoration:none;font-size:.8125rem;display:inline-flex;align-items:center;gap:.25rem;margin-bottom:1.5rem;}
+  .back-link:hover{color:var(--teal);}
+  .flash{background:color-mix(in srgb,var(--teal) 12%,transparent);border:1px solid var(--teal);border-radius:6px;padding:.75rem 1rem;font-size:.875rem;margin-bottom:1rem;}
+  .flash--error{background:color-mix(in srgb,#ef4444 12%,transparent);border-color:#ef4444;}
+  .cap-table{width:100%;border-collapse:collapse;}
+  .cap-table th{text-align:left;font-family:var(--font-mono);font-size:.75rem;color:var(--muted);padding:.5rem .75rem;border-bottom:1px solid var(--border);}
+  .cap-table td{padding:.625rem .75rem;border-bottom:1px solid var(--border-subtle);font-size:.875rem;}
+  .cap-table tr:hover td{background:var(--surface-hover);}
+  .badge{display:inline-block;font-family:var(--font-mono);font-size:.7rem;padding:.2rem .45rem;border-radius:4px;background:var(--surface-2);color:var(--muted);}
+  .badge--on{background:color-mix(in srgb,var(--teal) 15%,transparent);color:var(--teal);}
+  .badge--off{background:color-mix(in srgb,#ef4444 10%,transparent);color:#ef4444;}
+  .btn{display:inline-flex;align-items:center;gap:.375rem;padding:.5rem 1rem;border-radius:6px;font-size:.875rem;font-family:inherit;cursor:pointer;border:none;text-decoration:none;}
+  .btn--primary{background:var(--teal);color:#fff;}
+  .btn--primary:hover{filter:brightness(1.1);}
+  .btn--ghost{background:transparent;border:1px solid var(--border);color:var(--text);}
+  .btn--ghost:hover{background:var(--surface-hover);}
+  .btn--danger{background:transparent;border:1px solid #ef4444;color:#ef4444;}
+  .btn--danger:hover{background:color-mix(in srgb,#ef4444 10%,transparent);}
+  .form-field{display:flex;flex-direction:column;gap:.375rem;margin-bottom:1rem;}
+  .form-field label{font-size:.8125rem;color:var(--muted);}
+  .form-field textarea,.form-field input{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:.625rem .75rem;font-family:var(--font-mono);font-size:.8125rem;color:var(--text);resize:vertical;width:100%;box-sizing:border-box;}
+  .form-field textarea:focus,.form-field input:focus{outline:none;border-color:var(--teal);}
+  .cap-kind{font-family:var(--font-mono);font-size:.75rem;}
+  .row-actions{display:flex;gap:.5rem;align-items:center;}
+  .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;}
+  .detail-section{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1.25rem;}
+  .detail-section h3{font-family:var(--font-mono);font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:0 0 1rem;}
+  .meta-row{display:flex;justify-content:space-between;font-size:.8125rem;padding:.375rem 0;border-bottom:1px solid var(--border-subtle);}
+  .meta-row:last-child{border-bottom:none;}
+  .meta-label{color:var(--muted);}
+  .page-header{display:flex;align-items:center;gap:1rem;margin-bottom:2rem;}
+  .page-header h1{font-size:1.25rem;font-weight:600;margin:0;flex:1;}
+  .tag{display:inline-block;font-size:.7rem;padding:.15rem .4rem;border-radius:4px;background:var(--surface-2);color:var(--muted);margin-right:.25rem;}
+  .error-box{background:color-mix(in srgb,#ef4444 10%,transparent);border:1px solid #ef4444;border-radius:6px;padding:.75rem 1rem;font-family:var(--font-mono);font-size:.8125rem;color:#ef4444;margin-bottom:1rem;}
+  @media(max-width:700px){.detail-grid{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+<div class="admin-layout">
+  <aside class="admin-sidebar">
+    <div class="admin-brand">ConusAI Admin</div>
+    <nav class="admin-nav">
+      <a href="/super-admin">Capabilities</a>
+      <a href="/super-admin/new">+ New Capability</a>
+    </nav>
+    <div class="admin-user">
+      <strong>{{ user_name }}</strong>
+      super_admin
+    </div>
+    <a href="/" class="back-link" style="margin-top:.5rem;">← Back to Workshop</a>
+  </aside>
+  <main class="admin-main">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+<script>
+// HTMX optional — progressive enhancement for inline test panel
+// For simplicity we use native fetch for test invocation
+</script>
+</body>
+</html>

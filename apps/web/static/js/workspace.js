@@ -12,6 +12,7 @@
 
 const WS_API = "/v1/workspaces";
 let activeNodeId = null;
+let activeNodeKind = null;
 let treeEl = null;
 let emptyEl = null;
 
@@ -45,6 +46,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     } else {
       treeEl.querySelectorAll("[aria-current='page']").forEach((n) => n.removeAttribute("aria-current"));
       activeNodeId = null;
+      activeNodeKind = null;
     }
   });
 
@@ -109,7 +111,7 @@ async function applySearch(query) {
 
   let results = [];
   try {
-    results = await apiFetch(`/v1/workspaces/search?q=${encodeURIComponent(query)}&limit=40`);
+    results = await apiFetch(`/v1/workspaces/search?q=${encodeURIComponent(query)}&limit=40&mode=context`);
     if (!Array.isArray(results)) results = [];
   } catch (_) {
     // API unavailable — fall back to DOM name scan below
@@ -303,6 +305,7 @@ function selectFolder(node, summaryEl) {
   );
   summaryEl.setAttribute("aria-current", "page");
   activeNodeId = node.id;
+  activeNodeKind = "folder";
 }
 
 async function selectConversation(node, el) {
@@ -312,6 +315,7 @@ async function selectConversation(node, el) {
   );
   el.setAttribute("aria-current", "page");
   activeNodeId = node.id;
+  activeNodeKind = "conversation";
 
   // Push URL state so the selection survives reload and enables deep-linking
   const url = new URL(window.location.href);
@@ -706,8 +710,17 @@ async function apiFetch(url, opts = {}) {
     ...opts,
   });
   if (res.status === 204) return null;
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  const contentType = res.headers.get("content-type") || "";
+  const data = contentType.includes("application/json")
+    ? await res.json()
+    : await res.text();
+  if (!res.ok) {
+    const message =
+      typeof data === "string"
+        ? data
+        : data?.error || data?.message || `HTTP ${res.status}`;
+    throw new Error(message);
+  }
   return data;
 }
 
@@ -740,6 +753,10 @@ function escHtml(str) {
 export { activeNodeId, showToast };
 export function getActiveNodeId() {
   return activeNodeId;
+}
+
+export function isActiveConversationSelected() {
+  return activeNodeKind === "conversation";
 }
 
 // Live-save hook: call from app.js editor blur

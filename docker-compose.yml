@@ -50,12 +50,12 @@ services:
         mc mb --ignore-existing local/conusai &&
         echo 'bucket conusai ready'
       "
-    profiles: ["full"]
+    profiles: ["infra", "full"]
 
   # ── Agent Gateway ─────────────────────────────────────────────────────────
   agent-gateway:
     build:
-      context: .
+      context: ./apps/backend
       dockerfile: Dockerfile
       target: gateway
     container_name: conusai-gateway
@@ -83,8 +83,8 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./capabilities:/app/capabilities:ro
-      - ./crates/agent-gateway/assets:/app/ui-assets:ro
+      - ./apps/backend/capabilities:/app/capabilities
+      - ./apps/backend/crates/agent-gateway/assets:/app/ui-assets:ro
     restart: unless-stopped
     profiles: ["full"]
 
@@ -105,7 +105,7 @@ services:
     depends_on:
       - jaeger
     volumes:
-      - ./scripts/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ./apps/backend/scripts/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
     ports:
       - "4317:4317"   # gRPC OTLP
       - "4318:4318"   # HTTP OTLP
