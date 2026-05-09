@@ -967,37 +967,37 @@ body::after {
   0%, 100% { transform: translateY(0);    opacity: 0.35; }
   45%      { transform: translateY(-5px); opacity: 1;    }
 }
-/* ── Persistent waiting dot — always present when idle ──────────────────────
-   Sits just below the last message, left-aligned with AI messages.
-   Three rings + core. Mostly meditative (5s cycle) with a sharp attention
-   flare every ~9s — creates psychological urgency: "I'm here, talk to me." */
-.chat-waiting-row {
-  width: 100%;
-  max-width: var(--composer-w);
-  padding: var(--s-2) var(--s-4) 0;
-  display: flex;
-  align-items: center;
-  /* slide up gently when it first appears */
-  animation: wdw-enter 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+/* ── Persistent waiting dot — pinned at bottom-center of main canvas ────────
+   Always visible when AI is idle. Three rings + core. Meditative 5s breath
+   with an attention flare every ~9s. Creates urgency: "I'm here, talk to me." */
+.chat-waiting-anchor {
+  position: absolute;
+  /* sits just above the composer area */
+  bottom: 148px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  pointer-events: none;
+  /* slide up on mount */
+  animation: wdw-enter 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 @keyframes wdw-enter {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 .waiting-dot {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 24px; height: 24px;
+  width: 28px; height: 28px;
   position: relative;
-  margin-left: var(--s-5); /* align under AI message left-border indent */
   flex-shrink: 0;
   animation: wdw-breath 5s ease-in-out infinite;
 }
 .wdw-core {
-  width: 5px; height: 5px;
+  width: 7px; height: 7px;
   border-radius: 50%;
   background: var(--ember);
   position: relative; z-index: 1;
-  box-shadow: 0 0 5px var(--ember-glow);
+  box-shadow: 0 0 8px var(--ember-glow);
   /* slow idle pulse with infrequent sharp flare */
   animation: wdw-core-pulse 9s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
@@ -1009,17 +1009,17 @@ body::after {
 }
 /* r1: fires every cycle, slow expand */
 .wdw-r1 {
-  width:  10px; height: 10px;
+  width: 14px; height: 14px;
   animation: wdw-ring-slow 5s cubic-bezier(0.16, 1, 0.3, 1) 0s infinite;
 }
 /* r2: slightly delayed, wider */
 .wdw-r2 {
-  width: 18px; height: 18px;
+  width: 22px; height: 22px;
   animation: wdw-ring-slow 5s cubic-bezier(0.16, 1, 0.3, 1) 1.8s infinite;
 }
 /* r3: attention-flare ring — only fires on the flare keyframe of a longer cycle */
 .wdw-r3 {
-  width: 24px; height: 24px;
+  width: 28px; height: 28px;
   animation: wdw-ring-flare 9s cubic-bezier(0.16, 1, 0.3, 1) 0s infinite;
 }
 
