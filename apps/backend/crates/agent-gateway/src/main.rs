@@ -3,10 +3,8 @@ use anyhow::Result;
 use axum::{Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
 use jobs::JobSchedulerService;
 use prometheus::Encoder;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer, ExposeHeaders};
-use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 
@@ -73,34 +71,6 @@ fn build_cors() -> CorsLayer {
         .allow_credentials(true)
 }
 
-fn resolve_assets_dir() -> Result<PathBuf> {
-    if let Ok(configured) = std::env::var("CONUSAI_UI_ASSETS") {
-        let configured_path = PathBuf::from(configured);
-        anyhow::ensure!(
-            configured_path.is_dir(),
-            "CONUSAI_UI_ASSETS does not point to an existing directory: {}",
-            configured_path.display()
-        );
-        return Ok(configured_path);
-    }
-
-    // Resolve from common run layouts first, then fall back to crate-relative path.
-    let candidates = [
-        PathBuf::from("crates/agent-gateway/assets"),
-        PathBuf::from("apps/backend/crates/agent-gateway/assets"),
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
-    ];
-
-    for candidate in candidates {
-        if candidate.is_dir() {
-            return Ok(candidate);
-        }
-    }
-
-    anyhow::bail!(
-        "Unable to resolve UI assets directory. Set CONUSAI_UI_ASSETS to the absolute assets path."
-    )
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -192,9 +162,6 @@ async fn main() -> Result<()> {
         None
     };
 
-    let assets_dir = resolve_assets_dir()?;
-    info!(assets_dir = %assets_dir.display(), "serving UI assets");
-
     let app = Router::new()
         .merge(routes::public_router())
         // Prometheus metrics — no auth required (restrict via network/proxy in prod)
@@ -226,7 +193,6 @@ async fn main() -> Result<()> {
                 .layer(axum::middleware::from_fn(mw::trace::propagate_trace))
                 .layer(axum::middleware::from_fn(mw::request_id::inject_request_id)),
         )
-        .nest_service("/assets", ServeDir::new(&assets_dir))
         .layer(build_cors())
         .layer(TraceLayer::new_for_http())
         .with_state(Arc::clone(&state));

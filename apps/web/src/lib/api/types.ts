@@ -1,8 +1,6 @@
 export interface ApiError { status: number; message: string; }
 export type ApiResult<T> = { data: T; error: null } | { data: null; error: ApiError };
 
-export interface Thread { id: string; title?: string; }
-export interface Capability { name: string; kind?: string; tools?: unknown[]; }
 export interface WorkspaceContent { content: string; }
 export interface UploadResponse { id: string; filename: string; size: number; content_type: string; download_url: string; }
 

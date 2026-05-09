@@ -1,7 +1,5 @@
 export const EP = {
-  THREADS: '/v1/threads',
   THREAD_MESSAGES: (id: string) => `/v1/threads/${id}/messages`,
-  CAPABILITIES: '/v1/capabilities',
   WORKSPACES: '/v1/workspaces',
   WORKSPACES_TREE: '/v1/workspaces/tree',
   WORKSPACES_SEARCH: '/v1/workspaces/search',
@@ -13,5 +11,4 @@ export const EP = {
   UI_STREAM: '/ui/stream',
   UI_UPLOAD: '/ui/upload',
   UI_EXTRACT_INVOICE: '/ui/extract-invoice',
-  FILES: (id: string) => `/v1/files/${id}`,
 } as const;
