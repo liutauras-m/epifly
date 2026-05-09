@@ -652,9 +652,11 @@
 				{@render composer()}
 
 				<div class="greeting-waiting" aria-hidden="true">
-					<span class="ced-ring ced-r1"></span>
-					<span class="ced-ring ced-r2"></span>
-					<span class="ced-core"></span>
+					<span class="ced-wrap">
+						<span class="ced-ring ced-r1"></span>
+						<span class="ced-ring ced-r2"></span>
+						<span class="ced-core"></span>
+					</span>
 				</div>
 
 				<div class="chips">
@@ -722,9 +724,11 @@
 					<!-- Waiting dot — appears directly after last message when idle -->
 					{#if !inFlight}
 						<div class="chat-end-dot" aria-hidden="true">
-							<span class="ced-ring ced-r1"></span>
-							<span class="ced-ring ced-r2"></span>
-							<span class="ced-core"></span>
+							<span class="ced-wrap">
+								<span class="ced-ring ced-r1"></span>
+								<span class="ced-ring ced-r2"></span>
+								<span class="ced-core"></span>
+							</span>
 						</div>
 					{/if}
 				</div>

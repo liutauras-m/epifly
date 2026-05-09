@@ -973,14 +973,16 @@ body::after {
    communicating "I'm here, waiting for you."
    Core: 9px, always ≥70% opacity. Two rings expand outward on a 2.4s cycle.
    ─────────────────────────────────────────────────────────────────────────── */
+/* ── Chat-end waiting dot ─────────────────────────────────────────────────────
+   Minimalist sonar-ping. A single centred wrapper positions the rings
+   exactly on the core so all three layers share the same origin point.
+   ─────────────────────────────────────────────────────────────────────────── */
 .chat-end-dot {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  padding-left: var(--s-5); /* aligns with AI message text indent */
+  padding-left: var(--s-5);   /* aligns with AI message left indent */
   height: 56px;
   overflow: visible;
-  position: relative;
   pointer-events: none;
   animation: ced-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
@@ -988,52 +990,63 @@ body::after {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 28px;
-  position: relative;
+  height: 56px;
   pointer-events: none;
-  margin-top: var(--s-3);
   animation: ced-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.3s both;
 }
 @keyframes ced-enter {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0; transform: translateY(5px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Core: bold, unmissable blink */
-.ced-core {
-  width: 14px; height: 14px;
-  border-radius: 50%;
-  background: var(--ember-2);          /* darker teal — more contrast on paper */
-  position: relative; z-index: 1;
+/* Centering wrapper — rings use top/left 50% + translate so they always
+   expand from the exact centre of the core dot */
+.ced-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
   flex-shrink: 0;
-  /* permanent halo so it never disappears completely */
-  box-shadow: 0 0 0 3px rgba(90,173,166,0.18), 0 0 12px 2px var(--ember-glow);
-  animation: ced-pulse 1.8s ease-in-out infinite;
-}
-@keyframes ced-pulse {
-  0%, 100% { transform: scale(1);    opacity: 0.75; box-shadow: 0 0 0 3px rgba(90,173,166,0.15), 0 0  8px 1px var(--ember-glow); }
-  50%       { transform: scale(1.22); opacity: 1.00; box-shadow: 0 0 0 5px rgba(90,173,166,0.25), 0 0 18px 4px var(--ember-glow); }
 }
 
-/* Rings: bold outward radar */
+/* Core dot */
+.ced-core {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--ember-2);
+  position: relative; z-index: 1;
+  flex-shrink: 0;
+  animation: ced-core-beat 2s ease-in-out infinite;
+}
+@keyframes ced-core-beat {
+  0%, 100% { opacity: 0.65; transform: scale(1); }
+  50%       { opacity: 1.00; transform: scale(1.15); }
+}
+
+/* Rings — anchored to centre of wrapper */
 .ced-ring {
   position: absolute;
+  top: 50%; left: 50%;
   border-radius: 50%;
-  border: 2px solid var(--ember-2);
+  border: 1.5px solid var(--ember);
   opacity: 0;
+  /* start collapsed at centre */
+  transform: translate(-50%, -50%) scale(0);
 }
 .ced-r1 {
-  width: 30px; height: 30px;
-  animation: ced-ring-out 2.0s cubic-bezier(0.16, 1, 0.3, 1) 0s infinite;
+  width: 28px; height: 28px;
+  animation: ced-ping 2.2s ease-out 0s infinite;
 }
 .ced-r2 {
   width: 48px; height: 48px;
-  animation: ced-ring-out 2.0s cubic-bezier(0.16, 1, 0.3, 1) 0.65s infinite;
+  animation: ced-ping 2.2s ease-out 0.8s infinite;
 }
-@keyframes ced-ring-out {
-  0%   { transform: scale(0.15); opacity: 0.85; }
-  65%  { transform: scale(1);    opacity: 0.15; }
-  100% { transform: scale(1.1);  opacity: 0; }
+@keyframes ced-ping {
+  0%   { transform: translate(-50%, -50%) scale(0.2); opacity: 0.75; }
+  75%  { transform: translate(-50%, -50%) scale(1);   opacity: 0; }
+  100% { transform: translate(-50%, -50%) scale(1);   opacity: 0; }
 }
 
 .composer-bottom {
