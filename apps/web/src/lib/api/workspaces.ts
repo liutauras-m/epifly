@@ -60,6 +60,14 @@ export function deleteNode(fetchFn: typeof fetch, id: string): Promise<ApiResult
   return apiCall(fetchFn, EP.WORKSPACE_NODE(id), { method: 'DELETE' });
 }
 
+export function shareNode(fetchFn: typeof fetch, id: string, userId: string): Promise<ApiResult<WorkspaceNode>> {
+  return apiCall(fetchFn, EP.WORKSPACE_SHARE(id), { method: 'POST', body: JSON.stringify({ user_id: userId }) });
+}
+
+export function unshareNode(fetchFn: typeof fetch, id: string, userId: string): Promise<ApiResult<WorkspaceNode>> {
+  return apiCall(fetchFn, EP.WORKSPACE_UNSHARE(id), { method: 'POST', body: JSON.stringify({ user_id: userId }) });
+}
+
 /**
  * Upload a single file as multipart/form-data.
  * Cannot go through apiCall because apiCall forces Content-Type: application/json.

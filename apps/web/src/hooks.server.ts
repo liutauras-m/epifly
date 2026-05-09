@@ -6,16 +6,8 @@ import { COOKIE_NAME, verify } from '$lib/server/session';
 // them anyway; but we keep this list explicit for clarity and future proofing).
 const CSRF_EXEMPT_PREFIXES = ['/v1', '/api', '/ui', '/mcp', '/admin'];
 
-// Warn loudly in production if the session key is still the insecure default.
-if (process.env.NODE_ENV === 'production') {
-	const key = process.env.UI_SESSION_KEY ?? '';
-	if (!key || key === 'conusai-foundry-dev-secret-change-me-32b') {
-		console.error(
-			'[hooks] FATAL: UI_SESSION_KEY is not set or uses the insecure default. ' +
-			'Set a strong random secret before deploying.'
-		);
-	}
-}
+// NOTE: Production key enforcement (throw on missing UI_SESSION_KEY) lives in
+// src/lib/server/session.ts → getKey(). It fires on the first sign/verify call.
 
 export const handle: Handle = async ({ event, resolve }) => {
 	// ── Manual CSRF origin check (scoped) ────────────────────────────────────

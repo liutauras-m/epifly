@@ -5,6 +5,8 @@
 	import { streamChat as apiStreamChat } from '$lib/api/stream';
 	import { workspacesApi, apiCall } from '$lib/api';
 	import { EP } from '$lib/api/endpoints';
+	import { toasts } from '$lib/ui/toast.svelte';
+	import { autoGrow } from '$lib/ui/actions';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
@@ -218,8 +220,13 @@
 	// ── Theme ────────────────────────────────────────────────────────────────
 	let theme = $state('paper');
 	onMount(() => {
-		// Read theme set by the flash-prevention script in app.html
-		theme = document.documentElement.dataset.theme ?? localStorage.getItem('conusai-theme') ?? 'paper';
+		// Priority: flash-prevention script set data-theme → localStorage → system preference
+		const stored = localStorage.getItem('conusai-theme');
+		const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+		theme = document.documentElement.dataset.theme
+			?? stored
+			?? (systemDark ? 'forge' : 'paper');
+		document.documentElement.setAttribute('data-theme', theme);
 	});
 	function toggleTheme() {
 		theme = theme === 'paper' ? 'forge' : 'paper';
@@ -328,8 +335,10 @@
 			// the next selectNode call will find the newly-created thread_id.
 			if (selectedNodeId) await refreshNodeMetadata(selectedNodeId);
 		} catch (e: unknown) {
+			const msg = e instanceof Error ? e.message : String(e);
 			messages = messages.filter((m) => m.role !== 'thinking');
-			messages = [...messages, { role: 'ai', text: `Stream failed: ${e instanceof Error ? e.message : String(e)}` }];
+			messages = [...messages, { role: 'ai', text: `Stream failed: ${msg}` }];
+			toasts.error(`Connection error: ${msg}`);
 		} finally {
 			inFlight = false;
 		}
@@ -359,10 +368,36 @@
 	}
 
 	// ── Upload ────────────────────────────────────────────────────────────────
+	const ALLOWED_MIME = new Set([
+		'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+		'application/pdf', 'text/plain', 'text/markdown',
+		'application/json', 'text/csv',
+	]);
+	const MAX_FILE_SIZE = 20 * 1024 * 1024;  // 20 MB
+	const MAX_ATTACHMENTS = 5;
+
 	async function uploadFiles(files: File[]) {
 		for (const file of files) {
+			// Attachment count limit
+			if (pendingAttachments.length >= MAX_ATTACHMENTS) {
+				toasts.warning(`Max ${MAX_ATTACHMENTS} attachments per message.`);
+				break;
+			}
+			// MIME type validation
+			if (!ALLOWED_MIME.has(file.type)) {
+				toasts.error(`"${file.name}" — unsupported file type (${file.type || 'unknown'}).`);
+				continue;
+			}
+			// Size limit
+			if (file.size > MAX_FILE_SIZE) {
+				toasts.error(`"${file.name}" is too large (max 20 MB).`);
+				continue;
+			}
 			const result = await workspacesApi.uploadFile(fetch, file);
-			if (result.error) continue;
+			if (result.error) {
+				toasts.error(`Upload failed: ${result.error.message}`);
+				continue;
+			}
 			const d = result.data;
 			pendingAttachments = [...pendingAttachments, { id: d.id, filename: d.filename, size: d.size }];
 		}
@@ -393,11 +428,7 @@
 		streamChat(prompt);
 	}
 
-	// ── Textarea auto-grow ─────────────────────────────────────────────────────
-	function grow(el: HTMLTextAreaElement) {
-		el.style.height = 'auto';
-		el.style.height = Math.min(el.scrollHeight, 240) + 'px';
-	}
+	// autoGrow is a Svelte action imported from $lib/ui/actions — use:autoGrow on the textarea
 
 	// ── Load thread history ───────────────────────────────────────────────────
 	async function loadThread(threadId: string) {
@@ -741,7 +772,7 @@
 			<label class="sr-only" for="prompt">Message</label>
 			<textarea id="prompt" class="composer-input" name="prompt" placeholder="How can I help you today?"
 				rows="1" autocomplete="off" bind:value={inputValue}
-				oninput={(e) => grow(e.currentTarget)}
+				use:autoGrow
 				onkeydown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); (e.currentTarget.closest('form') as HTMLFormElement)?.requestSubmit(); } }}></textarea>
 
 			<input id="file-input" type="file" style="display:none" multiple

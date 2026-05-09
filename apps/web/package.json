@@ -6,7 +6,9 @@
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "svelte-check --tsconfig ./tsconfig.json"
+    "lint": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run",
+    "test:ui": "vitest --ui"
   },
   "dependencies": {
     "@sveltejs/adapter-node": "^5.2.12",
@@ -17,7 +19,9 @@
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "svelte-check": "^4.2.1",
     "typescript": "^5.7.3",
-    "vite": "^6.3.5"
+    "vite": "^6.3.5",
+    "vitest": "^2.1.9",
+    "@vitest/ui": "^2.1.9"
   },
   "type": "module"
 }

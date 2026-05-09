@@ -1,0 +1,81 @@
+<script lang="ts">
+	import { workspacesApi } from '$lib/api';
+	import { toasts } from '$lib/ui/toast.svelte';
+	import type { WorkspaceNode } from '$lib/types';
+
+	let { node, onclose }: {
+		node: WorkspaceNode & { shared_with?: string[] };
+		onclose: (updated?: WorkspaceNode) => void;
+	} = $props();
+
+	let uid = $state('');
+	let busy = $state(false);
+	let sharedWith = $state<string[]>(node.shared_with ?? []);
+
+	async function addShare() {
+		const id = uid.trim();
+		if (!id) return;
+		busy = true;
+		const result = await workspacesApi.shareNode(fetch, node.id, id);
+		busy = false;
+		if (result.error) { toasts.error(`Share failed: ${result.error.message}`); return; }
+		sharedWith = (result.data as WorkspaceNode & { shared_with?: string[] }).shared_with ?? sharedWith;
+		uid = '';
+	}
+
+	async function removeShare(userId: string) {
+		const result = await workspacesApi.unshareNode(fetch, node.id, userId);
+		if (result.error) { toasts.error(`Unshare failed: ${result.error.message}`); return; }
+		sharedWith = (result.data as WorkspaceNode & { shared_with?: string[] }).shared_with ?? sharedWith.filter(u => u !== userId);
+	}
+</script>
+
+<div class="dialog-backdrop" role="presentation" onclick={() => onclose()} onkeydown={() => {}}>
+	<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="share-title"
+		onclick={(e) => e.stopPropagation()}>
+		<h2 id="share-title" class="dialog-title">Share "{node.name}"</h2>
+
+		{#if sharedWith.length > 0}
+			<ul class="shared-list">
+				{#each sharedWith as u (u)}
+					<li class="shared-row">
+						<span>{u}</span>
+						<button class="btn-ghost btn-sm" onclick={() => removeShare(u)}>Remove</button>
+					</li>
+				{/each}
+			</ul>
+		{:else}
+			<p class="empty-hint">Not shared with anyone yet.</p>
+		{/if}
+
+		<label class="dialog-field">
+			<span class="label-text">Add user ID</span>
+			<input class="dialog-input" type="text" placeholder="user-abc123" bind:value={uid}
+				autocomplete="off" onkeydown={(e) => e.key === 'Enter' && addShare()} />
+		</label>
+
+		<div class="dialog-actions">
+			<button class="btn-ghost" onclick={() => onclose()}>Close</button>
+			<button class="btn-primary" onclick={addShare} disabled={busy || !uid.trim()}>
+				{busy ? '…' : 'Share'}
+			</button>
+		</div>
+	</div>
+</div>
+
+<style>
+	.dialog-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+	.dialog { background: var(--surface, #fff); border-radius: 0.5rem; padding: 1.5rem; max-width: 24rem; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.15); }
+	.dialog-title { font-size: 1rem; font-weight: 600; margin: 0 0 1rem; }
+	.shared-list { list-style: none; padding: 0; margin: 0 0 1rem; display: flex; flex-direction: column; gap: 0.375rem; }
+	.shared-row { display: flex; align-items: center; justify-content: space-between; font-size: 0.875rem; }
+	.empty-hint { font-size: 0.875rem; opacity: 0.55; margin: 0 0 1rem; }
+	.dialog-field { display: flex; flex-direction: column; gap: 0.375rem; margin-bottom: 1.25rem; }
+	.label-text { font-size: 0.8125rem; opacity: 0.65; }
+	.dialog-input { border: 1px solid var(--border, #d1cdc8); border-radius: 0.25rem; padding: 0.5rem 0.625rem; font-size: 0.875rem; width: 100%; }
+	.dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
+	.btn-ghost { background: none; border: 1px solid var(--border, #d1cdc8); border-radius: 0.25rem; padding: 0.375rem 0.875rem; cursor: pointer; font-size: 0.875rem; }
+	.btn-sm { padding: 0.2rem 0.5rem; font-size: 0.8125rem; }
+	.btn-primary { background: var(--ember-2, #0d9488); color: #fff; border: none; border-radius: 0.25rem; padding: 0.375rem 0.875rem; cursor: pointer; font-size: 0.875rem; }
+	.btn-primary:disabled { opacity: 0.5; cursor: default; }
+</style>
