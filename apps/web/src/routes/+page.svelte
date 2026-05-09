@@ -714,6 +714,18 @@
 					{/each}
 				</div>
 
+				<!-- Persistent waiting dot — always visible when idle, creates presence & urgency -->
+				{#if !inFlight}
+					<div class="chat-waiting-row" aria-hidden="true">
+						<span class="waiting-dot">
+							<span class="wdw-ring wdw-r1"></span>
+							<span class="wdw-ring wdw-r2"></span>
+							<span class="wdw-ring wdw-r3"></span>
+							<span class="wdw-core"></span>
+						</span>
+					</div>
+				{/if}
+
 				<div class="composer-bottom">
 					{@render composer()}
 				</div>
