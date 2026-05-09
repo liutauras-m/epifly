@@ -1,9 +1,11 @@
 use crate::agent::hooks::TracingHook;
 use crate::context::tenant::TenantContext;
+use crate::tools::semantic_router::SemanticCapabilityRouter;
 use rig::client::ProviderClient;
 use rig::client::completion::CompletionClient;
 use rig::completion::Prompt;
 use rig::providers::anthropic;
+use std::sync::Arc;
 use tracing::{info, instrument};
 
 pub struct AgentBuilder {
@@ -11,6 +13,7 @@ pub struct AgentBuilder {
     preamble: String,
     max_tokens: u64,
     tenant: Option<TenantContext>,
+    semantic_router: Option<Arc<SemanticCapabilityRouter>>,
 }
 
 impl AgentBuilder {
@@ -20,6 +23,7 @@ impl AgentBuilder {
             preamble: "You are a helpful AI assistant.".into(),
             max_tokens: 4096,
             tenant: None,
+            semantic_router: None,
         }
     }
 
@@ -35,6 +39,13 @@ impl AgentBuilder {
 
     pub fn with_tenant(mut self, tenant: TenantContext) -> Self {
         self.tenant = Some(tenant);
+        self
+    }
+
+    /// Wire a `SemanticCapabilityRouter` so the agent pre-filters tools
+    /// to top-K per turn rather than sending all registered tools.
+    pub fn with_semantic_router(mut self, router: Arc<SemanticCapabilityRouter>) -> Self {
+        self.semantic_router = Some(router);
         self
     }
 
@@ -56,6 +67,10 @@ impl AgentBuilder {
         Agent {
             inner,
             tenant: self.tenant,
+            semantic_router: self.semantic_router,
+            model: self.model,
+            preamble: self.preamble,
+            max_tokens,
         }
     }
 
@@ -75,6 +90,11 @@ impl AgentBuilder {
 pub struct Agent {
     inner: rig::agent::Agent<rig::providers::anthropic::completion::CompletionModel>,
     pub tenant: Option<TenantContext>,
+    /// If set, tool definitions for each turn are resolved via semantic routing.
+    pub semantic_router: Option<Arc<SemanticCapabilityRouter>>,
+    model: String,
+    preamble: String,
+    max_tokens: u64,
 }
 
 impl Agent {
@@ -82,8 +102,14 @@ impl Agent {
     pub async fn prompt(&self, text: &str) -> common::error::Result<String> {
         info!("agent prompt");
         let hook = TracingHook::new(
-            self.tenant.as_ref().map(|t| t.tenant_id.as_str()).unwrap_or("none"),
-            self.tenant.as_ref().map(|t| t.plan.to_string()).unwrap_or_default(),
+            self.tenant
+                .as_ref()
+                .map(|t| t.tenant_id.as_str())
+                .unwrap_or("none"),
+            self.tenant
+                .as_ref()
+                .map(|t| t.plan.to_string())
+                .unwrap_or_default(),
             None,
         );
         let max_turns = self
@@ -91,6 +117,31 @@ impl Agent {
             .as_ref()
             .map(|t| t.plan.max_turns() as usize)
             .unwrap_or(10);
+
+        if let Some(router) = &self.semantic_router {
+            let tools = router
+                .rig_tools_for_prompt(text, self.tenant.as_ref())
+                .await
+                .map_err(common::error::ConusAiError::Other)?;
+
+            let client = anthropic::Client::from_env()
+                .map_err(|e| common::error::ConusAiError::Other(e.into()))?;
+
+            let routed_agent = client
+                .agent(&self.model)
+                .preamble(&self.preamble)
+                .max_tokens(self.max_tokens)
+                .tools(tools)
+                .build();
+
+            return routed_agent
+                .prompt(text)
+                .max_turns(max_turns)
+                .with_hook(hook)
+                .await
+                .map_err(|e| common::error::ConusAiError::Other(e.into()));
+        }
+
         self.inner
             .prompt(text)
             .max_turns(max_turns)

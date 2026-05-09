@@ -36,9 +36,16 @@ pub struct ToolManifest {
     pub config: serde_json::Value,
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Primary namespace in dot-separated slug form, e.g. `"accounting.invoice"`.
+    /// Optional — empty string means unnamespaced.
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// Present when `kind = "chain"` and the capability is data-driven (no bespoke Rust).
     #[serde(default)]
     pub chain: Option<LlmChainConfig>,
+    /// Empty = global (all tenants). Non-empty = only these tenant IDs see this capability.
+    #[serde(default)]
+    pub tenant_scope: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -50,6 +57,12 @@ pub enum ToolKind {
     Docker,
     /// Built-in in-process tools (filesystem, cargo runner). Not loaded from YAML.
     Native,
+    /// DB-backed, versioned prompt capability — no Rust rebuild required.
+    #[serde(rename = "dynamic_prompt")]
+    DynamicPrompt,
+    /// External MCP service registered via JSON (no TOML file on disk).
+    #[serde(rename = "remote_mcp")]
+    RemoteMcp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +82,11 @@ impl ToolManifest {
             common::error::ConusAiError::Tool(format!("cannot read {:?}: {e}", path))
         })?;
         Self::from_toml(&s)
+    }
+
+    /// Returns the primary namespace or empty string if unset.
+    pub fn namespace(&self) -> &str {
+        self.namespace.as_deref().unwrap_or("")
     }
 
     pub fn embedding_text(&self) -> String {

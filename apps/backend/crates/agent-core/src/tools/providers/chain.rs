@@ -10,7 +10,7 @@ use crate::llm::LlmRegistry;
 use crate::tools::card::CapabilityCard;
 use crate::tools::executor::resolve_image_path;
 use crate::tools::manifest::{ToolKind, ToolManifest};
-use crate::tools::provider::{CapabilityProvider, CapabilityFactory};
+use crate::tools::provider::{CapabilityFactory, CapabilityProvider};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -275,7 +275,10 @@ impl CapabilityFactory for ChainFactory {
     fn create(&self, card: CapabilityCard) -> anyhow::Result<Arc<dyn CapabilityProvider>> {
         // Data-driven: if [chain] block present, use generic PromptChainCapability.
         if card.manifest.chain.is_some() {
-            return Ok(Arc::new(PromptChainCapability::new(card.manifest, Arc::clone(&self.llm))?));
+            return Ok(Arc::new(PromptChainCapability::new(
+                card.manifest,
+                Arc::clone(&self.llm),
+            )?));
         }
         // Legacy: hardcoded providers for existing capabilities.
         match card.manifest.name.as_str() {

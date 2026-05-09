@@ -1,17 +1,17 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/common",
-    "crates/agent-core",
-    "crates/jobs",
-    "crates/agent-gateway",
-    "evals",
+    "apps/backend/crates/common",
+    "apps/backend/crates/agent-core",
+    "apps/backend/crates/jobs",
+    "apps/backend/crates/agent-gateway",
+    "apps/backend/evals",
 ]
 
 [workspace.package]
-version      = "0.1.0"
+version      = "0.3.1"
 edition      = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 authors      = ["Liutauras Medziunas <info@conusai.com>"]
 license      = "MIT"
 repository   = "https://github.com/conusai/conusai-platform"
@@ -24,8 +24,9 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 # AI / Rig
 rig-core     = { version = "0.36" }
 
-# Vector DB
-qdrant-client = { version = "1" }
+# Postgres / Vector DB
+sqlx         = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "json", "migrate"] }
+rig-postgres = { version = "0.2.5" }
 
 # HTTP
 axum         = { version = "0.8", features = ["ws", "multipart"] }
@@ -55,9 +56,9 @@ opentelemetry-prometheus   = { version = "0.27" }
 prometheus                 = { version = "0.13" }
 tracing-opentelemetry      = { version = "0.28" }
 
-# WASM
-wasmtime     = { version = "29", features = ["component-model"] }
-wasmtime-wasi = { version = "29" }
+# WASM — upgraded to wasmtime 44 + Component Model (wasip2)
+wasmtime     = { version = "44", features = ["component-model"] }
+wasmtime-wasi = { version = "44" }
 
 # Auth / Crypto
 jsonwebtoken = { version = "9" }
@@ -73,6 +74,9 @@ base64       = { version = "0.22" }
 # Object / file storage (MinIO / S3)
 object_store = { version = "0.11", features = ["aws"] }
 
+# Local embeddings (optional, feature-gated in agent-core)
+fastembed = { version = "5" }
+
 # HMAC (for SigV4 / search helpers)
 hmac         = { version = "0.12" }
 
@@ -84,6 +88,11 @@ bytes        = { version = "1" }
 futures      = { version = "0.3" }
 async-trait  = { version = "0.1" }
 bon          = { version = "3" }
+
+# Caching
+moka         = { version = "0.12", features = ["future"] }
+
+# indexmap for deterministic namespace index
 
 # CLI args
 clap         = { version = "4", features = ["derive"] }

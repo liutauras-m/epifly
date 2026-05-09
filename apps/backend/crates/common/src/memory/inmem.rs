@@ -1,7 +1,7 @@
 //! In-memory implementations of all store traits.
 //!
 //! Intended for tests and for local dev when `CONUSAI_TEST_MODE=1` is set.
-//! No Qdrant or MinIO required — everything lives in locked HashMaps / Vecs.
+//! No Postgres or MinIO required — everything lives in locked HashMaps / Vecs.
 //!
 //! These are **not** thread-safe across process restarts; data is lost on exit.
 //! That is intentional — they exist to remove the Docker dependency from tests.
@@ -54,11 +54,17 @@ impl ThreadStore for InMemoryThreadStore {
         };
         {
             let mut threads = self.threads.lock().unwrap();
-            threads.insert((tenant_id.to_owned(), thread_id_str.clone()), thread.clone());
+            threads.insert(
+                (tenant_id.to_owned(), thread_id_str.clone()),
+                thread.clone(),
+            );
         }
         {
             let mut msgs = self.messages.lock().unwrap();
-            msgs.insert((tenant_id.to_owned(), thread_id_str.clone()), initial_messages);
+            msgs.insert(
+                (tenant_id.to_owned(), thread_id_str.clone()),
+                initial_messages,
+            );
         }
         Ok(thread)
     }
@@ -436,6 +442,17 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
             .unwrap()
             .insert(node_id, content.to_owned());
         Ok(())
+    }
+
+    async fn semantic_search_nodes(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+        query: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<WorkspaceNode>> {
+        // In-memory store has no embedding engine — fall back to full-text search.
+        self.search_nodes(tenant_id, user_id, query, limit).await
     }
 
     async fn bind_thread(

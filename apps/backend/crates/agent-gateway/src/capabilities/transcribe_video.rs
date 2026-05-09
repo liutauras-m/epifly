@@ -43,7 +43,9 @@ impl TranscribeVideoCapability {
             }],
             config: serde_json::Value::Null,
             tags: vec!["audio".into(), "video".into(), "transcription".into()],
+            namespace: None,
             chain: None,
+            tenant_scope: vec![],
         };
 
         Self { manifest, executor }
@@ -77,7 +79,10 @@ impl CapabilityProvider for TranscribeVideoCapability {
                     "tenant_id": tenant_id,
                 });
 
-                let task_id = self.executor.enqueue("video-transcription", payload).await?;
+                let task_id = self
+                    .executor
+                    .enqueue("video-transcription", payload)
+                    .await?;
 
                 Ok(json!({
                     "task_id": task_id,

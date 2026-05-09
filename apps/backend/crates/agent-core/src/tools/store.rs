@@ -8,7 +8,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisteredToolState {
     pub enabled: bool,
-    pub created_at: String,   // RFC 3339
+    pub created_at: String, // RFC 3339
     pub updated_at: String,
 }
 
@@ -50,12 +50,11 @@ impl RegisteredToolStore for FilesystemStore {
         let mut names = Vec::new();
         for entry in std::fs::read_dir(&self.root)? {
             let entry = entry?;
-            if entry.path().is_dir() {
-                if let Some(name) = entry.file_name().to_str() {
-                    if entry.path().join("capability.toml").exists() {
-                        names.push(name.to_string());
-                    }
-                }
+            if entry.path().is_dir()
+                && let Some(name) = entry.file_name().to_str()
+                && entry.path().join("capability.toml").exists()
+            {
+                names.push(name.to_string());
             }
         }
         Ok(names)
@@ -117,7 +116,7 @@ impl RegisteredToolStore for FilesystemStore {
 
 // ── In-memory implementation (tests) ─────────────────────────────────────────
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(test)]
 pub mod mem {
     use super::*;
     use std::collections::HashMap;
@@ -131,7 +130,9 @@ pub mod mem {
     }
 
     impl InMemoryStore {
-        pub fn new() -> Self { Self::default() }
+        pub fn new() -> Self {
+            Self::default()
+        }
     }
 
     impl RegisteredToolStore for InMemoryStore {
@@ -139,23 +140,35 @@ pub mod mem {
             Ok(self.manifests.lock().unwrap().keys().cloned().collect())
         }
         fn read_manifest(&self, name: &str) -> anyhow::Result<String> {
-            self.manifests.lock().unwrap().get(name)
+            self.manifests
+                .lock()
+                .unwrap()
+                .get(name)
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("not found: {name}"))
         }
         fn write_manifest(&self, name: &str, toml: &str) -> anyhow::Result<()> {
-            self.manifests.lock().unwrap().insert(name.to_string(), toml.to_string());
+            self.manifests
+                .lock()
+                .unwrap()
+                .insert(name.to_string(), toml.to_string());
             Ok(())
         }
         fn write_wasm(&self, name: &str, bytes: &[u8]) -> anyhow::Result<()> {
-            self.wasms.lock().unwrap().insert(name.to_string(), bytes.to_vec());
+            self.wasms
+                .lock()
+                .unwrap()
+                .insert(name.to_string(), bytes.to_vec());
             Ok(())
         }
         fn read_state(&self, name: &str) -> anyhow::Result<Option<RegisteredToolState>> {
             Ok(self.states.lock().unwrap().get(name).cloned())
         }
         fn write_state(&self, name: &str, state: &RegisteredToolState) -> anyhow::Result<()> {
-            self.states.lock().unwrap().insert(name.to_string(), state.clone());
+            self.states
+                .lock()
+                .unwrap()
+                .insert(name.to_string(), state.clone());
             Ok(())
         }
         fn delete(&self, name: &str) -> anyhow::Result<()> {

@@ -1,7 +1,8 @@
+use crate::mw::RouterQuotaLayer;
 use crate::state::AppState;
 use axum::{
     Router,
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
 };
 use std::sync::Arc;
 use utoipa::Modify;
@@ -9,9 +10,9 @@ use utoipa::OpenApi;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa_swagger_ui::SwaggerUi;
 
-pub mod agent;
 mod admin_capabilities;
 mod admin_jobs;
+pub mod agent;
 mod audit;
 pub mod auth;
 mod capabilities;
@@ -19,6 +20,7 @@ pub mod chat;
 mod files;
 mod health;
 mod mcp;
+pub mod realtime;
 mod search;
 mod tasks;
 mod threads;
@@ -106,6 +108,14 @@ pub fn public_router() -> Router<Arc<AppState>> {
         .route("/health", get(health::health))
         // Auth: exchange credentials for JWT
         .route("/v1/auth/login", post(auth::login))
+        // Self-registration for external capability services.
+        // Auth: if PLATFORM_ADMIN_TOKEN is set the request must carry
+        //   `Authorization: Bearer <token>`.  In dev (token unset) all
+        //   requests are accepted.
+        .route(
+            "/admin/capabilities/register",
+            post(admin_capabilities::register_capability),
+        )
         // OpenAPI spec (machine-readable) + Swagger UI
         // SwaggerUi registers GET /openapi.json itself, so we don't add a
         // separate route to avoid an "Overlapping method route" panic.
@@ -114,20 +124,61 @@ pub fn public_router() -> Router<Arc<AppState>> {
 
 /// Super-admin only routes (JWT-protected with role=super_admin).
 pub fn admin_router() -> Router<Arc<AppState>> {
-    use axum::middleware;
     use crate::mw::admin::require_super_admin_jwt;
+    use axum::middleware;
     Router::new()
         .route("/admin/capabilities", get(admin_capabilities::list))
         .route("/admin/capabilities", post(admin_capabilities::create))
-        .route("/admin/capabilities/reload", post(admin_capabilities::reload_all))
-        .route("/admin/capabilities/validate", post(admin_capabilities::validate))
-        .route("/admin/capabilities/test", post(admin_capabilities::test_invoke))
-        .route("/admin/capabilities/{name}", get(admin_capabilities::get_one))
-        .route("/admin/capabilities/{name}/manifest", get(admin_capabilities::get_manifest))
-        .route("/admin/capabilities/{name}", axum::routing::patch(admin_capabilities::update))
-        .route("/admin/capabilities/{name}/enabled", axum::routing::patch(admin_capabilities::set_enabled))
-        .route("/admin/capabilities/{name}", axum::routing::delete(admin_capabilities::delete_one))
-        .route("/admin/capabilities/{name}/reload", post(admin_capabilities::reload_one))
+        .route(
+            "/admin/capabilities/reload",
+            post(admin_capabilities::reload_all),
+        )
+        .route(
+            "/admin/capabilities/validate",
+            post(admin_capabilities::validate),
+        )
+        .route(
+            "/admin/capabilities/test",
+            post(admin_capabilities::test_invoke),
+        )
+        .route(
+            "/admin/capabilities/{name}",
+            get(admin_capabilities::get_one),
+        )
+        .route(
+            "/admin/capabilities/{name}/manifest",
+            get(admin_capabilities::get_manifest),
+        )
+        .route(
+            "/admin/capabilities/{name}",
+            axum::routing::patch(admin_capabilities::update),
+        )
+        .route(
+            "/admin/capabilities/{name}/enabled",
+            axum::routing::patch(admin_capabilities::set_enabled),
+        )
+        .route(
+            "/admin/capabilities/{name}",
+            axum::routing::delete(admin_capabilities::delete_one),
+        )
+        .route(
+            "/admin/capabilities/{name}/reload",
+            post(admin_capabilities::reload_one),
+        )
+        // Dynamic prompt management
+        .route(
+            "/admin/capabilities/{name}/prompt",
+            put(admin_capabilities::upsert_prompt).get(admin_capabilities::get_prompt),
+        )
+        .route(
+            "/admin/capabilities/{name}/prompt/versions",
+            get(admin_capabilities::list_prompt_versions),
+        )
+        // Namespace browser
+        .route(
+            "/admin/capabilities/namespaces",
+            get(admin_capabilities::list_namespaces),
+        )
         // Job management
         .route("/admin/jobs", get(admin_jobs::list_jobs))
         .route("/admin/jobs/{name}", get(admin_jobs::get_job))
@@ -142,10 +193,14 @@ pub fn protected_router() -> Router<Arc<AppState>> {
         // OpenAI-compatible chat
         .route("/v1/chat/completions", post(chat::completions))
         // Agent with tool calling + optional thread memory
+        // Wrapped with RouterQuotaLayer to enforce per-turn tool/invoke caps.
         .route("/v1/agent/completions", post(agent::agent_completions))
+        .route_layer(RouterQuotaLayer::new(
+            crate::mw::router_quota::RouterQuotaConfig::from_env(),
+        ))
         // Tool registry (path kept as /v1/capabilities for API compatibility)
         .route("/v1/capabilities", get(capabilities::list_capabilities))
-        // Semantic capability search (Qdrant-backed)
+        // Semantic capability search (Postgres pgvector ANN)
         .route("/v1/capabilities/search", get(search::search))
         // MCP JSON-RPC 2.0
         .route("/mcp", post(mcp::dispatch))
@@ -177,4 +232,6 @@ pub fn protected_router() -> Router<Arc<AppState>> {
         .route("/v1/tasks/{id}/sse", get(tasks::task_sse))
         // ── Threads ─────────────────────────────────────────────────────────
         .route("/v1/threads/{id}/messages", get(threads::get_messages))
+        // ── Realtime ────────────────────────────────────────────────────────
+        .route("/api/realtime/workspace", get(realtime::realtime_workspace))
 }

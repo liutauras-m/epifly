@@ -4,8 +4,8 @@ use crate::job::{TaskState, TaskStatus};
 use crate::registry::JobRegistry;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::broadcast;
 use tokio::sync::RwLock;
+use tokio::sync::broadcast;
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -82,13 +82,7 @@ impl JobExecutor {
                 Err(e) => {
                     error!(task_id = %task_id, job = %job_name_owned, error = %e, "background job failed");
                     executor
-                        .update_state(
-                            task_id,
-                            TaskState::Failed,
-                            None,
-                            Some(e.to_string()),
-                            &tx,
-                        )
+                        .update_state(task_id, TaskState::Failed, None, Some(e.to_string()), &tx)
                         .await;
                 }
             }
@@ -109,7 +103,7 @@ impl JobExecutor {
     pub async fn list_tasks(&self, limit: usize) -> Vec<TaskStatus> {
         let tasks = self.tasks.read().await;
         let mut all: Vec<TaskStatus> = tasks.values().cloned().collect();
-        all.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        all.sort_by_key(|x| std::cmp::Reverse(x.created_at));
         all.truncate(limit);
         all
     }

@@ -1,10 +1,11 @@
-/// Semantic capability search backed by Qdrant.
+/// Semantic capability search backed by Postgres pgvector ANN retrieval.
 ///
 /// GET /v1/capabilities/search?q=finance&limit=5
 ///
-/// On first call per tenant the collection is created and all capability
-/// embeddings are upserted.  Subsequent calls hit the Qdrant search API.
-/// Falls back to local substring matching when Qdrant is unreachable.
+/// On each request, capability cards are upserted into `capability_embeddings`
+/// (with embedding) when their content has changed (hash-based check).
+/// The query is embedded and top-N results are retrieved via cosine ANN search.
+/// Falls back to local substring matching only when the vector path fails.
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
 use axum::{
@@ -15,9 +16,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use tracing::{info, warn};
-
-const VECTOR_DIMS: usize = 64;
+use tracing::{instrument, warn};
 
 #[derive(Deserialize, utoipa::IntoParams)]
 pub struct SearchQuery {
@@ -35,148 +34,143 @@ pub struct SearchQuery {
     security(("bearer_auth" = [])),
     tag = "capabilities",
 )]
+#[instrument(skip(state, tenant, query))]
 pub async fn search(
     State(state): State<Arc<AppState>>,
     Extension(tenant): Extension<ResolvedTenant>,
     Query(query): Query<SearchQuery>,
 ) -> Json<Value> {
     let limit = query.limit.unwrap_or(5).min(20) as usize;
-    let qdrant_url = std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://localhost:6333".into());
-    let collection = tenant.0.qdrant_collection("capabilities");
 
-    // Collect cards once (outside lock)
     let cards: Vec<_> = {
         let reg = state.registry.lock().unwrap();
         reg.all_enabled().cloned().collect()
     };
 
-    // Ensure the Qdrant collection is seeded for this tenant
-    if let Err(e) = ensure_collection(&qdrant_url, &collection, &cards).await {
-        warn!(error = %e, collection, "Qdrant seed failed; falling back to local search");
-        return Json(local_search(&tenant.0.tenant_id, &query.q, &cards, limit));
-    }
-
-    // Vector search
-    let q_vec = text_to_vec(&query.q);
-    match qdrant_search(&qdrant_url, &collection, q_vec, limit as u64).await {
+    match vector_search(&state, &query.q, &cards, limit).await {
         Ok(results) => Json(json!({
             "tenant_id": tenant.0.tenant_id,
             "query": query.q,
             "results": results,
-            "source": "qdrant"
+            "source": "vector"
         })),
         Err(e) => {
-            warn!(error = %e, "Qdrant search failed; falling back to local");
+            warn!(error = %e, "vector capability search failed; falling back to local");
             Json(local_search(&tenant.0.tenant_id, &query.q, &cards, limit))
         }
     }
 }
 
-// ── Qdrant helpers ─────────────────────────────────────────────────────────────
+// ── Vector search path ────────────────────────────────────────────────────────
 
-/// Create the collection if absent and upsert all capability vectors.
-async fn ensure_collection(
-    base: &str,
-    collection: &str,
+async fn vector_search(
+    state: &AppState,
+    query: &str,
     cards: &[agent_core::tools::card::CapabilityCard],
-) -> anyhow::Result<()> {
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()?;
+    limit: usize,
+) -> anyhow::Result<Vec<Value>> {
+    // 1. Refresh capability embeddings for changed cards.
+    refresh_capability_embeddings(state, cards).await?;
 
-    // Check existence
-    let check = http
-        .get(format!("{base}/collections/{collection}"))
-        .send()
+    // 2. Embed the query.
+    let query_embedding = state.embedding_service.embed_query(query).await?;
+
+    // 3. ANN retrieval.
+    let hits = state
+        .vector_store
+        .top_n_capabilities(&query_embedding, limit)
         .await?;
 
-    if check.status() == 404 {
-        // Create collection
-        http.put(format!("{base}/collections/{collection}"))
-            .json(&json!({
-                "vectors": { "size": VECTOR_DIMS, "distance": "Cosine" }
-            }))
-            .send()
-            .await?;
-
-        info!(collection, "Qdrant collection created");
-    }
-
-    // Upsert all capability embeddings
-    let points: Vec<Value> = cards
-        .iter()
-        .enumerate()
-        .map(|(i, card)| {
-            let embedding_text = card.manifest.embedding_text();
+    Ok(hits
+        .into_iter()
+        .map(|h| {
             json!({
-                "id": i + 1,
-                "vector": text_to_vec(&embedding_text),
-                "payload": {
-                    "name":        card.manifest.name,
-                    "description": card.manifest.description,
-                    "kind":        format!("{:?}", card.manifest.kind),
-                    "tags":        card.manifest.tags,
-                }
+                "name":     h.capability_id,
+                "content":  h.content,
+                "metadata": h.metadata,
+                "score":    1.0 - h.distance,
             })
         })
-        .collect();
+        .collect())
+}
 
-    if !points.is_empty() {
-        http.put(format!("{base}/collections/{collection}/points"))
-            .json(&json!({ "points": points }))
-            .send()
-            .await?;
+/// Upsert capability cards into `capability_embeddings` when their content has
+/// changed.  Uses a SHA-256 hash stored in `metadata.content_hash` to skip
+/// unchanged cards.
+async fn refresh_capability_embeddings(
+    state: &AppState,
+    cards: &[agent_core::tools::card::CapabilityCard],
+) -> anyhow::Result<()> {
+    for card in cards {
+        let content = format!(
+            "{} {} {} {}",
+            card.manifest.name,
+            card.manifest.description,
+            card.namespace(),
+            card.manifest.tags.join(" ")
+        );
+
+        let content_hash = {
+            let mut h = Sha256::new();
+            h.update(content.as_bytes());
+            format!("{:x}", h.finalize())
+        };
+
+        // Fetch stored hash.
+        let stored_hash: Option<String> = if let Some(pool) = &state.pool {
+            sqlx::query_scalar!(
+                "SELECT (metadata->>'content_hash')::text
+             FROM capability_embeddings WHERE capability_id = $1",
+                card.manifest.name,
+            )
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .flatten()
+        } else {
+            None
+        };
+
+        if stored_hash.as_deref() == Some(&content_hash) {
+            continue; // unchanged — skip re-embedding
+        }
+
+        // Generate embedding.
+        let embedding = match state.embedding_service.embed_query(&content).await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(capability = %card.manifest.name, error = %e, "embedding generation failed; skipping card");
+                continue;
+            }
+        };
+
+        let metadata = json!({
+            "kind":         format!("{:?}", card.manifest.kind),
+            "tags":         card.manifest.tags,
+            "namespace":    card.namespace(),
+            "content_hash": content_hash,
+        });
+
+        if let Err(e) = state
+            .vector_store
+            .upsert_capability_embedding_full(
+                &card.manifest.name,
+                &content,
+                &embedding,
+                &metadata,
+                card.namespace(),
+                card.tags(),
+            )
+            .await
+        {
+            warn!(capability = %card.manifest.name, error = %e, "capability embedding upsert failed");
+        }
     }
-
     Ok(())
 }
 
-async fn qdrant_search(
-    base: &str,
-    collection: &str,
-    vector: Vec<f32>,
-    limit: u64,
-) -> anyhow::Result<Vec<Value>> {
-    let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()?;
-
-    let resp = http
-        .post(format!("{base}/collections/{collection}/points/search"))
-        .json(&json!({
-            "vector": vector,
-            "limit": limit,
-            "with_payload": true
-        }))
-        .send()
-        .await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Qdrant search returned {status}: {body}");
-    }
-
-    let body: Value = resp.json().await?;
-    let hits = body["result"]
-        .as_array()
-        .unwrap_or(&vec![])
-        .iter()
-        .map(|r| {
-            json!({
-                "name":        r["payload"]["name"],
-                "description": r["payload"]["description"],
-                "kind":        r["payload"]["kind"],
-                "tags":        r["payload"]["tags"],
-                "score":       r["score"]
-            })
-        })
-        .collect();
-
-    Ok(hits)
-}
-
-// ── Fallback: local substring search ─────────────────────────────────────────
+// ── Local fallback ────────────────────────────────────────────────────────────
 
 fn local_search(
     tenant_id: &str,
@@ -213,25 +207,4 @@ fn local_search(
         "results": results,
         "source": "local"
     })
-}
-
-// ── Embedding helper ──────────────────────────────────────────────────────────
-
-/// Deterministic hash-based vector.  Not semantically meaningful but exercises
-/// the Qdrant data plane with real writes and nearest-neighbour queries.
-/// Replace with a real embedding model for production semantic search.
-pub fn text_to_vec(text: &str) -> Vec<f32> {
-    let mut hasher = Sha256::new();
-    hasher.update(text.as_bytes());
-    let hash = hasher.finalize();
-    let hash_bytes = hash.as_slice(); // 32 bytes
-
-    (0..VECTOR_DIMS)
-        .map(|i| {
-            let b = hash_bytes[i % hash_bytes.len()];
-            // Rotate to decorrelate dimensions
-            let rotated = b.rotate_left((i % 8) as u32);
-            (rotated as f32 / 127.5) - 1.0 // [-1, 1]
-        })
-        .collect()
 }

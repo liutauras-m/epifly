@@ -9,7 +9,9 @@ pub struct PromptTemplate {
 
 impl PromptTemplate {
     pub fn new(template: impl Into<String>) -> Self {
-        Self { template: template.into() }
+        Self {
+            template: template.into(),
+        }
     }
 
     /// Render the template, replacing `{{path.to.key}}` with values from `ctx`.

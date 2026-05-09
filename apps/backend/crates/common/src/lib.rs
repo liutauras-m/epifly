@@ -1,5 +1,7 @@
+pub mod artifact;
 pub mod audit;
 pub mod config;
+pub mod db;
 pub mod error;
 pub mod eval;
 pub mod http_client;

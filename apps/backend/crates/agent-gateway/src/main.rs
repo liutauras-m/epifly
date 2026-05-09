@@ -1,3 +1,4 @@
+use agent_core::{WorkspaceIndexer, indexing::RealFsWatcher};
 use anyhow::Result;
 use axum::{Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
 use jobs::JobSchedulerService;
@@ -7,13 +8,13 @@ use std::sync::Arc;
 use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer, ExposeHeaders};
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
-use tracing::info;
+use tracing::{info, warn};
 
+mod capabilities;
 mod mw;
 mod routes;
 mod state;
 mod ui;
-mod capabilities;
 
 use state::AppState;
 
@@ -66,9 +67,9 @@ fn build_cors() -> CorsLayer {
             axum::http::HeaderName::from_static("x-tenant-id"),
             axum::http::HeaderName::from_static("x-api-key"),
         ]))
-        .expose_headers(ExposeHeaders::list([
-            axum::http::HeaderName::from_static("x-request-id"),
-        ]))
+        .expose_headers(ExposeHeaders::list([axum::http::HeaderName::from_static(
+            "x-request-id",
+        )]))
         .allow_credentials(true)
 }
 
@@ -107,20 +108,42 @@ async fn main() -> Result<()> {
     let (_telemetry, prom_registry) = common::telemetry::init("agent-gateway", "info");
     let prom_registry = Arc::new(prom_registry);
 
-    let state = Arc::new(AppState::from_env()?);
+    let state = Arc::new(AppState::from_env().await?);
     let loaded = state.registry.lock().unwrap().len();
     info!(capabilities = loaded, "capability registry loaded");
+
+    // Wire capability-spec realtime hot-reload channel (Postgres mode only).
+    if let (Some(realtime), Some(spec_factory)) = (
+        state.realtime_service.clone(),
+        state.capability_spec_factory.clone(),
+    ) {
+        let registry = Arc::clone(&state.registry);
+        tokio::spawn(async move {
+            let mut rx = realtime.subscribe_capability_spec_changes().await;
+            while let Some((namespace, tool_name)) = rx.recv().await {
+                if let Err(e) = spec_factory
+                    .reload_one(&registry, &namespace, &tool_name)
+                    .await
+                {
+                    warn!(error = %e, namespace, tool_name, "capability-spec hot-reload failed");
+                }
+            }
+        });
+        info!("capability-spec realtime hot-reload listener started");
+    }
 
     // Register dynamic capabilities that depend on runtime services (e.g. JobExecutor).
     {
         use agent_core::tools::provider::CapabilityProvider;
         use capabilities::transcribe_video::TranscribeVideoCapability;
-        let provider: Arc<dyn CapabilityProvider> =
-            Arc::new(TranscribeVideoCapability::new(Arc::clone(&state.job_executor)));
+        let provider: Arc<dyn CapabilityProvider> = Arc::new(TranscribeVideoCapability::new(
+            Arc::clone(&state.job_executor),
+        ));
         let card = agent_core::tools::card::CapabilityCard::new(
             provider.manifest().clone(),
             std::path::PathBuf::from("runtime"),
-        ).with_provider(Arc::clone(&provider));
+        )
+        .with_provider(Arc::clone(&provider));
         state.registry.lock().unwrap().register(card);
         info!("TranscribeVideoCapability registered");
     }
@@ -138,6 +161,36 @@ async fn main() -> Result<()> {
     // The `_scheduler` guard is kept alive for the process lifetime.
     let _scheduler = JobSchedulerService::start(&state.job_registry).await?;
     info!("job scheduler started");
+
+    // Start the workspace file indexer if WORKSPACES_ROOT is configured.
+    // Runs an initial index pass then watches for changes at configurable intervals.
+    let _watcher = if let Ok(root) = std::env::var("WORKSPACES_ROOT") {
+        if let Some(pool) = state.pool.clone() {
+            let root_path = PathBuf::from(root);
+            let indexer = Arc::new(WorkspaceIndexer::new(
+                root_path.clone(),
+                pool,
+                Arc::clone(&state.embedding_service),
+                Arc::clone(&state.vector_store),
+            ));
+            // Run the first indexing pass in the background; don't block startup.
+            let idx_clone = Arc::clone(&indexer);
+            tokio::spawn(async move {
+                if let Err(e) = idx_clone.index_once().await {
+                    tracing::warn!(error = %e, "initial workspace index pass failed");
+                }
+            });
+            let watcher = RealFsWatcher::spawn(Arc::clone(&indexer));
+            info!(root = %root_path.display(), "workspace indexer started");
+            Some(watcher)
+        } else {
+            info!("WORKSPACES_ROOT set but no pool available — workspace indexer disabled");
+            None
+        }
+    } else {
+        info!("WORKSPACES_ROOT not set — workspace indexer disabled");
+        None
+    };
 
     let assets_dir = resolve_assets_dir()?;
     info!(assets_dir = %assets_dir.display(), "serving UI assets");

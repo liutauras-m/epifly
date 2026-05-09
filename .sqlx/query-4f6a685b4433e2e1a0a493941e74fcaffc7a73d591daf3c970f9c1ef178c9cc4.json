@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO workspace_nodes\n                (id, tenant_id, owner_id, parent_id, kind, name, virtual_path, last_modified, shared_with, metadata)\n             VALUES ($1, $2, $3, $4, 'folder', $5, $6, $7, '{}', '{}'::jsonb)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4f6a685b4433e2e1a0a493941e74fcaffc7a73d591daf3c970f9c1ef178c9cc4"
+}

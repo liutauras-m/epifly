@@ -1,6 +1,7 @@
 //! `JobContext` — shared dependencies injected into every job run.
 
 use common::audit::AuditStore;
+use sqlx::PgPool;
 use std::sync::Arc;
 
 /// Shared context provided to every scheduled and background job.
@@ -10,8 +11,8 @@ use std::sync::Arc;
 pub struct JobContext {
     /// Append-only audit log (from `common`).
     pub audit_store: Arc<dyn AuditStore>,
-    /// Qdrant base URL — passed as a string so `jobs` doesn't depend on qdrant-client directly.
-    pub qdrant_url: String,
+    /// Optional Postgres connection pool. `None` in in-memory test mode.
+    pub pool: Option<PgPool>,
     /// MinIO / S3 endpoint (may be `None` if not configured).
     pub minio_endpoint: Option<String>,
     /// The name of the MinIO bucket.
@@ -21,13 +22,13 @@ pub struct JobContext {
 impl JobContext {
     pub fn new(
         audit_store: Arc<dyn AuditStore>,
-        qdrant_url: impl Into<String>,
+        pool: Option<PgPool>,
         minio_endpoint: Option<String>,
         bucket: Option<String>,
     ) -> Self {
         Self {
             audit_store,
-            qdrant_url: qdrant_url.into(),
+            pool,
             minio_endpoint,
             bucket,
         }

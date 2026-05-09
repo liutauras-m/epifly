@@ -8,13 +8,7 @@
 /// For JSON error responses (4xx/5xx) it also injects `request_id` into the
 /// `{"error": {"request_id": "..."}}` body field so clients can correlate
 /// errors without inspecting headers.
-use axum::{
-    body,
-    extract::Request,
-    http::HeaderValue,
-    middleware::Next,
-    response::Response,
-};
+use axum::{body, extract::Request, http::HeaderValue, middleware::Next, response::Response};
 use uuid::Uuid;
 
 pub async fn inject_request_id(req: Request, next: Next) -> Response {
@@ -48,13 +42,9 @@ pub async fn inject_request_id(req: Request, next: Next) -> Response {
             match body::to_bytes(body_stream, 1_048_576).await {
                 Ok(bytes) => {
                     let try_inject = |bytes: &[u8]| -> Option<Vec<u8>> {
-                        let mut json: serde_json::Value =
-                            serde_json::from_slice(bytes).ok()?;
-                        if let Some(obj) = json
-                            .get_mut("error")
-                            .and_then(|e| e.as_object_mut())
-                            && (!obj.contains_key("request_id")
-                                || obj["request_id"].is_null())
+                        let mut json: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+                        if let Some(obj) = json.get_mut("error").and_then(|e| e.as_object_mut())
+                            && (!obj.contains_key("request_id") || obj["request_id"].is_null())
                         {
                             obj.insert(
                                 "request_id".to_string(),

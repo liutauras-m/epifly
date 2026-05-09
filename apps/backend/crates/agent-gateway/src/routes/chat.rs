@@ -31,7 +31,7 @@ pub struct ChatRequest {
     pub messages: Vec<ChatMessage>,
     pub max_tokens: Option<u64>,
     pub stream: Option<bool>,
-    /// Optional ULID — when provided, loads history from Qdrant and persists this turn.
+    /// Optional ULID — when provided, loads history from Postgres and persists this turn.
     pub thread_id: Option<String>,
     /// Optional workspace node ULID — when provided, injects folder+conversation context.
     pub workspace_node_id: Option<String>,
@@ -143,17 +143,17 @@ async fn blocking_response(
         .find(|m| m.role == "system")
         .map(|m| m.content.clone());
 
-    let client = anthropic::Client::from_env()
-        .expect("ANTHROPIC_API_KEY must be set");
+    let client = anthropic::Client::from_env().expect("ANTHROPIC_API_KEY must be set");
     let mut builder = client.agent(model_id).max_tokens(max_tokens);
     if let Some(sys) = system {
         builder = builder.preamble(&sys);
     }
 
     let agent = builder.build();
-    let text = agent.prompt(last_user).await.map_err(|e| {
-        map_rig_error(e.to_string())
-    })?;
+    let text = agent
+        .prompt(last_user)
+        .await
+        .map_err(|e| map_rig_error(e.to_string()))?;
 
     Ok(Json(ChatResponse {
         id: format!("chatcmpl-{}", Uuid::new_v4()),

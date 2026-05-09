@@ -8,7 +8,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub server: ServerConfig,
-    pub qdrant: QdrantConfig,
+    pub database: DatabaseConfig,
     pub capabilities_dir: String,
     pub telemetry: TelemetryConfig,
     pub llm: LlmConfig,
@@ -50,9 +50,15 @@ pub struct AnthropicProviderConfig {
     pub api_version: String,
 }
 
-fn default_anthropic_key_env() -> String { "ANTHROPIC_API_KEY".into() }
-fn default_anthropic_base_url() -> String { "https://api.anthropic.com".into() }
-fn default_anthropic_api_version() -> String { "2023-06-01".into() }
+fn default_anthropic_key_env() -> String {
+    "ANTHROPIC_API_KEY".into()
+}
+fn default_anthropic_base_url() -> String {
+    "https://api.anthropic.com".into()
+}
+fn default_anthropic_api_version() -> String {
+    "2023-06-01".into()
+}
 
 impl Default for AnthropicProviderConfig {
     fn default() -> Self {
@@ -71,9 +77,9 @@ pub struct ServerConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QdrantConfig {
+pub struct DatabaseConfig {
+    /// Full Postgres connection URL, read from DATABASE_URL env via figment.
     pub url: String,
-    pub collection: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,9 +122,8 @@ impl Default for AppConfig {
                 host: "0.0.0.0".into(),
                 port: 8080,
             },
-            qdrant: QdrantConfig {
-                url: "http://localhost:6334".into(),
-                collection: "capabilities".into(),
+            database: DatabaseConfig {
+                url: "postgres://conusai:conusai@localhost:5432/conusai".into(),
             },
             capabilities_dir: "./capabilities".into(),
             telemetry: TelemetryConfig {

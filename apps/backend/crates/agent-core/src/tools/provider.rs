@@ -85,3 +85,17 @@ pub trait CapabilityFactory: Send + Sync + 'static {
     /// Create a provider from the card.  Called once per discovered capability.
     fn create(&self, card: CapabilityCard) -> anyhow::Result<Arc<dyn CapabilityProvider>>;
 }
+
+/// Factory variant that can load many capabilities efficiently from a data source
+/// (e.g. a database table) in a single pass with batched embedding writes.
+///
+/// Implement this on `CapabilityFactory` implementors that have bulk sources.
+#[async_trait]
+pub trait BulkCapabilityFactory: CapabilityFactory {
+    /// Load all available capabilities into `registry`.
+    /// Returns the count of successfully loaded capabilities.
+    async fn load_batch(
+        &self,
+        into: &mut crate::tools::registry::ToolRegistry,
+    ) -> anyhow::Result<usize>;
+}

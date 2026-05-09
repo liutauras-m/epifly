@@ -31,7 +31,8 @@ pub async fn list_capabilities(
     let caps: Vec<Value> = registry
         .all_enabled()
         .map(|card| {
-            let supported_tools: Vec<_> = card.manifest.tools.iter().map(|t| t.name.clone()).collect();
+            let supported_tools: Vec<_> =
+                card.manifest.tools.iter().map(|t| t.name.clone()).collect();
             json!({
                 "name": card.manifest.name,
                 "version": card.manifest.version,

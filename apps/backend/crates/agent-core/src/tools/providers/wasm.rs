@@ -1,7 +1,7 @@
 use crate::context::tenant::TenantContext;
 use crate::tools::card::CapabilityCard;
 use crate::tools::manifest::{ToolKind, ToolManifest};
-use crate::tools::provider::{CapabilityProvider, CapabilityFactory};
+use crate::tools::provider::{CapabilityFactory, CapabilityProvider};
 use crate::tools::wasm_loader::WasmToolLoader;
 use async_trait::async_trait;
 use serde_json::Value;

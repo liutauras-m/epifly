@@ -1,6 +1,7 @@
 use super::card::CapabilityCard;
 use super::manifest::ToolManifest;
-use super::provider::{CapabilityProvider, CapabilityFactory};
+use super::namespace::NamespaceFilter;
+use super::provider::{BulkCapabilityFactory, CapabilityFactory, CapabilityProvider};
 use crate::llm::LlmRegistry;
 use std::collections::HashMap;
 use std::path::Path;
@@ -12,6 +13,9 @@ use tracing::{info, warn};
 pub struct ToolRegistry {
     cards: HashMap<String, CapabilityCard>,
     factories: Vec<Box<dyn CapabilityFactory>>,
+    bulk_factories: Vec<Box<dyn BulkCapabilityFactory>>,
+    /// namespace segment → child segment names (for admin autocomplete).
+    namespace_index: HashMap<String, Vec<String>>,
 }
 
 impl ToolRegistry {
@@ -26,8 +30,19 @@ impl ToolRegistry {
         let mut r = Self::new();
         r.register_factory(McpFactory);
         r.register_factory(WasmFactory);
-        r.register_factory(ChainFactory::new(llm));
+        r.register_factory(ChainFactory::new(Arc::clone(&llm)));
         r.register_factory(BuiltinFactory);
+        r
+    }
+
+    /// Like `with_default_factories` but also includes `DynamicPromptFactory` when
+    /// a Postgres pool is available.
+    pub fn with_all_factories(llm: Arc<LlmRegistry>, pool: Option<sqlx::PgPool>) -> Self {
+        let mut r = Self::with_default_factories(Arc::clone(&llm));
+        if let Some(pool) = pool {
+            use super::providers::dynamic_prompt::DynamicPromptFactory;
+            r.register_factory(DynamicPromptFactory::new(pool, llm));
+        }
         r
     }
 
@@ -35,9 +50,30 @@ impl ToolRegistry {
         self.factories.push(Box::new(factory));
     }
 
+    /// Register a `BulkCapabilityFactory` for use at boot (via `run_bulk_load`).
+    pub fn register_bulk_factory(&mut self, factory: impl BulkCapabilityFactory + 'static) {
+        self.bulk_factories.push(Box::new(factory));
+    }
+
+    /// Run all registered bulk factories to populate the registry.
+    /// Returns total capabilities loaded.
+    pub async fn run_bulk_load(&mut self) -> anyhow::Result<usize> {
+        let factories = std::mem::take(&mut self.bulk_factories);
+        let mut total = 0;
+        for factory in &factories {
+            match factory.load_batch(self).await {
+                Ok(n) => total += n,
+                Err(e) => warn!(error = %e, "bulk factory load_batch failed"),
+            }
+        }
+        self.bulk_factories = factories;
+        Ok(total)
+    }
+
     /// Register a card that already has a provider cached on it.
     pub fn register(&mut self, card: CapabilityCard) {
         info!(name = %card.manifest.name, kind = ?card.manifest.kind, enabled = %card.enabled, "registering tool card");
+        self.index_namespace(&card);
         self.cards.insert(card.manifest.name.clone(), card);
     }
 
@@ -45,8 +81,9 @@ impl ToolRegistry {
     pub fn register_provider(&mut self, provider: Arc<dyn CapabilityProvider>) {
         let manifest = provider.manifest().clone();
         info!(name = %manifest.name, kind = ?manifest.kind, "registering tool provider");
-        let card = CapabilityCard::new(manifest, std::path::PathBuf::from("."))
-            .with_provider(provider);
+        let card =
+            CapabilityCard::new(manifest, std::path::PathBuf::from(".")).with_provider(provider);
+        self.index_namespace(&card);
         self.cards.insert(card.manifest.name.clone(), card);
     }
 
@@ -59,7 +96,11 @@ impl ToolRegistry {
 
     /// Remove a capability. Returns true if it existed.
     pub fn unregister(&mut self, name: &str) -> bool {
-        self.cards.remove(name).is_some()
+        let removed = self.cards.remove(name).is_some();
+        if removed {
+            self.rebuild_namespace_index();
+        }
+        removed
     }
 
     /// Replace or add a provider in-place.
@@ -100,6 +141,7 @@ impl ToolRegistry {
             }
         }
         self.cards.insert(name, card);
+        self.rebuild_namespace_index();
         Ok(())
     }
 
@@ -124,6 +166,22 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// Find capabilities matching a `NamespaceFilter` (in-memory, no DB).
+    pub fn search_by_namespace<'a>(&'a self, ns: &NamespaceFilter) -> Vec<&'a CapabilityCard> {
+        self.cards
+            .values()
+            .filter(|c| c.enabled && ns.matches(c.namespace()))
+            .collect()
+    }
+
+    /// Child namespace segments for `prefix` — powers admin autocomplete.
+    pub fn namespace_children(&self, prefix: &str) -> Vec<String> {
+        self.namespace_index
+            .get(prefix)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// All cards (enabled and disabled).
     pub fn all(&self) -> impl Iterator<Item = &CapabilityCard> {
         self.cards.values()
@@ -144,6 +202,34 @@ impl ToolRegistry {
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
+    fn index_namespace(&mut self, card: &CapabilityCard) {
+        let ns = card.namespace();
+        if ns.is_empty() {
+            return;
+        }
+        let segments: Vec<&str> = ns.split('.').collect();
+        for i in 0..segments.len() {
+            let parent = if i == 0 {
+                String::new()
+            } else {
+                segments[..i].join(".")
+            };
+            let child = segments[i].to_string();
+            let children = self.namespace_index.entry(parent).or_default();
+            if !children.contains(&child) {
+                children.push(child);
+            }
+        }
+    }
+
+    fn rebuild_namespace_index(&mut self) {
+        self.namespace_index.clear();
+        let cards: Vec<CapabilityCard> = self.cards.values().cloned().collect();
+        for card in &cards {
+            self.index_namespace(card);
+        }
+    }
+
     fn factory_for(&self, card: &CapabilityCard) -> Option<&dyn CapabilityFactory> {
         self.factories
             .iter()
@@ -163,9 +249,13 @@ impl ToolRegistry {
         {
             let entry = entry.map_err(|e| common::error::ConusAiError::Tool(e.to_string()))?;
             let cap_dir = entry.path();
-            if !cap_dir.is_dir() { continue; }
+            if !cap_dir.is_dir() {
+                continue;
+            }
             let manifest_path = cap_dir.join("capability.toml");
-            if !manifest_path.exists() { continue; }
+            if !manifest_path.exists() {
+                continue;
+            }
 
             let state_enabled = read_state_enabled(&cap_dir);
 
@@ -182,6 +272,7 @@ impl ToolRegistry {
                             }
                         }
                     }
+                    self.index_namespace(&card);
                     self.cards.insert(card.manifest.name.clone(), card);
                     count += 1;
                 }
@@ -194,9 +285,15 @@ impl ToolRegistry {
 
 fn read_state_enabled(cap_dir: &Path) -> bool {
     let state_path = cap_dir.join("state.json");
-    if !state_path.exists() { return true; }
-    let Ok(raw) = std::fs::read_to_string(&state_path) else { return true };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else { return true };
+    if !state_path.exists() {
+        return true;
+    }
+    let Ok(raw) = std::fs::read_to_string(&state_path) else {
+        return true;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return true;
+    };
     v["enabled"].as_bool().unwrap_or(true)
 }
 
@@ -214,7 +311,9 @@ mod tests {
             tools: vec![],
             config: serde_json::Value::Null,
             tags,
+            namespace: None,
             chain: None,
+            tenant_scope: vec![],
         };
         CapabilityCard::new(manifest, std::path::PathBuf::from("/tmp"))
     }
@@ -263,5 +362,67 @@ mod tests {
         let result = r.load_from_dir(std::path::Path::new("/tmp/nonexistent-xyzabc"));
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 0);
+    }
+
+    fn make_ns_card(name: &str, ns: &str) -> CapabilityCard {
+        let manifest = ToolManifest {
+            name: name.into(),
+            version: "0.1.0".into(),
+            description: "ns-test".into(),
+            kind: ToolKind::Chain,
+            tools: vec![],
+            config: serde_json::Value::Null,
+            tags: vec![],
+            namespace: if ns.is_empty() { None } else { Some(ns.into()) },
+            chain: None,
+            tenant_scope: vec![],
+        };
+        CapabilityCard::new(manifest, std::path::PathBuf::from("/tmp"))
+    }
+
+    #[test]
+    fn test_namespace_index_exact() {
+        use crate::tools::namespace::NamespaceFilter;
+        let mut r = ToolRegistry::new();
+        r.register(make_ns_card("erp.po.create", "erp.po"));
+        r.register(make_ns_card("erp.gl.post", "erp.gl"));
+        r.register(make_ns_card("native", ""));
+        let filter = NamespaceFilter::Exact("erp.po".into());
+        let found = r.search_by_namespace(&filter);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].manifest.name, "erp.po.create");
+    }
+
+    #[test]
+    fn test_namespace_index_prefix() {
+        use crate::tools::namespace::NamespaceFilter;
+        let mut r = ToolRegistry::new();
+        r.register(make_ns_card("erp.po.create", "erp.po"));
+        r.register(make_ns_card("erp.gl.post", "erp.gl"));
+        r.register(make_ns_card("payroll.run", "payroll"));
+        let filter = NamespaceFilter::Prefix("erp.".into());
+        let mut found: Vec<_> = r
+            .search_by_namespace(&filter)
+            .into_iter()
+            .map(|c| c.manifest.name.clone())
+            .collect();
+        found.sort();
+        assert_eq!(found, vec!["erp.gl.post", "erp.po.create"]);
+    }
+
+    #[test]
+    fn test_namespace_children() {
+        let mut r = ToolRegistry::new();
+        r.register(make_ns_card("erp.po.create", "erp.po"));
+        r.register(make_ns_card("erp.gl.post", "erp.gl"));
+        r.register(make_ns_card("payroll.run", "payroll"));
+        // namespace_children returns immediate children (single segment), not full paths.
+        let top = r.namespace_children("");
+        assert!(top.contains(&"erp".to_string()));
+        assert!(top.contains(&"payroll".to_string()));
+        let erp_children = r.namespace_children("erp");
+        assert!(erp_children.contains(&"po".to_string()));
+        assert!(erp_children.contains(&"gl".to_string()));
+        assert!(!erp_children.contains(&"payroll".to_string()));
     }
 }

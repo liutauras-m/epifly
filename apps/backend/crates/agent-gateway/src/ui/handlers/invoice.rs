@@ -47,7 +47,10 @@ pub async fn ui_extract_invoice(
                     return err(StatusCode::GONE, "upload token expired");
                 }
                 if stored_tid != tenant.tenant_id.as_str() {
-                    return err(StatusCode::NOT_FOUND, "token not found — upload the file first");
+                    return err(
+                        StatusCode::NOT_FOUND,
+                        "token not found — upload the file first",
+                    );
                 }
                 key.clone()
             }

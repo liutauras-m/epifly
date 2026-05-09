@@ -4,13 +4,12 @@
 /// When streaming, emits OpenAI-compatible SSE chunks plus extra `tool_call_start` /
 /// `tool_call_result` event types so clients can follow tool execution in real-time.
 ///
-/// Pass `"thread_id": "<ulid>"` to load history from Qdrant and persist the turn.
+/// Pass `"thread_id": "<ulid>"` to load history from Postgres and persist the turn.
 /// Pass `"max_turns": N` to override the default tool-call rounds (capped by plan tier).
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
 use agent_core::ContextBuilder;
 use agent_core::map_rig_error;
-use agent_core::tools::executor::ToolExecutor;
 use axum::{
     Extension, Json,
     extract::State,
@@ -20,6 +19,7 @@ use axum::{
     },
 };
 use chrono::Utc;
+use common::audit::AuditEvent;
 use common::error::HttpError;
 use common::memory::thread::Message;
 use common::metrics;
@@ -92,6 +92,7 @@ struct AgentCtx {
     effective_system: Option<String>,
     /// Parsed workspace node ULID, used to index chat content for search.
     workspace_node_id: Option<_Ulid>,
+    max_invokes_per_turn: usize,
 }
 
 async fn build_ctx(
@@ -176,13 +177,59 @@ async fn build_ctx(
         vec![]
     };
 
-    let tools: Vec<Value> = {
-        let registry = state.registry.lock().unwrap();
-        registry
-            .all_enabled()
-            .flat_map(ToolExecutor::tool_definitions)
-            .collect()
+    // Resolve top-K tool definitions via semantic router.
+    // Falls back to an empty tool list if routing fails (non-fatal).
+    let user_query = req
+        .messages
+        .iter()
+        .rfind(|m| m.role == "user")
+        .map(|m| m.content.as_str())
+        .unwrap_or("");
+    let mut tools: Vec<Value> = match state
+        .semantic_router
+        .tool_definitions(user_query, Some(&tenant.0))
+        .await
+    {
+        Ok(defs) => defs,
+        Err(e) => {
+            warn!(error = %e, "semantic router failed — continuing with zero tools for this turn");
+            vec![]
+        }
     };
+    let max_tools = state.router_quota.max_tools_per_turn.max(1);
+    if tools.len() > max_tools {
+        tools.truncate(max_tools);
+    }
+
+    // Audit semantic-router selection for observability and compliance.
+    // `cache_hit` is currently not surfaced by the router public API.
+    let selected_capabilities: Vec<String> = {
+        let mut out = Vec::new();
+        for t in &tools {
+            if let Some(name) = t.get("name").and_then(|v| v.as_str()) {
+                let cap = name
+                    .split_once("__")
+                    .map(|(c, _)| c)
+                    .unwrap_or(name)
+                    .to_string();
+                if !out.contains(&cap) {
+                    out.push(cap);
+                }
+            }
+        }
+        out
+    };
+    let _ = state
+        .audit_store
+        .append(
+            AuditEvent::new(tenant_id.clone(), "semantic_router.select").with_metadata(json!({
+                "selected_top_k": tools.len(),
+                "selected_capabilities": selected_capabilities,
+                "cache_hit": serde_json::Value::Null,
+            })),
+        )
+        .await;
+
     let new_messages: Vec<Value> = req
         .messages
         .iter()
@@ -274,6 +321,7 @@ async fn build_ctx(
         messages: history,
         effective_system,
         workspace_node_id,
+        max_invokes_per_turn: state.router_quota.max_invokes_per_turn.max(1),
     })
 }
 
@@ -297,6 +345,7 @@ async fn blocking_agent(
         mut messages,
         effective_system,
         workspace_node_id,
+        max_invokes_per_turn,
     } = ctx;
 
     let thread_store = Arc::clone(&state.thread_store);
@@ -428,6 +477,12 @@ async fn blocking_agent(
             if block["type"] != "tool_use" {
                 continue;
             }
+            if tool_calls_made >= max_invokes_per_turn {
+                return Err(err500(format!(
+                    "tool invocation limit exceeded: max_invokes_per_turn={}",
+                    max_invokes_per_turn
+                )));
+            }
             let call_id = block["id"].as_str().unwrap_or("").to_string();
             let tool_name = block["name"].as_str().unwrap_or("");
             let tool_input = &block["input"];
@@ -489,6 +544,7 @@ pub async fn stream_agent(
             mut messages,
             effective_system,
             workspace_node_id,
+            max_invokes_per_turn,
         } = ctx;
 
         let thread_store = Arc::clone(&state.thread_store);
@@ -816,6 +872,21 @@ pub async fn stream_agent(
             for (_idx, (id, name, json_str)) in sorted_tools {
                 let parsed_input: Value = serde_json::from_str(&json_str).unwrap_or(json!({}));
 
+                if tool_calls_made >= max_invokes_per_turn {
+                    emit_stream_error(
+                        &tx,
+                        &completion_id,
+                        &model_id,
+                        &format!(
+                            "tool invocation limit exceeded: max_invokes_per_turn={}",
+                            max_invokes_per_turn
+                        ),
+                        thread_id.as_deref(),
+                    )
+                    .await;
+                    return;
+                }
+
                 info!(round, tool = name, "executing tool (stream)");
                 tool_calls_made += 1;
 
@@ -933,19 +1004,32 @@ async fn resolve_and_invoke(
     input: &Value,
     tenant: &ResolvedTenant,
 ) -> anyhow::Result<Value> {
-    let (cap_name, tool_name) = full_tool_name
-        .split_once("__")
-        .ok_or_else(|| anyhow::anyhow!("invalid tool name: {full_tool_name}"))?;
+    let raw_result = state
+        .semantic_router
+        .invoke(full_tool_name, input, Some(&tenant.0))
+        .await?;
 
-    // Grab the provider Arc under a short-lived lock so we don't hold it across await.
-    let provider = {
-        let registry = state.registry.lock().unwrap();
-        registry
-            .get_provider(cap_name)
-            .ok_or_else(|| anyhow::anyhow!("no provider registered for '{cap_name}'"))?
-    };
+    // Phase 4 — ArtifactBridge: materialise any file artifacts into MinIO + workspace.
+    if let Some(ref bridge) = state.artifact_bridge {
+        if let Ok(tool_out) =
+            serde_json::from_value::<common::artifact::ToolOutput>(raw_result.clone())
+        {
+            if !tool_out.artifacts.is_empty() {
+                let tool_short = full_tool_name.split("__").next().unwrap_or(full_tool_name);
+                let _ = bridge
+                    .process_if_artifacts(
+                        &tenant.0.tenant_id,
+                        tenant.0.user_id.as_deref(),
+                        tool_short,
+                        None,
+                        &tool_out,
+                    )
+                    .await;
+            }
+        }
+    }
 
-    provider.invoke(tool_name, input, Some(&tenant.0)).await
+    Ok(raw_result)
 }
 
 fn err500(msg: String) -> HttpError {

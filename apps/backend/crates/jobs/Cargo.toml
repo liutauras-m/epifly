@@ -23,6 +23,7 @@ futures              = { workspace = true }
 opentelemetry        = { workspace = true }
 prometheus           = { workspace = true }
 reqwest              = { workspace = true }
+sqlx.workspace       = true
 
 [dev-dependencies]
 tokio = { workspace = true }

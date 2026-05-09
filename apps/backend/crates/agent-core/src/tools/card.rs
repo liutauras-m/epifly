@@ -37,10 +37,25 @@ impl CapabilityCard {
         }
     }
 
+    /// Primary namespace (empty string if unnamespaced).
+    pub fn namespace(&self) -> &str {
+        self.manifest.namespace()
+    }
+
+    /// Secondary tags for filtering.
+    pub fn tags(&self) -> &[String] {
+        &self.manifest.tags
+    }
+
     pub fn with_provider(mut self, provider: Arc<dyn CapabilityProvider>) -> Self {
         self.provider = Some(provider);
         self
     }
+
+    /// Returns true if this capability is visible to `tenant_id`.
+    /// An empty scope means global (always visible).
+    pub fn is_visible_to(&self, tenant_id: &str) -> bool {
+        let scope = &self.manifest.tenant_scope;
+        scope.is_empty() || scope.iter().any(|t| t == tenant_id)
+    }
 }
-
-

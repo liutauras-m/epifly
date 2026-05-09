@@ -1,6 +1,6 @@
 //! `AuditLogCleanupJob` — deletes audit entries older than the configured retention window.
 //!
-//! Default retention: 30 days.  Override via `AUDIT_RETENTION_DAYS` env var.
+//! Default retention: 90 days.  Override via `AUDIT_RETENTION_DAYS` env var.
 
 use crate::context::JobContext;
 use crate::job::ScheduledJob;
@@ -21,18 +21,28 @@ impl ScheduledJob for AuditLogCleanupJob {
         "0 0 2 * * *"
     }
 
-    async fn run(&self, _ctx: Arc<JobContext>) -> anyhow::Result<()> {
-        let retention_days: u64 = std::env::var("AUDIT_RETENTION_DAYS")
+    async fn run(&self, ctx: Arc<JobContext>) -> anyhow::Result<()> {
+        let retention_days: i64 = std::env::var("AUDIT_RETENTION_DAYS")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(30);
+            .unwrap_or(90);
 
-        // The in-memory and Qdrant audit stores don't implement TTL-based deletion yet.
-        // This job acts as a no-op placeholder that logs intent — a future PR will add
-        // `AuditStore::delete_before(tenant, timestamp)` to the trait.
+        let Some(pool) = &ctx.pool else {
+            info!("audit-log-cleanup: skipped (no postgres pool in test mode)");
+            return Ok(());
+        };
+
+        let result = sqlx::query!(
+            "DELETE FROM audit_events WHERE timestamp < now() - ($1 || ' days')::interval",
+            retention_days.to_string(),
+        )
+        .execute(pool)
+        .await?;
+
         info!(
             retention_days,
-            "audit-log-cleanup: retention window enforced (TTL deletion not yet implemented)"
+            deleted = result.rows_affected(),
+            "audit-log-cleanup: deleted old audit events"
         );
         Ok(())
     }

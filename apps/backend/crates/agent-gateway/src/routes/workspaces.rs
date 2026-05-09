@@ -48,53 +48,6 @@ fn apply_cursor(mut nodes: Vec<WorkspaceNode>, after: Option<Ulid>) -> Vec<Works
     nodes
 }
 
-fn semantic_terms(query: &str) -> Vec<String> {
-    fn stem(t: &str) -> String {
-        let mut s = t.to_lowercase();
-        if s.ends_with("ing") && s.len() > 5 {
-            s.truncate(s.len() - 3);
-        } else if s.ends_with("ed") && s.len() > 4 {
-            s.truncate(s.len() - 2);
-        } else if s.ends_with('s') && s.len() > 3 {
-            s.truncate(s.len() - 1);
-        }
-        s
-    }
-
-    fn synonym_set(token: &str) -> &'static [&'static str] {
-        match token {
-            "invoice" | "bill" | "receipt" => &["invoice", "bill", "receipt", "payment"],
-            "meeting" | "minutes" | "notes" => {
-                &["meeting", "minutes", "notes", "summary", "standup"]
-            }
-            "plan" | "roadmap" | "todo" => &["plan", "roadmap", "todo", "milestone", "task"],
-            "bug" | "issue" | "error" => &["bug", "issue", "error", "fix", "defect"],
-            "design" | "ux" | "ui" => &["design", "ux", "ui", "wireframe", "prototype"],
-            "contract" | "agreement" => &["contract", "agreement", "terms", "clause"],
-            "spec" | "requirement" => &["spec", "requirement", "acceptance", "criteria"],
-            _ => &[],
-        }
-    }
-
-    let mut out: Vec<String> = Vec::new();
-    for raw in query.split_whitespace() {
-        let token = stem(raw);
-        if token.is_empty() {
-            continue;
-        }
-        if !out.contains(&token) {
-            out.push(token.clone());
-        }
-        for s in synonym_set(&token) {
-            let ss = (*s).to_string();
-            if !out.contains(&ss) {
-                out.push(ss);
-            }
-        }
-    }
-    out
-}
-
 #[derive(Deserialize)]
 pub struct ContentBody {
     pub content: String,
@@ -170,7 +123,7 @@ pub async fn create(
                 .await
         }
         NodeKind::Conversation => {
-            // MinIO put first, then Qdrant upsert
+            // Write empty body to content store, then create workspace node.
             let node = state
                 .workspace_store
                 .create_conversation(&tenant.tenant_id, owner, body.parent_id, &body.name)
@@ -186,7 +139,10 @@ pub async fn create(
             return Ok(Json(node));
         }
         NodeKind::File => {
-            return Err(HttpError::validation("kind", "files are created via /v1/files"));
+            return Err(HttpError::validation(
+                "kind",
+                "files are created via /v1/files",
+            ));
         }
     }
     .map_err(map_err)?;
@@ -194,11 +150,11 @@ pub async fn create(
     Ok(Json(node))
 }
 
-/// GET /v1/workspaces/search?q=&limit= — full-text search over workspace node names.
+/// GET /v1/workspaces/search?q=&limit= — search workspace nodes.
 ///
-/// Uses Qdrant text_match on the `name` field (word-tokenised, lowercase).
-/// Falls back to a local substring scan when the index isn't ready yet.
-/// Returns a flat list of matching nodes (folders + conversations) the user can access.
+/// `mode=semantic` (or `mode=context`) uses embedding + ANN retrieval from
+/// `content_embeddings`.  Default mode uses Postgres full-text search on node
+/// names and virtual paths.
 #[utoipa::path(
     get,
     path = "/v1/workspaces/search",
@@ -228,35 +184,22 @@ pub async fn search(
         return Ok(Json(vec![]));
     }
 
-    if !semantic {
+    if semantic {
         let nodes = state
             .workspace_store
-            .search_nodes(&tenant.tenant_id, user, &query, limit)
+            .semantic_search_nodes(&tenant.tenant_id, user, &query, limit)
             .await
             .map_err(map_err)?;
-
         return Ok(Json(apply_cursor(nodes, q.after)));
     }
 
-    let mut merged: Vec<WorkspaceNode> = Vec::new();
-    let terms = semantic_terms(&query);
-    for term in terms {
-        let batch = state
-            .workspace_store
-            .search_nodes(&tenant.tenant_id, user, &term, limit)
-            .await
-            .map_err(map_err)?;
-        for node in batch {
-            if merged.iter().all(|n| n.id != node.id) {
-                merged.push(node);
-                if merged.len() >= limit {
-                    return Ok(Json(apply_cursor(merged, q.after)));
-                }
-            }
-        }
-    }
+    let nodes = state
+        .workspace_store
+        .search_nodes(&tenant.tenant_id, user, &query, limit)
+        .await
+        .map_err(map_err)?;
 
-    Ok(Json(apply_cursor(merged, q.after)))
+    Ok(Json(apply_cursor(nodes, q.after)))
 }
 
 /// GET /v1/workspaces/tree?parent_id= — list immediate children.
@@ -378,15 +321,14 @@ pub async fn patch_content(
         .await
         .map_err(map_err)?;
 
-    // MinIO write first, then update Qdrant with content_text for search indexing.
+    // Write content to MinIO, then index for semantic search.
     state
         .workspace_content
         .write(&tenant.tenant_id, &node.virtual_path, &body.content)
         .await
         .map_err(map_err)?;
 
-    // index_content updates content_text in Qdrant payload AND bumps last_modified,
-    // so we skip the separate bump_last_modified call.
+    // index_content persists embeddings for semantic search and bumps last_modified.
     let _ = state
         .workspace_store
         .index_content(&tenant.tenant_id, id, &body.content)

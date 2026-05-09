@@ -100,12 +100,16 @@ pub struct PermissionHook {
 impl PermissionHook {
     /// Allow all tools (Enterprise/Pro).
     pub fn allow_all() -> Self {
-        Self { allowed_tools: vec![] }
+        Self {
+            allowed_tools: vec![],
+        }
     }
 
     /// Restrict to specific tool names (Free tier).
     pub fn allow(tools: Vec<String>) -> Self {
-        Self { allowed_tools: tools }
+        Self {
+            allowed_tools: tools,
+        }
     }
 }
 

@@ -13,6 +13,7 @@ pub fn builtin_tool_card() -> CapabilityCard {
         kind: ToolKind::Native,
         config: serde_json::Value::Null,
         tags: vec!["native".into(), "filesystem".into(), "cargo".into()],
+        namespace: None,
         tools: vec![
             ToolDef {
                 name: "read_file".into(),
@@ -72,6 +73,7 @@ pub fn builtin_tool_card() -> CapabilityCard {
             },
         ],
         chain: None,
+        tenant_scope: vec![],
     };
 
     CapabilityCard::new(manifest, std::path::PathBuf::from("."))

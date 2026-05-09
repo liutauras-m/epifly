@@ -1,7 +1,7 @@
 use super::card::CapabilityCard;
 
 /// Generates an embedding-friendly description for a tool.
-/// Full Qdrant integration wired in Phase 6.
+/// Tool embedding helper — wraps a tool's embedding vector for storage/retrieval.
 pub struct ToolEmbedding;
 
 impl ToolEmbedding {

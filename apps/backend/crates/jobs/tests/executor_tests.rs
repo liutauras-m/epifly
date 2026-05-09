@@ -2,19 +2,17 @@
 
 #[cfg(test)]
 mod tests {
-    use jobs::{
-        BackgroundJob, JobContext, JobExecutor, JobRegistry, TaskState,
-    };
-    use common::memory::InMemoryAuditStore;
     use async_trait::async_trait;
+    use common::memory::InMemoryAuditStore;
+    use jobs::{BackgroundJob, JobContext, JobExecutor, JobRegistry, TaskState};
     use std::sync::Arc;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
 
     fn make_ctx() -> Arc<JobContext> {
         Arc::new(JobContext::new(
             Arc::new(InMemoryAuditStore::new()),
-            "http://localhost:6333",
             None,
+            Some("http://localhost:6333".to_string()),
             None,
         ))
     }
@@ -25,8 +23,14 @@ mod tests {
 
     #[async_trait]
     impl BackgroundJob for EchoJob {
-        fn name(&self) -> &str { "echo" }
-        async fn run(&self, input: serde_json::Value, _ctx: Arc<JobContext>) -> anyhow::Result<serde_json::Value> {
+        fn name(&self) -> &str {
+            "echo"
+        }
+        async fn run(
+            &self,
+            input: serde_json::Value,
+            _ctx: Arc<JobContext>,
+        ) -> anyhow::Result<serde_json::Value> {
             Ok(input)
         }
     }
@@ -35,8 +39,14 @@ mod tests {
 
     #[async_trait]
     impl BackgroundJob for FailJob {
-        fn name(&self) -> &str { "fail" }
-        async fn run(&self, _input: serde_json::Value, _ctx: Arc<JobContext>) -> anyhow::Result<serde_json::Value> {
+        fn name(&self) -> &str {
+            "fail"
+        }
+        async fn run(
+            &self,
+            _input: serde_json::Value,
+            _ctx: Arc<JobContext>,
+        ) -> anyhow::Result<serde_json::Value> {
             anyhow::bail!("intentional test failure")
         }
     }
@@ -81,7 +91,13 @@ mod tests {
             sleep(Duration::from_millis(20)).await;
             let status = exec.get_status(task_id).await.unwrap();
             if status.state == TaskState::Failed {
-                assert!(status.error.as_deref().unwrap_or("").contains("intentional"));
+                assert!(
+                    status
+                        .error
+                        .as_deref()
+                        .unwrap_or("")
+                        .contains("intentional")
+                );
                 break;
             }
             attempts += 1;

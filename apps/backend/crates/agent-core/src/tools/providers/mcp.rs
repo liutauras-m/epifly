@@ -2,7 +2,7 @@ use crate::context::tenant::TenantContext;
 use crate::tools::card::CapabilityCard;
 use crate::tools::manifest::{ToolKind, ToolManifest};
 use crate::tools::mcp_adapter::McpAdapter;
-use crate::tools::provider::{CapabilityProvider, CapabilityFactory};
+use crate::tools::provider::{CapabilityFactory, CapabilityProvider};
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
