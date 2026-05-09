@@ -967,90 +967,73 @@ body::after {
   0%, 100% { transform: translateY(0);    opacity: 0.35; }
   45%      { transform: translateY(-5px); opacity: 1;    }
 }
-/* ── Persistent waiting dot — pinned at bottom-center of main canvas ────────
-   Always visible when AI is idle. Three rings + core. Meditative 5s breath
-   with an attention flare every ~9s. Creates urgency: "I'm here, talk to me." */
-.chat-waiting-anchor {
-  position: absolute;
-  /* sits just above the composer area */
-  bottom: 148px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
-  pointer-events: none;
-  /* slide up on mount */
-  animation: wdw-enter 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-@keyframes wdw-enter {
-  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
-}
-.waiting-dot {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px;
+/* ── Chat-end waiting dot ─────────────────────────────────────────────────────
+   Placed as the last item inside .messages (inline flow), so it sits directly
+   below the last AI message — left-aligned, clearly visible, immediately
+   communicating "I'm here, waiting for you."
+   Core: 9px, always ≥70% opacity. Two rings expand outward on a 2.4s cycle.
+   ─────────────────────────────────────────────────────────────────────────── */
+.chat-end-dot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-left: var(--s-5); /* aligns with AI message text indent */
+  height: 56px;
+  overflow: visible;
   position: relative;
-  flex-shrink: 0;
-  animation: wdw-breath 5s ease-in-out infinite;
+  pointer-events: none;
+  animation: ced-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
-.wdw-core {
-  width: 7px; height: 7px;
+.greeting-waiting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  position: relative;
+  pointer-events: none;
+  margin-top: var(--s-3);
+  animation: ced-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.3s both;
+}
+@keyframes ced-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Core: bold, unmissable blink */
+.ced-core {
+  width: 14px; height: 14px;
   border-radius: 50%;
-  background: var(--ember);
+  background: var(--ember-2);          /* darker teal — more contrast on paper */
   position: relative; z-index: 1;
-  box-shadow: 0 0 8px var(--ember-glow);
-  /* slow idle pulse with infrequent sharp flare */
-  animation: wdw-core-pulse 9s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  flex-shrink: 0;
+  /* permanent halo so it never disappears completely */
+  box-shadow: 0 0 0 3px rgba(90,173,166,0.18), 0 0 12px 2px var(--ember-glow);
+  animation: ced-pulse 1.8s ease-in-out infinite;
 }
-.wdw-ring {
+@keyframes ced-pulse {
+  0%, 100% { transform: scale(1);    opacity: 0.75; box-shadow: 0 0 0 3px rgba(90,173,166,0.15), 0 0  8px 1px var(--ember-glow); }
+  50%       { transform: scale(1.22); opacity: 1.00; box-shadow: 0 0 0 5px rgba(90,173,166,0.25), 0 0 18px 4px var(--ember-glow); }
+}
+
+/* Rings: bold outward radar */
+.ced-ring {
   position: absolute;
   border-radius: 50%;
-  border: 1.5px solid var(--ember);
+  border: 2px solid var(--ember-2);
   opacity: 0;
 }
-/* r1: fires every cycle, slow expand */
-.wdw-r1 {
-  width: 14px; height: 14px;
-  animation: wdw-ring-slow 5s cubic-bezier(0.16, 1, 0.3, 1) 0s infinite;
+.ced-r1 {
+  width: 30px; height: 30px;
+  animation: ced-ring-out 2.0s cubic-bezier(0.16, 1, 0.3, 1) 0s infinite;
 }
-/* r2: slightly delayed, wider */
-.wdw-r2 {
-  width: 22px; height: 22px;
-  animation: wdw-ring-slow 5s cubic-bezier(0.16, 1, 0.3, 1) 1.8s infinite;
+.ced-r2 {
+  width: 48px; height: 48px;
+  animation: ced-ring-out 2.0s cubic-bezier(0.16, 1, 0.3, 1) 0.65s infinite;
 }
-/* r3: attention-flare ring — only fires on the flare keyframe of a longer cycle */
-.wdw-r3 {
-  width: 28px; height: 28px;
-  animation: wdw-ring-flare 9s cubic-bezier(0.16, 1, 0.3, 1) 0s infinite;
-}
-
-/* ── Whole-dot ambient breath ── */
-@keyframes wdw-breath {
-  0%, 100% { transform: scale(1);    opacity: 0.55; }
-  50%       { transform: scale(1.05); opacity: 0.85; }
-}
-
-/* ── Core pulse: mostly dim, sharp flare at ~60% then settle ── */
-@keyframes wdw-core-pulse {
-  0%   { transform: scale(1);    opacity: 0.45; box-shadow: 0 0 5px var(--ember-glow); }
-  30%  { transform: scale(0.8);  opacity: 0.30; box-shadow: 0 0 3px var(--ember-glow); }
-  60%  { transform: scale(1.35); opacity: 1.00; box-shadow: 0 0 12px var(--ember), 0 0 24px var(--ember-glow); }
-  72%  { transform: scale(0.95); opacity: 0.70; box-shadow: 0 0 6px var(--ember-glow); }
-  100% { transform: scale(1);    opacity: 0.45; box-shadow: 0 0 5px var(--ember-glow); }
-}
-
-/* ── Regular rings: gentle outward drift ── */
-@keyframes wdw-ring-slow {
-  0%   { transform: scale(0.4); opacity: 0.70; }
-  55%  { transform: scale(1);   opacity: 0.12; }
-  100% { transform: scale(1.1); opacity: 0; }
-}
-
-/* ── Flare ring: sharp snap-out at the 60% mark of the 9s cycle ── */
-@keyframes wdw-ring-flare {
-  0%,  55%  { transform: scale(0.3); opacity: 0; }
-  60%        { transform: scale(0.3); opacity: 0.9; }
-  80%        { transform: scale(1);   opacity: 0; }
-  100%       { transform: scale(1);   opacity: 0; }
+@keyframes ced-ring-out {
+  0%   { transform: scale(0.15); opacity: 0.85; }
+  65%  { transform: scale(1);    opacity: 0.15; }
+  100% { transform: scale(1.1);  opacity: 0; }
 }
 
 .composer-bottom {

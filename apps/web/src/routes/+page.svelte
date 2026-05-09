@@ -651,6 +651,12 @@
 
 				{@render composer()}
 
+				<div class="greeting-waiting" aria-hidden="true">
+					<span class="ced-ring ced-r1"></span>
+					<span class="ced-ring ced-r2"></span>
+					<span class="ced-core"></span>
+				</div>
+
 				<div class="chips">
 					{#each [['Code','Help me write code that '],['Write','Help me write '],['Learn','Teach me about '],['Life stuff','Help me with '],["Operator's choice",'Pick the best approach for ']] as [label, prompt]}
 						<button class="chip" onclick={() => { inputValue = prompt; }}>
@@ -712,6 +718,15 @@
 							<div class="tool-body">{card.result || 'running…'}</div>
 						</details>
 					{/each}
+
+					<!-- Waiting dot — appears directly after last message when idle -->
+					{#if !inFlight}
+						<div class="chat-end-dot" aria-hidden="true">
+							<span class="ced-ring ced-r1"></span>
+							<span class="ced-ring ced-r2"></span>
+							<span class="ced-core"></span>
+						</div>
+					{/if}
 				</div>
 
 				<div class="composer-bottom">
@@ -719,17 +734,6 @@
 				</div>
 			</section>
 		{/if}
-	<!-- Persistent waiting dot — pinned at bottom-center of main, always visible -->
-	{#if !inFlight}
-		<div class="chat-waiting-anchor" aria-hidden="true">
-			<span class="waiting-dot">
-				<span class="wdw-ring wdw-r1"></span>
-				<span class="wdw-ring wdw-r2"></span>
-				<span class="wdw-ring wdw-r3"></span>
-				<span class="wdw-core"></span>
-			</span>
-		</div>
-	{/if}
 	</main>
 </div>
 
