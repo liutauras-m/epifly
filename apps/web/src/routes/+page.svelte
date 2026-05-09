@@ -15,6 +15,7 @@
 	let inFlight = $state(false);
 	let inputValue = $state('');
 	let pendingAttachments: { id: string; filename: string; size: number }[] = $state([]);
+	let composerFocused = $state(false);
 
 	// ── Workspace tree ────────────────────────────────────────────────────────
 	let workspaceNodes = $state<WorkspaceNode[]>(data.workspaceTree ?? []);
@@ -676,6 +677,8 @@
 {#snippet composer()}
 	<div class="composer-wrap">
 		<form class="composer" class:drop-target={dropTarget}
+			class:focused={composerFocused}
+			class:has-content={inputValue.length > 0 || pendingAttachments.length > 0}
 			onsubmit={handleSubmit}
 			ondragover={(e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); dropTarget = true; } }}
 			ondragleave={() => (dropTarget = false)}
@@ -709,7 +712,9 @@
 
 			<label class="sr-only" for="prompt">Message</label>
 			<textarea id="prompt" class="composer-input" name="prompt" placeholder="How can I help you today?"
-				rows="2" autocomplete="off" bind:value={inputValue}
+				rows="1" autocomplete="off" bind:value={inputValue}
+				onfocus={() => (composerFocused = true)}
+				onblur={() => (composerFocused = false)}
 				oninput={(e) => grow(e.currentTarget)}
 				onkeydown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); (e.currentTarget.closest('form') as HTMLFormElement)?.requestSubmit(); } }}></textarea>
 
