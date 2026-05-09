@@ -1262,6 +1262,24 @@ body::after {
 .ws-children { display: flex; flex-direction: column; }
 .ws-loading { padding: var(--s-1) var(--s-3); font-size: var(--t-meta); color: var(--ink-3); font-style: italic; }
 
+/* ── Workspace creation form ──────────────────────────────────────────────── */
+.ws-new-form { display: flex; flex-direction: column; gap: 6px; padding: var(--s-2) var(--s-2) var(--s-1); border-bottom: 1px solid var(--rule); }
+.ws-new-kind { display: flex; gap: 4px; }
+.ws-kind-btn { flex: 1; padding: 3px 0; font-size: var(--t-meta); border: 1px solid var(--rule);
+  background: none; color: var(--ink-2); border-radius: var(--r-xs); cursor: pointer; transition: all 100ms; }
+.ws-kind-btn.active { background: var(--ember-soft); border-color: var(--ember); color: var(--ink); font-weight: 600; }
+.ws-new-row { display: flex; gap: 4px; align-items: center; }
+.ws-new-input { flex: 1; padding: 4px 6px; font-size: var(--t-meta); border: 1px solid var(--rule);
+  border-radius: var(--r-xs); background: var(--paper); color: var(--ink); outline: none; }
+.ws-new-input:focus { border-color: var(--ember); }
+.ws-new-ok, .ws-new-cancel { width: 24px; height: 24px; border: 1px solid var(--rule); background: none;
+  color: var(--ink-2); border-radius: var(--r-xs); cursor: pointer; font-size: 12px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ws-new-ok:hover { background: var(--ember-soft); color: var(--ink); }
+.ws-new-cancel:hover { background: var(--paper-2); }
+.ws-new-ok:disabled { opacity: 0.5; cursor: default; }
+.ws-new-error { font-size: 10px; color: #c0392b; padding: 0 2px; }
+
 /* dialog */
 .ws-dialog-form {
   padding: var(--s-5); display: flex; flex-direction: column; gap: var(--s-4);

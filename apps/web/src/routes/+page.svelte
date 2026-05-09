@@ -69,6 +69,60 @@
 		} catch { /* ignore */ }
 	}
 
+	// ── Workspace creation ────────────────────────────────────────────────────
+	let newNodeKind = $state<'folder' | 'conversation'>('folder');
+	let newNodeName = $state('');
+	let newNodeParentId = $state<string | null>(null);
+	let showNewNodeForm = $state(false);
+	let newNodeError = $state('');
+	let newNodeBusy = $state(false);
+
+	function openNewNodeForm(parentId: string | null = null) {
+		newNodeParentId = parentId;
+		newNodeName = '';
+		newNodeError = '';
+		newNodeKind = 'folder';
+		showNewNodeForm = true;
+	}
+
+	function closeNewNodeForm() {
+		showNewNodeForm = false;
+		newNodeName = '';
+		newNodeError = '';
+	}
+
+	async function submitNewNode(e: SubmitEvent) {
+		e.preventDefault();
+		const name = newNodeName.trim();
+		if (!name) { newNodeError = 'Name is required'; return; }
+		newNodeBusy = true;
+		newNodeError = '';
+		try {
+			const body: Record<string, unknown> = { kind: newNodeKind, name };
+			if (newNodeParentId) body.parent_id = newNodeParentId;
+			const res = await fetch('/v1/workspaces', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			});
+			if (!res.ok) {
+				const err = await res.json().catch(() => ({}));
+				newNodeError = (err as { error?: string }).error ?? `Error ${res.status}`;
+				return;
+			}
+			closeNewNodeForm();
+			await refreshWorkspaceTree();
+		} catch (err) {
+			newNodeError = err instanceof Error ? err.message : 'Network error';
+		} finally {
+			newNodeBusy = false;
+		}
+	}
+
+	function focusInput(el: HTMLInputElement) {
+		el.focus();
+	}
+
 	// ── Workspace search (debounced) ─────────────────────────────────────────
 	let searchQuery = $state('');
 	let searchResults = $state<WorkspaceNode[]>([]);
@@ -337,7 +391,8 @@
 		<section class="nav-section ws-section" aria-labelledby="ws-heading">
 			<header class="nav-header">
 				<span id="ws-heading" class="nav-heading label-mono">Workspace</span>
-				<button type="button" class="icon-btn ws-new-btn" aria-label="New folder or conversation">
+				<button type="button" class="icon-btn ws-new-btn" aria-label="New folder or conversation"
+					onclick={() => openNewNodeForm(null)}>
 					<svg class="icon" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
 						<line x1="9" y1="3" x2="9" y2="15"/><line x1="3" y1="9" x2="15" y2="9"/>
 					</svg>
@@ -359,6 +414,27 @@
 					</button>
 				{/if}
 			</div>
+
+			<!-- New folder / conversation form -->
+			{#if showNewNodeForm}
+				<form class="ws-new-form" onsubmit={submitNewNode}>
+					<div class="ws-new-kind">
+						<button type="button" class="ws-kind-btn" class:active={newNodeKind === 'folder'}
+							onclick={() => newNodeKind = 'folder'}>📁 Folder</button>
+						<button type="button" class="ws-kind-btn" class:active={newNodeKind === 'conversation'}
+							onclick={() => newNodeKind = 'conversation'}>📄 Chat</button>
+					</div>
+					<div class="ws-new-row">
+						<input class="ws-new-input" type="text" placeholder={newNodeKind === 'folder' ? 'Folder name…' : 'Conversation name…'}
+							bind:value={newNodeName} use:focusInput maxlength={80} autocomplete="off" />
+						<button type="submit" class="ws-new-ok" disabled={newNodeBusy} aria-label="Create">
+							{#if newNodeBusy}…{:else}✓{/if}
+						</button>
+						<button type="button" class="ws-new-cancel" onclick={closeNewNodeForm} aria-label="Cancel">✕</button>
+					</div>
+					{#if newNodeError}<div class="ws-new-error">{newNodeError}</div>{/if}
+				</form>
+			{/if}
 
 			<!-- Search results -->
 			{#if searchQuery}
