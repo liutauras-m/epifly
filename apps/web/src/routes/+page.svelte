@@ -680,6 +680,8 @@
 			class:focused={composerFocused}
 			class:has-content={inputValue.length > 0 || pendingAttachments.length > 0}
 			onsubmit={handleSubmit}
+			onfocusin={() => (composerFocused = true)}
+			onfocusout={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) composerFocused = false; }}
 			ondragover={(e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); dropTarget = true; } }}
 			ondragleave={() => (dropTarget = false)}
 			ondrop={(e) => { e.preventDefault(); dropTarget = false; if (e.dataTransfer?.files?.length) uploadFiles([...e.dataTransfer.files]); }}>
@@ -713,8 +715,6 @@
 			<label class="sr-only" for="prompt">Message</label>
 			<textarea id="prompt" class="composer-input" name="prompt" placeholder="How can I help you today?"
 				rows="1" autocomplete="off" bind:value={inputValue}
-				onfocus={() => (composerFocused = true)}
-				onblur={() => (composerFocused = false)}
 				oninput={(e) => grow(e.currentTarget)}
 				onkeydown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); (e.currentTarget.closest('form') as HTMLFormElement)?.requestSubmit(); } }}></textarea>
 
