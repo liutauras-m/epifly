@@ -851,7 +851,13 @@ body::after {
 }
 .message {
   opacity: 0;
-  animation: msg-in var(--dur-3) var(--ease-out) forwards;
+  animation: msg-in 420ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+/* Streaming AI message — no container animation.
+   The tokens ARE the reveal; fading the wrapper too creates a muddy double-fade. */
+.message.ai.streaming {
+  animation: none;
+  opacity: 1;
 }
 
 /* ── User bubble ── */
@@ -895,20 +901,23 @@ body::after {
   white-space: pre-wrap;
 }
 
-/* ── Word token — premium 2026 reveal ──
-   Pure opacity + translateY with ease-out-expo (no blur filter).
-   ~340ms gives a confident, intentional pace.
-   inline-block is required for transform to apply; whitespace tokens
-   render correctly because we tokenize words+whitespace separately. */
+/* ── Word token — staggered per-batch reveal ─────────────────────────────────
+   Each token in a flush batch gets animation-delay: batchIndex * 22ms (set
+   inline from JS). This creates a left-to-right reading wave instead of
+   the whole batch flashing in at once.
+
+   5px Y + scale(0.96→1): perceptible without being dramatic.
+   ease-out-expo (0.16, 1, 0.3, 1): snaps into place confidently.
+   400ms: enough to register the motion, not so long it feels sluggish.        */
 .tok {
   display: inline-block;
   white-space: pre-wrap;
   will-change: opacity, transform;
-  animation: tok-in 340ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: tok-in 400ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 @keyframes tok-in {
-  from { opacity: 0; transform: translateY(3px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(5px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0)   scale(1); }
 }
 
 /* ── Sonar-ping dot ───────────────────────────────────────────────────────────
@@ -994,12 +1003,13 @@ body::after {
 }
 
 @keyframes msg-in {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(10px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+/* User bubble: slides in from the right with a slight scale pop */
 @keyframes msg-in-user {
-  from { opacity: 0; transform: translateX(10px); }
-  to   { opacity: 1; transform: translateX(0); }
+  from { opacity: 0; transform: translateX(14px) scale(0.97); }
+  to   { opacity: 1; transform: translateX(0)    scale(1); }
 }
 @keyframes rail-stream {
   0%, 100% { opacity: 0.4; box-shadow: 0 0 0 0 transparent; }

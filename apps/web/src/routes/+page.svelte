@@ -10,7 +10,7 @@
 	// ── State ────────────────────────────────────────────────────────────────
 	let showChat = $state(false);
 	// words: word tokens for animated streaming display; cleared when streaming ends
-	let messages: { role: 'user' | 'ai' | 'thinking'; text: string; streaming?: boolean; words?: { t: string; id: number }[] }[] = $state([]);
+	let messages: { role: 'user' | 'ai' | 'thinking'; text: string; streaming?: boolean; words?: { t: string; id: number; delay: number }[] }[] = $state([]);
 	let toolCards: Map<string, { name: string; status: 'running' | 'success' | 'error'; result: string; startTime: number }> = $state(new Map());
 	let activeThreadId = $state<string | null>(null);
 	let inFlight = $state(false);
@@ -285,7 +285,7 @@
 				wordAccum = keep;
 				// Tokenise: split preserving whitespace runs between words
 				const tokens = take.split(/(\s+)/).filter(s => s.length > 0);
-				const newWords = tokens.map(t => ({ t, id: wid++ }));
+				const newWords = tokens.map((t, i) => ({ t, id: wid++, delay: i * 22 }));
 				const m = messages[aiIdx];
 				messages[aiIdx] = { ...m, text: m.text + take, words: [...(m.words ?? []), ...newWords] };
 				messages = [...messages];
@@ -681,7 +681,7 @@
 						{:else}
 							<div class="message ai" class:streaming={msg.streaming}>
 								{#if msg.streaming && msg.words}
-									<span class="ai-text" aria-live="polite">{#each msg.words as w (w.id)}<span class="tok">{w.t}</span>{/each}</span>
+									<span class="ai-text" aria-live="polite">{#each msg.words as w (w.id)}<span class="tok" style="animation-delay:{w.delay}ms">{w.t}</span>{/each}</span>
 									{@render sonarDot(true)}
 								{:else}
 									<span class="ai-text">{msg.text}</span>
