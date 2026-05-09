@@ -342,7 +342,7 @@ body::after {
 }
 .greeting {
   display: flex; align-items: center;
-  gap: var(--s-4);
+  justify-content: center;
   opacity: 0;
   animation: rise var(--dur-4) var(--ease-out) 0.3s forwards;
 }
@@ -370,24 +370,35 @@ body::after {
    serif headline so it visually anchors to the name without competing
    with it. Fades in slightly after the headline so it feels like the
    AI is *noticing* you. */
+/* Living period — inline inside the headline, at text baseline.
+   Reads as a sentence-ending period. The core breathes like ink on paper. */
 .greeting-presence {
   display: inline-flex;
-  align-items: center;
-  /* Lift to optical centre of the cap-height (≈55% of font-size) */
-  vertical-align: 0.42em;
-  margin-left: 0.32em;
+  align-items: flex-end;       /* anchor to baseline of parent text */
+  vertical-align: baseline;
+  margin-left: 0.06em;
+  margin-bottom: 0.12em;       /* optical nudge to sit on the baseline */
   opacity: 0;
   animation: rise var(--dur-4) var(--ease-out) 0.9s forwards;
 }
 .greeting-presence .sonar.sonar-sm {
-  width: 22px; height: 22px;
+  width: 20px; height: 20px;
   margin-left: 0;
 }
+/* Period-sized core: ink colour, no glow — reads as punctuation */
 .greeting-presence .sonar-core {
-  width: 8px; height: 8px;
+  width: 7px; height: 7px;
+  background: var(--ink-2);
+  animation: period-beat 2.8s ease-in-out infinite;
 }
+@keyframes period-beat {
+  0%, 100% { opacity: 0.9;  transform: scale(1); }
+  50%       { opacity: 0.35; transform: scale(0.75); }
+}
+/* Rings: very faint teal — alive but barely there */
+.greeting-presence .sonar-ring { border-color: var(--ember); }
 .greeting-presence .sonar-r1 { width: 14px; height: 14px; }
-.greeting-presence .sonar-r2 { width: 22px; height: 22px; }
+.greeting-presence .sonar-r2 { width: 20px; height: 20px; }
 
 /* Sigil: scale in + persistent gentle breathe */
 @keyframes sigil-enter {

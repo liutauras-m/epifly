@@ -646,9 +646,7 @@
 			<section class="greeting-screen">
 				<div class="greeting">
 					<img class="sigil" src="/images/favicon.png" alt="" aria-hidden="true">
-					<h1 class="greeting-text">
-						Good {data.user ? '' : ''}morning, {data.user?.firstName ?? 'there'}<span class="greeting-presence">{@render sonarDot(true)}</span>
-					</h1>
+					<h1 class="greeting-text">Good {data.user ? '' : ''}morning, {data.user?.firstName ?? 'there'}<span class="greeting-presence">{@render sonarDot(true)}</span></h1>
 				</div>
 
 				{@render composer()}
