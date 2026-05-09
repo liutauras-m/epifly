@@ -718,6 +718,9 @@
 				oninput={(e) => grow(e.currentTarget)}
 				onkeydown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); (e.currentTarget.closest('form') as HTMLFormElement)?.requestSubmit(); } }}></textarea>
 
+			<input id="file-input" type="file" style="display:none" multiple
+				onchange={(e) => { const files = e.currentTarget.files; if (files?.length) uploadFiles([...files]); e.currentTarget.value = ''; }}>
+
 			<div class="composer-toolbar">
 				<button type="button" class="toolbar-btn" aria-label="Attach file"
 					onclick={() => document.getElementById('file-input')?.click()}>
@@ -725,8 +728,6 @@
 						<path d="M15 9l-6 6a4 4 0 0 1-5.657-5.657l7-7a2.5 2.5 0 0 1 3.536 3.536l-7 7a1 1 0 0 1-1.414-1.414l6-6"/>
 					</svg>
 				</button>
-				<input id="file-input" type="file" hidden multiple
-					onchange={(e) => { const files = e.currentTarget.files; if (files?.length) uploadFiles([...files]); e.currentTarget.value = ''; }}>
 				<div class="toolbar-spacer"></div>
 				<button type="submit" class="send-btn" aria-label="Send" disabled={inFlight}>
 					<svg class="icon" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round">
