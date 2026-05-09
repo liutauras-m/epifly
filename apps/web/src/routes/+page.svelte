@@ -9,7 +9,8 @@
 
 	// ── State ────────────────────────────────────────────────────────────────
 	let showChat = $state(false);
-	let messages: { role: 'user' | 'ai' | 'thinking'; text: string; streaming?: boolean }[] = $state([]);
+	// words: word tokens for animated streaming display; cleared when streaming ends
+	let messages: { role: 'user' | 'ai' | 'thinking'; text: string; streaming?: boolean; words?: { t: string; id: number }[] }[] = $state([]);
 	let toolCards: Map<string, { name: string; status: 'running' | 'success' | 'error'; result: string; startTime: number }> = $state(new Map());
 	let activeThreadId = $state<string | null>(null);
 	let inFlight = $state(false);
@@ -263,6 +264,39 @@
 			const dec = new TextDecoder();
 			let buf = '';
 
+			// ── Word-level streaming buffer ─────────────────────────────────────
+			// Incoming chars accumulate in wordAccum. On each animation frame we
+			// flush complete words (split at whitespace) as individual .tok spans
+			// so CSS can animate each word in. Partial last word stays buffered.
+			let wordAccum = '';
+			let wid = 0;
+			let rafId: number | null = null;
+
+			function flushWords(final = false) {
+				if (!wordAccum || aiIdx < 0 || messages[aiIdx]?.role !== 'ai') { rafId = null; return; }
+				// On final flush, take everything; otherwise split at last whitespace
+				let take = wordAccum;
+				let keep = '';
+				if (!final) {
+					const cut = wordAccum.search(/\S+$/);
+					if (cut > 0) { take = wordAccum.slice(0, cut); keep = wordAccum.slice(cut); }
+					else if (cut === 0) { rafId = null; return; } // single partial word, wait
+				}
+				wordAccum = keep;
+				// Tokenise: split preserving whitespace runs between words
+				const tokens = take.split(/(\s+)/).filter(s => s.length > 0);
+				const newWords = tokens.map(t => ({ t, id: wid++ }));
+				const m = messages[aiIdx];
+				messages[aiIdx] = { ...m, text: m.text + take, words: [...(m.words ?? []), ...newWords] };
+				messages = [...messages];
+				scrollIfNear();
+				rafId = null;
+			}
+
+			function scheduleFlush() {
+				if (!rafId) rafId = requestAnimationFrame(() => flushWords());
+			}
+
 			while (true) {
 				const { value, done } = await reader.read();
 				if (done) break;
@@ -282,12 +316,11 @@
 
 						if (typeof delta.content === 'string') {
 							if (aiIdx < 0 || messages[aiIdx]?.role !== 'ai') {
-								messages = [...messages, { role: 'ai', text: '', streaming: true }];
+								messages = [...messages, { role: 'ai', text: '', words: [], streaming: true }];
 								aiIdx = messages.length - 1;
 							}
-							messages[aiIdx] = { ...messages[aiIdx], text: messages[aiIdx].text + delta.content };
-							messages = [...messages];
-							scrollIfNear();
+							wordAccum += delta.content;
+							scheduleFlush();
 						} else if (delta.tool_call_start) {
 							const { id, name } = delta.tool_call_start as { id: string; name: string };
 							newToolCards.set(id, { name, status: 'running', result: '', startTime: performance.now() });
@@ -317,7 +350,11 @@
 					}
 				}
 			}
-			if (aiIdx >= 0) messages[aiIdx] = { ...messages[aiIdx], streaming: false };
+			// Final flush of any remaining partial word
+			if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+			flushWords(true);
+			// Stream done — clear word tokens, keep plain text, remove indicator
+			if (aiIdx >= 0) messages[aiIdx] = { ...messages[aiIdx], streaming: false, words: undefined };
 			messages = [...messages];
 			// If this chat was bound to a workspace node, refresh its metadata so
 			// the next selectNode call will find the newly-created thread_id.
@@ -631,7 +668,11 @@
 					{#each messages as msg, i (i)}
 						{#if msg.role === 'thinking'}
 							<div class="message ai thinking">
-								<span class="thinking-dots" aria-label="Thinking"><i></i><i></i><i></i></span>
+								<span class="writing-dot thinking-dot" aria-label="Thinking" role="status">
+									<span class="wd-ring wd-r1"></span>
+									<span class="wd-ring wd-r2"></span>
+									<span class="wd-core"></span>
+								</span>
 							</div>
 						{:else if msg.role === 'user'}
 							<div class="message user">{msg.text}</div>
@@ -643,8 +684,16 @@
 							{/if}
 						{:else}
 							<div class="message ai" class:streaming={msg.streaming}>
-								<span class="ai-text">{msg.text}</span>
-								{#if msg.streaming}<span class="cursor" aria-hidden="true"></span>{/if}
+								{#if msg.streaming && msg.words}
+									<span class="ai-text" aria-live="polite">{#each msg.words as w (w.id)}<span class="tok">{w.t}</span>{/each}</span>
+									<span class="writing-dot" aria-label="Writing" role="status">
+										<span class="wd-ring wd-r1"></span>
+										<span class="wd-ring wd-r2"></span>
+										<span class="wd-core"></span>
+									</span>
+								{:else}
+									<span class="ai-text">{msg.text}</span>
+								{/if}
 							</div>
 						{/if}
 					{/each}

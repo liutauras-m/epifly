@@ -867,50 +867,76 @@ body::after {
   transition: background var(--dur-3) var(--ease-out);
 }
 .message.ai.streaming::before {
-  background: linear-gradient(to bottom, transparent 0%, var(--ember) 40%, var(--ember) 60%, transparent 100%);
-  background-size: 100% 250%;
-  animation: rail-travel 1.6s ease-in-out infinite;
+  background: var(--ember);
+  width: 2px;
+  animation: rail-stream 1.4s ease-in-out infinite;
 }
 .message.ai .ai-text {
   white-space: pre-wrap;
 }
-.message.ai .cursor {
-  display: inline-block;
-  width: 2px; height: 1em;
-  background: var(--ember);
-  vertical-align: text-bottom;
-  margin-left: 2px;
-  border-radius: var(--r-full);
-  box-shadow: 0 0 6px var(--ember-glow);
-  animation: cursor-pulse 1.1s ease-in-out infinite;
+
+/* ── Word token — each word fades in as it streams ── */
+.tok {
+  display: inline;
+  animation: tok-in 180ms var(--ease-out) both;
 }
+@keyframes tok-in {
+  from { opacity: 0; filter: blur(3px); }
+  to   { opacity: 1; filter: blur(0); }
+}
+
+/* ── Writing dot — ConusAI favicon-inspired radar ripple ── */
+.writing-dot {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px;
+  position: relative;
+  vertical-align: middle;
+  margin-left: 5px;
+  flex-shrink: 0;
+}
+.wd-core {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--ember);
+  position: relative; z-index: 1;
+  animation: wd-core 1.6s ease-in-out infinite;
+}
+.wd-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1.5px solid var(--ember);
+  animation: wd-ring-out 1.6s ease-out infinite;
+}
+.wd-r1 { width: 9px;  height: 9px;  animation-delay: 0s; }
+.wd-r2 { width: 15px; height: 15px; animation-delay: 0.55s; }
+
+@keyframes wd-core {
+  0%, 100% { transform: scale(1);    opacity: 1; }
+  50%       { transform: scale(0.65); opacity: 0.5; }
+}
+@keyframes wd-ring-out {
+  0%   { transform: scale(0.35); opacity: 0.85; }
+  70%  { transform: scale(1);    opacity: 0.15; }
+  100% { transform: scale(1);    opacity: 0; }
+}
+
+/* Thinking mode: slower pulse, slightly dimmer */
+.thinking-dot .wd-core { animation-duration: 2.2s; }
+.thinking-dot .wd-r1   { animation-duration: 2.2s; opacity: 0.7; }
+.thinking-dot .wd-r2   { animation-duration: 2.2s; animation-delay: 0.8s; opacity: 0.5; }
 .message.ai.error::before { background: var(--rust); }
 .message.ai.error { color: var(--ink-2); }
 .message.ai.error .ai-text::before { content: "⚠  "; color: var(--rust); }
 
 /* ── Thinking indicator ── */
 .message.ai.thinking {
-  padding: 8px 0 8px var(--s-5);
+  padding: 10px 0 10px var(--s-5);
 }
 .message.ai.thinking::before {
   background: var(--ember);
-  opacity: 0.3;
+  opacity: 0.25;
   animation: none;
 }
-.thinking-dots {
-  display: inline-flex; gap: 5px; align-items: center;
-}
-.thinking-dots i {
-  width: 5px; height: 5px;
-  border-radius: var(--r-full);
-  background: var(--ember);
-  display: inline-block;
-  animation: dot-wave 1.3s ease-in-out infinite;
-  opacity: 0.5;
-}
-.thinking-dots i:nth-child(1) { animation-delay: 0s;    }
-.thinking-dots i:nth-child(2) { animation-delay: 0.18s; }
-.thinking-dots i:nth-child(3) { animation-delay: 0.36s; }
 
 @keyframes msg-in {
   from { opacity: 0; transform: translateY(8px); }
@@ -920,14 +946,9 @@ body::after {
   from { opacity: 0; transform: translateX(10px); }
   to   { opacity: 1; transform: translateX(0); }
 }
-@keyframes cursor-pulse {
-  0%, 100% { opacity: 1;    transform: scaleY(1);    }
-  50%      { opacity: 0.2;  transform: scaleY(0.8);  }
-}
-@keyframes rail-travel {
-  0%   { background-position: 0 0%;    opacity: 0.6; }
-  50%  { background-position: 0 50%;   opacity: 1;   }
-  100% { background-position: 0 100%;  opacity: 0.6; }
+@keyframes rail-stream {
+  0%, 100% { opacity: 0.4; box-shadow: 0 0 0 0 transparent; }
+  50%       { opacity: 1;   box-shadow: 0 0 8px 1px var(--ember-glow); }
 }
 @keyframes dot-wave {
   0%, 100% { transform: translateY(0);    opacity: 0.35; }
