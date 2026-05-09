@@ -388,7 +388,7 @@ body::after {
 /* Period-sized core: ink colour, no glow — reads as punctuation */
 .greeting-presence .sonar-core {
   width: 7px; height: 7px;
-  background: var(--ink-2);
+  background: var(--ember-2);
   animation: period-beat 2.8s ease-in-out infinite;
 }
 @keyframes period-beat {
