@@ -7,32 +7,32 @@
 /* ── Tokens · Paper (default) ─────────────────────────────────────────────── */
 :root,
 :root[data-theme="paper"] {
-  --ink:        #14110D;
-  --ink-2:      #3A332B;
-  --ink-3:      #6E6357;
-  --paper:      #F4EEE3;
-  --paper-2:    #EBE3D4;
-  --paper-3:    #DFD4BF;
-  --rule:       #D6CAB0;
-  --seam:       #C2B391;
-  --vignette:   radial-gradient(ellipse at 18% 8%, rgba(128,205,198,0.08), transparent 45%);
+  --ink:        #18181A;
+  --ink-2:      #3A393E;
+  --ink-3:      #70707A;
+  --paper:      #EEEEED;
+  --paper-2:    #E6E5E3;
+  --paper-3:    #DADAD6;
+  --rule:       #CECDC8;
+  --seam:       #B8B7B0;
+  --vignette:   radial-gradient(ellipse at 18% 8%, rgba(128,205,198,0.06), transparent 45%);
   --grain-blend: overlay;
-  --grain-opacity: 0.05;
+  --grain-opacity: 0.03;
 }
 
 /* ── Tokens · Forge (dark) ────────────────────────────────────────────────── */
 :root[data-theme="forge"] {
-  --ink:        #F4EEE3;
-  --ink-2:      #C8BFAE;
-  --ink-3:      #8A8174;
-  --paper:      #100E0B;
-  --paper-2:    #181612;
-  --paper-3:    #211E18;
-  --rule:       #2A251E;
-  --seam:       #3A3328;
-  --vignette:   radial-gradient(ellipse at 18% 8%, rgba(128,205,198,0.12), transparent 50%);
+  --ink:        #EDEDEC;
+  --ink-2:      #B0AFAB;
+  --ink-3:      #76756F;
+  --paper:      #141414;
+  --paper-2:    #1C1C1C;
+  --paper-3:    #242424;
+  --rule:       #2E2E2E;
+  --seam:       #3A3A3A;
+  --vignette:   radial-gradient(ellipse at 18% 8%, rgba(128,205,198,0.08), transparent 50%);
   --grain-blend: soft-light;
-  --grain-opacity: 0.08;
+  --grain-opacity: 0.05;
 }
 
 /* ── Tokens · Shared accents ──────────────────────────────────────────────── */
@@ -77,7 +77,7 @@
   --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px;
   --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 72px;
 
-  --rail: 260px;
+  --rail: 240px;
   --gutter: 64px;
   --composer-w: 720px;
 
@@ -89,10 +89,10 @@
   /* Radius scale — nested radius principle:
      inner element r = outer r − padding_gap.
      Editorial restraint: we use corners only where they signal interactivity. */
-  --r-xs:   3px;    /* badges, micro elements */
-  --r-sm:   6px;    /* buttons, pills, small inputs */
-  --r-md:   10px;   /* composer, cards, toasts */
-  --r-lg:   16px;   /* larger panels */
+  --r-xs:   4px;    /* badges, micro elements */
+  --r-sm:   8px;    /* buttons, pills, small inputs */
+  --r-md:   14px;   /* composer, cards, toasts */
+  --r-lg:   20px;   /* larger panels */
   --r-full: 9999px; /* circles */
 }
 
@@ -159,6 +159,8 @@ body::after {
   flex-direction: column;
   overflow: hidden;
   height: 100vh;
+  /* Slightly cooler surface to lift from body */
+  backdrop-filter: none;
 }
 
 /* ws-section fills available space and scrolls internally */
@@ -336,18 +338,20 @@ body::after {
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
   padding: 0 var(--gutter);
+  gap: var(--s-5);
 }
 .greeting {
   display: flex; align-items: center;
-  gap: var(--s-4);
-  margin-bottom: var(--s-7);
+  justify-content: center;
   opacity: 0;
-  animation: rise var(--dur-4) var(--ease-out) 0.42s forwards;
+  animation: rise var(--dur-4) var(--ease-out) 0.3s forwards;
 }
 .greeting .sigil {
-  width: 56px; height: 56px;
+  width: 48px; height: 48px;
   flex-shrink: 0;
   display: block;
+  opacity: 0;
+  animation: sigil-enter 0.8s var(--ease-out) 0.1s forwards;
 }
 .greeting-text {
   font-family: var(--font-display);
@@ -357,9 +361,47 @@ body::after {
   font-variation-settings: "opsz" 96, "SOFT" 30, "WONK" 0;
   color: var(--ink);
   line-height: 1.05;
+  opacity: 0;
+  animation: rise var(--dur-4) var(--ease-out) 0.22s forwards;
 }
+
+/* Presence dot — inline beside the user's name. Reads as
+   "I see you, I'm here, ready to talk." Sits at the cap-height of the
+   serif headline so it visually anchors to the name without competing
+   with it. Fades in slightly after the headline so it feels like the
+   AI is *noticing* you. */
+/* Living period — inline inside the headline, at text baseline.
+   Reads as a sentence-ending period. The core breathes like ink on paper. */
+/* Inline placement inside the greeting headline — no size overrides,
+   just positioning so the dot reads as end-of-sentence punctuation */
+.greeting-presence {
+  display: inline-flex;
+  align-items: flex-end;
+  vertical-align: baseline;
+  margin-left: 0.08em;
+  margin-bottom: 0.1em;
+  opacity: 0;
+  animation: rise var(--dur-4) var(--ease-out) 0.9s forwards;
+}
+.greeting-presence .sonar-sm { margin-left: 0; }
+
+/* Sigil: scale in + persistent gentle breathe */
+@keyframes sigil-enter {
+  0%   { opacity: 0; transform: scale(0.72) rotate(-8deg); filter: blur(4px); }
+  60%  { opacity: 1; transform: scale(1.05) rotate(1deg);  filter: blur(0); }
+  100% { opacity: 1; transform: scale(1)    rotate(0deg);  filter: blur(0); }
+}
+@keyframes sigil-breathe {
+  0%, 100% { transform: scale(1);    opacity: 0.92; }
+  50%       { transform: scale(1.06); opacity: 1; }
+}
+.greeting .sigil {
+  animation: sigil-enter 0.8s var(--ease-out) 0.1s forwards,
+             sigil-breathe 4s ease-in-out 1.0s infinite;
+}
+
 @keyframes rise {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(10px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
@@ -379,95 +421,121 @@ body::after {
   opacity: 0;
   animation: rise var(--dur-4) var(--ease-out) 0.56s forwards;
 }
+
+/* Idle: barely-there border, minimal shadow */
 .composer {
   background: var(--paper);
   border: 1px solid var(--rule);
   border-radius: var(--r-md);
-  box-shadow: 0 2px 12px var(--shadow-sm);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
   transition: border-color var(--dur-2) var(--ease-out),
-              box-shadow var(--dur-2) var(--ease-out);
+              box-shadow var(--dur-3) var(--ease-out),
+              background var(--dur-2) var(--ease-out);
   display: flex; flex-direction: column;
   overflow: hidden;
 }
-.composer:focus-within {
+/* Focused: ember ring + elevated shadow */
+.composer.focused {
   border-color: var(--ember);
-  box-shadow: 0 0 0 3px var(--ember-soft), 0 4px 20px var(--shadow-sm);
+  box-shadow: 0 0 0 3px var(--ember-soft),
+              0 8px 32px rgba(0,0,0,0.10);
+}
+/* Has content but not focused: subtle lift */
+.composer.has-content:not(.focused) {
+  border-color: var(--seam);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.08);
 }
 .composer.dragover {
   border-color: var(--ember);
   border-style: dashed;
   background: var(--ember-soft);
 }
+
+/* Single-line when idle, grows on type */
 .composer-input {
   width: 100%;
   resize: none;
-  padding: var(--s-4);
+  padding: 14px var(--s-4) 14px;
   background: transparent;
   font-family: var(--font-body);
   font-size: 15px;
-  line-height: 1.55;
+  line-height: 1.6;
   color: var(--ink);
-  min-height: 60px;
+  min-height: 52px;
   max-height: 240px;
+  transition: min-height var(--dur-2) var(--ease-out);
+  overflow-y: hidden;
+}
+.composer.focused .composer-input,
+.composer.has-content .composer-input {
+  min-height: 72px;
 }
 .composer-input::placeholder {
   color: var(--ink-3);
-  font-style: italic;
 }
+
+/* Toolbar: collapsed when idle, slides open on focus/content */
 .composer-toolbar {
   display: flex; align-items: center; gap: var(--s-3);
-  padding: var(--s-2) var(--s-3);
-  border-top: 1px solid var(--rule);
+  padding: 0 var(--s-3);
+  border-top: 1px solid transparent;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height var(--dur-2) var(--ease-out),
+              opacity var(--dur-2) var(--ease-out),
+              border-color var(--dur-2) var(--ease-out),
+              padding var(--dur-2) var(--ease-out);
 }
+.composer.focused .composer-toolbar,
+.composer.has-content .composer-toolbar {
+  max-height: 52px;
+  opacity: 1;
+  padding: var(--s-2) var(--s-3);
+  border-top-color: var(--rule);
+}
+
 .toolbar-btn {
   display: inline-flex; align-items: center; gap: var(--s-2);
-  padding: var(--s-2) var(--s-3);
+  padding: var(--s-2) var(--s-2);
   color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
   border-radius: var(--r-xs);
   transition: color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out);
 }
 .toolbar-btn:hover { color: var(--ink); background: var(--paper-2); }
-.toolbar-btn .icon { width: 14px; height: 14px; stroke-width: 1.5; }
+.toolbar-btn .icon { width: 15px; height: 15px; stroke-width: 1.5; }
 .toolbar-spacer { flex: 1; }
-.model-pill {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 4px var(--s-3);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-2);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-xs);
-  cursor: pointer;
-  transition: border-color var(--dur-1) var(--ease-out),
-              color var(--dur-1) var(--ease-out),
-              background var(--dur-1) var(--ease-out);
-}
-.model-pill:hover { border-color: var(--ember); color: var(--ink); background: var(--ember-soft); }
-.model-pill .chevron { width: 10px; height: 10px; stroke-width: 1.5; }
+
+
+
+/* Send: hidden when no content, springs in when content appears */
 .send-btn {
-  width: 32px; height: 32px;
+  width: 34px; height: 34px;
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--ember);
   color: var(--paper);
-  border-radius: var(--r-sm);
-  /* nested radius: composer r-md (10px) minus toolbar padding ~4px = r-sm (6px) */
+  border-radius: var(--r-full);
+  opacity: 0;
+  transform: scale(0.6);
   transition: background var(--dur-1) var(--ease-out),
-              transform var(--dur-1) var(--ease-spring),
+              opacity var(--dur-2) var(--ease-out),
+              transform var(--dur-2) var(--ease-spring),
               box-shadow var(--dur-1) var(--ease-out);
+  pointer-events: none;
+}
+.composer.has-content .send-btn {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
 }
 .send-btn:hover {
   background: var(--ember-2);
-  box-shadow: 0 2px 8px var(--ember-glow);
+  box-shadow: 0 2px 10px var(--ember-glow);
+  transform: scale(1.06);
 }
-.send-btn:active { transform: scale(0.93); }
-.send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-.send-btn .icon { width: 14px; height: 14px; stroke-width: 1.75; }
+.send-btn:active { transform: scale(0.93) !important; }
+.send-btn:disabled { opacity: 0.35 !important; transform: scale(1) !important; cursor: not-allowed; }
+.send-btn .icon { width: 14px; height: 14px; stroke-width: 2; }
 
 /* ── Attachments preview ─────────────────────────────────────────────────── */
 .attachments {
@@ -610,42 +678,43 @@ body::after {
 
 /* ── Quick chips ─────────────────────────────────────────────────────────── */
 .chips {
-  display: flex; flex-wrap: wrap; gap: var(--s-3);
-  margin-top: var(--s-5);
+  display: flex; flex-wrap: wrap; gap: 8px;
   width: 100%;
   max-width: var(--composer-w);
   justify-content: center;
 }
 .chip {
-  position: relative;
   display: inline-flex; align-items: center; gap: var(--s-2);
-  padding: 6px var(--s-3);
+  padding: 5px 14px;
   color: var(--ink-3);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.10em;
-  text-transform: uppercase;
-  border: 1px solid transparent;
-  border-radius: var(--r-sm);
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-full);
+  background: transparent;
   opacity: 0;
-  animation: rise var(--dur-3) var(--ease-out) forwards;
+  animation: chip-in var(--dur-3) var(--ease-spring) forwards;
   transition: color var(--dur-1) var(--ease-out),
               border-color var(--dur-2) var(--ease-out),
               background var(--dur-2) var(--ease-out),
               transform var(--dur-2) var(--ease-spring);
 }
-.chip:nth-child(1) { animation-delay: 0.68s; }
-.chip:nth-child(2) { animation-delay: 0.74s; }
-.chip:nth-child(3) { animation-delay: 0.80s; }
-.chip:nth-child(4) { animation-delay: 0.86s; }
-.chip:nth-child(5) { animation-delay: 0.92s; }
+@keyframes chip-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.94); }
+  to   { opacity: 1; transform: translateY(0)   scale(1); }
+}
+.chip:nth-child(1) { animation-delay: 0.72s; }
+.chip:nth-child(2) { animation-delay: 0.80s; }
+.chip:nth-child(3) { animation-delay: 0.88s; }
+.chip:nth-child(4) { animation-delay: 0.96s; }
+.chip:nth-child(5) { animation-delay: 1.04s; }
 .chip:hover {
   color: var(--ink);
-  border-color: var(--ember);
-  background: var(--ember-soft);
+  border-color: var(--seam);
+  background: var(--paper-2);
   transform: translateY(-1px);
 }
-.chip:active { transform: translateY(0); }
+.chip:active { transform: translateY(0) scale(0.97); }
 .chip .icon { width: 13px; height: 13px; stroke-width: 1.5; color: var(--ember); }
 
 /* ── Workspace search input ───────────────────────────────────────────────── */
@@ -782,18 +851,22 @@ body::after {
 }
 .message {
   opacity: 0;
-  animation: msg-in var(--dur-3) var(--ease-out) forwards;
+  animation: msg-in 420ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+/* Streaming AI message — no container animation.
+   The tokens ARE the reveal; fading the wrapper too creates a muddy double-fade. */
+.message.ai.streaming {
+  animation: none;
+  opacity: 1;
 }
 
 /* ── User bubble ── */
 .message.user {
   align-self: flex-end;
   max-width: 78%;
-  background: var(--paper-2);
+  background: var(--paper-3);
   border: 1px solid var(--rule);
-  border-left: 2.5px solid var(--ember);
-  border-radius: 0 var(--r-md) var(--r-md) var(--r-xs);
-  /* top-left sharp (anchors to left rail), other corners softened */
+  border-radius: var(--r-md);
   padding: var(--s-3) var(--s-4);
   font-size: 14.5px;
   color: var(--ink);
@@ -820,72 +893,147 @@ body::after {
   transition: background var(--dur-3) var(--ease-out);
 }
 .message.ai.streaming::before {
-  background: linear-gradient(to bottom, transparent 0%, var(--ember) 40%, var(--ember) 60%, transparent 100%);
-  background-size: 100% 250%;
-  animation: rail-travel 1.6s ease-in-out infinite;
+  background: var(--ember);
+  width: 2px;
+  animation: rail-stream 1.4s ease-in-out infinite;
 }
 .message.ai .ai-text {
   white-space: pre-wrap;
 }
-.message.ai .cursor {
+
+/* ── Word token — staggered per-batch reveal ─────────────────────────────────
+   Each token in a flush batch gets animation-delay: batchIndex * 22ms (set
+   inline from JS). This creates a left-to-right reading wave instead of
+   the whole batch flashing in at once.
+
+   5px Y + scale(0.96→1): perceptible without being dramatic.
+   ease-out-expo (0.16, 1, 0.3, 1): snaps into place confidently.
+   400ms: enough to register the motion, not so long it feels sluggish.        */
+.tok {
   display: inline-block;
-  width: 2px; height: 1em;
-  background: var(--ember);
-  vertical-align: text-bottom;
-  margin-left: 2px;
-  border-radius: var(--r-full);
-  box-shadow: 0 0 6px var(--ember-glow);
-  animation: cursor-pulse 1.1s ease-in-out infinite;
+  white-space: pre-wrap;
+  will-change: opacity, transform;
+  animation: tok-in 400ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
+@keyframes tok-in {
+  from { opacity: 0; transform: translateY(5px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0)   scale(1); }
+}
+
+/* ── Sonar-ping dot ───────────────────────────────────────────────────────────
+   One component, one core size (8px), one animation — used everywhere.
+
+   .sonar       standalone wrapper (thinking row, chat-end row)
+   .sonar-sm    inline wrapper (next to streaming text, greeting period)
+
+   Core is always 8px. Rings scale proportionally.
+   Animation: 2.6s premium ease — slow breath with clean radar rings.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* Wrappers — only control space for rings to expand into */
+.sonar {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px; height: 48px;
+  flex-shrink: 0;
+}
+.sonar.sonar-sm {
+  width: 28px; height: 28px;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+
+/* ── Core: 8px, always — the one canonical dot size ── */
+.sonar-core {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--ember-2);
+  position: relative; z-index: 1;
+  flex-shrink: 0;
+  animation: sonar-beat 2.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+@keyframes sonar-beat {
+  0%,  100% { opacity: 0.70; transform: scale(1);    }
+  45%        { opacity: 1.00; transform: scale(1.12); }
+  55%        { opacity: 1.00; transform: scale(1.12); }
+}
+
+/* ── Rings: centred on core via translate(-50%,-50%) ── */
+.sonar-ring {
+  position: absolute;
+  top: 50%; left: 50%;
+  border-radius: 50%;
+  border: 1.5px solid var(--ember);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0);
+}
+/* Full wrapper ring sizes */
+.sonar-r1 {
+  width: 22px; height: 22px;
+  animation: sonar-ping 2.6s cubic-bezier(0.2, 0, 0.1, 1) 0s infinite;
+}
+.sonar-r2 {
+  width: 40px; height: 40px;
+  animation: sonar-ping 2.6s cubic-bezier(0.2, 0, 0.1, 1) 1.0s infinite;
+}
+/* Small wrapper: rings scale proportionally to wrapper */
+.sonar-sm .sonar-r1 { width: 16px; height: 16px; }
+.sonar-sm .sonar-r2 { width: 26px; height: 26px; }
+
+@keyframes sonar-ping {
+  0%   { transform: translate(-50%, -50%) scale(0.1); opacity: 0.80; }
+  70%  { transform: translate(-50%, -50%) scale(1);   opacity: 0.05; }
+  100% { transform: translate(-50%, -50%) scale(1);   opacity: 0;    }
+}
+
 .message.ai.error::before { background: var(--rust); }
 .message.ai.error { color: var(--ink-2); }
 .message.ai.error .ai-text::before { content: "⚠  "; color: var(--rust); }
 
-/* ── Thinking indicator ── */
+/* ── Thinking message — dot sits in the AI message row ── */
 .message.ai.thinking {
-  padding: 8px 0 8px var(--s-5);
+  padding: 4px 0 4px var(--s-5);
 }
 .message.ai.thinking::before {
   background: var(--ember);
-  opacity: 0.3;
+  opacity: 0.25;
   animation: none;
 }
-.thinking-dots {
-  display: inline-flex; gap: 5px; align-items: center;
-}
-.thinking-dots i {
-  width: 5px; height: 5px;
-  border-radius: var(--r-full);
-  background: var(--ember);
-  display: inline-block;
-  animation: dot-wave 1.3s ease-in-out infinite;
-  opacity: 0.5;
-}
-.thinking-dots i:nth-child(1) { animation-delay: 0s;    }
-.thinking-dots i:nth-child(2) { animation-delay: 0.18s; }
-.thinking-dots i:nth-child(3) { animation-delay: 0.36s; }
 
 @keyframes msg-in {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(10px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+/* User bubble: slides in from the right with a slight scale pop */
 @keyframes msg-in-user {
-  from { opacity: 0; transform: translateX(10px); }
-  to   { opacity: 1; transform: translateX(0); }
+  from { opacity: 0; transform: translateX(14px) scale(0.97); }
+  to   { opacity: 1; transform: translateX(0)    scale(1); }
 }
-@keyframes cursor-pulse {
-  0%, 100% { opacity: 1;    transform: scaleY(1);    }
-  50%      { opacity: 0.2;  transform: scaleY(0.8);  }
-}
-@keyframes rail-travel {
-  0%   { background-position: 0 0%;    opacity: 0.6; }
-  50%  { background-position: 0 50%;   opacity: 1;   }
-  100% { background-position: 0 100%;  opacity: 0.6; }
+@keyframes rail-stream {
+  0%, 100% { opacity: 0.4; box-shadow: 0 0 0 0 transparent; }
+  50%       { opacity: 1;   box-shadow: 0 0 8px 1px var(--ember-glow); }
 }
 @keyframes dot-wave {
   0%, 100% { transform: translateY(0);    opacity: 0.35; }
   45%      { transform: translateY(-5px); opacity: 1;    }
 }
+/* ── Sonar-ping placement containers ─────────────────────────────────────── */
+.chat-end-dot {
+  display: flex;
+  align-items: center;
+  padding-left: var(--s-5);   /* aligns with AI message left indent */
+  height: 56px;
+  overflow: visible;
+  pointer-events: none;
+  animation: sonar-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes sonar-enter {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 .composer-bottom {
   width: 100%;
   max-width: var(--composer-w);
@@ -1243,6 +1391,42 @@ body::after {
   from { background-position: 200% 0; }
   to   { background-position: -200% 0; }
 }
+
+/* ── Workspace tree nodes ────────────────────────────────────────────────── */
+.ws-folder { display: flex; flex-direction: column; }
+.ws-node {
+  display: flex; align-items: center; gap: var(--s-1);
+  width: 100%; padding: 4px var(--s-2) 4px calc(var(--s-2) + var(--depth, 0) * 12px);
+  border: none; background: none; cursor: pointer; text-align: left;
+  border-radius: var(--r-sm); color: var(--ink-2); font-size: var(--t-meta);
+  transition: background 120ms, color 120ms;
+}
+.ws-node:hover { background: var(--paper-3); color: var(--ink); }
+.ws-node-selected { background: var(--ember-soft) !important; color: var(--ink) !important; font-weight: 500; }
+.ws-node-chevron { width: 12px; font-size: 9px; color: var(--ink-3); flex-shrink: 0; }
+.ws-node-icon { font-size: 10px; flex-shrink: 0; opacity: 0.7; }
+.ws-node-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-node-path { font-size: 10px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100px; }
+.ws-children { display: flex; flex-direction: column; }
+.ws-loading { padding: var(--s-1) var(--s-3); font-size: var(--t-meta); color: var(--ink-3); font-style: italic; }
+
+/* ── Workspace creation form ──────────────────────────────────────────────── */
+.ws-new-form { display: flex; flex-direction: column; gap: 6px; padding: var(--s-2) var(--s-2) var(--s-1); border-bottom: 1px solid var(--rule); }
+.ws-new-kind { display: flex; gap: 4px; }
+.ws-kind-btn { flex: 1; padding: 3px 0; font-size: var(--t-meta); border: 1px solid var(--rule);
+  background: none; color: var(--ink-2); border-radius: var(--r-xs); cursor: pointer; transition: all 100ms; }
+.ws-kind-btn.active { background: var(--ember-soft); border-color: var(--ember); color: var(--ink); font-weight: 600; }
+.ws-new-row { display: flex; gap: 4px; align-items: center; }
+.ws-new-input { flex: 1; padding: 4px 6px; font-size: var(--t-meta); border: 1px solid var(--rule);
+  border-radius: var(--r-xs); background: var(--paper); color: var(--ink); outline: none; }
+.ws-new-input:focus { border-color: var(--ember); }
+.ws-new-ok, .ws-new-cancel { width: 24px; height: 24px; border: 1px solid var(--rule); background: none;
+  color: var(--ink-2); border-radius: var(--r-xs); cursor: pointer; font-size: 12px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ws-new-ok:hover { background: var(--ember-soft); color: var(--ink); }
+.ws-new-cancel:hover { background: var(--paper-2); }
+.ws-new-ok:disabled { opacity: 0.5; cursor: default; }
+.ws-new-error { font-size: 10px; color: #c0392b; padding: 0 2px; }
 
 /* dialog */
 .ws-dialog-form {

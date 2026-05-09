@@ -15,5 +15,9 @@ export default defineConfig({
 			'/swagger-ui': { target: 'http://localhost:8080', changeOrigin: true },
 			'/metrics': { target: 'http://localhost:8080', changeOrigin: true }
 		}
+	},
+	test: {
+		include: ['src/tests/**/*.{test,spec}.ts'],
+		environment: 'node',
 	}
 });

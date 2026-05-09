@@ -1,22 +1,231 @@
 <script lang="ts">
 	import type { PageData } from './$types';
+	import type { WorkspaceNode } from '$lib/types';
+	import type { InvoiceData } from '$lib/api/types';
+	import { streamChat as apiStreamChat } from '$lib/api/stream';
+	import { workspacesApi, apiCall } from '$lib/api';
+	import { EP } from '$lib/api/endpoints';
+	import { toasts } from '$lib/ui/toast.svelte';
+	import { autoGrow } from '$lib/ui/actions';
 	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 
 	let { data }: { data: PageData } = $props();
 
 	// ── State ────────────────────────────────────────────────────────────────
 	let showChat = $state(false);
-	let messages: { role: 'user' | 'ai' | 'thinking'; text: string; streaming?: boolean }[] = $state([]);
+	// words: word tokens for animated streaming display; cleared when streaming ends
+	let messages: { role: 'user' | 'ai' | 'thinking'; text: string; streaming?: boolean; words?: { t: string; id: number; delay: number }[] }[] = $state([]);
 	let toolCards: Map<string, { name: string; status: 'running' | 'success' | 'error'; result: string; startTime: number }> = $state(new Map());
 	let activeThreadId = $state<string | null>(null);
 	let inFlight = $state(false);
 	let inputValue = $state('');
 	let pendingAttachments: { id: string; filename: string; size: number }[] = $state([]);
+	let composerFocused = $state(false);
+
+	// ── Workspace tree ────────────────────────────────────────────────────────
+	let workspaceNodes = $state<WorkspaceNode[]>(data.workspaceTree ?? []);
+	let expandedFolders = $state<Set<string>>(new Set());
+	let childNodes = $state<Map<string, WorkspaceNode[]>>(new Map());
+	let selectedNodeId = $state<string | null>(null);
+
+	onMount(() => {
+		const wsParam = $page.url.searchParams.get('ws');
+		if (wsParam) selectedNodeId = wsParam;
+	});
+
+	async function toggleFolder(node: WorkspaceNode) {
+		if (expandedFolders.has(node.id)) {
+			expandedFolders.delete(node.id);
+			expandedFolders = new Set(expandedFolders);
+		} else {
+			expandedFolders.add(node.id);
+			expandedFolders = new Set(expandedFolders);
+			if (!childNodes.has(node.id)) {
+				try {
+					const result = await workspacesApi.getTree(fetch, node.id);
+					if (!result.error) {
+						const raw = result.data;
+						const nodes: WorkspaceNode[] = Array.isArray(raw) ? raw : ((raw as { nodes?: WorkspaceNode[] })?.nodes ?? []);
+						const updated = new Map(childNodes);
+						updated.set(node.id, nodes);
+						childNodes = updated;
+					}
+				} catch { /* ignore */ }
+			}
+		}
+	}
+
+	async function selectNode(node: WorkspaceNode) {
+		selectedNodeId = node.id;
+		goto(`?ws=${node.id}`, { replaceState: true, keepFocus: true, noScroll: true });
+		if (node.kind !== 'conversation') return;
+
+		showChat = true;
+		messages = [];
+
+		// If the node already has a bound thread, load its history
+		const tid = node.metadata?.thread_id ?? null;
+		if (tid) {
+			activeThreadId = tid;
+			messages = [{ role: 'ai', text: '…', streaming: true }];
+			try {
+				type MsgArr = { role: string; content: unknown }[];
+				const result = await apiCall<MsgArr | { data?: MsgArr }>(fetch, EP.THREAD_MESSAGES(tid));
+				if (!result.error) {
+					const raw = result.data;
+					const msgs: MsgArr = Array.isArray(raw) ? raw : ((raw as { data?: MsgArr })?.data ?? []);
+					messages = msgs
+						.filter((m) => m.role === 'user' || m.role === 'assistant')
+						.map((m) => ({
+							role: (m.role === 'assistant' ? 'ai' : 'user') as 'ai' | 'user',
+							text: typeof m.content === 'string' ? m.content
+								: Array.isArray(m.content)
+									? (m.content as { type: string; text?: string }[])
+											.filter((b) => b.type === 'text')
+											.map((b) => b.text ?? '')
+											.join('')
+									: String(m.content),
+							streaming: false
+						}));
+					if (messages.length === 0) {
+						messages = [{ role: 'ai', text: `_${node.virtual_path} — no messages yet._`, streaming: false }];
+					}
+				} else {
+					messages = [{ role: 'ai', text: `_${node.virtual_path}_`, streaming: false }];
+				}
+			} catch {
+				messages = [{ role: 'ai', text: `_${node.virtual_path}_`, streaming: false }];
+			}
+		} else {
+			// No thread yet — show the file name, chat will bind one on first message
+			activeThreadId = null;
+			messages = [{ role: 'ai', text: `_${node.virtual_path} — send a message to start._`, streaming: false }];
+		}
+	}
+
+	/** After a stream bound to a workspace node completes, re-fetch that node
+	 *  so its metadata.thread_id is populated for the next selectNode call. */
+	async function refreshNodeMetadata(nodeId: string) {
+		try {
+			const result = await workspacesApi.getNode(fetch, nodeId);
+			if (result.error) return;
+			const updated: WorkspaceNode = result.data;
+			// Update the node in all trees in-place
+			function patchIn(nodes: WorkspaceNode[]): boolean {
+				for (let i = 0; i < nodes.length; i++) {
+					if (nodes[i].id === nodeId) { nodes[i] = updated; return true; }
+				}
+				return false;
+			}
+			if (!patchIn(workspaceNodes)) {
+				for (const children of childNodes.values()) patchIn(children);
+			}
+			workspaceNodes = [...workspaceNodes];
+		} catch { /* ignore */ }
+	}
+
+	async function refreshWorkspaceTree() {
+		try {
+			const result = await workspacesApi.getTree(fetch);
+			if (!result.error) {
+				const raw = result.data;
+				workspaceNodes = Array.isArray(raw) ? raw : ((raw as { nodes?: WorkspaceNode[] })?.nodes ?? []);
+			}
+		} catch { /* ignore */ }
+	}
+
+	// ── Workspace creation ────────────────────────────────────────────────────
+	let newNodeKind = $state<'folder' | 'conversation'>('folder');
+	let newNodeName = $state('');
+	let newNodeParentId = $state<string | null>(null);
+	let showNewNodeForm = $state(false);
+	let newNodeError = $state('');
+	let newNodeBusy = $state(false);
+
+	function openNewNodeForm(parentId: string | null = null) {
+		newNodeParentId = parentId;
+		newNodeName = '';
+		newNodeError = '';
+		newNodeKind = 'folder';
+		showNewNodeForm = true;
+	}
+
+	function closeNewNodeForm() {
+		showNewNodeForm = false;
+		newNodeName = '';
+		newNodeError = '';
+	}
+
+	async function submitNewNode(e: SubmitEvent) {
+		e.preventDefault();
+		const name = newNodeName.trim();
+		if (!name) { newNodeError = 'Name is required'; return; }
+		newNodeBusy = true;
+		newNodeError = '';
+		try {
+			const result = await workspacesApi.createNode(fetch, {
+				kind: newNodeKind,
+				name,
+				parent_id: newNodeParentId
+			});
+			if (result.error) {
+				newNodeError = result.error.message ?? `Error ${result.error.status}`;
+				return;
+			}
+			closeNewNodeForm();
+			await refreshWorkspaceTree();
+		} catch (err) {
+			newNodeError = err instanceof Error ? err.message : 'Network error';
+		} finally {
+			newNodeBusy = false;
+		}
+	}
+
+	function focusInput(el: HTMLInputElement) {
+		el.focus();
+	}
+
+	// ── Workspace search (debounced) ─────────────────────────────────────────
+	let searchQuery = $state('');
+	let searchResults = $state<WorkspaceNode[]>([]);
+	let searchTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function onSearchInput(e: Event) {
+		const q = (e.target as HTMLInputElement).value;
+		searchQuery = q;
+		if (searchTimer) clearTimeout(searchTimer);
+		if (!q.trim()) { searchResults = []; return; }
+		searchTimer = setTimeout(async () => {
+			try {
+				const result = await workspacesApi.searchNodes(fetch, q.trim());
+				if (!result.error) {
+					const raw = result.data;
+					searchResults = Array.isArray(raw) ? raw : ((raw as { nodes?: WorkspaceNode[] })?.nodes ?? []);
+				}
+			} catch { searchResults = []; }
+		}, 220);
+	}
+
+	function clearSearch() {
+		searchQuery = '';
+		searchResults = [];
+		if (searchTimer) clearTimeout(searchTimer);
+	}
+
+	// ── Recents (local, updated after chat) ──────────────────────────────────
+	let recents = $state<{ id: string; title: string }[]>(data.recents ?? []);
 
 	// ── Theme ────────────────────────────────────────────────────────────────
 	let theme = $state('paper');
 	onMount(() => {
-		theme = localStorage.getItem('conusai-theme') ?? 'paper';
+		// Priority: flash-prevention script set data-theme → localStorage → system preference
+		const stored = localStorage.getItem('conusai-theme');
+		const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+		theme = document.documentElement.dataset.theme
+			?? stored
+			?? (systemDark ? 'forge' : 'paper');
 		document.documentElement.setAttribute('data-theme', theme);
 	});
 	function toggleTheme() {
@@ -45,75 +254,91 @@
 		let aiIdx = -1;
 		const newToolCards = new Map(toolCards);
 
-		try {
-			const body: Record<string, unknown> = { message: prompt, thread_id: activeThreadId };
-			const res = await fetch('/ui/stream', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(body)
-			});
-			if (!res.ok || !res.body) {
-				messages = messages.filter((m) => m.role !== 'thinking');
-				messages = [...messages, { role: 'ai', text: `Error: ${res.status} ${res.statusText}` }];
-				return;
+		// ── Word-level streaming buffer ─────────────────────────────────────
+		// Incoming chars accumulate in wordAccum. On each animation frame we
+		// flush complete words (split at whitespace) as individual .tok spans
+		// so CSS can animate each word in. Partial last word stays buffered.
+		let wordAccum = '';
+		let wid = 0;
+		let rafId: number | null = null;
+
+		function flushWords(final = false) {
+			if (!wordAccum || aiIdx < 0 || messages[aiIdx]?.role !== 'ai') { rafId = null; return; }
+			let take = wordAccum;
+			let keep = '';
+			if (!final) {
+				const cut = wordAccum.search(/\S+$/);
+				if (cut > 0) { take = wordAccum.slice(0, cut); keep = wordAccum.slice(cut); }
+				else if (cut === 0) { rafId = null; return; }
 			}
+			wordAccum = keep;
+			const tokens = take.split(/(\s+)/).filter(s => s.length > 0);
+			const newWords = tokens.map((t, i) => ({ t, id: wid++, delay: i * 22 }));
+			const m = messages[aiIdx];
+			messages[aiIdx] = { ...m, text: m.text + take, words: [...(m.words ?? []), ...newWords] };
+			messages = [...messages];
+			scrollIfNear();
+			rafId = null;
+		}
+
+		function scheduleFlush() {
+			if (!rafId) rafId = requestAnimationFrame(() => flushWords());
+		}
+
+		try {
 			messages = messages.filter((m) => m.role !== 'thinking');
 
-			const reader = res.body.getReader();
-			const dec = new TextDecoder();
-			let buf = '';
-
-			while (true) {
-				const { value, done } = await reader.read();
-				if (done) break;
-				buf += dec.decode(value, { stream: true });
-				let pos: number;
-				while ((pos = buf.indexOf('\n\n')) !== -1) {
-					const block = buf.slice(0, pos);
-					buf = buf.slice(pos + 2);
-					for (const line of block.split('\n')) {
-						if (!line.startsWith('data: ')) continue;
-						const raw = line.slice(6);
-						if (raw === '[DONE]') continue;
-						let ev: Record<string, unknown>;
-						try { ev = JSON.parse(raw); } catch { continue; }
-						const delta = (ev.choices as { delta?: Record<string, unknown> }[])?.[0]?.delta;
-						if (!delta) continue;
-
-						if (typeof delta.content === 'string') {
-							if (aiIdx < 0 || messages[aiIdx]?.role !== 'ai') {
-								messages = [...messages, { role: 'ai', text: '', streaming: true }];
-								aiIdx = messages.length - 1;
-							}
-							messages[aiIdx] = { ...messages[aiIdx], text: messages[aiIdx].text + delta.content };
-							messages = [...messages];
-							scrollIfNear();
-						} else if (delta.tool_call_start) {
-							const { id, name } = delta.tool_call_start as { id: string; name: string };
-							newToolCards.set(id, { name, status: 'running', result: '', startTime: performance.now() });
-							toolCards = new Map(newToolCards);
-							aiIdx = -1;
-						} else if (delta.tool_call_result) {
-							const { tool_use_id, result } = delta.tool_call_result as { tool_use_id: string; result: string };
-							const card = newToolCards.get(tool_use_id);
-							if (card) {
-								let isError = false;
-								try { const obj = JSON.parse(result); if (obj?.error || obj?.status === 'error') isError = true; } catch {}
-								if (typeof result === 'string' && result.startsWith('Error:')) isError = true;
-								newToolCards.set(tool_use_id, { ...card, status: isError ? 'error' : 'success', result });
-								toolCards = new Map(newToolCards);
-							}
-						}
-
-						if (ev.thread_id) activeThreadId = ev.thread_id as string;
+			for await (const delta of apiStreamChat({
+				message: prompt,
+				threadId: activeThreadId,
+				workspaceNodeId: selectedNodeId
+			})) {
+				if (delta.kind === 'text') {
+					if (aiIdx < 0 || messages[aiIdx]?.role !== 'ai') {
+						messages = [...messages, { role: 'ai', text: '', words: [], streaming: true }];
+						aiIdx = messages.length - 1;
+					}
+					wordAccum += delta.content;
+					scheduleFlush();
+				} else if (delta.kind === 'tool_start') {
+					newToolCards.set(delta.id, { name: delta.name, status: 'running', result: '', startTime: performance.now() });
+					toolCards = new Map(newToolCards);
+					aiIdx = -1;
+				} else if (delta.kind === 'tool_result') {
+					const card = newToolCards.get(delta.tool_use_id);
+					if (card) {
+						let isError = false;
+						try { const obj = JSON.parse(delta.result); if (obj?.error || obj?.status === 'error') isError = true; } catch {}
+						if (typeof delta.result === 'string' && delta.result.startsWith('Error:')) isError = true;
+						newToolCards.set(delta.tool_use_id, { ...card, status: isError ? 'error' : 'success', result: delta.result });
+						toolCards = new Map(newToolCards);
+					}
+				} else if (delta.kind === 'thread_id') {
+					const tid = delta.id;
+					if (tid !== activeThreadId) {
+						activeThreadId = tid;
+						// Prepend to recents sidebar (trim duplicates)
+						const title = prompt.slice(0, 60) + (prompt.length > 60 ? '…' : '');
+						recents = [{ id: tid, title }, ...recents.filter((r) => r.id !== tid)].slice(0, 20);
 					}
 				}
+				// 'done' terminates the generator naturally
 			}
-			if (aiIdx >= 0) messages[aiIdx] = { ...messages[aiIdx], streaming: false };
+
+			// Final flush of any remaining partial word
+			if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+			flushWords(true);
+			// Stream done — clear word tokens, keep plain text, remove indicator
+			if (aiIdx >= 0) messages[aiIdx] = { ...messages[aiIdx], streaming: false, words: undefined };
 			messages = [...messages];
+			// If this chat was bound to a workspace node, refresh its metadata so
+			// the next selectNode call will find the newly-created thread_id.
+			if (selectedNodeId) await refreshNodeMetadata(selectedNodeId);
 		} catch (e: unknown) {
+			const msg = e instanceof Error ? e.message : String(e);
 			messages = messages.filter((m) => m.role !== 'thinking');
-			messages = [...messages, { role: 'ai', text: `Stream failed: ${e instanceof Error ? e.message : String(e)}` }];
+			messages = [...messages, { role: 'ai', text: `Stream failed: ${msg}` }];
+			toasts.error(`Connection error: ${msg}`);
 		} finally {
 			inFlight = false;
 		}
@@ -129,14 +354,12 @@
 		messages = [...messages, { role: 'ai', text: 'Running invoice pipeline…', streaming: true }];
 		const loadIdx = messages.length - 1;
 		try {
-			const res = await fetch('/ui/extract-invoice', {
-				method: 'POST', headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ token })
+			const result = await apiCall<InvoiceData>(fetch, EP.UI_EXTRACT_INVOICE, {
+				method: 'POST', body: JSON.stringify({ token })
 			});
 			messages = messages.filter((_, i) => i !== loadIdx);
-			if (!res.ok) { messages = [...messages, { role: 'ai', text: `Extraction failed: ${res.statusText}` }]; return; }
-			const d = await res.json();
-			invoiceResults = new Map([...invoiceResults, [token, d]]);
+			if (result.error) { messages = [...messages, { role: 'ai', text: `Extraction failed: ${result.error.message}` }]; return; }
+			invoiceResults = new Map([...invoiceResults, [token, result.data]]);
 			messages = [...messages, { role: 'ai', text: '__invoice__' + token }];
 		} catch (e: unknown) {
 			messages = messages.filter((_, i) => i !== loadIdx);
@@ -145,13 +368,37 @@
 	}
 
 	// ── Upload ────────────────────────────────────────────────────────────────
+	const ALLOWED_MIME = new Set([
+		'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+		'application/pdf', 'text/plain', 'text/markdown',
+		'application/json', 'text/csv',
+	]);
+	const MAX_FILE_SIZE = 20 * 1024 * 1024;  // 20 MB
+	const MAX_ATTACHMENTS = 5;
+
 	async function uploadFiles(files: File[]) {
 		for (const file of files) {
-			const fd = new FormData();
-			fd.append('file', file, file.name);
-			const res = await fetch('/ui/upload', { method: 'POST', body: fd });
-			if (!res.ok) continue;
-			const d = await res.json() as { id: string; filename: string; size: number };
+			// Attachment count limit
+			if (pendingAttachments.length >= MAX_ATTACHMENTS) {
+				toasts.warning(`Max ${MAX_ATTACHMENTS} attachments per message.`);
+				break;
+			}
+			// MIME type validation
+			if (!ALLOWED_MIME.has(file.type)) {
+				toasts.error(`"${file.name}" — unsupported file type (${file.type || 'unknown'}).`);
+				continue;
+			}
+			// Size limit
+			if (file.size > MAX_FILE_SIZE) {
+				toasts.error(`"${file.name}" is too large (max 20 MB).`);
+				continue;
+			}
+			const result = await workspacesApi.uploadFile(fetch, file);
+			if (result.error) {
+				toasts.error(`Upload failed: ${result.error.message}`);
+				continue;
+			}
+			const d = result.data;
 			pendingAttachments = [...pendingAttachments, { id: d.id, filename: d.filename, size: d.size }];
 		}
 	}
@@ -181,11 +428,7 @@
 		streamChat(prompt);
 	}
 
-	// ── Textarea auto-grow ─────────────────────────────────────────────────────
-	function grow(el: HTMLTextAreaElement) {
-		el.style.height = 'auto';
-		el.style.height = Math.min(el.scrollHeight, 240) + 'px';
-	}
+	// autoGrow is a Svelte action imported from $lib/ui/actions — use:autoGrow on the textarea
 
 	// ── Load thread history ───────────────────────────────────────────────────
 	async function loadThread(threadId: string) {
@@ -194,16 +437,20 @@
 		activeThreadId = threadId;
 		messages = [{ role: 'ai', text: 'Loading…', streaming: true }];
 		try {
-			const res = await fetch(`/v1/threads/${threadId}/messages`, {
-				headers: { 'X-Tenant-ID': 'dev' }
-			});
-			if (!res.ok) { messages = [{ role: 'ai', text: 'Could not load thread.' }]; return; }
-			const raw = await res.json() as unknown;
-			const arr = Array.isArray(raw) ? raw : (raw as { messages?: unknown[] }).messages ?? [];
-			messages = (arr as { role: string; content: string }[]).map((m) => ({
-				role: m.role === 'user' ? 'user' : 'ai',
-				text: m.content
-			}));
+			type MsgArr = { role: string; content: string }[];
+			type MsgEnv = MsgArr | { data?: MsgArr; messages?: MsgArr; items?: MsgArr };
+			const result = await apiCall<MsgEnv>(fetch, EP.THREAD_MESSAGES(threadId));
+			if (result.error) { messages = [{ role: 'ai', text: 'Could not load thread.' }]; return; }
+			const raw = result.data;
+			const arr: MsgArr = Array.isArray(raw) ? raw
+				: ((raw as { data?: MsgArr })?.data
+					?? (raw as { messages?: MsgArr })?.messages
+					?? (raw as { items?: MsgArr })?.items
+					?? []);
+			const filtered = arr.filter((m) => m.role === 'user' || m.role === 'assistant');
+			messages = filtered.length
+				? filtered.map((m) => ({ role: (m.role === 'user' ? 'user' : 'ai') as 'user' | 'ai', text: m.content }))
+				: [{ role: 'ai', text: 'No messages in this thread yet.' }];
 		} catch { messages = [{ role: 'ai', text: 'Failed to load thread.' }]; }
 	}
 
@@ -234,7 +481,6 @@
 <svelte:window onkeydown={onKeydown} />
 <svelte:head>
 	<title>Workshop · ConusAI</title>
-	<script src="/js/workspace.js" type="module"></script>
 </svelte:head>
 
 <div class="app">
@@ -243,7 +489,8 @@
 		<section class="nav-section ws-section" aria-labelledby="ws-heading">
 			<header class="nav-header">
 				<span id="ws-heading" class="nav-heading label-mono">Workspace</span>
-				<button type="button" class="icon-btn ws-new-btn" aria-label="New folder or conversation">
+				<button type="button" class="icon-btn ws-new-btn" aria-label="New folder or conversation"
+					onclick={() => openNewNodeForm(null)}>
 					<svg class="icon" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
 						<line x1="9" y1="3" x2="9" y2="15"/><line x1="3" y1="9" x2="15" y2="9"/>
 					</svg>
@@ -253,22 +500,75 @@
 				<svg class="ws-search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
 					<circle cx="6.5" cy="6.5" r="4.5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/>
 				</svg>
-				<input id="ws-search" class="ws-search-input" type="search" placeholder="Search conversations…" autocomplete="off" spellcheck="false" aria-label="Search workspace">
-				<button class="ws-search-clear" id="ws-search-clear" aria-label="Clear search" hidden>
-					<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-						<line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/>
-					</svg>
-				</button>
+				<input id="ws-search" class="ws-search-input" type="search" placeholder="Search conversations…"
+					autocomplete="off" spellcheck="false" aria-label="Search workspace"
+					value={searchQuery}
+					oninput={onSearchInput}>
+				{#if searchQuery}
+					<button class="ws-search-clear" aria-label="Clear search" onclick={clearSearch}>
+						<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+							<line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/>
+						</svg>
+					</button>
+				{/if}
 			</div>
-			<div id="workspace-tree" class="ws-tree" role="tree" aria-busy="true" aria-labelledby="ws-heading">
-				<div class="ws-skeleton" aria-hidden="true"></div>
-			</div>
+
+			<!-- New folder / conversation form -->
+			{#if showNewNodeForm}
+				<form class="ws-new-form" onsubmit={submitNewNode}>
+					<div class="ws-new-kind">
+						<button type="button" class="ws-kind-btn" class:active={newNodeKind === 'folder'}
+							onclick={() => newNodeKind = 'folder'}>📁 Folder</button>
+						<button type="button" class="ws-kind-btn" class:active={newNodeKind === 'conversation'}
+							onclick={() => newNodeKind = 'conversation'}>📄 Chat</button>
+					</div>
+					<div class="ws-new-row">
+						<input class="ws-new-input" type="text" placeholder={newNodeKind === 'folder' ? 'Folder name…' : 'Conversation name…'}
+							bind:value={newNodeName} use:focusInput maxlength={80} autocomplete="off" />
+						<button type="submit" class="ws-new-ok" disabled={newNodeBusy} aria-label="Create">
+							{#if newNodeBusy}…{:else}✓{/if}
+						</button>
+						<button type="button" class="ws-new-cancel" onclick={closeNewNodeForm} aria-label="Cancel">✕</button>
+					</div>
+					{#if newNodeError}<div class="ws-new-error">{newNodeError}</div>{/if}
+				</form>
+			{/if}
+
+			<!-- Search results -->
+			{#if searchQuery}
+				<div class="ws-tree" role="listbox" aria-label="Search results">
+					{#if searchResults.length === 0}
+						<div class="empty-hint">No matches for "{searchQuery}"</div>
+					{:else}
+						{#each searchResults as node (node.id)}
+							<button class="ws-node ws-node-{node.kind}" class:ws-node-selected={selectedNodeId === node.id}
+								role="option" aria-selected={selectedNodeId === node.id}
+								onclick={() => selectNode(node)}>
+								<span class="ws-node-icon">{node.kind === 'folder' ? '📁' : '📄'}</span>
+								<span class="ws-node-name">{node.name}</span>
+								<span class="ws-node-path">{node.virtual_path}</span>
+							</button>
+						{/each}
+					{/if}
+				</div>
+			{:else}
+				<!-- Workspace tree -->
+				<div id="workspace-tree" class="ws-tree" role="tree" aria-labelledby="ws-heading">
+					{#if workspaceNodes.length === 0}
+						<div class="empty-hint">No folders yet — click <strong>+</strong> to create one.</div>
+					{:else}
+						{#each workspaceNodes as node (node.id)}
+							{@render treeNode(node, 0)}
+						{/each}
+					{/if}
+				</div>
+			{/if}
 		</section>
 
 		<div class="nav-section">
 			<div class="nav-heading label-mono">Recents</div>
 			<div class="recents-list" id="recents-list">
-				{#each data.recents as r (r.id)}
+				{#each recents as r (r.id)}
 					<div class="recent" role="button" tabindex="0"
 						onclick={() => loadThread(r.id)}
 						onkeydown={(e) => e.key === 'Enter' && loadThread(r.id)}
@@ -329,7 +629,7 @@
 					{/if}
 				</svg>
 			</button>
-			<a href="/logout" class="icon-btn" aria-label="Logout">
+			<a href="/logout" class="icon-btn" aria-label="Logout" data-sveltekit-reload>
 				<svg class="icon" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
 					<path d="M7 3H3v12h4M12 6l4 3-4 3M6 9h10"/>
 				</svg>
@@ -345,7 +645,7 @@
 			<section class="greeting-screen">
 				<div class="greeting">
 					<img class="sigil" src="/images/favicon.png" alt="" aria-hidden="true">
-					<h1 class="greeting-text">Good {data.user ? '' : ''}morning, {data.user?.firstName ?? 'there'}</h1>
+					<h1 class="greeting-text">Good {data.user ? '' : ''}morning, {data.user?.firstName ?? 'there'}<span class="greeting-presence">{@render sonarDot(true)}</span></h1>
 				</div>
 
 				{@render composer()}
@@ -367,7 +667,7 @@
 					{#each messages as msg, i (i)}
 						{#if msg.role === 'thinking'}
 							<div class="message ai thinking">
-								<span class="thinking-dots" aria-label="Thinking"><i></i><i></i><i></i></span>
+								{@render sonarDot()}
 							</div>
 						{:else if msg.role === 'user'}
 							<div class="message user">{msg.text}</div>
@@ -379,8 +679,12 @@
 							{/if}
 						{:else}
 							<div class="message ai" class:streaming={msg.streaming}>
-								<span class="ai-text">{msg.text}</span>
-								{#if msg.streaming}<span class="cursor" aria-hidden="true"></span>{/if}
+								{#if msg.streaming && msg.words}
+									<span class="ai-text" aria-live="polite">{#each msg.words as w (w.id)}<span class="tok" style="animation-delay:{w.delay}ms">{w.t}</span>{/each}</span>
+									{@render sonarDot(true)}
+								{:else}
+									<span class="ai-text">{msg.text}</span>
+								{/if}
 							</div>
 						{/if}
 					{/each}
@@ -399,6 +703,13 @@
 							<div class="tool-body">{card.result || 'running…'}</div>
 						</details>
 					{/each}
+
+					<!-- Waiting dot — appears directly after last message when idle -->
+					{#if !inFlight}
+						<div class="chat-end-dot">
+							{@render sonarDot()}
+						</div>
+					{/if}
 				</div>
 
 				<div class="composer-bottom">
@@ -409,11 +720,25 @@
 	</main>
 </div>
 
+<!-- ── Sonar-ping dot — single component used everywhere ─────────────────── -->
+{#snippet sonarDot(sm: boolean = false)}
+	<span class="sonar" class:sonar-sm={sm} role="status" aria-label="Waiting">
+		<span class="sonar-ring sonar-r1"></span>
+		<span class="sonar-ring sonar-r2"></span>
+		<span class="sonar-core"></span>
+	</span>
+{/snippet}
+
 <!-- ── Composer snippet ────────────────────────────────────────────────────── -->
 {#snippet composer()}
 	<div class="composer-wrap">
 		<form class="composer" class:drop-target={dropTarget}
+			class:focused={composerFocused}
+			class:has-content={inputValue.length > 0 || pendingAttachments.length > 0}
+			aria-busy={inFlight}
 			onsubmit={handleSubmit}
+			onfocusin={() => (composerFocused = true)}
+			onfocusout={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) composerFocused = false; }}
 			ondragover={(e) => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); dropTarget = true; } }}
 			ondragleave={() => (dropTarget = false)}
 			ondrop={(e) => { e.preventDefault(); dropTarget = false; if (e.dataTransfer?.files?.length) uploadFiles([...e.dataTransfer.files]); }}>
@@ -446,9 +771,12 @@
 
 			<label class="sr-only" for="prompt">Message</label>
 			<textarea id="prompt" class="composer-input" name="prompt" placeholder="How can I help you today?"
-				rows="2" autocomplete="off" bind:value={inputValue}
-				oninput={(e) => grow(e.currentTarget)}
+				rows="1" autocomplete="off" bind:value={inputValue}
+				use:autoGrow
 				onkeydown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); (e.currentTarget.closest('form') as HTMLFormElement)?.requestSubmit(); } }}></textarea>
+
+			<input id="file-input" type="file" style="display:none" multiple
+				onchange={(e) => { const files = e.currentTarget.files; if (files?.length) uploadFiles([...files]); e.currentTarget.value = ''; }}>
 
 			<div class="composer-toolbar">
 				<button type="button" class="toolbar-btn" aria-label="Attach file"
@@ -457,10 +785,7 @@
 						<path d="M15 9l-6 6a4 4 0 0 1-5.657-5.657l7-7a2.5 2.5 0 0 1 3.536 3.536l-7 7a1 1 0 0 1-1.414-1.414l6-6"/>
 					</svg>
 				</button>
-				<input id="file-input" type="file" hidden multiple
-					onchange={(e) => { const files = e.currentTarget.files; if (files?.length) uploadFiles([...files]); e.currentTarget.value = ''; }}>
 				<div class="toolbar-spacer"></div>
-				<span class="model-pill">Opus 4.7</span>
 				<button type="submit" class="send-btn" aria-label="Send" disabled={inFlight}>
 					<svg class="icon" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round">
 						<line x1="7" y1="12" x2="7" y2="2"/><polyline points="3,6 7,2 11,6"/>
@@ -526,12 +851,36 @@
 	</div>
 {/snippet}
 
-<script lang="ts" context="module">
-	interface InvoiceData {
-		invoice_number?: unknown; status?: string; invoice_date?: string; due_date?: string;
-		issuer_name?: unknown; issuer_address?: string;
-		billed_to_name?: unknown; billed_to_company?: string;
-		currency?: string; subtotal?: number; tax_amount?: number; total_amount?: number;
-		line_items?: { description?: string; quantity?: unknown; unit_price?: unknown; total?: unknown }[];
-	}
-</script>
+<!-- ── Workspace tree node snippet ─────────────────────────────────────────── -->
+{#snippet treeNode(node: WorkspaceNode, depth: number)}
+	{#if node.kind === 'folder'}
+		<div class="ws-folder" style="--depth:{depth}">
+			<button class="ws-node ws-node-folder" class:ws-node-expanded={expandedFolders.has(node.id)}
+				class:ws-node-selected={selectedNodeId === node.id}
+				onclick={() => { selectedNodeId = node.id; goto(`?ws=${node.id}`, { replaceState: true, keepFocus: true, noScroll: true }); toggleFolder(node); }}
+				aria-expanded={expandedFolders.has(node.id)}>
+				<span class="ws-node-chevron">{expandedFolders.has(node.id) ? '▾' : '▸'}</span>
+				<span class="ws-node-icon">📁</span>
+				<span class="ws-node-name">{node.name}</span>
+			</button>
+			{#if expandedFolders.has(node.id)}
+				<div class="ws-children">
+					{#if childNodes.has(node.id)}
+						{#each childNodes.get(node.id) ?? [] as child (child.id)}
+							{@render treeNode(child, depth + 1)}
+						{/each}
+					{:else}
+						<div class="ws-loading">Loading…</div>
+					{/if}
+				</div>
+			{/if}
+		</div>
+	{:else}
+		<button class="ws-node ws-node-conversation" class:ws-node-selected={selectedNodeId === node.id}
+			style="--depth:{depth}" onclick={() => selectNode(node)}>
+			<span class="ws-node-icon">📄</span>
+			<span class="ws-node-name">{node.name}</span>
+		</button>
+	{/if}
+{/snippet}
+
