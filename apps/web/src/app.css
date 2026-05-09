@@ -875,55 +875,68 @@ body::after {
   white-space: pre-wrap;
 }
 
-/* ── Word token — each word fades in as it streams ── */
+/* ── Word token — premium 2026 reveal ──
+   Pure opacity + translateY with ease-out-expo (no blur filter).
+   ~340ms gives a confident, intentional pace.
+   inline-block is required for transform to apply; whitespace tokens
+   render correctly because we tokenize words+whitespace separately. */
 .tok {
-  display: inline;
-  animation: tok-in 180ms var(--ease-out) both;
+  display: inline-block;
+  white-space: pre-wrap;
+  will-change: opacity, transform;
+  animation: tok-in 340ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 @keyframes tok-in {
-  from { opacity: 0; filter: blur(3px); }
-  to   { opacity: 1; filter: blur(0); }
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ── Writing dot — ConusAI favicon-inspired radar ripple ── */
+/* ── Writing dot — ConusAI favicon radar ripple (slower, meditative) ── */
 .writing-dot {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 16px; height: 16px;
+  width: 18px; height: 18px;
   position: relative;
   vertical-align: middle;
-  margin-left: 5px;
+  margin-left: 6px;
   flex-shrink: 0;
+  /* Whole dot has its own gentle breath */
+  animation: wd-breath 3.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 .wd-core {
   width: 5px; height: 5px;
   border-radius: 50%;
   background: var(--ember);
   position: relative; z-index: 1;
-  animation: wd-core 1.6s ease-in-out infinite;
+  box-shadow: 0 0 6px var(--ember-glow);
+  animation: wd-core 2.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 .wd-ring {
   position: absolute;
   border-radius: 50%;
   border: 1.5px solid var(--ember);
-  animation: wd-ring-out 1.6s ease-out infinite;
+  animation: wd-ring-out 2.8s cubic-bezier(0.16, 1, 0.3, 1) infinite;
 }
-.wd-r1 { width: 9px;  height: 9px;  animation-delay: 0s; }
-.wd-r2 { width: 15px; height: 15px; animation-delay: 0.55s; }
+.wd-r1 { width: 10px; height: 10px; animation-delay: 0s; }
+.wd-r2 { width: 18px; height: 18px; animation-delay: 1.0s; }
 
+@keyframes wd-breath {
+  0%, 100% { transform: scale(1); }
+  50%       { transform: scale(1.04); }
+}
 @keyframes wd-core {
   0%, 100% { transform: scale(1);    opacity: 1; }
-  50%       { transform: scale(0.65); opacity: 0.5; }
+  50%       { transform: scale(0.7);  opacity: 0.55; }
 }
 @keyframes wd-ring-out {
-  0%   { transform: scale(0.35); opacity: 0.85; }
-  70%  { transform: scale(1);    opacity: 0.15; }
-  100% { transform: scale(1);    opacity: 0; }
+  0%   { transform: scale(0.3); opacity: 0.9; }
+  60%  { transform: scale(0.95); opacity: 0.2; }
+  100% { transform: scale(1);   opacity: 0; }
 }
 
-/* Thinking mode: slower pulse, slightly dimmer */
-.thinking-dot .wd-core { animation-duration: 2.2s; }
-.thinking-dot .wd-r1   { animation-duration: 2.2s; opacity: 0.7; }
-.thinking-dot .wd-r2   { animation-duration: 2.2s; animation-delay: 0.8s; opacity: 0.5; }
+/* Thinking mode: even slower, more contemplative */
+.thinking-dot .wd-core { animation-duration: 3.2s; }
+.thinking-dot .wd-r1   { animation-duration: 3.2s; opacity: 0.65; }
+.thinking-dot .wd-r2   { animation-duration: 3.2s; animation-delay: 1.4s; opacity: 0.45; }
 .message.ai.error::before { background: var(--rust); }
 .message.ai.error { color: var(--ink-2); }
 .message.ai.error .ai-text::before { content: "⚠  "; color: var(--rust); }
