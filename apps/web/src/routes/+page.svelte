@@ -1,6 +1,10 @@
 <script lang="ts">
 	import type { PageData } from './$types';
 	import type { WorkspaceNode } from '$lib/types';
+	import type { InvoiceData } from '$lib/api/types';
+	import { streamChat as apiStreamChat } from '$lib/api/stream';
+	import { workspacesApi, apiCall } from '$lib/api';
+	import { EP } from '$lib/api/endpoints';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
@@ -38,10 +42,10 @@
 			expandedFolders = new Set(expandedFolders);
 			if (!childNodes.has(node.id)) {
 				try {
-					const res = await fetch(`/v1/workspaces/tree?parent_id=${node.id}`);
-					if (res.ok) {
-						const raw = await res.json();
-						const nodes: WorkspaceNode[] = Array.isArray(raw) ? raw : (raw?.nodes ?? []);
+					const result = await workspacesApi.getTree(fetch, node.id);
+					if (!result.error) {
+						const raw = result.data;
+						const nodes: WorkspaceNode[] = Array.isArray(raw) ? raw : ((raw as { nodes?: WorkspaceNode[] })?.nodes ?? []);
 						const updated = new Map(childNodes);
 						updated.set(node.id, nodes);
 						childNodes = updated;
@@ -65,10 +69,11 @@
 			activeThreadId = tid;
 			messages = [{ role: 'ai', text: '…', streaming: true }];
 			try {
-				const res = await fetch(`/v1/threads/${tid}/messages`);
-				if (res.ok) {
-					const raw = await res.json();
-					const msgs: { role: string; content: unknown }[] = Array.isArray(raw) ? raw : (raw?.data ?? []);
+				type MsgArr = { role: string; content: unknown }[];
+				const result = await apiCall<MsgArr | { data?: MsgArr }>(fetch, EP.THREAD_MESSAGES(tid));
+				if (!result.error) {
+					const raw = result.data;
+					const msgs: MsgArr = Array.isArray(raw) ? raw : ((raw as { data?: MsgArr })?.data ?? []);
 					messages = msgs
 						.filter((m) => m.role === 'user' || m.role === 'assistant')
 						.map((m) => ({
@@ -102,9 +107,9 @@
 	 *  so its metadata.thread_id is populated for the next selectNode call. */
 	async function refreshNodeMetadata(nodeId: string) {
 		try {
-			const res = await fetch(`/v1/workspaces/${nodeId}`);
-			if (!res.ok) return;
-			const updated: WorkspaceNode = await res.json();
+			const result = await workspacesApi.getNode(fetch, nodeId);
+			if (result.error) return;
+			const updated: WorkspaceNode = result.data;
 			// Update the node in all trees in-place
 			function patchIn(nodes: WorkspaceNode[]): boolean {
 				for (let i = 0; i < nodes.length; i++) {
@@ -121,10 +126,10 @@
 
 	async function refreshWorkspaceTree() {
 		try {
-			const res = await fetch('/v1/workspaces/tree');
-			if (res.ok) {
-				const raw = await res.json();
-				workspaceNodes = Array.isArray(raw) ? raw : (raw?.nodes ?? []);
+			const result = await workspacesApi.getTree(fetch);
+			if (!result.error) {
+				const raw = result.data;
+				workspaceNodes = Array.isArray(raw) ? raw : ((raw as { nodes?: WorkspaceNode[] })?.nodes ?? []);
 			}
 		} catch { /* ignore */ }
 	}
@@ -158,16 +163,13 @@
 		newNodeBusy = true;
 		newNodeError = '';
 		try {
-			const body: Record<string, unknown> = { kind: newNodeKind, name };
-			if (newNodeParentId) body.parent_id = newNodeParentId;
-			const res = await fetch('/v1/workspaces', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(body)
+			const result = await workspacesApi.createNode(fetch, {
+				kind: newNodeKind,
+				name,
+				parent_id: newNodeParentId
 			});
-			if (!res.ok) {
-				const err = await res.json().catch(() => ({}));
-				newNodeError = (err as { error?: string }).error ?? `Error ${res.status}`;
+			if (result.error) {
+				newNodeError = result.error.message ?? `Error ${result.error.status}`;
 				return;
 			}
 			closeNewNodeForm();
@@ -195,10 +197,10 @@
 		if (!q.trim()) { searchResults = []; return; }
 		searchTimer = setTimeout(async () => {
 			try {
-				const res = await fetch(`/v1/workspaces/search?q=${encodeURIComponent(q.trim())}&limit=20`);
-				if (res.ok) {
-					const raw = await res.json();
-					searchResults = Array.isArray(raw) ? raw : (raw?.nodes ?? []);
+				const result = await workspacesApi.searchNodes(fetch, q.trim());
+				if (!result.error) {
+					const raw = result.data;
+					searchResults = Array.isArray(raw) ? raw : ((raw as { nodes?: WorkspaceNode[] })?.nodes ?? []);
 				}
 			} catch { searchResults = []; }
 		}, 220);
@@ -216,8 +218,8 @@
 	// ── Theme ────────────────────────────────────────────────────────────────
 	let theme = $state('paper');
 	onMount(() => {
-		theme = localStorage.getItem('conusai-theme') ?? 'paper';
-		document.documentElement.setAttribute('data-theme', theme);
+		// Read theme set by the flash-prevention script in app.html
+		theme = document.documentElement.dataset.theme ?? localStorage.getItem('conusai-theme') ?? 'paper';
 	});
 	function toggleTheme() {
 		theme = theme === 'paper' ? 'forge' : 'paper';
@@ -245,111 +247,77 @@
 		let aiIdx = -1;
 		const newToolCards = new Map(toolCards);
 
-		try {
-			const body: Record<string, unknown> = { message: prompt, thread_id: activeThreadId };
-			if (selectedNodeId) body.workspace_node_id = selectedNodeId;
-			const res = await fetch('/ui/stream', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(body)
-			});
-			if (!res.ok || !res.body) {
-				messages = messages.filter((m) => m.role !== 'thinking');
-				messages = [...messages, { role: 'ai', text: `Error: ${res.status} ${res.statusText}` }];
-				return;
+		// ── Word-level streaming buffer ─────────────────────────────────────
+		// Incoming chars accumulate in wordAccum. On each animation frame we
+		// flush complete words (split at whitespace) as individual .tok spans
+		// so CSS can animate each word in. Partial last word stays buffered.
+		let wordAccum = '';
+		let wid = 0;
+		let rafId: number | null = null;
+
+		function flushWords(final = false) {
+			if (!wordAccum || aiIdx < 0 || messages[aiIdx]?.role !== 'ai') { rafId = null; return; }
+			let take = wordAccum;
+			let keep = '';
+			if (!final) {
+				const cut = wordAccum.search(/\S+$/);
+				if (cut > 0) { take = wordAccum.slice(0, cut); keep = wordAccum.slice(cut); }
+				else if (cut === 0) { rafId = null; return; }
 			}
+			wordAccum = keep;
+			const tokens = take.split(/(\s+)/).filter(s => s.length > 0);
+			const newWords = tokens.map((t, i) => ({ t, id: wid++, delay: i * 22 }));
+			const m = messages[aiIdx];
+			messages[aiIdx] = { ...m, text: m.text + take, words: [...(m.words ?? []), ...newWords] };
+			messages = [...messages];
+			scrollIfNear();
+			rafId = null;
+		}
+
+		function scheduleFlush() {
+			if (!rafId) rafId = requestAnimationFrame(() => flushWords());
+		}
+
+		try {
 			messages = messages.filter((m) => m.role !== 'thinking');
 
-			const reader = res.body.getReader();
-			const dec = new TextDecoder();
-			let buf = '';
-
-			// ── Word-level streaming buffer ─────────────────────────────────────
-			// Incoming chars accumulate in wordAccum. On each animation frame we
-			// flush complete words (split at whitespace) as individual .tok spans
-			// so CSS can animate each word in. Partial last word stays buffered.
-			let wordAccum = '';
-			let wid = 0;
-			let rafId: number | null = null;
-
-			function flushWords(final = false) {
-				if (!wordAccum || aiIdx < 0 || messages[aiIdx]?.role !== 'ai') { rafId = null; return; }
-				// On final flush, take everything; otherwise split at last whitespace
-				let take = wordAccum;
-				let keep = '';
-				if (!final) {
-					const cut = wordAccum.search(/\S+$/);
-					if (cut > 0) { take = wordAccum.slice(0, cut); keep = wordAccum.slice(cut); }
-					else if (cut === 0) { rafId = null; return; } // single partial word, wait
-				}
-				wordAccum = keep;
-				// Tokenise: split preserving whitespace runs between words
-				const tokens = take.split(/(\s+)/).filter(s => s.length > 0);
-				const newWords = tokens.map((t, i) => ({ t, id: wid++, delay: i * 22 }));
-				const m = messages[aiIdx];
-				messages[aiIdx] = { ...m, text: m.text + take, words: [...(m.words ?? []), ...newWords] };
-				messages = [...messages];
-				scrollIfNear();
-				rafId = null;
-			}
-
-			function scheduleFlush() {
-				if (!rafId) rafId = requestAnimationFrame(() => flushWords());
-			}
-
-			while (true) {
-				const { value, done } = await reader.read();
-				if (done) break;
-				buf += dec.decode(value, { stream: true });
-				let pos: number;
-				while ((pos = buf.indexOf('\n\n')) !== -1) {
-					const block = buf.slice(0, pos);
-					buf = buf.slice(pos + 2);
-					for (const line of block.split('\n')) {
-						if (!line.startsWith('data: ')) continue;
-						const raw = line.slice(6);
-						if (raw === '[DONE]') continue;
-						let ev: Record<string, unknown>;
-						try { ev = JSON.parse(raw); } catch { continue; }
-						const delta = (ev.choices as { delta?: Record<string, unknown> }[])?.[0]?.delta;
-						if (!delta) continue;
-
-						if (typeof delta.content === 'string') {
-							if (aiIdx < 0 || messages[aiIdx]?.role !== 'ai') {
-								messages = [...messages, { role: 'ai', text: '', words: [], streaming: true }];
-								aiIdx = messages.length - 1;
-							}
-							wordAccum += delta.content;
-							scheduleFlush();
-						} else if (delta.tool_call_start) {
-							const { id, name } = delta.tool_call_start as { id: string; name: string };
-							newToolCards.set(id, { name, status: 'running', result: '', startTime: performance.now() });
-							toolCards = new Map(newToolCards);
-							aiIdx = -1;
-						} else if (delta.tool_call_result) {
-							const { tool_use_id, result } = delta.tool_call_result as { tool_use_id: string; result: string };
-							const card = newToolCards.get(tool_use_id);
-							if (card) {
-								let isError = false;
-								try { const obj = JSON.parse(result); if (obj?.error || obj?.status === 'error') isError = true; } catch {}
-								if (typeof result === 'string' && result.startsWith('Error:')) isError = true;
-								newToolCards.set(tool_use_id, { ...card, status: isError ? 'error' : 'success', result });
-								toolCards = new Map(newToolCards);
-							}
-						}
-
-						// thread_id is set when a workspace node is bound; fall back to
-						// the completion id so standalone chats still appear in Recents.
-						const tid = (ev.thread_id as string | null) ?? (ev.id as string | null);
-						if (tid && tid !== activeThreadId) {
-							activeThreadId = tid;
-							// Prepend to recents sidebar (trim duplicates)
-							const title = prompt.slice(0, 60) + (prompt.length > 60 ? '…' : '');
-							recents = [{ id: tid, title }, ...recents.filter((r) => r.id !== tid)].slice(0, 20);
-						}
+			for await (const delta of apiStreamChat({
+				message: prompt,
+				threadId: activeThreadId,
+				workspaceNodeId: selectedNodeId
+			})) {
+				if (delta.kind === 'text') {
+					if (aiIdx < 0 || messages[aiIdx]?.role !== 'ai') {
+						messages = [...messages, { role: 'ai', text: '', words: [], streaming: true }];
+						aiIdx = messages.length - 1;
+					}
+					wordAccum += delta.content;
+					scheduleFlush();
+				} else if (delta.kind === 'tool_start') {
+					newToolCards.set(delta.id, { name: delta.name, status: 'running', result: '', startTime: performance.now() });
+					toolCards = new Map(newToolCards);
+					aiIdx = -1;
+				} else if (delta.kind === 'tool_result') {
+					const card = newToolCards.get(delta.tool_use_id);
+					if (card) {
+						let isError = false;
+						try { const obj = JSON.parse(delta.result); if (obj?.error || obj?.status === 'error') isError = true; } catch {}
+						if (typeof delta.result === 'string' && delta.result.startsWith('Error:')) isError = true;
+						newToolCards.set(delta.tool_use_id, { ...card, status: isError ? 'error' : 'success', result: delta.result });
+						toolCards = new Map(newToolCards);
+					}
+				} else if (delta.kind === 'thread_id') {
+					const tid = delta.id;
+					if (tid !== activeThreadId) {
+						activeThreadId = tid;
+						// Prepend to recents sidebar (trim duplicates)
+						const title = prompt.slice(0, 60) + (prompt.length > 60 ? '…' : '');
+						recents = [{ id: tid, title }, ...recents.filter((r) => r.id !== tid)].slice(0, 20);
 					}
 				}
+				// 'done' terminates the generator naturally
 			}
+
 			// Final flush of any remaining partial word
 			if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
 			flushWords(true);
@@ -377,14 +345,12 @@
 		messages = [...messages, { role: 'ai', text: 'Running invoice pipeline…', streaming: true }];
 		const loadIdx = messages.length - 1;
 		try {
-			const res = await fetch('/ui/extract-invoice', {
-				method: 'POST', headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ token })
+			const result = await apiCall<InvoiceData>(fetch, EP.UI_EXTRACT_INVOICE, {
+				method: 'POST', body: JSON.stringify({ token })
 			});
 			messages = messages.filter((_, i) => i !== loadIdx);
-			if (!res.ok) { messages = [...messages, { role: 'ai', text: `Extraction failed: ${res.statusText}` }]; return; }
-			const d = await res.json();
-			invoiceResults = new Map([...invoiceResults, [token, d]]);
+			if (result.error) { messages = [...messages, { role: 'ai', text: `Extraction failed: ${result.error.message}` }]; return; }
+			invoiceResults = new Map([...invoiceResults, [token, result.data]]);
 			messages = [...messages, { role: 'ai', text: '__invoice__' + token }];
 		} catch (e: unknown) {
 			messages = messages.filter((_, i) => i !== loadIdx);
@@ -395,11 +361,9 @@
 	// ── Upload ────────────────────────────────────────────────────────────────
 	async function uploadFiles(files: File[]) {
 		for (const file of files) {
-			const fd = new FormData();
-			fd.append('file', file, file.name);
-			const res = await fetch('/ui/upload', { method: 'POST', body: fd });
-			if (!res.ok) continue;
-			const d = await res.json() as { id: string; filename: string; size: number };
+			const result = await workspacesApi.uploadFile(fetch, file);
+			if (result.error) continue;
+			const d = result.data;
 			pendingAttachments = [...pendingAttachments, { id: d.id, filename: d.filename, size: d.size }];
 		}
 	}
@@ -442,16 +406,20 @@
 		activeThreadId = threadId;
 		messages = [{ role: 'ai', text: 'Loading…', streaming: true }];
 		try {
-			const res = await fetch(`/v1/threads/${threadId}/messages`, {
-				headers: { 'X-Tenant-ID': 'dev' }
-			});
-			if (!res.ok) { messages = [{ role: 'ai', text: 'Could not load thread.' }]; return; }
-			const raw = await res.json() as unknown;
-			const arr = Array.isArray(raw) ? raw : (raw as { messages?: unknown[] }).messages ?? [];
-			messages = (arr as { role: string; content: string }[]).map((m) => ({
-				role: m.role === 'user' ? 'user' : 'ai',
-				text: m.content
-			}));
+			type MsgArr = { role: string; content: string }[];
+			type MsgEnv = MsgArr | { data?: MsgArr; messages?: MsgArr; items?: MsgArr };
+			const result = await apiCall<MsgEnv>(fetch, EP.THREAD_MESSAGES(threadId));
+			if (result.error) { messages = [{ role: 'ai', text: 'Could not load thread.' }]; return; }
+			const raw = result.data;
+			const arr: MsgArr = Array.isArray(raw) ? raw
+				: ((raw as { data?: MsgArr })?.data
+					?? (raw as { messages?: MsgArr })?.messages
+					?? (raw as { items?: MsgArr })?.items
+					?? []);
+			const filtered = arr.filter((m) => m.role === 'user' || m.role === 'assistant');
+			messages = filtered.length
+				? filtered.map((m) => ({ role: (m.role === 'user' ? 'user' : 'ai') as 'user' | 'ai', text: m.content }))
+				: [{ role: 'ai', text: 'No messages in this thread yet.' }];
 		} catch { messages = [{ role: 'ai', text: 'Failed to load thread.' }]; }
 	}
 
@@ -736,6 +704,7 @@
 		<form class="composer" class:drop-target={dropTarget}
 			class:focused={composerFocused}
 			class:has-content={inputValue.length > 0 || pendingAttachments.length > 0}
+			aria-busy={inFlight}
 			onsubmit={handleSubmit}
 			onfocusin={() => (composerFocused = true)}
 			onfocusout={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) composerFocused = false; }}
@@ -884,12 +853,3 @@
 	{/if}
 {/snippet}
 
-<script lang="ts" context="module">
-	interface InvoiceData {
-		invoice_number?: unknown; status?: string; invoice_date?: string; due_date?: string;
-		issuer_name?: unknown; issuer_address?: string;
-		billed_to_name?: unknown; billed_to_company?: string;
-		currency?: string; subtotal?: number; tax_amount?: number; total_amount?: number;
-		line_items?: { description?: string; quantity?: unknown; unit_price?: unknown; total?: unknown }[];
-	}
-</script>

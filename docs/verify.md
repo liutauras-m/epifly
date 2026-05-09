@@ -872,7 +872,7 @@ Response shape (once wired):
 
 Browser-driven verification of the SvelteKit sidebar at [`apps/web/src/routes/+page.svelte`](../apps/web/src/routes/+page.svelte).
 
-> **Status (2026-05-08):** Sidebar structure renders correctly. Recents and Capabilities load via SSR but return empty when `JWT_SECRET` is set (session-cookie auth rejected on `/v1/*`). Workspace tree is a **stub** (`aria-busy="true"`, skeleton div) — not yet wired to `GET /v1/workspaces/tree`. Items marked ⚠️ below are pending implementation.
+> **Status (2026-05-09):** All items verified after Phases 1–4 of [`docs/web/plan.md`](web/plan.md) were implemented.
 
 ```bash
 # Backend — unset JWT_SECRET so /v1/* accepts session cookie
@@ -888,17 +888,65 @@ Manual checklist (use Chrome, preview tools, or Playwright):
 - ✅ `GET http://localhost:5173/` while logged out → 302 to `/login`. Submit name + plan → 302 to `/`.
 - ✅ Sidebar sections rendered (top-to-bottom): **WORKSPACE** header with `+` icon-button → search input → workspace tree area → **RECENTS** → **CAPABILITIES** → user chip footer.
 - ✅ **No** legacy `New chat`, `Search` nav item, brand monogram, or `Chats / Projects / Code / Customize / Design / More` rows.
-- ✅ Sidebar scrolls internally when the tree overflows (`.ws-section` is `flex: 1 1 0; overflow: hidden;` and `.ws-tree` has `overflow-y: auto`).
-- ⚠️ **RECENTS** loads from `GET /v1/threads?limit=20` via SSR — returns empty when JWT required; works with `unset JWT_SECRET`.
-- ⚠️ **CAPABILITIES** loads from `GET /v1/capabilities` via SSR — returns empty when JWT required; works with `unset JWT_SECRET`.
-- ⚠️ **WORKSPACE TREE** — stub only; `#workspace-tree` renders a skeleton. Wiring `GET /v1/workspaces/tree` + tree component is pending.
-- ⚠️ Type `inv` in the search input → `/v1/workspaces/search?q=inv` fires after debounce — not yet implemented client-side.
-- ⚠️ Click a conversation → URL updates to `?ws=<id>` — not yet implemented (tree stub).
-- ✅ Send a message in the composer → DevTools shows `POST /ui/stream` (proxied) → SSE response renders in chat.
-- ⚠️ After response, `metadata.thread_id` populated on workspace node — pending workspace tree wiring.
+- ✅ Sidebar scrolls internally when the tree overflows.
+- ✅ **RECENTS** loads from `GET /v1/threads?limit=20` via SSR; clicking a recent loads full thread history.
+- ✅ **CAPABILITIES** loads from `GET /v1/capabilities` via SSR.
+- ✅ **WORKSPACE TREE** — fully wired to `GET /v1/workspaces/tree` via SSR; lazy child-loading on folder expand; `?ws=<id>` URL deep-link.
+- ✅ Type in the search input → `/v1/workspaces/search?q=…` fires after 220ms debounce.
+- ✅ Click a conversation → URL updates to `?ws=<id>`, thread history loads.
+- ✅ Send a message in the composer → `POST /ui/stream` (proxied) → SSE response streams with word-level animation.
+- ✅ After response, `metadata.thread_id` refreshed on workspace node.
 - ✅ Theme toggle (sun/moon icon in top bar) works; `Cmd/Ctrl-Enter` to send works.
 
 The session cookie is set by SvelteKit's form action and verified by the Rust gateway (`/ui/*` requests include `Cookie: conusai_session=...`); both use the same HMAC key from the `UI_SESSION_KEY` env var.
+
+---
+
+## Phase 14 — Frontend Architecture Phases 1–4 (2026-05-09)
+
+Implementation of [`docs/web/plan.md`](web/plan.md) Phases 1–4 verified in-browser.
+
+### Phase 1 — Typed API client + SSE module ✅
+
+| Check | Status |
+|---|---|
+| `grep -R "fetch(" apps/web/src/routes apps/web/src/lib` returns matches only in `client.ts`, `stream.ts`, `workspaces.ts` (upload), `env.ts` (server wrapper) | ✅ Verified |
+| Chat, upload, invoice, thread-load flows work end-to-end | ✅ Verified in browser |
+| `src/lib/api/{client,endpoints,types,stream,glyphs,workspaces,index}.ts` created | ✅ |
+| `src/lib/server/env.ts` with `BACKEND_URL` + `createServerFetch()` | ✅ |
+| `+page.server.ts` refactored — no local `glyphFor()`, uses `apiCall` via `createServerFetch` | ✅ |
+| SSE auto-reconnect (3 attempts, 200ms/600ms/1.8s backoff), opt-out via `{ reconnect: false }` | ✅ Implemented in `stream.ts` |
+| `InvoiceData` moved from module-script block to `$lib/api/types.ts` | ✅ |
+| `ChatStreamDelta` discriminated union (`text \| tool_start \| tool_result \| thread_id \| done`) | ✅ |
+
+### Phase 2 — Workspace cleanup ✅
+
+| Check | Status |
+|---|---|
+| `apps/web/static/js/workspace.js` deleted (755 lines of orphaned code) | ✅ |
+| No `prompt()` / `confirm()` in `apps/web/` | ✅ (replaced by Svelte-native form in page.svelte) |
+| Workspace tree (folders, conversations, search, create, lazy-load) works in browser | ✅ Verified |
+| Selecting a conversation loads thread history | ✅ Verified |
+
+### Phase 3 — Session & auth hardening ✅
+
+| Check | Status |
+|---|---|
+| `svelte.config.js` — blanket `csrf: { checkOrigin: false }` removed | ✅ |
+| `hooks.server.ts` — scoped origin check: enforced for form paths, exempt for `/v1`, `/api`, `/ui`, `/mcp`, `/admin` | ✅ |
+| Production missing-key warning logged at startup | ✅ (`console.error` in hooks) |
+| Existing login still works in dev with no env vars set | ✅ Verified |
+
+### Phase 4 — UX, accessibility & error boundaries ✅
+
+| Check | Status |
+|---|---|
+| `src/routes/+error.svelte` — custom error page with status + message + back link | ✅ |
+| `src/lib/ui/toast.svelte.ts` — runes-based toast store (`add/dismiss/info/success/error/warning`) | ✅ |
+| `src/lib/ui/LiveAnnouncer.svelte` — visually-hidden `aria-live="polite"` region + toast stack | ✅ |
+| `+layout.svelte` mounts `<LiveAnnouncer />` globally | ✅ |
+| Theme init reads `document.documentElement.dataset.theme` (set by flash-prevention script in `app.html`) | ✅ |
+| `aria-busy={inFlight}` on composer form | ✅ |
 
 ---
 
