@@ -5,4 +5,5 @@ export interface WorkspaceNode {
 	virtual_path: string;
 	parent_id: string | null;
 	last_modified: string;
+	metadata?: { thread_id?: string | null } | null;
 }

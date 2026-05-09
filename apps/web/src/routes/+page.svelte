@@ -49,14 +49,72 @@
 		}
 	}
 
-	function selectNode(node: WorkspaceNode) {
+	async function selectNode(node: WorkspaceNode) {
 		selectedNodeId = node.id;
 		goto(`?ws=${node.id}`, { replaceState: true, keepFocus: true, noScroll: true });
-		if (node.kind === 'conversation') {
-			showChat = true;
+		if (node.kind !== 'conversation') return;
+
+		showChat = true;
+		messages = [];
+
+		// If the node already has a bound thread, load its history
+		const tid = node.metadata?.thread_id ?? null;
+		if (tid) {
+			activeThreadId = tid;
+			messages = [{ role: 'ai', text: '…', streaming: true }];
+			try {
+				const res = await fetch(`/v1/threads/${tid}/messages`);
+				if (res.ok) {
+					const raw = await res.json();
+					const msgs: { role: string; content: unknown }[] = Array.isArray(raw) ? raw : (raw?.data ?? []);
+					messages = msgs
+						.filter((m) => m.role === 'user' || m.role === 'assistant')
+						.map((m) => ({
+							role: (m.role === 'assistant' ? 'ai' : 'user') as 'ai' | 'user',
+							text: typeof m.content === 'string' ? m.content
+								: Array.isArray(m.content)
+									? (m.content as { type: string; text?: string }[])
+											.filter((b) => b.type === 'text')
+											.map((b) => b.text ?? '')
+											.join('')
+									: String(m.content),
+							streaming: false
+						}));
+					if (messages.length === 0) {
+						messages = [{ role: 'ai', text: `_${node.virtual_path} — no messages yet._`, streaming: false }];
+					}
+				} else {
+					messages = [{ role: 'ai', text: `_${node.virtual_path}_`, streaming: false }];
+				}
+			} catch {
+				messages = [{ role: 'ai', text: `_${node.virtual_path}_`, streaming: false }];
+			}
+		} else {
+			// No thread yet — show the file name, chat will bind one on first message
 			activeThreadId = null;
-			messages = [{ role: 'ai', text: `Opened: ${node.virtual_path}`, streaming: false }];
+			messages = [{ role: 'ai', text: `_${node.virtual_path} — send a message to start._`, streaming: false }];
 		}
+	}
+
+	/** After a stream bound to a workspace node completes, re-fetch that node
+	 *  so its metadata.thread_id is populated for the next selectNode call. */
+	async function refreshNodeMetadata(nodeId: string) {
+		try {
+			const res = await fetch(`/v1/workspaces/${nodeId}`);
+			if (!res.ok) return;
+			const updated: WorkspaceNode = await res.json();
+			// Update the node in all trees in-place
+			function patchIn(nodes: WorkspaceNode[]): boolean {
+				for (let i = 0; i < nodes.length; i++) {
+					if (nodes[i].id === nodeId) { nodes[i] = updated; return true; }
+				}
+				return false;
+			}
+			if (!patchIn(workspaceNodes)) {
+				for (const children of childNodes.values()) patchIn(children);
+			}
+			workspaceNodes = [...workspaceNodes];
+		} catch { /* ignore */ }
 	}
 
 	async function refreshWorkspaceTree() {
@@ -260,6 +318,9 @@
 			}
 			if (aiIdx >= 0) messages[aiIdx] = { ...messages[aiIdx], streaming: false };
 			messages = [...messages];
+			// If this chat was bound to a workspace node, refresh its metadata so
+			// the next selectNode call will find the newly-created thread_id.
+			if (selectedNodeId) await refreshNodeMetadata(selectedNodeId);
 		} catch (e: unknown) {
 			messages = messages.filter((m) => m.role !== 'thinking');
 			messages = [...messages, { role: 'ai', text: `Stream failed: ${e instanceof Error ? e.message : String(e)}` }];
