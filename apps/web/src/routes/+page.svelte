@@ -1,6 +1,9 @@
 <script lang="ts">
 	import type { PageData } from './$types';
+	import type { WorkspaceNode } from '$lib/types';
 	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 
 	let { data }: { data: PageData } = $props();
 
@@ -12,6 +15,89 @@
 	let inFlight = $state(false);
 	let inputValue = $state('');
 	let pendingAttachments: { id: string; filename: string; size: number }[] = $state([]);
+
+	// ── Workspace tree ────────────────────────────────────────────────────────
+	let workspaceNodes = $state<WorkspaceNode[]>(data.workspaceTree ?? []);
+	let expandedFolders = $state<Set<string>>(new Set());
+	let childNodes = $state<Map<string, WorkspaceNode[]>>(new Map());
+	let selectedNodeId = $state<string | null>(null);
+
+	onMount(() => {
+		const wsParam = $page.url.searchParams.get('ws');
+		if (wsParam) selectedNodeId = wsParam;
+	});
+
+	async function toggleFolder(node: WorkspaceNode) {
+		if (expandedFolders.has(node.id)) {
+			expandedFolders.delete(node.id);
+			expandedFolders = new Set(expandedFolders);
+		} else {
+			expandedFolders.add(node.id);
+			expandedFolders = new Set(expandedFolders);
+			if (!childNodes.has(node.id)) {
+				try {
+					const res = await fetch(`/v1/workspaces/tree?parent_id=${node.id}`);
+					if (res.ok) {
+						const raw = await res.json();
+						const nodes: WorkspaceNode[] = Array.isArray(raw) ? raw : (raw?.nodes ?? []);
+						const updated = new Map(childNodes);
+						updated.set(node.id, nodes);
+						childNodes = updated;
+					}
+				} catch { /* ignore */ }
+			}
+		}
+	}
+
+	function selectNode(node: WorkspaceNode) {
+		selectedNodeId = node.id;
+		goto(`?ws=${node.id}`, { replaceState: true, keepFocus: true, noScroll: true });
+		if (node.kind === 'conversation') {
+			showChat = true;
+			activeThreadId = null;
+			messages = [{ role: 'ai', text: `Opened: ${node.virtual_path}`, streaming: false }];
+		}
+	}
+
+	async function refreshWorkspaceTree() {
+		try {
+			const res = await fetch('/v1/workspaces/tree');
+			if (res.ok) {
+				const raw = await res.json();
+				workspaceNodes = Array.isArray(raw) ? raw : (raw?.nodes ?? []);
+			}
+		} catch { /* ignore */ }
+	}
+
+	// ── Workspace search (debounced) ─────────────────────────────────────────
+	let searchQuery = $state('');
+	let searchResults = $state<WorkspaceNode[]>([]);
+	let searchTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function onSearchInput(e: Event) {
+		const q = (e.target as HTMLInputElement).value;
+		searchQuery = q;
+		if (searchTimer) clearTimeout(searchTimer);
+		if (!q.trim()) { searchResults = []; return; }
+		searchTimer = setTimeout(async () => {
+			try {
+				const res = await fetch(`/v1/workspaces/search?q=${encodeURIComponent(q.trim())}&limit=20`);
+				if (res.ok) {
+					const raw = await res.json();
+					searchResults = Array.isArray(raw) ? raw : (raw?.nodes ?? []);
+				}
+			} catch { searchResults = []; }
+		}, 220);
+	}
+
+	function clearSearch() {
+		searchQuery = '';
+		searchResults = [];
+		if (searchTimer) clearTimeout(searchTimer);
+	}
+
+	// ── Recents (local, updated after chat) ──────────────────────────────────
+	let recents = $state<{ id: string; title: string }[]>(data.recents ?? []);
 
 	// ── Theme ────────────────────────────────────────────────────────────────
 	let theme = $state('paper');
@@ -47,6 +133,7 @@
 
 		try {
 			const body: Record<string, unknown> = { message: prompt, thread_id: activeThreadId };
+			if (selectedNodeId) body.workspace_node_id = selectedNodeId;
 			const res = await fetch('/ui/stream', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -105,7 +192,15 @@
 							}
 						}
 
-						if (ev.thread_id) activeThreadId = ev.thread_id as string;
+						// thread_id is set when a workspace node is bound; fall back to
+						// the completion id so standalone chats still appear in Recents.
+						const tid = (ev.thread_id as string | null) ?? (ev.id as string | null);
+						if (tid && tid !== activeThreadId) {
+							activeThreadId = tid;
+							// Prepend to recents sidebar (trim duplicates)
+							const title = prompt.slice(0, 60) + (prompt.length > 60 ? '…' : '');
+							recents = [{ id: tid, title }, ...recents.filter((r) => r.id !== tid)].slice(0, 20);
+						}
 					}
 				}
 			}
@@ -234,7 +329,6 @@
 <svelte:window onkeydown={onKeydown} />
 <svelte:head>
 	<title>Workshop · ConusAI</title>
-	<script src="/js/workspace.js" type="module"></script>
 </svelte:head>
 
 <div class="app">
@@ -253,22 +347,54 @@
 				<svg class="ws-search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
 					<circle cx="6.5" cy="6.5" r="4.5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/>
 				</svg>
-				<input id="ws-search" class="ws-search-input" type="search" placeholder="Search conversations…" autocomplete="off" spellcheck="false" aria-label="Search workspace">
-				<button class="ws-search-clear" id="ws-search-clear" aria-label="Clear search" hidden>
-					<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-						<line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/>
-					</svg>
-				</button>
+				<input id="ws-search" class="ws-search-input" type="search" placeholder="Search conversations…"
+					autocomplete="off" spellcheck="false" aria-label="Search workspace"
+					value={searchQuery}
+					oninput={onSearchInput}>
+				{#if searchQuery}
+					<button class="ws-search-clear" aria-label="Clear search" onclick={clearSearch}>
+						<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+							<line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/>
+						</svg>
+					</button>
+				{/if}
 			</div>
-			<div id="workspace-tree" class="ws-tree" role="tree" aria-busy="true" aria-labelledby="ws-heading">
-				<div class="ws-skeleton" aria-hidden="true"></div>
-			</div>
+
+			<!-- Search results -->
+			{#if searchQuery}
+				<div class="ws-tree" role="listbox" aria-label="Search results">
+					{#if searchResults.length === 0}
+						<div class="empty-hint">No matches for "{searchQuery}"</div>
+					{:else}
+						{#each searchResults as node (node.id)}
+							<button class="ws-node ws-node-{node.kind}" class:ws-node-selected={selectedNodeId === node.id}
+								role="option" aria-selected={selectedNodeId === node.id}
+								onclick={() => selectNode(node)}>
+								<span class="ws-node-icon">{node.kind === 'folder' ? '📁' : '📄'}</span>
+								<span class="ws-node-name">{node.name}</span>
+								<span class="ws-node-path">{node.virtual_path}</span>
+							</button>
+						{/each}
+					{/if}
+				</div>
+			{:else}
+				<!-- Workspace tree -->
+				<div id="workspace-tree" class="ws-tree" role="tree" aria-labelledby="ws-heading">
+					{#if workspaceNodes.length === 0}
+						<div class="empty-hint">No folders yet — click <strong>+</strong> to create one.</div>
+					{:else}
+						{#each workspaceNodes as node (node.id)}
+							{@render treeNode(node, 0)}
+						{/each}
+					{/if}
+				</div>
+			{/if}
 		</section>
 
 		<div class="nav-section">
 			<div class="nav-heading label-mono">Recents</div>
 			<div class="recents-list" id="recents-list">
-				{#each data.recents as r (r.id)}
+				{#each recents as r (r.id)}
 					<div class="recent" role="button" tabindex="0"
 						onclick={() => loadThread(r.id)}
 						onkeydown={(e) => e.key === 'Enter' && loadThread(r.id)}
@@ -524,6 +650,37 @@
 			<div class="inv-source">Extracted from {filename} via InvoicePipeline</div>
 		</div>
 	</div>
+{/snippet}
+
+<!-- ── Workspace tree node snippet ─────────────────────────────────────────── -->
+{#snippet treeNode(node: WorkspaceNode, depth: number)}
+	{#if node.kind === 'folder'}
+		<div class="ws-folder" style="--depth:{depth}">
+			<button class="ws-node ws-node-folder" class:ws-node-expanded={expandedFolders.has(node.id)}
+				onclick={() => toggleFolder(node)} aria-expanded={expandedFolders.has(node.id)}>
+				<span class="ws-node-chevron">{expandedFolders.has(node.id) ? '▾' : '▸'}</span>
+				<span class="ws-node-icon">📁</span>
+				<span class="ws-node-name">{node.name}</span>
+			</button>
+			{#if expandedFolders.has(node.id)}
+				<div class="ws-children">
+					{#if childNodes.has(node.id)}
+						{#each childNodes.get(node.id) ?? [] as child (child.id)}
+							{@render treeNode(child, depth + 1)}
+						{/each}
+					{:else}
+						<div class="ws-loading">Loading…</div>
+					{/if}
+				</div>
+			{/if}
+		</div>
+	{:else}
+		<button class="ws-node ws-node-conversation" class:ws-node-selected={selectedNodeId === node.id}
+			style="--depth:{depth}" onclick={() => selectNode(node)}>
+			<span class="ws-node-icon">📄</span>
+			<span class="ws-node-name">{node.name}</span>
+		</button>
+	{/if}
 {/snippet}
 
 <script lang="ts" context="module">

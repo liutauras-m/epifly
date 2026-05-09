@@ -1244,6 +1244,24 @@ body::after {
   to   { background-position: -200% 0; }
 }
 
+/* ── Workspace tree nodes ────────────────────────────────────────────────── */
+.ws-folder { display: flex; flex-direction: column; }
+.ws-node {
+  display: flex; align-items: center; gap: var(--s-1);
+  width: 100%; padding: 3px var(--s-2) 3px calc(var(--s-2) + var(--depth, 0) * 12px);
+  border: none; background: none; cursor: pointer; text-align: left;
+  border-radius: var(--r-xs); color: var(--ink-2); font-size: var(--t-meta);
+  transition: background 120ms, color 120ms;
+}
+.ws-node:hover { background: var(--paper-2); color: var(--ink); }
+.ws-node-selected { background: var(--ember-soft) !important; color: var(--ink) !important; }
+.ws-node-chevron { width: 12px; font-size: 9px; color: var(--ink-3); flex-shrink: 0; }
+.ws-node-icon { font-size: 11px; flex-shrink: 0; }
+.ws-node-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-node-path { font-size: 10px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100px; }
+.ws-children { display: flex; flex-direction: column; }
+.ws-loading { padding: var(--s-1) var(--s-3); font-size: var(--t-meta); color: var(--ink-3); font-style: italic; }
+
 /* dialog */
 .ws-dialog-form {
   padding: var(--s-5); display: flex; flex-direction: column; gap: var(--s-4);

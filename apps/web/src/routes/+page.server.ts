@@ -1,10 +1,12 @@
 import type { PageServerLoad } from './$types';
 import { COOKIE_NAME } from '$lib/server/session';
+import type { WorkspaceNode } from '$lib/types';
+export type { WorkspaceNode };
 
 const BACKEND = process.env.CONUSAI_BACKEND_URL ?? 'http://localhost:8080';
 
 export const load: PageServerLoad = async ({ locals, cookies }) => {
-	if (!locals.user) return { recents: [], capabilities: [] };
+	if (!locals.user) return { recents: [], capabilities: [], workspaceTree: [] };
 
 	const sessionCookie = cookies.get(COOKIE_NAME) ?? '';
 	const headers: Record<string, string> = {
@@ -12,9 +14,10 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		'Content-Type': 'application/json'
 	};
 
-	const [threadsRes, capsRes] = await Promise.allSettled([
+	const [threadsRes, capsRes, treeRes] = await Promise.allSettled([
 		fetch(`${BACKEND}/v1/threads?limit=20`, { headers }),
-		fetch(`${BACKEND}/v1/capabilities`, { headers })
+		fetch(`${BACKEND}/v1/capabilities`, { headers }),
+		fetch(`${BACKEND}/v1/workspaces/tree`, { headers })
 	]);
 
 	const recents: { id: string; title: string }[] = await (async () => {
@@ -34,7 +37,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		if (capsRes.status !== 'fulfilled' || !capsRes.value.ok) return [];
 		try {
 			const data = await capsRes.value.json();
-			const arr = Array.isArray(data) ? data : (data?.data ?? data?.items ?? []);
+			const arr = Array.isArray(data) ? data : (data?.capabilities ?? data?.data ?? data?.items ?? []);
 			return (arr as Cap[]).map((c) => ({
 				name: c.name,
 				kindGlyph: glyphFor(c.kind ?? ''),
@@ -43,7 +46,15 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		} catch { return []; }
 	})();
 
-	return { recents, capabilities };
+	const workspaceTree: WorkspaceNode[] = await (async () => {
+		if (treeRes.status !== 'fulfilled' || !treeRes.value.ok) return [];
+		try {
+			const data = await treeRes.value.json();
+			return Array.isArray(data) ? data : (data?.nodes ?? []);
+		} catch { return []; }
+	})();
+
+	return { recents, capabilities, workspaceTree };
 };
 
 function glyphFor(kind: string): string {
