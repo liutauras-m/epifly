@@ -1,7 +1,7 @@
 <script lang="ts">
   import { setContext } from 'svelte';
-  import { createThemeStore } from '../stores/themeStore.js';
-  import type { ThemeAdapter } from '../stores/themeStore.js';
+  import { createThemeStore } from '../stores/themeStore.svelte.js';
+  import type { ThemeAdapter } from '../stores/themeStore.svelte.js';
 
   let {
     adapter = undefined,

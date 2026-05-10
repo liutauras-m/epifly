@@ -1,5 +1,5 @@
 <script lang="ts">
-  import "./tokens.css";
+  import "../tokens.css";
 
   interface Props {
     title?: string;

@@ -151,4 +151,7 @@
   .send-btn:hover:not(:disabled) { background: var(--ember-2); }
   .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .icon { width: 16px; height: 16px; }
+  @media (max-width: 640px) {
+    .toolbar-btn, .send-btn { width: 44px; height: 44px; }
+  }
 </style>

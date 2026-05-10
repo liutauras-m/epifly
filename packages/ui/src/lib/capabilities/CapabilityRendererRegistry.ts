@@ -15,7 +15,7 @@ export interface CreateRegistryOpts {
 }
 
 export function createCapabilityRendererRegistry(opts: CreateRegistryOpts = {}): CapabilityRendererRegistry {
-  const renderers = $state(new Map<string, Renderer>());
+  const renderers = new Map<string, Renderer>();
   return {
     register(name, renderer) { renderers.set(name, renderer); },
     unregister(name)         { renderers.delete(name); },

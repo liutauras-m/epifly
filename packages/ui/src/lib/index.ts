@@ -28,14 +28,14 @@ export { default as LiveAnnouncer } from "./utils/LiveAnnouncer.svelte";
 export { autoGrow } from "./utils/actions.js";
 
 // ── Stores ───────────────────────────────────────────────────────────────────
-export { createThemeStore, localStorageAdapter } from "./stores/themeStore.js";
-export type { Theme, ThemeAdapter, ThemeStore } from "./stores/themeStore.js";
-export { createFeatureFlags } from "./stores/featureFlags.js";
-export type { FeatureFlags, FeatureFlagStore } from "./stores/featureFlags.js";
+export { createThemeStore, localStorageAdapter } from "./stores/themeStore.svelte.js";
+export type { Theme, ThemeAdapter, ThemeStore } from "./stores/themeStore.svelte.js";
+export { createFeatureFlags } from "./stores/featureFlags.svelte.js";
+export type { FeatureFlags, FeatureFlagStore } from "./stores/featureFlags.svelte.js";
 export { toasts } from "./stores/toast.svelte.js";
 export type { ToastKind } from "./stores/toast.svelte.js";
-export { modeStore } from "./stores/modeStore.js";
-export type { AppMode } from "./stores/modeStore.js";
+export { modeStore } from "./stores/modeStore.svelte.js";
+export type { AppMode } from "./stores/modeStore.svelte.js";
 
 // ── Capabilities ─────────────────────────────────────────────────────────────
 export { createCapabilityRendererRegistry } from "./capabilities/CapabilityRendererRegistry.js";

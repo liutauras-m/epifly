@@ -1,0 +1,117 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Web E2E + iOS mobile emulation (Ubuntu, cheap) ───────────────────────────
+  e2e-web:
+    name: E2E / Web + iOS (Chrome)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build web app
+        run: pnpm --filter web build
+
+      - name: Run web E2E
+        run: pnpm e2e:web
+        env:
+          CI: true
+
+      - name: Run iOS mobile-web E2E
+        run: pnpm e2e:ios
+        env:
+          CI: true
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: web-test-results
+          path: test-results/
+          retention-days: 7
+
+  # ── macOS Browser Shell E2E (macOS runner, path-filtered) ────────────────────
+  e2e-shell-macos:
+    name: E2E / macOS Shell (Tauri)
+    runs-on: macos-15
+    # Only run when browser-shell code changed — macOS runners are expensive
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.changed_files, 'apps/browser-shell')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/browser-shell/src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
+
+      - name: Build Tauri app (debug)
+        run: pnpm --filter browser-shell tauri build --debug
+        env:
+          CONUSAI_E2E: "1"
+
+      - name: Start tauri-driver and run shell E2E
+        run: |
+          BINARY="apps/browser-shell/src-tauri/target/aarch64-apple-darwin/debug/browser-shell"
+          tauri-driver --port 9515 --binary "$BINARY" &
+          DRIVER_PID=$!
+          sleep 3
+          TAURI_WEBDRIVER_URL="ws://127.0.0.1:9515" CONUSAI_E2E=1 pnpm e2e:shell
+          kill $DRIVER_PID
+        env:
+          CI: true
+          CONUSAI_E2E: "1"
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: shell-test-results
+          path: test-results/
+          retention-days: 7

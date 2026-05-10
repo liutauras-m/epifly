@@ -6,6 +6,14 @@
   "scripts": {
     "dev": "pnpm --filter web dev",
     "build": "pnpm -r build",
-    "lint": "pnpm -r lint"
+    "lint": "pnpm -r lint",
+    "e2e": "playwright test",
+    "e2e:web": "playwright test --project=web",
+    "e2e:ios": "playwright test --project=ios-mobile-web",
+    "e2e:shell": "playwright test --project=shell-macos",
+    "e2e:all": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
   }
 }

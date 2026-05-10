@@ -1,4 +1,5 @@
 export const EP = {
+  THREADS: '/v1/threads',
   THREAD_MESSAGES: (id: string) => `/v1/threads/${id}/messages`,
   WORKSPACES: '/v1/workspaces',
   WORKSPACES_TREE: '/v1/workspaces/tree',

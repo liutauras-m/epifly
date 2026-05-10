@@ -29,6 +29,25 @@ impl DeviceAuthService {
     pub fn new(initial: Option<String>) -> Self {
         Self { inner: Arc::new(RwLock::new(initial)) }
     }
+
+    /// E2E test bypass: when `CONUSAI_E2E=1` is set at launch, inject a synthetic
+    /// token so the LoginPanel is skipped without Stronghold provisioning.
+    #[cfg(debug_assertions)]
+    pub fn from_env_or_e2e(env_var_token: Option<String>) -> Self {
+        let token = env_var_token.or_else(|| {
+            if std::env::var("CONUSAI_E2E").as_deref() == Ok("1") {
+                Some("e2e-bypass-token".to_owned())
+            } else {
+                None
+            }
+        });
+        Self::new(token)
+    }
+
+    #[cfg(not(debug_assertions))]
+    pub fn from_env_or_e2e(env_var_token: Option<String>) -> Self {
+        Self::new(env_var_token)
+    }
 }
 
 impl DeviceTokenProvider for DeviceAuthService {

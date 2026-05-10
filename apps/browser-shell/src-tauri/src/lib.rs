@@ -51,8 +51,8 @@ pub fn run() {
     let tabs_state: TabManagerState = Arc::new(Mutex::new(tabs::TabManager::default()));
     let recorder_state: RecorderStateHandle =
         Arc::new(Mutex::new(recorder::RecorderState::new()));
-    // Allow bootstrap via env var; frontend will overwrite from Stronghold once loaded.
-    let token_state: DeviceAuthHandle = Arc::new(DeviceAuthService::new(
+    // Allow bootstrap via env var or E2E bypass (debug builds only).
+    let token_state: DeviceAuthHandle = Arc::new(DeviceAuthService::from_env_or_e2e(
         std::env::var("CONUSAI_DEVICE_TOKEN").ok(),
     ));
 

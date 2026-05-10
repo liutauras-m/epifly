@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContext } from 'svelte';
-  import type { ThemeStore } from '../stores/themeStore.js';
+  import type { ThemeStore } from '../stores/themeStore.svelte.js';
 
   const theme = getContext<ThemeStore>('conusai.theme');
 </script>

@@ -35,19 +35,5 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const raw = event.cookies.get(COOKIE_NAME);
 	event.locals.user = raw ? (verify(raw) ?? null) : null;
 
-	const response = await resolve(event);
-
-	// ── Content-Security-Policy ───────────────────────────────────────────────
-	response.headers.set(
-		"Content-Security-Policy",
-		[
-			"default-src 'self'",
-			"connect-src 'self' wss:",
-			"img-src 'self' data: blob:",
-			"script-src 'self'",
-			"style-src 'self' 'unsafe-inline'",
-		].join("; ")
-	);
-
-	return response;
+	return resolve(event);
 };
