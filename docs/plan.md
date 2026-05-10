@@ -1,995 +1,725 @@
-# ConusAI Platform — v0.3.3 Implementation Plan
-## Zero-Core-Touch Mode + Self-Registering Generic Agent Capabilities
+# ConusAI Auth + Tenancy — Detailed Implementation Plan v0.8
 
-**Version:** v0.3.3  
-**Branch:** `feat/v0.3.3-zero-core-touch`  
-**Status:** Ready for AI implementation  
-**Goal:** Ship the infrastructure that lets any new capability self-register over HTTP — no Rust rebuild, no Cargo changes, no platform restart — and validate it with a live `current-time` MCP service.
-
----
-
-## Codebase Baseline (v0.3.2)
-
-All of the following already exist and must NOT be changed unless a phase explicitly modifies them:
-
-| Component | Location | Status |
-|-----------|----------|--------|
-| `CapabilityProvider` trait | `agent-core/src/tools/provider.rs` | ✅ complete |
-| `CapabilityCard` | `agent-core/src/tools/card.rs` | ✅ complete |
-| `ToolRegistry` | `agent-core/src/tools/registry.rs` | ✅ complete |
-| `SemanticCapabilityRouter` | `agent-core/src/tools/semantic_router.rs` | ✅ complete |
-| `DynamicPromptCapability` | `agent-core/src/chains/dynamic_prompt.rs` | ✅ complete |
-| `CapabilitySpecFactory` | `agent-core/src/tools/providers/capability_spec.rs` | ✅ complete |
-| `PgVectorStore` | `agent-core/src/vector_store/postgres.rs` | ✅ complete |
-| `EmbeddingService` | `agent-core/src/indexing/embedding_service.rs` | ✅ complete |
-| `RealtimeService` | `agent-core/src/realtime/mod.rs` | ✅ LISTEN/NOTIFY wired |
-| `McpAdapter` / `McpProvider` | `agent-core/src/tools/providers/mcp.rs` | ✅ file-based only |
-| `/admin/capabilities/*` CRUD | `agent-gateway/src/routes/admin_capabilities.rs` | ✅ TOML/WASM |
-| `RouterQuotaLayer` | `agent-gateway/src/mw/router_quota.rs` | ✅ complete |
-| `AppState` | `agent-gateway/src/state.rs` | ✅ all fields |
-| DB migrations | `common/migrations/` | ✅ 7 migrations |
-
-**What is missing (gaps this plan closes):**
-
-1. No `/admin/capabilities/register` endpoint accepting JSON manifests from external services
-2. No `RemoteMcpCapability` — dynamic MCP provider constructed from a JSON payload, not a TOML file
-3. No `tenant_scope` field — capabilities cannot be scoped to specific tenant IDs
-4. `RealtimeService` hot-reload not wired to `CapabilitySpecFactory::reload_one()` at startup
-5. No `ArtifactBridge` — tool outputs with file artifacts are not persisted to workspace nodes
-6. No `services/` directory — no example of a self-registering external capability
-7. `ToolKind` enum missing `RemoteMcp` variant
+> Source: `docs/tasks/auth.md` v0.6 (2026-05-09) reconciled against the current
+> code on `main`, then refined by the v0.8 review (2026-05-09). This is the
+> **authoritative, code-grounded** plan.
+> All effort estimates and high-level phasing match v0.6. Where v0.6 was vague
+> or misaligned with the repo, this document gives the exact files, types,
+> diffs, and acceptance gates.
+>
+> **v0.8 changelog** (vs v0.7):
+> 1. `secrecy = "0.10"` for `JwtIssuer.secret` + provider creds (no `Debug` leaks).
+> 2. Shared `common::jwt::JwtSecret::from_env()` — single source of truth for issuer + middleware.
+> 3. `#[tracing::instrument]` + Prometheus counters on auth service entry points.
+> 4. `#[non_exhaustive]` `AuthError` with proper `source` chains via `From` impls.
+> 5. Provider registry stays as `HashMap` (no premature factory abstraction).
+> 6. Frontend client renamed `GatewayClient` / `apiFetch` (was `BackendJwtAdapter`/`gatewayFetch`).
+> 7. `AuthConfig::load` falls back to `CONUSAI_` prefix for transition (e.g. `JWT_SECRET`).
+> 8. New round-trip integration test: `JwtIssuer::issue` → real `mw/tenant.rs` decode.
+>
+> **Effort**: 22–27 AI-hours (~145k tokens). +4h vs v0.7 baseline for the 8 refinements.
 
 ---
 
-## Phase 0 — Readiness Verification (pre-flight, 0 new code)
+## 0. Code-reality reconciliation (what changed vs v0.6)
 
-**Before starting** run these commands and confirm all pass:
+A full read of the workspace turned up the following deltas from the v0.6 doc.
+They drive the corrections below; nothing in v0.6's *intent* changes.
 
-```bash
-# 1. Compile check
-cargo check -p agent-core -p agent-gateway
+| Area | v0.6 assumption | Reality on `main` | Action |
+|---|---|---|---|
+| Workspace manifest | `[workspace.members]` table | [Cargo.toml](Cargo.toml#L1-L8) uses `[workspace] members = [...]` array | Append `"crates/auth-core"` to the existing array, **not** a new table |
+| `async-trait` | "already in workspace.deps" | Not in [Cargo.toml](Cargo.toml#L19-L97) `[workspace.dependencies]` | Add `async-trait = { version = "0.1" }` to workspace deps (currently only used inside `agent-core` indirectly) |
+| `wiremock` | dev-dep, "already used" | Not present anywhere | Add as `[dev-dependencies]` of `auth-core` only |
+| `figment` re-use | "existing pattern" | [common/src/config/mod.rs](crates/common/src/config/mod.rs#L1-L62) uses `Toml::file("config.toml") + Env::prefixed("CONUSAI_")` | Mirror this exact pattern in `auth-core::config` |
+| `TenantClaims` shape | "already supports `tenant_id`" | [context/tenant.rs](crates/agent-core/src/context/tenant.rs#L102-L108) is `{ sub, tenant_id, plan, exp }` (HS256) | `JwtIssuer` MUST emit *exactly* this shape so [mw/tenant.rs](crates/agent-gateway/src/mw/tenant.rs#L40-L60) keeps working unchanged. Add fields only via additive, optional claims |
+| JWT algorithm | RS256 *or* HS256 | [mw/tenant.rs](crates/agent-gateway/src/mw/tenant.rs#L43-L46) hard-codes HS256 + `JWT_SECRET` env | Phase A ships HS256 only; RS256/JWKS deferred to Phase D (post-ZITADEL prep) |
+| `BackendJwtAdapter` (frontend) | "Phase 3 already prepared" | [apps/web/src/lib/server/session.ts](apps/web/src/lib/server/session.ts#L1-L60) is an HMAC cookie only; no JWT adapter exists | Phase C must **create** the adapter, not just "activate" it |
+| Login UI | "buttons added" | [apps/web/src/routes/login/+page.svelte](apps/web/src/routes/login/+page.svelte#L1-L60) is a name+plan form (dev fake login) | Phase C adds provider buttons *next to* the dev form, gated by env |
+| `crates/auth-core` | implied | Does not exist | Create from scratch |
+| UI session ↔ tenant | "shared via cookie" | [ui/session.rs](crates/agent-gateway/src/ui/session.rs#L40-L55) reads tenant from `CONUSAI_UI_TENANT_ID` env (single tenant) | Phase B extends `SessionUser` to carry `tenant_id` + `email` after OAuth login |
 
-# 2. Full test suite
-cargo test --workspace
+**Conclusion:** v0.6's three-phase shape (A: `auth-core`, B: gateway wiring,
+C: frontend + docs) is correct. The corrections above are tactical, not
+architectural. We add **no new phases** beyond optional Phase D.
 
-# 3. Docker infra up
-docker compose --profile infra up -d
+Effort revised: **A 13–15h · B 7–9h · C 3–4h · (D optional 4–6h)**
+→ baseline 23–28 AI-hours (includes v0.8 refinements), still inside v0.6 band.
 
-# 4. Run migrations
-make db-migrate
+---
 
-# 5. Smoke-test admin route
-JWT=$(curl -s -X POST http://localhost:8080/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@test.local","password":"dev"}' | jq -r .token)
-curl -H "Authorization: Bearer $JWT" http://localhost:8080/admin/capabilities | jq length
+## 1. Phase A — `crates/auth-core` (library + tenant resolution)
+
+Pure domain logic. **Zero** Axum/HTTP/SvelteKit coupling.
+
+### 1.1 Workspace manifest diffs
+
+[Cargo.toml](Cargo.toml) — append to the `members` array:
+
+```toml
+[workspace]
+resolver = "3"
+members = [
+    "crates/common",
+    "crates/agent-core",
+    "crates/agent-gateway",
+    "crates/auth-core",      # ← NEW
+    "crates/invoice-demo",
+    "evals",
+]
 ```
 
-Expected: all tests pass, admin route returns array (possibly empty).
+Append to `[workspace.dependencies]`:
 
----
-
-## Phase 1 — `RemoteMcpCapability` + `ToolKind::RemoteMcp` (2 AI-hours)
-
-**Principle:** External MCP services must be invokable without a TOML file on disk. The existing `McpProvider` reads its endpoint from `card.manifest.config["endpoint"]` which requires a file. We need a variant that stores all state in the DB row payload.
-
-### 1.1 — Add `RemoteMcp` to `ToolKind` enum
-
-**File:** `apps/backend/crates/agent-core/src/tools/manifest.rs`
-
-Add to the `ToolKind` enum:
-```rust
-/// External MCP service registered via JSON (no TOML file on disk).
-#[serde(rename = "remote_mcp")]
-RemoteMcp,
+```toml
+# OAuth / OIDC
+oauth2          = { version = "5.0", default-features = false, features = ["reqwest", "rustls-tls"] }
+openidconnect   = { version = "4",   default-features = false, features = ["reqwest", "rustls-tls"] }
+async-trait     = { version = "0.1" }
+secrecy         = { version = "0.10", features = ["serde"] }   # v0.8 #1
+auth-core       = { path = "crates/auth-core" }
 ```
 
-### 1.2 — Create `RemoteMcpCapability`
+Notes:
+- `default-features = false` removes `oauth2`'s default `native-tls` so the
+  whole workspace stays on `rustls` (consistent with `reqwest` features
+  already in `[workspace.dependencies]`).
+- `openidconnect = "4"` is the latest stable line tracking `oauth2 = "5"`
+  (v0.6's "0.4" string was a typo).
+- `secrecy` (v0.8 #1) wraps every byte of secret material so it never lands
+  in `Debug`, `tracing`, or panic output. `JwtIssuer.secret`, `ProviderCreds.client_secret`,
+  and the flow-cookie HMAC key all use `SecretBox<Vec<u8>>` / `SecretString`.
 
-**New file:** `apps/backend/crates/agent-core/src/tools/providers/remote_mcp.rs`
+### 1.2 `crates/auth-core/Cargo.toml`
 
+```toml
+[package]
+name         = "auth-core"
+version      = { workspace = true }
+edition      = { workspace = true }
+rust-version = { workspace = true }
+authors      = { workspace = true }
+license      = { workspace = true }
+repository   = { workspace = true }
+
+[dependencies]
+oauth2        = { workspace = true }
+openidconnect = { workspace = true }
+async-trait   = { workspace = true }
+jsonwebtoken  = { workspace = true }
+serde         = { workspace = true }
+serde_json    = { workspace = true }
+thiserror     = { workspace = true }
+figment       = { workspace = true }
+ulid          = { workspace = true }
+chrono        = { workspace = true }
+tracing       = { workspace = true }
+secrecy       = { workspace = true }                # v0.8 #1
+url           = "2"
+reqwest       = { workspace = true }
+
+# Re-use the platform's TenantContext / PlanTier so we don't fork the type.
+agent-core    = { path = "../agent-core" }
+# Shared JwtSecret helper (v0.8 #2) — single source of truth for JWT_SECRET.
+common        = { path = "../common" }
+
+[dev-dependencies]
+tokio    = { workspace = true }
+wiremock = "0.6"
+```
+
+> Reusing `agent-core::{PlanTier, TenantContext, TenantClaims}` is a deliberate
+> tightening of v0.6 — it guarantees that `auth-core` cannot drift from the
+> middleware's claim shape.
+
+### 1.3 Directory layout
+
+```
+crates/auth-core/
+├── Cargo.toml
+├── README.md
+├── src/
+│   ├── lib.rs
+│   ├── error.rs
+│   ├── profile.rs          # UserProfile (provider-normalised)
+│   ├── tenant.rs           # TenantResolver trait + EmailDomainTenantResolver
+│   ├── jwt.rs              # JwtIssuer (HS256, emits agent_core::TenantClaims)
+│   ├── config.rs           # AuthConfig (figment, mirrors common::config pattern)
+│   ├── service.rs          # AuthService — orchestrates provider + resolver + issuer (#[tracing::instrument])
+│   ├── provider.rs         # OAuthProvider trait, FlowState, registry
+│   └── providers/
+│       ├── mod.rs
+│       ├── google.rs       # openidconnect (full OIDC, JWKS-validated)
+│       ├── github.rs       # plain oauth2 + GET /user + GET /user/emails
+│       └── microsoft.rs    # openidconnect (multi-tenant common endpoint)
+└── tests/
+    ├── google_flow.rs       # wiremock OIDC happy/error paths
+    ├── github_flow.rs
+    └── tenant_resolver.rs
+```
+
+### 1.4 Type-level contracts (exact signatures)
+
+`error.rs` (v0.8 #4 — `#[non_exhaustive]`, real `source` chains):
 ```rust
-//! `RemoteMcpCapability` — dynamically-registered MCP provider.
-//!
-//! Unlike `McpProvider` (file-based, kind=Mcp), this type is constructed
-//! entirely from a JSON registration payload and requires no TOML on disk.
-//! It is created by `CapabilityRegistrar::register_json()` and stored in
-//! `capability_specs` with strategy = "remote_mcp".
-
-use crate::context::tenant::TenantContext;
-use crate::tools::manifest::ToolManifest;
-use crate::tools::mcp_adapter::McpAdapter;
-use crate::tools::provider::CapabilityProvider;
-use async_trait::async_trait;
-use serde_json::Value;
-use std::sync::Arc;
-
-pub struct RemoteMcpCapability {
-    manifest: ToolManifest,
-    endpoint: String,
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum AuthError {
+    #[error("oauth request failed")]
+    OAuthRequest(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("oauth token exchange: {0}")]
+    OAuthExchange(String),
+    #[error("oidc discovery / verification")]
+    Oidc(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("jwt")]
+    Jwt(#[from] jsonwebtoken::errors::Error),
+    #[error("http")]
+    Http(#[from] reqwest::Error),
+    #[error("tenant resolution: {0}")] Tenant(String),
+    #[error("config: {0}")]            Config(String),
+    #[error("unknown provider: {0}")]  UnknownProvider(String),
+    #[error("invalid state")]          InvalidState,
+    #[error("invalid pkce verifier")]  InvalidPkce,
 }
+pub type Result<T> = std::result::Result<T, AuthError>;
 
-impl RemoteMcpCapability {
-    pub fn new(manifest: ToolManifest, endpoint: String) -> Arc<Self> {
-        Arc::new(Self { manifest, endpoint })
-    }
+// Per-provider From impls funnel `oauth2::RequestTokenError<…>` etc. into
+// `OAuthRequest` so call sites stay `?`-friendly while preserving the chain.
+```
+
+`profile.rs`:
+```rust
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct UserProfile {
+    pub provider: String,        // "google" | "github" | "microsoft"
+    pub provider_user_id: String,
+    pub email: String,
+    pub email_verified: bool,
+    pub name: Option<String>,
+    pub avatar_url: Option<String>,
 }
+```
 
-#[async_trait]
-impl CapabilityProvider for RemoteMcpCapability {
-    fn manifest(&self) -> &ToolManifest {
-        &self.manifest
-    }
+`tenant.rs`:
+```rust
+use agent_core::{PlanTier, TenantContext};
 
-    async fn invoke(
+#[async_trait::async_trait]
+pub trait TenantResolver: Send + Sync {
+    async fn resolve_or_create(
         &self,
-        tool_name: &str,
-        input: &Value,
-        _tenant: Option<&TenantContext>,
-    ) -> anyhow::Result<Value> {
-        let adapter = McpAdapter::new(&self.endpoint)
-            .map_err(|e| anyhow::anyhow!("MCP adapter error: {e}"))?;
-        adapter
-            .call_tool(tool_name, input.clone())
-            .await
-            .map_err(|e| anyhow::anyhow!("MCP call_tool error: {e}"))
+        profile: &UserProfile,
+        hint: Option<&str>,
+    ) -> Result<ResolvedTenant>;
+}
+
+pub struct ResolvedTenant {
+    pub tenant_id: String,       // free-form; ULID or slug
+    pub plan: PlanTier,
+}
+
+/// Dev / single-process default. Maps `email` domain → tenant slug.
+/// `personal-domains` (gmail.com, …) collapse to `personal`.
+pub struct EmailDomainTenantResolver { /* config */ }
+```
+
+`jwt.rs` — emits the **existing** `agent_core::TenantClaims`, secret wrapped
+with `secrecy` (v0.8 #1) and pulled via the shared helper (v0.8 #2):
+```rust
+use agent_core::TenantClaims;
+use common::jwt::JwtSecret;             // v0.8 #2 (new tiny module)
+use secrecy::{ExposeSecret, SecretBox}; // v0.8 #1
+
+pub struct JwtIssuer {
+    secret: SecretBox<Vec<u8>>,
+    ttl: chrono::Duration,
+}
+
+impl JwtIssuer {
+    /// Constructs from the shared `JwtSecret` so the issuer and `mw/tenant.rs`
+    /// can never disagree about which env var is authoritative.
+    pub fn new(secret: JwtSecret, ttl: chrono::Duration) -> Self;
+    pub fn from_env() -> Result<Self>;   // delegates to JwtSecret::from_env
+    pub fn issue(&self, profile: &UserProfile, tenant: &ResolvedTenant) -> Result<String>;
+    // sub = profile.email (matches existing middleware contract)
+}
+```
+
+**v0.8 #2 — new shared module** `crates/common/src/jwt.rs`:
+```rust
+use secrecy::{ExposeSecret, SecretBox};
+
+#[derive(Clone)]
+pub struct JwtSecret(SecretBox<Vec<u8>>);
+
+impl JwtSecret {
+    pub fn from_env() -> Option<Self> {
+        std::env::var("JWT_SECRET").ok()
+            .filter(|s| !s.is_empty())
+            .map(|s| Self(SecretBox::new(Box::new(s.into_bytes()))))
     }
+    pub fn expose(&self) -> &[u8] { self.0.expose_secret() }
 }
 ```
+[mw/tenant.rs](crates/agent-gateway/src/mw/tenant.rs#L20-L46) is migrated in
+Phase B to call `JwtSecret::from_env()` instead of reading `JWT_SECRET`
+directly — semantics identical, drift impossible.
 
-**Register in providers/mod.rs:**
+`provider.rs`:
 ```rust
-pub mod remote_mcp;
-```
-
-### 1.3 — Add `remote_mcp` strategy to `CapabilitySpecFactory::row_to_provider`
-
-**File:** `apps/backend/crates/agent-core/src/tools/providers/capability_spec.rs`
-
-In `row_to_provider()`, add a new arm to the `match row.strategy.as_str()` block:
-
-```rust
-"remote_mcp" => (ToolKind::RemoteMcp, None),
-```
-
-And in the final provider construction match, add:
-```rust
-ToolKind::RemoteMcp => {
-    let endpoint = row.payload["endpoint"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("remote_mcp spec '{}' missing payload.endpoint", cap_name))?
-        .to_string();
-    providers::remote_mcp::RemoteMcpCapability::new(manifest, endpoint)
-}
-```
-
-**Tests to add** in the same file's `#[cfg(test)]` block:
-- `remote_mcp_provider_forwards_to_adapter` — mock endpoint, verify `invoke` calls `call_tool`
-
----
-
-## Phase 2 — `tenant_scope` for Capability-Level Tenant Isolation (2 AI-hours)
-
-**Principle:** A capability should be visible only to the tenants it was registered for. `"global"` means all tenants. The filter must be applied at `SemanticCapabilityRouter::select()` time and at `/v1/capabilities` list time.
-
-### 2.1 — Migration: add `tenant_scope` to `capability_specs`
-
-**New file:** `apps/backend/crates/common/migrations/20260507000300_capability_tenant_scope.up.sql`
-
-```sql
-ALTER TABLE capability_specs
-    ADD COLUMN IF NOT EXISTS tenant_scope TEXT[] NOT NULL DEFAULT '{}';
--- Empty array = global (visible to all tenants).
--- Non-empty = visible only to listed tenant IDs.
-COMMENT ON COLUMN capability_specs.tenant_scope IS
-    'Empty = global. Non-empty = restrict to these tenant IDs.';
-
-CREATE INDEX IF NOT EXISTS capability_specs_scope_idx
-    ON capability_specs USING GIN (tenant_scope);
-```
-
-**Also update** `docker/init/02-schema.sql` to add `tenant_scope TEXT[] NOT NULL DEFAULT '{}'` to the `capability_specs` CREATE TABLE definition, plus the GIN index.
-
-### 2.2 — Add `tenant_scope` to `CapabilitySpecRow`
-
-**File:** `apps/backend/crates/agent-core/src/tools/providers/capability_spec.rs`
-
-Add to `CapabilitySpecRow`:
-```rust
-tenant_scope: Vec<String>,
-```
-
-### 2.3 — Add `tenant_scope` to `CapabilityCard` / `ToolManifest`
-
-**File:** `apps/backend/crates/agent-core/src/tools/manifest.rs`
-
-Add to `ToolManifest`:
-```rust
-/// Empty = global (all tenants). Non-empty = only these tenant IDs see this capability.
-#[serde(default)]
-pub tenant_scope: Vec<String>,
-```
-
-**File:** `apps/backend/crates/agent-core/src/tools/card.rs`
-
-Add helper to `CapabilityCard`:
-```rust
-/// Returns true if this capability is visible to `tenant_id`.
-/// An empty scope means global (always visible).
-pub fn is_visible_to(&self, tenant_id: &str) -> bool {
-    let scope = &self.manifest.tenant_scope;
-    scope.is_empty() || scope.iter().any(|t| t == tenant_id)
-}
-```
-
-### 2.4 — Enforce scope in `SemanticCapabilityRouter::select()`
-
-**File:** `apps/backend/crates/agent-core/src/tools/semantic_router.rs`
-
-After ANN hits are collected and distance-filtered, add a scope filter:
-```rust
-// Filter by tenant_scope if tenant is known.
-if let Some(t) = tenant {
-    let registry = self.registry.lock().unwrap();
-    cap_names.retain(|name| {
-        registry.get(name)
-            .map(|card| card.is_visible_to(&t.tenant_id))
-            .unwrap_or(false)
-    });
-}
-```
-
-Also enforce in `ToolRegistry::search_by_namespace()` — add `tenant_id: Option<&str>` parameter and filter cards by `is_visible_to`.
-
-### 2.5 — Enforce scope at `/v1/capabilities` list route
-
-**File:** `apps/backend/crates/agent-gateway/src/routes/` (capabilities listing handler)
-
-When building the list response, filter by `card.is_visible_to(&tenant.tenant_id)`.
-
-**Tests:**
-- Unit test in `card.rs`: `is_visible_to_global`, `is_visible_to_specific_tenant`, `is_not_visible_to_other_tenant`
-- Unit test in `semantic_router.rs`: `select_respects_tenant_scope`
-
----
-
-## Phase 3 — `POST /admin/capabilities/register` Self-Registration Endpoint (2 AI-hours)
-
-**Principle:** External services call this endpoint with a JSON manifest on startup. No TOML file, no WASM binary, no disk access. The registration atomically: validates → persists to `capability_specs` → embeds → inserts into registry.
-
-### 3.1 — Request/Response types
-
-**File:** `apps/backend/crates/agent-gateway/src/routes/admin_capabilities.rs`
-
-Add new request type:
-```rust
-/// JSON manifest posted by external self-registering capability services.
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct CapabilityRegisterRequest {
-    /// Unique ID, e.g. "media.time.current-time" — stored as capability_id.
-    pub capability_id: String,
-    /// Human name, used as tool_name in capability_specs.
-    pub name: String,
-    /// Dot-separated namespace, e.g. "media.time".
-    pub namespace: String,
-    pub description: String,
-    pub version: String,
-    /// Must be "remote_mcp" for self-registering MCP services.
-    pub kind: String,
-    /// MCP server endpoint URL (required when kind = "remote_mcp").
-    pub endpoint: Option<String>,
-    /// Tool definitions (name + description + JSON Schema).
-    pub tools: Vec<ToolDefJson>,
-    /// Empty = global. Non-empty = only these tenant IDs.
-    #[serde(default)]
-    pub tenant_scope: Vec<String>,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub tags: Vec<String>,
+pub struct FlowStart {
+    pub authorization_url: url::Url,
+    pub state: String,            // CSRF state, opaque
+    pub pkce_verifier: String,    // caller stores (cookie/session) & echoes back
+    pub nonce: Option<String>,    // OIDC only
 }
 
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub struct ToolDefJson {
-    pub name: String,
-    pub description: String,
-    pub input_schema: serde_json::Value,
-}
-
-fn default_true() -> bool { true }
-```
-
-### 3.2 — Handler implementation
-
-Add route `POST /admin/capabilities/register` in `admin_capabilities.rs`:
-
-```rust
-pub async fn register_capability(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<CapabilityRegisterRequest>,
-) -> Result<impl IntoResponse, HttpError>
-```
-
-**Implementation steps inside the handler:**
-
-1. **Validate** — `capability_id` must match pattern `^[a-z][a-z0-9._-]{1,127}$`; `kind` must be `"remote_mcp"` (only supported kind for self-registration); `endpoint` required when kind = `"remote_mcp"`; `tools` must be non-empty.
-2. **Upsert `capability_specs` row** — use `INSERT ... ON CONFLICT (namespace, tool_name) DO UPDATE` so re-registration is idempotent:
-   ```sql
-   INSERT INTO capability_specs
-       (id, namespace, tool_name, description, input_schema, output_schema,
-        strategy, payload, tags, tenant_scope, enabled)
-   VALUES ($1, $2, $3, $4, $5, NULL, 'remote_mcp',
-           jsonb_build_object('endpoint', $6), $7, $8, $9)
-   ON CONFLICT (namespace, tool_name)
-   DO UPDATE SET
-       description  = EXCLUDED.description,
-       payload      = EXCLUDED.payload,
-       tags         = EXCLUDED.tags,
-       tenant_scope = EXCLUDED.tenant_scope,
-       enabled      = EXCLUDED.enabled,
-       updated_at   = now()
-   RETURNING id
-   ```
-3. **Build provider** — call `CapabilitySpecFactory::row_to_provider()` with the synthesised row (no DB re-read needed — the row data is already in memory from step 2).
-4. **Embed + upsert vector** — call `state.embedding_service.embed_query(&embedding_text)` then `state.vector_store.upsert_capability_embedding_full(...)`.
-5. **Register in-process** — `state.registry.lock().unwrap().register(card.with_provider(provider))`.
-6. **Invalidate router cache** — `state.semantic_router.invalidate_all().await`.
-7. **Audit log** — `state.audit_store.append(AuditEvent::new("system", "capability.register").with_metadata(json!({...})))`.
-8. **Return** `201 Created` with `{ "capability_id": "...", "registered": true }`.
-
-### 3.3 — Wire route in router
-
-**File:** `apps/backend/crates/agent-gateway/src/routes/mod.rs`
-
-Add `register_capability` to the admin router alongside existing admin capability routes.
-
-### 3.4 — Tests
-
-Add integration test in `admin_capabilities.rs` `#[cfg(test)]` block:
-- `register_new_capability_201` — POST valid JSON, assert 201, assert registry contains the capability
-- `register_idempotent_on_conflict` — POST same capability_id twice, assert 200 on second call (not 409)
-- `register_rejects_unknown_kind` — POST with `kind = "unknown"`, assert 400
-- `register_rejects_missing_endpoint_for_remote_mcp` — no endpoint field, assert 400
-
----
-
-## Phase 4 — `ArtifactBridge` (3 AI-hours)
-
-**Principle:** Tools return structured `ToolOutput` with an `artifacts` array. A post-invoke interceptor (not inside the tool) uploads artifacts to MinIO and creates `workspace_nodes` entries. Tools stay pure — they never touch storage directly.
-
-### 4.1 — `Artifact` and `ToolOutput` types in `common`
-
-**New file:** `apps/backend/crates/common/src/artifact.rs`
-
-```rust
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Artifact {
-    /// Filename including extension, e.g. "transcript_2026.txt".
-    pub name: String,
-    /// MIME type, e.g. "text/plain", "application/pdf".
-    pub mime_type: String,
-    /// Base64-encoded content for small files (< 1 MiB). Mutually exclusive with `source_url`.
-    #[serde(default)]
-    pub data: Option<String>,
-    /// Pre-signed or direct URL for large files. Mutually exclusive with `data`.
-    #[serde(default)]
-    pub source_url: Option<String>,
-    /// Domain-specific metadata (e.g. `{"duration": 184.5, "language": "en"}`).
-    #[serde(default)]
-    pub metadata: Value,
-}
-
-/// Canonical tool output envelope.
-/// All `CapabilityProvider::invoke()` implementations may return this as their JSON value.
-/// The `ArtifactBridge` detects `artifacts` and materialises them into the workspace.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ToolOutput {
-    /// Human-readable summary forwarded to the LLM as the tool result.
-    pub content: String,
-    /// Files produced by this tool invocation. May be empty.
-    #[serde(default)]
-    pub artifacts: Vec<Artifact>,
-    /// Any extra domain metadata. Not sent to the LLM.
-    #[serde(default)]
-    pub metadata: Value,
-}
-```
-
-**Register in `common/src/lib.rs`:** `pub mod artifact;`
-
-### 4.2 — `ArtifactBridge` implementation
-
-**New file:** `apps/backend/crates/agent-core/src/bridge/artifact_bridge.rs`
-
-```rust
-//! Post-invoke artifact materialisation bridge.
-//!
-//! Called after every `CapabilityProvider::invoke()` that returns a `ToolOutput`
-//! with non-empty `artifacts`. Uploads binaries to MinIO, creates `workspace_nodes`
-//! rows, and optionally triggers CocoIndex embedding for indexable MIME types.
-//!
-//! # SRP contract
-//! - Tools return `ToolOutput` — they never call object_store or workspace_store.
-//! - `ArtifactBridge` owns the upload + workspace node creation + index trigger.
-//! - `CapabilityProvider::invoke()` returns a raw `serde_json::Value`.
-//!   The caller (agent runtime) calls `ArtifactBridge::process_if_artifacts` after invoke.
-
-use common::artifact::{Artifact, ToolOutput};
-use common::memory::workspace::{WorkspaceNode, WorkspaceStore};
-use object_store::ObjectStore;
-use serde_json::json;
-use sqlx::PgPool;
-use std::sync::Arc;
-use tracing::{info, instrument, warn};
-use ulid::Ulid;
-
-/// MIME types that should be indexed after upload.
-const INDEXABLE_MIME_PREFIXES: &[&str] = &["text/", "application/pdf", "application/json"];
-
-pub struct ArtifactBridge {
-    pool: PgPool,
-    object_store: Arc<dyn ObjectStore>,
-    workspace_store: Arc<dyn WorkspaceStore>,
-}
-
-impl ArtifactBridge {
-    pub fn new(
-        pool: PgPool,
-        object_store: Arc<dyn ObjectStore>,
-        workspace_store: Arc<dyn WorkspaceStore>,
-    ) -> Arc<Self> {
-        Arc::new(Self { pool, object_store, workspace_store })
-    }
-
-    /// If `output` contains artifacts, materialise each one. Returns the output unchanged.
-    #[instrument(skip(self, output), fields(tool = tool_name, artifact_count = output.artifacts.len()))]
-    pub async fn process_if_artifacts(
+#[async_trait::async_trait]
+pub trait OAuthProvider: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn start(&self) -> Result<FlowStart>;
+    async fn finish(
         &self,
-        tenant_id: &str,
-        user_id: Option<&str>,
-        tool_name: &str,
-        parent_node_id: Option<&str>,
-        output: &ToolOutput,
-    ) -> anyhow::Result<()> {
-        if output.artifacts.is_empty() {
-            return Ok(());
-        }
-        for artifact in &output.artifacts {
-            if let Err(e) = self.materialise(tenant_id, user_id, tool_name, parent_node_id, artifact).await {
-                warn!(error = %e, artifact = %artifact.name, "artifact materialisation failed — skipping");
-            }
-        }
-        Ok(())
-    }
+        code: &str,
+        pkce_verifier: &str,
+        nonce: Option<&str>,
+    ) -> Result<UserProfile>;
+}
+```
 
-    async fn materialise(
+`service.rs` — provider registry stays a plain `HashMap` (v0.8 #5: no premature
+factory abstraction); both entry points are `#[tracing::instrument]` (v0.8 #3):
+```rust
+pub struct AuthService {
+    providers: std::collections::HashMap<String, Box<dyn OAuthProvider>>,
+    resolver:  Box<dyn TenantResolver>,
+    issuer:    JwtIssuer,
+    metrics:   AuthMetrics,            // login_success_total, login_failure_total{reason}
+}
+
+pub struct LoginToken {
+    pub jwt: String,
+    pub profile: UserProfile,
+    pub tenant: ResolvedTenant,
+}
+
+impl AuthService {
+    #[tracing::instrument(skip(self), fields(provider))]
+    pub fn start_login(&self, provider: &str) -> Result<FlowStart>;
+
+    #[tracing::instrument(skip(self, code, pkce_verifier, nonce), fields(provider, tenant_id))]
+    pub async fn finish_login(
         &self,
-        tenant_id: &str,
-        user_id: Option<&str>,
-        tool_name: &str,
-        parent_node_id: Option<&str>,
-        artifact: &Artifact,
-    ) -> anyhow::Result<()> {
-        let node_id = Ulid::new().to_string();
-        let object_key = format!("{tenant_id}/{tool_name}/{node_id}/{}", artifact.name);
-
-        // Upload to object store if data is present.
-        if let Some(ref b64) = artifact.data {
-            use base64::Engine;
-            let bytes = base64::engine::general_purpose::STANDARD.decode(b64)?;
-            self.object_store
-                .put(&object_key.clone().into(), bytes.into())
-                .await?;
-        }
-
-        // Create workspace node.
-        let node = WorkspaceNode {
-            id: node_id.clone(),
-            tenant_id: tenant_id.to_string(),
-            owner_id: user_id.unwrap_or("system").to_string(),
-            parent_id: parent_node_id.map(str::to_string),
-            kind: "file".to_string(),
-            name: artifact.name.clone(),
-            virtual_path: format!("/outputs/{tool_name}/{}", artifact.name),
-            metadata: json!({
-                "mime_type": artifact.mime_type,
-                "tool":       tool_name,
-                "source":     "tool_output",
-                "object_key": object_key,
-                "artifact_metadata": artifact.metadata,
-            }),
-            ..Default::default()
-        };
-        self.workspace_store.create_node(&node).await?;
-
-        // Trigger indexing for text-like MIME types (async, best-effort).
-        if is_indexable(&artifact.mime_type) {
-            let pool = self.pool.clone();
-            let key = object_key.clone();
-            let id = node_id.clone();
-            tokio::spawn(async move {
-                if let Err(e) = trigger_index(pool, id, key).await {
-                    warn!(error = %e, "artifact index trigger failed");
-                }
-            });
-        }
-
-        info!(artifact = %artifact.name, node_id = %node_id, "artifact materialised");
-        Ok(())
-    }
-}
-
-fn is_indexable(mime: &str) -> bool {
-    INDEXABLE_MIME_PREFIXES.iter().any(|p| mime.starts_with(p))
-}
-
-async fn trigger_index(pool: PgPool, node_id: String, object_key: String) -> anyhow::Result<()> {
-    // Insert a pending indexing task — picked up by the indexer background task.
-    sqlx::query!(
-        "INSERT INTO indexing_queue (node_id, object_key, created_at)
-         VALUES ($1, $2, now())
-         ON CONFLICT (node_id) DO NOTHING",
-        node_id,
-        object_key,
-    )
-    .execute(&pool)
-    .await?;
-    Ok(())
+        provider: &str,
+        code: &str,
+        pkce_verifier: &str,
+        nonce: Option<&str>,
+        tenant_hint: Option<&str>,
+    ) -> Result<LoginToken>;
 }
 ```
 
-**New file:** `apps/backend/crates/agent-core/src/bridge/mod.rs`
+`AuthMetrics` is constructed from the existing `prometheus::Registry` already
+threaded through `agent-gateway::main` ([main.rs](crates/agent-gateway/src/main.rs#L36-L41)):
 ```rust
-pub mod artifact_bridge;
-pub use artifact_bridge::ArtifactBridge;
+pub struct AuthMetrics {
+    pub login_success: prometheus::IntCounterVec,  // labels: provider
+    pub login_failure: prometheus::IntCounterVec,  // labels: provider, reason
+    pub flow_started:  prometheus::IntCounterVec,  // labels: provider
+}
+impl AuthMetrics {
+    pub fn register(registry: &prometheus::Registry) -> Self;
+}
 ```
 
-**Register in `agent-core/src/lib.rs`:** `pub mod bridge;`
-
-### 4.3 — DB migration: `indexing_queue` table
-
-**New file:** `apps/backend/crates/common/migrations/20260507000400_indexing_queue.up.sql`
-
-```sql
-CREATE TABLE IF NOT EXISTS indexing_queue (
-    id          BIGSERIAL PRIMARY KEY,
-    node_id     TEXT        NOT NULL,
-    object_key  TEXT        NOT NULL,
-    status      TEXT        NOT NULL DEFAULT 'pending',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    processed_at TIMESTAMPTZ,
-    error       TEXT,
-    UNIQUE (node_id)
-);
-CREATE INDEX IF NOT EXISTS indexing_queue_status_idx ON indexing_queue (status, created_at);
-```
-
-**Also add** to `docker/init/02-schema.sql`.
-
-### 4.4 — Wire `ArtifactBridge` into `AppState`
-
-**File:** `apps/backend/crates/agent-gateway/src/state.rs`
-
-Add field:
-```rust
-pub artifact_bridge: Option<Arc<ArtifactBridge>>,
-```
-
-Populate in `from_env()`: construct `ArtifactBridge::new(pool, file_store, workspace_store)` only when both Postgres and MinIO are configured.
-
-### 4.5 — Wire `ArtifactBridge` into the agent completion route
-
-**File:** `apps/backend/crates/agent-gateway/src/routes/agent.rs`
-
-After each tool invocation result is returned, attempt to parse it as `ToolOutput` and call `bridge.process_if_artifacts(...)`:
+`config.rs` — `figment` pattern identical to
+[common/src/config/mod.rs](crates/common/src/config/mod.rs#L53-L61):
 
 ```rust
-if let Some(ref bridge) = state.artifact_bridge {
-    if let Ok(tool_out) = serde_json::from_value::<common::artifact::ToolOutput>(raw_result.clone()) {
-        let _ = bridge.process_if_artifacts(
-            &tenant.tenant_id,
-            tenant.user_id.as_deref(),
-            &tool_name,
-            thread_node_id.as_deref(),
-            &tool_out,
-        ).await;
+use secrecy::SecretString;       // v0.8 #1
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct AuthConfig {
+    /// Optional override; otherwise `common::jwt::JwtSecret::from_env()` wins (v0.8 #2).
+    pub jwt_secret: Option<SecretString>,
+    pub jwt_ttl_secs: u64,                     // default 900 (15 min)
+    pub base_url: String,                      // for redirect_uri construction
+    pub providers: ProvidersConfig,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+pub struct ProvidersConfig {
+    pub google:    Option<ProviderCreds>,
+    pub github:    Option<ProviderCreds>,
+    pub microsoft: Option<ProviderCreds>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ProviderCreds {
+    pub client_id: String,
+    pub client_secret: SecretString,           // v0.8 #1 — never logged
+}
+
+impl AuthConfig {
+    pub fn load() -> Result<Self> {
+        figment::Figment::new()
+            .merge(figment::providers::Toml::file("config.toml"))
+            // v0.8 #7 — accept legacy CONUSAI_ prefix first (so `JWT_SECRET`,
+            // `CONUSAI_BASE_URL`, etc. work during the transition window),
+            // then let the explicit auth-scoped prefix override.
+            .merge(figment::providers::Env::prefixed("CONUSAI_").split("__"))
+            .merge(figment::providers::Env::prefixed("CONUSAI_AUTH__").split("__"))
+            .extract()
+            .map_err(|e| AuthError::Config(e.to_string()))
     }
 }
 ```
 
-The LLM still receives `raw_result` unchanged — `ArtifactBridge` runs as a side-effect.
+Env-var examples (documented in `crates/auth-core/README.md`):
+```
+CONUSAI_AUTH__JWT_SECRET=...
+CONUSAI_AUTH__JWT_TTL_SECS=900
+CONUSAI_AUTH__BASE_URL=https://app.example.com
+CONUSAI_AUTH__PROVIDERS__GOOGLE__CLIENT_ID=...
+CONUSAI_AUTH__PROVIDERS__GOOGLE__CLIENT_SECRET=...
+```
 
-### 4.6 — Tests
+### 1.5 Implementation order (1 file = 1 commit, in order)
 
-- `artifact_bridge_skips_empty_artifacts` — `process_if_artifacts` with no artifacts returns Ok and writes nothing
-- `artifact_bridge_creates_workspace_node` — mock `WorkspaceStore`, assert `create_node` called with correct fields
-- `artifact_bridge_non_indexable_mime_no_queue_entry` — verify `trigger_index` not called for `image/png`
+1. `error.rs` → `profile.rs` → `tenant.rs` (compiles standalone)
+2. `jwt.rs` (with unit tests: round-trip → `agent_core::TenantClaims`)
+3. `config.rs` (figment unit test with `Jail::expect_with`)
+4. `provider.rs` (trait only — no providers yet)
+5. `providers/google.rs` first (most complete OIDC reference)
+6. `providers/microsoft.rs` (copy of google with discovery URL change)
+7. `providers/github.rs` (oauth2 + manual profile fetch via `reqwest`)
+8. `service.rs` (composes all above)
+9. `lib.rs` re-exports + `pub fn build_auth_service(cfg, resolver) -> AuthService`
+10. `tests/*.rs` with `wiremock` doubling each IdP
+
+### 1.6 Phase A acceptance
+
+- `cargo build -p auth-core` clean.
+- `cargo test -p auth-core --all-features` (≥ 12 tests; one happy path + one
+  CSRF-fail + one expired-code per provider; resolver email-domain matrix).
+- **v0.8 #8** — `tests/jwt_contract.rs`: build a `TenantContext` via the real
+  decode path used by [mw/tenant.rs](crates/agent-gateway/src/mw/tenant.rs#L43-L52)
+  from a token issued by `JwtIssuer`. Pinned regression: shape change in
+  `TenantClaims` will fail this test before any HTTP test does.
+- `cargo clippy -p auth-core --all-targets -- -D warnings`.
+- `cargo doc -p auth-core --no-deps` warning-free.
+- No `Debug`/`Display` impl on any type that holds an unwrapped secret
+  (enforced by `secrecy` types — v0.8 #1).
+- README documents env vars + 30-LOC "add a provider" recipe.
 
 ---
 
-## Phase 5 — Hot-Reload Wiring at Startup (1 AI-hour)
+## 2. Phase B — Wire `AuthService` into `agent-gateway`
 
-**Problem:** `RealtimeService::subscribe_capability_spec_changes()` exists but nothing calls it at startup to feed `CapabilitySpecFactory::reload_one()`. The LISTEN/NOTIFY trigger fires correctly but the receiver is never consumed.
+**Goal:** Add the OAuth start/callback HTTP routes; persist outcome into the
+existing `conusai_session` cookie *and* return the JWT for API clients.
+**No** changes to `mw/tenant.rs`, `protected_router`, or `TenantClaims`.
 
-**File:** `apps/backend/crates/agent-gateway/src/state.rs` (or `main.rs`)
+### 2.1 New module
 
-In `AppState::from_env()`, after constructing `realtime_service` and `capability_spec_factory`, spawn a background task:
+```
+crates/agent-gateway/src/auth/
+├── mod.rs
+├── routes.rs
+├── handlers.rs
+└── flow_state.rs   # short-lived signed cookie that holds (state, pkce, nonce, provider, return_to)
+```
+
+`flow_state.rs` reuses the existing HMAC pattern from
+[ui/session.rs](crates/agent-gateway/src/ui/session.rs#L60-L80) (same
+`UI_SESSION_KEY`, different cookie name `conusai_oauth_flow`, 10 min TTL).
+
+### 2.2 Routes (mounted on `public_router`)
+
+[routes/mod.rs](crates/agent-gateway/src/routes/mod.rs#L21-L26) gains:
 
 ```rust
-if let (Some(rt), Some(factory)) = (&state.realtime_service, &state.capability_spec_factory) {
-    let mut rx = rt.subscribe_capability_spec_changes().await;
-    let factory = Arc::clone(factory);
-    let registry = Arc::clone(&state.registry);
-    tokio::spawn(async move {
-        while let Some((namespace, tool_name)) = rx.recv().await {
-            if let Err(e) = factory.reload_one(&registry, &namespace, &tool_name).await {
-                tracing::warn!(error = %e, namespace, tool_name, "hot-reload failed");
-            } else {
-                tracing::info!(namespace, tool_name, "capability hot-reloaded via LISTEN/NOTIFY");
-            }
-        }
-    });
+pub fn public_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/health", get(health::health))
+        .route("/v1/files/{token}", get(files::download))
+        .merge(crate::auth::routes::auth_router())   // ← NEW
 }
 ```
 
-This ensures that a `capability_specs_changed` NOTIFY (from any INSERT/UPDATE/DELETE on `capability_specs` — including the new `/register` endpoint) propagates to the in-memory registry within milliseconds.
-
-**Tests:**
-- `hot_reload_task_picks_up_notify` — use `tokio::sync::mpsc` mock, verify `reload_one` called after message received
-
----
-
-## Phase 6 — `services/current-time` Example Capability (2 AI-hours)
-
-This is the zero-core-touch validation service. It lives outside `apps/backend/` and requires **zero Rust changes** to add.
-
-### 6.1 — Directory structure
-
-```
-services/
-  current-time/
-    Dockerfile
-    main.py
-    requirements.txt
+`auth/routes.rs`:
+```rust
+pub fn auth_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/v1/auth/providers",            get(handlers::list_providers))
+        .route("/v1/auth/{provider}/login",     get(handlers::start_login))
+        .route("/v1/auth/{provider}/callback",  get(handlers::finish_login))
+        .route("/v1/auth/logout",               post(handlers::logout))
+        .route("/v1/auth/me",                   get(handlers::me))
+        .layer(/* per-IP rate limiter from AppState.rate_limiter */)
+}
 ```
 
-### 6.2 — `services/current-time/Dockerfile`
+Behaviour:
+- `start_login` → 302 to provider authorization URL, sets `conusai_oauth_flow`
+  HMAC cookie carrying `(provider, state, pkce_verifier, nonce, return_to)`,
+  10 min, `HttpOnly; Secure; SameSite=Lax`.
+- `finish_login` → validates flow cookie, calls `AuthService::finish_login`,
+  on success:
+    - Sets `conusai_session` cookie (existing HMAC, extended `SessionUser`).
+    - If request `Accept: application/json` → returns
+      `{ "token": "...", "expires_in": 900, "profile": {…} }` (for SPA/CLI).
+    - Else → 302 to `return_to` (default `/`).
+- `me` → echoes the resolved tenant + profile from the session cookie (used
+  by frontend `+layout.server.ts` already).
+- `logout` → clears both cookies, 204.
 
-```dockerfile
-FROM python:3.12-slim
-WORKDIR /app
-RUN pip install --no-cache-dir fastapi uvicorn mcp httpx
-COPY . .
-EXPOSE 8082
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8082"]
-```
+### 2.3 `SessionUser` extension (additive)
 
-### 6.3 — `services/current-time/requirements.txt`
+[ui/session.rs](crates/agent-gateway/src/ui/session.rs#L26-L55): add fields,
+keeping `Deserialize` defaults so old cookies still parse.
 
-```
-fastapi>=0.115
-uvicorn>=0.32
-mcp>=1.0
-httpx>=0.27
-```
+```rust
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SessionUser {
+    pub name: String,
+    pub plan: String,
+    pub exp: i64,
+    #[serde(default)] pub email: Option<String>,
+    #[serde(default)] pub provider: Option<String>,
+    #[serde(default)] pub tenant_id: Option<String>,   // when set, overrides CONUSAI_UI_TENANT_ID
+    #[serde(default)] pub avatar_url: Option<String>,
+}
 
-### 6.4 — `services/current-time/main.py`
-
-```python
-"""
-current-time MCP capability service.
-Zero-core-touch: self-registers at startup via POST /admin/capabilities/register.
-"""
-import asyncio
-import os
-from datetime import datetime
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
-import httpx
-from fastapi import FastAPI
-from mcp.server.fastmcp import FastMCP
-
-mcp = FastMCP("current-time")
-
-
-@mcp.tool()
-async def get_current_time(timezone: str = "UTC") -> dict:
-    """Returns the current ISO 8601 timestamp. Optional IANA timezone name."""
-    try:
-        tz = ZoneInfo(timezone)
-    except ZoneInfoNotFoundError:
-        return {"error": f"Unknown timezone: {timezone!r}"}
-    now = datetime.now(tz)
-    return {
-        "content": f"Current time in {timezone}: {now.isoformat()}",
-        "artifacts": [],
-        "metadata": {"timezone": timezone, "timestamp": now.isoformat()},
+impl SessionUser {
+    pub fn tenant_context(&self) -> TenantContext {
+        let workspace_root = std::env::var("CONUSAI_WORKSPACE_ROOT")
+            .unwrap_or_else(|_| "/tmp/conusai/workspaces".into());
+        let tenant_id = self.tenant_id.clone()
+            .or_else(|| std::env::var("CONUSAI_UI_TENANT_ID").ok())
+            .unwrap_or_else(|| "dev".into());
+        TenantContext::new(tenant_id, Some(self.email.clone().unwrap_or_else(|| self.name.clone())),
+                           self.plan_tier(), workspace_root)
     }
+}
+```
 
+This makes [mw/tenant.rs](crates/agent-gateway/src/mw/tenant.rs#L60-L88) dev-mode
+path *automatically* honour the OAuth-issued tenant — no middleware change.
 
-app = FastAPI(title="current-time MCP service")
-mcp.mount(app)
+### 2.4 `AppState` extension
 
+[state.rs](crates/agent-gateway/src/state.rs#L14-L34): add
 
-# ── Self-registration ──────────────────────────────────────────────────────────
+```rust
+/// None when no provider is configured (dev mode falls back to fake login).
+pub auth_service: Option<Arc<auth_core::AuthService>>,
+/// Shared with the metrics handler in main.rs (v0.8 #3).
+pub prom_registry: Arc<prometheus::Registry>,
+```
 
-MANIFEST = {
-    "capability_id": "media.time.current-time",
-    "name": "current-time",
-    "namespace": "media.time",
-    "description": "Returns current server time with optional IANA timezone support.",
-    "version": "1.0.0",
-    "kind": "remote_mcp",
-    "endpoint": os.getenv("CONUSAI_SERVICE_URL", "http://current-time:8082") + "/mcp",
-    "tools": [
-        {
-            "name": "get_current_time",
-            "description": "Returns ISO 8601 timestamp for a given IANA timezone (default UTC).",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "timezone": {"type": "string", "description": "IANA timezone, e.g. 'Europe/Helsinki'"}
-                },
-            },
-        }
-    ],
-    "tenant_scope": os.getenv("CONUSAI_TENANT_SCOPE", "").split(",")
-        if os.getenv("CONUSAI_TENANT_SCOPE") else [],
-    "enabled": True,
-    "tags": ["time", "utility"],
+`AppState::from_env` (now `from_env(prom_registry: Arc<Registry>)`) calls
+`auth_core::AuthConfig::load()`; on `AuthError::Config` (missing `[providers]`),
+logs a warning and stores `None`. The Prometheus registry is threaded in so
+`AuthMetrics::register` can hang counters off the same exposition surface as
+[main.rs](crates/agent-gateway/src/main.rs#L36-L41). This preserves the current
+"no env vars needed for `cargo run`" UX.
+
+[mw/tenant.rs](crates/agent-gateway/src/mw/tenant.rs#L20) is migrated to
+`common::jwt::JwtSecret::from_env()` (v0.8 #2) — pure refactor, identical
+behaviour, eliminates the duplicated env read.
+
+### 2.5 `main.rs` mount
+
+[main.rs](crates/agent-gateway/src/main.rs#L43-L62) — `public_router()` is
+already merged; nothing to change beyond the `routes/mod.rs` edit.
+
+### 2.6 Phase B acceptance
+
+- `cargo test -p agent-gateway` green (existing tests untouched).
+- New integration test (`tests/auth_routes.rs`) using `wiremock` to fake an
+  IdP discovery + token + userinfo, full happy path:
+  `GET /v1/auth/google/login` → 302 → call back to
+  `GET /v1/auth/google/callback?code=…&state=…` with the flow cookie →
+  receives `conusai_session` cookie → `GET /v1/audit` (protected) succeeds
+  with that cookie via dev-mode middleware path.
+- Old `Bearer <jwt>` flow still works after the `JwtSecret` refactor (v0.8 #2):
+  same `JWT_SECRET`, same HS256 claim shape — verified by reusing the v0.8 #8
+  contract test from `auth-core` against the running server.
+- `/metrics` exposes `conusai_auth_login_success_total` and
+  `conusai_auth_login_failure_total{reason}` (v0.8 #3) after a happy path.
+- No regression in [ui/session.rs](crates/agent-gateway/src/ui/session.rs)
+  cookie verification for old-shape cookies.
+
+---
+
+## 3. Phase C — Frontend (`apps/web`) wiring + docs
+
+### 3.1 Provider buttons on the login page
+
+[apps/web/src/routes/login/+page.server.ts](apps/web/src/routes/login/+page.server.ts) —
+`load` adds:
+```ts
+const providers = await fetch(`${env.GATEWAY_URL}/v1/auth/providers`)
+    .then(r => r.json()).catch(() => ({ providers: [] }));
+return { greeting: timeGreeting(), providers: providers.providers };
+```
+
+[apps/web/src/routes/login/+page.svelte](apps/web/src/routes/login/+page.svelte) —
+above the existing `<form method="POST">`, render one `<a>` per provider:
+```svelte
+{#each data.providers as p}
+    <a class="oauth-btn" href="{env.PUBLIC_GATEWAY_URL}/v1/auth/{p.id}/login?return_to=/">
+        <img src="/icons/{p.id}.svg" alt=""> Continue with {p.label}
+    </a>
+{/each}
+{#if data.providers.length === 0}
+    <!-- existing dev fake-login form, unchanged -->
+{/if}
+```
+
+The dev form keeps working when no providers are configured — zero-config
+local dev is preserved.
+
+### 3.2 SvelteKit ↔ gateway session bridging
+
+`apps/web/src/lib/server/session.ts` already shares the HMAC key with
+[ui/session.rs](crates/agent-gateway/src/ui/session.rs#L57-L63). After Phase B
+the gateway sets `conusai_session` directly on the OAuth callback response, so
+SvelteKit's `verify()` will read the same cookie automatically. **No changes
+to the existing `sign`/`verify` helpers** — only update `SessionUser` TS type
+to mirror the new optional fields:
+
+```ts
+export interface SessionUser {
+    name: string;
+    plan: string;
+    exp: number;
+    email?: string;
+    provider?: string;
+    tenant_id?: string;
+    avatar_url?: string;
+}
+```
+
+### 3.3 `GatewayClient` (v0.8 #6 — was `BackendJwtAdapter` in v0.7)
+
+Create `apps/web/src/lib/server/backend.ts`:
+
+```ts
+export class GatewayClient {
+    constructor(private baseUrl: string) {}
+
+    /** Generic fetch against the gateway. Pass `jwt` for `/v1/*` (protected),
+     *  omit it for `/ui/*` (cookie-authenticated). */
+    async apiFetch(path: string, init: RequestInit = {}, jwt?: string) {
+        const headers = new Headers(init.headers);
+        if (jwt) headers.set('Authorization', `Bearer ${jwt}`);
+        return fetch(`${this.baseUrl}${path}`, { ...init, headers });
+    }
 }
 
-
-async def register_with_retry(max_retries: int = 10, delay: float = 3.0) -> None:
-    platform_url = os.environ["CONUSAI_PLATFORM_URL"]
-    token = os.environ["CONUSAI_PLATFORM_TOKEN"]
-    url = f"{platform_url}/admin/capabilities/register"
-
-    for attempt in range(1, max_retries + 1):
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.post(
-                    url,
-                    json=MANIFEST,
-                    headers={"Authorization": f"Bearer {token}"},
-                )
-                resp.raise_for_status()
-                print(f"[current-time] registered: {resp.json()}")
-                return
-        except Exception as exc:
-            print(f"[current-time] registration attempt {attempt}/{max_retries} failed: {exc}")
-            if attempt < max_retries:
-                await asyncio.sleep(delay)
-
-    print("[current-time] WARNING: all registration attempts failed — service running unregistered")
-
-
-@app.on_event("startup")
-async def on_startup() -> None:
-    asyncio.create_task(register_with_retry())
+export const gateway = new GatewayClient(env.GATEWAY_URL);
 ```
 
-### 6.5 — docker-compose.yml additions
+The broader `GatewayClient` / `apiFetch` naming is reusable for future SSR
+loaders against `/v1/*`. SSR can call `POST /v1/auth/exchange` (Phase D — not
+required for v0.8) to get a JWT from a session cookie. For now, SSR proxies
+to `/ui/*` which is already session-cookie authenticated.
 
-**File:** `docker-compose.yml`
+### 3.4 Logout
 
-Add the `current-time` service to the existing compose file (no other changes):
+[apps/web/src/routes/logout/+page.server.ts](apps/web/src/routes/logout/+page.server.ts) —
+add a server-side `POST` that calls `/v1/auth/logout` on the gateway in
+addition to clearing the SvelteKit cookie.
 
-```yaml
-  current-time:
-    build:
-      context: ./services/current-time
-    restart: unless-stopped
-    environment:
-      CONUSAI_PLATFORM_URL: "http://agent-gateway:8080"
-      CONUSAI_PLATFORM_TOKEN: "${PLATFORM_ADMIN_TOKEN}"
-      CONUSAI_SERVICE_URL: "http://current-time:8082"
-      # CONUSAI_TENANT_SCOPE: "tenant-abc,tenant-xyz"  # uncomment to scope
-    ports:
-      - "8082:8082"
-    profiles: [full]
-    depends_on:
-      agent-gateway:
-        condition: service_healthy
-```
+### 3.5 Docs
 
-Also add `PLATFORM_ADMIN_TOKEN=` to `.env.example` with a comment explaining it is a super-admin JWT.
+- `docs/backend/auth.md` (NEW) — ADR style:
+    - architecture (mermaid: browser → gateway `/v1/auth/*` → IdP → callback → cookie/JWT → middleware → protected route)
+    - config table (env vars)
+    - "add a provider" 30-LOC walkthrough
+    - ZITADEL migration sketch (drop-in `OAuthProvider` + `TenantResolver`)
+- `docs/web/arch.md` — add **Authentication** section linking to the above.
+- `README.md` (root) — link `docs/backend/auth.md` from the security section.
+
+### 3.6 CI
+
+`.github/workflows/*` (whichever runs `cargo test`):
+- add `cargo test -p auth-core` to the matrix.
+- add `cargo deny check advisories` (already required by Phase A acceptance).
+
+### 3.7 Phase C acceptance
+
+- `pnpm --filter web run check` clean.
+- Manual: with no env vars, `pnpm dev` shows the existing fake-login form
+  (no regression); with `CONUSAI_AUTH__PROVIDERS__GOOGLE__*` set, the
+  Google button appears and end-to-end login lands the user on `/`.
+- axe-core / Lighthouse scores unchanged on `/login`.
+- `docs/backend/auth.md` reviewed; mermaid renders.
 
 ---
 
-## Phase 7 — Eval Coverage (1 AI-hour)
+## 4. Phase D — Optional follow-ups (post-v0.7, deferred)
 
-**File:** `apps/backend/evals/src/` (add new eval dataset + scorer)
+Captured here so they are not lost; **not** part of the merge gate.
 
-### 7.1 — Semantic registration eval
-
-**New file:** `apps/backend/evals/datasets/capability_registration.jsonl`
-
-```jsonl
-{"query": "what time is it in Helsinki", "expected_capabilities": ["media.time.current-time"]}
-{"query": "current timestamp UTC", "expected_capabilities": ["media.time.current-time"]}
-{"query": "what day of the week is it", "expected_capabilities": ["media.time.current-time"]}
-```
-
-### 7.2 — Eval runner addition
-
-**File:** `apps/backend/evals/src/main.rs`
-
-Add a `capability_routing` eval case that:
-1. Registers `current-time` via the new `/register` endpoint against a test AppState
-2. For each query in the dataset, calls `semantic_router.select(query, None)`
-3. Asserts `expected_capabilities` ⊆ returned names
-4. Reports recall@K score
+1. **JWKS / RS256 mode** — second `JwtIssuer` impl using a key pair, plus
+   `mw/tenant.rs` extension to support `Algorithm::RS256` via JWKS URL.
+2. **`/v1/auth/exchange` (cookie → JWT)** — enables SvelteKit SSR to call
+   `/v1/*` directly without the `/ui/*` proxy.
+3. **Refresh tokens** — store hashed refresh handle in Qdrant
+   (`auth_refresh_<tenant_id>`); rotate on use.
+4. **ZITADEL `OAuthProvider`** — wraps the `zitadel` crate; keeps the
+   `OAuthProvider` trait; replaces `EmailDomainTenantResolver` with a
+   `ZitadelTenantResolver` reading orgs.
+5. **DB-backed `TenantResolver`** — sqlx + Postgres + RLS hook (currently
+   blocked by no Postgres in the stack — see [docker-compose.yml](docker-compose.yml)).
 
 ---
 
-## Phase 8 — Verification & Validation (1 AI-hour)
+## 5. Sequencing, PRs, and tracking
 
-### 8.1 — Full test suite
-
-```bash
-cargo test --workspace
+```
+PR-A  crates/auth-core + crates/common::jwt (Phase A)   — self-contained
+      includes v0.8 #1 (secrecy), #2 (JwtSecret), #4 (errors), #7 (config), #8 (contract test)
+PR-B  agent-gateway/auth/* + mw/tenant.rs migration to JwtSecret (Phase B)
+      includes v0.8 #2 wiring, #3 (tracing + metrics)
+PR-C  apps/web login + docs (Phase C)
+      includes v0.8 #6 (GatewayClient rename)
 ```
 
-All 59 existing tests must still pass. New tests added in Phases 1–5 must also pass.
+Each PR:
+- references this document's section number,
+- ships its own acceptance gate from §1.6 / §2.6 / §3.7,
+- updates [docs/web/tasks/frontend-improve.md](docs/web/tasks/frontend-improve.md)
+  Phase 3 status when PR-C merges.
 
-### 8.2 — Clippy clean
+## 6. Risk register (final)
 
-```bash
-cargo clippy --workspace --all-targets -- -D warnings
-```
-
-Zero warnings.
-
-### 8.3 — End-to-end smoke test
-
-```bash
-# Start infrastructure
-docker compose --profile infra up -d
-make db-migrate
-
-# Start full stack
-docker compose --profile full up -d
-
-# Wait for gateway health
-until curl -sf http://localhost:8080/health; do sleep 1; done
-
-# Get super-admin JWT
-TOKEN=$(curl -s -X POST http://localhost:8080/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@test.local","password":"dev"}' | jq -r .token)
-
-# Verify current-time auto-registered
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "http://localhost:8080/v1/capabilities/search?q=current+time" \
-  | jq '.[0].name'
-# Expected: "current-time"
-
-# Invoke via agent completions
-curl -s -X POST http://localhost:8080/v1/agent/completions \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"claude-opus-4-7","messages":[{"role":"user","content":"What time is it in Helsinki?"}]}' \
-  | jq '.choices[0].message.content'
-# Expected: string containing ISO timestamp
-```
-
-### 8.4 — Tenant scope smoke test
-
-```bash
-# Register with explicit tenant scope
-curl -s -X POST http://localhost:8080/admin/capabilities/register \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "capability_id": "test.scoped-tool",
-    "name": "scoped-tool",
-    "namespace": "test",
-    "description": "Only visible to tenant-abc",
-    "version": "1.0.0",
-    "kind": "remote_mcp",
-    "endpoint": "http://localhost:9999/mcp",
-    "tools": [{"name": "run", "description": "run", "input_schema": {"type": "object"}}],
-    "tenant_scope": ["tenant-abc"]
-  }'
-
-# Search as tenant-xyz → should NOT see scoped-tool
-curl -s -H "Authorization: Bearer $TOKEN_TENANT_XYZ" \
-  "http://localhost:8080/v1/capabilities/search?q=scoped+tool" \
-  | jq 'length'
-# Expected: 0
-```
+| Risk | Mitigation |
+|---|---|
+| `JWT_SECRET` mismatch between issuer and middleware | **v0.8 #2** — both call `common::jwt::JwtSecret::from_env()`; refactor of [mw/tenant.rs](crates/agent-gateway/src/mw/tenant.rs#L20) lands in PR-B |
+| Secret leakage via `Debug` / panic / tracing logs | **v0.8 #1** — every secret wrapped in `secrecy::SecretBox` / `SecretString`; no plain `String` for secrets anywhere |
+| Tenant leakage via guessable tenant_id | `EmailDomainTenantResolver` slugs via `slug::slugify` + collapses personal domains; `mw/tenant.rs` is the single trust boundary |
+| OAuth state / PKCE replay | Flow cookie is HMAC-signed, 10 min TTL, cleared on first use |
+| Cookie SameSite breakage on cross-site SSR | All cookies `SameSite=Lax`; gateway and web served from same eTLD+1 in prod |
+| Provider drift (e.g. GitHub primary email) | `providers/github.rs` integration test pins the response shape via `wiremock` |
+| `TenantClaims` shape regression | **v0.8 #8** — `tests/jwt_contract.rs` round-trips issuer → middleware decode |
+| Future ZITADEL migration | Trait-based design — drop-in `OAuthProvider` + `TenantResolver` impls, no callers change |
 
 ---
 
-## Phase 9 — Release & Tag (0.5 AI-hours)
-
-```bash
-# Final lint + build
-make verify
-cargo build --release --bin agent-gateway
-
-# Bump workspace version in Cargo.toml: 0.3.1 → 0.3.3
-sed -i '' 's/^version = "0.3.1"/version = "0.3.3"/' Cargo.toml
-
-# Commit
-git add -A
-git commit -m "feat(v0.3.3): zero-core-touch mode, self-registering capabilities
-
-- RemoteMcpCapability + ToolKind::RemoteMcp
-- POST /admin/capabilities/register for external service self-registration
-- tenant_scope field on capability_specs (global or per-tenant visibility)
-- ArtifactBridge: tool output files → MinIO + workspace nodes
-- indexing_queue table for async text artifact indexing
-- Hot-reload loop: LISTEN/NOTIFY → CapabilitySpecFactory::reload_one wired at startup
-- services/current-time: Python MCP self-registering example
-- docker-compose: current-time service under [full] profile
-- Evals: capability_routing dataset + recall@K scorer
-- Migration: tenant_scope, indexing_queue"
-
-git tag v0.3.3
-```
-
----
-
-## Implementation Order & Dependencies
-
-```
-Phase 1 (RemoteMcpCapability)
-    ↓
-Phase 2 (tenant_scope) ← independent of Phase 1 but both needed for Phase 3
-    ↓
-Phase 3 (register endpoint) ← requires Phases 1 + 2
-    ↓
-Phase 4 (ArtifactBridge)   ← independent, can run parallel to Phase 2
-Phase 5 (hot-reload wiring) ← independent, can run parallel to Phase 2
-    ↓
-Phase 6 (services/current-time) ← requires Phase 3
-    ↓
-Phase 7 (evals)   ← requires Phase 3 + 6
-Phase 8 (verify)  ← requires all prior phases
-Phase 9 (release) ← requires Phase 8
-```
-
----
-
-## File Change Summary
-
-| File | Action | Phase |
-|------|--------|-------|
-| `agent-core/src/tools/manifest.rs` | Add `RemoteMcp` to `ToolKind`, `tenant_scope` to `ToolManifest` | 1, 2 |
-| `agent-core/src/tools/providers/remote_mcp.rs` | **New** — `RemoteMcpCapability` | 1 |
-| `agent-core/src/tools/providers/mod.rs` | Register `remote_mcp` module | 1 |
-| `agent-core/src/tools/providers/capability_spec.rs` | Add `remote_mcp` strategy, `tenant_scope` row field | 1, 2 |
-| `agent-core/src/tools/card.rs` | Add `is_visible_to(tenant_id)` | 2 |
-| `agent-core/src/tools/semantic_router.rs` | Enforce `tenant_scope` filter in `select()` | 2 |
-| `agent-core/src/bridge/mod.rs` | **New** | 4 |
-| `agent-core/src/bridge/artifact_bridge.rs` | **New** — `ArtifactBridge` | 4 |
-| `agent-core/src/lib.rs` | `pub mod bridge` | 4 |
-| `agent-core/src/realtime/mod.rs` | No changes | — |
-| `agent-gateway/src/routes/admin_capabilities.rs` | Add `register_capability` handler + request types | 3 |
-| `agent-gateway/src/routes/mod.rs` | Register new route | 3 |
-| `agent-gateway/src/state.rs` | Add `artifact_bridge` field, spawn hot-reload task | 4, 5 |
-| `agent-gateway/src/routes/agent.rs` | Wire `ArtifactBridge` after tool invocation | 4 |
-| `common/src/artifact.rs` | **New** — `Artifact` + `ToolOutput` | 4 |
-| `common/src/lib.rs` | `pub mod artifact` | 4 |
-| `common/migrations/20260507000300_capability_tenant_scope.up.sql` | **New** | 2 |
-| `common/migrations/20260507000400_indexing_queue.up.sql` | **New** | 4 |
-| `docker/init/02-schema.sql` | Add `tenant_scope`, `indexing_queue` | 2, 4 |
-| `docker-compose.yml` | Add `current-time` service | 6 |
-| `.env.example` | Add `PLATFORM_ADMIN_TOKEN` | 6 |
-| `services/current-time/Dockerfile` | **New** | 6 |
-| `services/current-time/main.py` | **New** | 6 |
-| `services/current-time/requirements.txt` | **New** | 6 |
-| `evals/datasets/capability_registration.jsonl` | **New** | 7 |
-| `evals/src/main.rs` | Add capability routing eval | 7 |
-| `Cargo.toml` | Bump version to 0.3.3 | 9 |
-
-**Total new files:** 10  
-**Modified files:** 14  
-**New migrations:** 2  
-**Estimated AI-hours:** 14  
-**Estimated tokens:** ~90k
+**Definition of done (whole epic):**
+1. All three PRs merged; CI green including `cargo test -p auth-core --all-features`
+   (includes the v0.8 #8 contract test) and the gateway `auth_routes`
+   integration test.
+2. `docs/backend/auth.md` published and linked from root README; documents
+   the shared `common::jwt::JwtSecret` helper and the tracing + Prometheus
+   surface (v0.8 #2, #3).
+3. Manual end-to-end login on staging with at least one real IdP returns a
+   `conusai_session` cookie whose embedded `tenant_id` is honoured by
+   [mw/tenant.rs](crates/agent-gateway/src/mw/tenant.rs) on a subsequent
+   `/v1/audit` request, and `/metrics` increments
+   `conusai_auth_login_success_total{provider="…"}`.
+4. Dev `pnpm dev` with no env vars still works (fake-login fallback).

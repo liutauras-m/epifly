@@ -20,6 +20,7 @@
 	let toolCards: Map<string, { name: string; status: 'running' | 'success' | 'error'; result: string; startTime: number }> = $state(new Map());
 	let activeThreadId = $state<string | null>(null);
 	let inFlight = $state(false);
+	let streamController = $state<AbortController | null>(null);
 	let inputValue = $state('');
 	let pendingAttachments: { id: string; filename: string; size: number }[] = $state([]);
 	let composerFocused = $state(false);
@@ -33,6 +34,10 @@
 	onMount(() => {
 		const wsParam = $page.url.searchParams.get('ws');
 		if (wsParam) selectedNodeId = wsParam;
+		try {
+			const stored = localStorage.getItem('conusai-recents');
+			if (stored) recents = JSON.parse(stored);
+		} catch { /* ignore */ }
 	});
 
 	async function toggleFolder(node: WorkspaceNode) {
@@ -144,6 +149,13 @@
 	let newNodeError = $state('');
 	let newNodeBusy = $state(false);
 
+	function selectedFolderParent(): string | null {
+		if (!selectedNodeId) return null;
+		const allNodes = [...workspaceNodes, ...[...childNodes.values()].flat()];
+		const node = allNodes.find((n) => n.id === selectedNodeId);
+		return node?.kind === 'folder' ? selectedNodeId : null;
+	}
+
 	function openNewNodeForm(parentId: string | null = null) {
 		newNodeParentId = parentId;
 		newNodeName = '';
@@ -160,8 +172,9 @@
 
 	async function submitNewNode(e: SubmitEvent) {
 		e.preventDefault();
-		const name = newNodeName.trim();
+		let name = newNodeName.trim();
 		if (!name) { newNodeError = 'Name is required'; return; }
+		if (newNodeKind === 'conversation' && !name.endsWith('.md')) name = `${name}.md`;
 		newNodeBusy = true;
 		newNodeError = '';
 		try {
@@ -174,8 +187,30 @@
 				newNodeError = result.error.message ?? `Error ${result.error.status}`;
 				return;
 			}
+			const createdNode = result.data;
 			closeNewNodeForm();
-			await refreshWorkspaceTree();
+			// If created inside a folder, expand it and refresh its children
+			if (newNodeParentId) {
+				expandedFolders.add(newNodeParentId);
+				expandedFolders = new Set(expandedFolders);
+				try {
+					const childResult = await workspacesApi.getTree(fetch, newNodeParentId);
+					if (!childResult.error) {
+						const raw = childResult.data;
+						const nodes: WorkspaceNode[] = Array.isArray(raw) ? raw : ((raw as { nodes?: WorkspaceNode[] })?.nodes ?? []);
+						const updated = new Map(childNodes);
+						updated.set(newNodeParentId, nodes);
+						childNodes = updated;
+					}
+				} catch { /* ignore */ }
+				// Select the newly created node if it's a conversation
+				if (createdNode && newNodeKind === 'conversation') {
+					selectedNodeId = createdNode.id;
+					history.replaceState(null, '', `?ws=${createdNode.id}`);
+				}
+			} else {
+				await refreshWorkspaceTree();
+			}
 		} catch (err) {
 			newNodeError = err instanceof Error ? err.message : 'Network error';
 		} finally {
@@ -215,7 +250,7 @@
 	}
 
 	// ── Recents (local, updated after chat) ──────────────────────────────────
-	let recents = $state<{ id: string; title: string }[]>(data.recents ?? []);
+	let recents = $state<{ id: string; title: string }[]>([]);
 
 	// ── Theme ────────────────────────────────────────────────────────────────
 	let theme = $state('paper');
@@ -251,8 +286,19 @@
 		await tick();
 		scrollIfNear();
 
+		const controller = new AbortController();
+		streamController = controller;
+
 		let aiIdx = -1;
 		const newToolCards = new Map(toolCards);
+
+		// 45-second inactivity timeout — aborts if no new text or tool events arrive
+		let lastActivityTime = Date.now();
+		const timeoutId = setInterval(() => {
+			if (Date.now() - lastActivityTime > 45_000) {
+				controller.abort();
+			}
+		}, 5_000);
 
 		// ── Word-level streaming buffer ─────────────────────────────────────
 		// Incoming chars accumulate in wordAccum. On each animation frame we
@@ -291,10 +337,15 @@
 			for await (const delta of apiStreamChat({
 				message: prompt,
 				threadId: activeThreadId,
-				workspaceNodeId: selectedNodeId
+				workspaceNodeId: selectedNodeId,
+				signal: controller.signal,
 			})) {
+				lastActivityTime = Date.now();
+
 				if (delta.kind === 'text') {
 					if (aiIdx < 0 || messages[aiIdx]?.role !== 'ai') {
+						// Remove any post-tool thinking row before starting round-2 text
+						messages = messages.filter((m) => m.role !== 'thinking');
 						messages = [...messages, { role: 'ai', text: '', words: [], streaming: true }];
 						aiIdx = messages.length - 1;
 					}
@@ -313,6 +364,9 @@
 						newToolCards.set(delta.tool_use_id, { ...card, status: isError ? 'error' : 'success', result: delta.result });
 						toolCards = new Map(newToolCards);
 					}
+					// Show thinking row while waiting for round-2 LLM response
+					messages = [...messages.filter((m) => m.role !== 'thinking'), { role: 'thinking', text: '' }];
+					aiIdx = -1;
 				} else if (delta.kind === 'thread_id') {
 					const tid = delta.id;
 					if (tid !== activeThreadId) {
@@ -320,6 +374,7 @@
 						// Prepend to recents sidebar (trim duplicates)
 						const title = prompt.slice(0, 60) + (prompt.length > 60 ? '…' : '');
 						recents = [{ id: tid, title }, ...recents.filter((r) => r.id !== tid)].slice(0, 20);
+						try { localStorage.setItem('conusai-recents', JSON.stringify(recents)); } catch { /* ignore */ }
 					}
 				}
 				// 'done' terminates the generator naturally
@@ -335,11 +390,21 @@
 			// the next selectNode call will find the newly-created thread_id.
 			if (selectedNodeId) await refreshNodeMetadata(selectedNodeId);
 		} catch (e: unknown) {
-			const msg = e instanceof Error ? e.message : String(e);
+			clearInterval(timeoutId);
 			messages = messages.filter((m) => m.role !== 'thinking');
-			messages = [...messages, { role: 'ai', text: `Stream failed: ${msg}` }];
-			toasts.error(`Connection error: ${msg}`);
+			if (e instanceof Error && (e.name === 'AbortError' || e.message.includes('aborted'))) {
+				// User navigated away or timed out — don't show an error toast
+				if (messages.at(-1)?.role !== 'ai' || !messages.at(-1)?.text) {
+					messages = [...messages, { role: 'ai', text: 'Request cancelled.' }];
+				}
+			} else {
+				const msg = e instanceof Error ? e.message : String(e);
+				messages = [...messages, { role: 'ai', text: `Stream failed: ${msg}` }];
+				toasts.error(`Connection error: ${msg}`);
+			}
 		} finally {
+			clearInterval(timeoutId);
+			streamController = null;
 			inFlight = false;
 		}
 	}
@@ -417,14 +482,29 @@
 		e.preventDefault();
 		const val = inputValue.trim();
 		if (!val && pendingAttachments.length === 0) return;
-		let prompt = val;
-		if (pendingAttachments.length) {
-			const origin = window.location.origin;
-			const lines = pendingAttachments.map((a) => `- ${a.filename} (image_path: ${origin}/v1/files/${a.id})`).join('\n');
-			prompt = `${val}\n\n[Attached files]\n${lines}`;
-		}
+
+		// If the message looks like an extract request and there are invoice attachments,
+		// route each invoice through the extraction pipeline instead of the LLM.
+		const isExtractIntent = /extract\s*invoice|invoice\s*extract/i.test(val) || (!val && pendingAttachments.every(isInvoice));
+		const invoiceAttachments = isExtractIntent ? pendingAttachments.filter(isInvoice) : [];
+		const chatAttachments = pendingAttachments.filter((a) => !invoiceAttachments.includes(a));
+
 		inputValue = '';
 		pendingAttachments = [];
+
+		for (const a of invoiceAttachments) {
+			extractInvoice(a.id, a.filename);
+		}
+
+		if (!chatAttachments.length && !val && invoiceAttachments.length) return;
+		if (!val && !chatAttachments.length) return;
+
+		let prompt = val;
+		if (chatAttachments.length) {
+			const origin = window.location.origin;
+			const lines = chatAttachments.map((a) => `- ${a.filename} (image_path: ${origin}/ui/files/${a.id})`).join('\n');
+			prompt = `${val}\n\n[Attached files]\n${lines}`;
+		}
 		streamChat(prompt);
 	}
 
@@ -455,10 +535,13 @@
 	}
 
 	function newChat() {
+		streamController?.abort();
+		streamController = null;
 		showChat = false;
 		messages = [];
 		activeThreadId = null;
 		toolCards = new Map();
+		inFlight = false;
 	}
 
 	// ── Keyboard shortcuts ──────────────────────────────────────────────────
@@ -490,7 +573,7 @@
 			<header class="nav-header">
 				<span id="ws-heading" class="nav-heading label-mono">Workspace</span>
 				<button type="button" class="icon-btn ws-new-btn" aria-label="New folder or conversation"
-					onclick={() => openNewNodeForm(null)}>
+					onclick={() => openNewNodeForm(selectedFolderParent())}>
 					<svg class="icon" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
 						<line x1="9" y1="3" x2="9" y2="15"/><line x1="3" y1="9" x2="15" y2="9"/>
 					</svg>
@@ -680,8 +763,7 @@
 						{:else}
 							<div class="message ai" class:streaming={msg.streaming}>
 								{#if msg.streaming && msg.words}
-									<span class="ai-text" aria-live="polite">{#each msg.words as w (w.id)}<span class="tok" style="animation-delay:{w.delay}ms">{w.t}</span>{/each}</span>
-									{@render sonarDot(true)}
+									<span class="ai-text" aria-live="polite">{#each msg.words as w (w.id)}<span class="tok" style="animation-delay:{w.delay}ms">{w.t}</span>{/each}{#if msg.text}<span class="stream-cursor" aria-hidden="true"></span>{:else}&nbsp;{@render sonarDot(true)}{/if}</span>
 								{:else}
 									<span class="ai-text">{msg.text}</span>
 								{/if}
@@ -857,7 +939,7 @@
 		<div class="ws-folder" style="--depth:{depth}">
 			<button class="ws-node ws-node-folder" class:ws-node-expanded={expandedFolders.has(node.id)}
 				class:ws-node-selected={selectedNodeId === node.id}
-				onclick={() => { selectedNodeId = node.id; goto(`?ws=${node.id}`, { replaceState: true, keepFocus: true, noScroll: true }); toggleFolder(node); }}
+				onclick={() => { selectedNodeId = node.id; history.replaceState(null, '', `?ws=${node.id}`); toggleFolder(node); }}
 				aria-expanded={expandedFolders.has(node.id)}>
 				<span class="ws-node-chevron">{expandedFolders.has(node.id) ? '▾' : '▸'}</span>
 				<span class="ws-node-icon">📁</span>

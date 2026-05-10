@@ -53,11 +53,8 @@ impl From<ValidationReport> for ValidationResponse {
 pub struct CapabilityRegisterRequest {
     /// Unique reverse-dns-style ID, e.g. "media.time.current-time".
     pub capability_id: String,
-    /// Human name used as tool_name in capability_specs.
-    pub name: String,
     /// Dot-separated namespace, e.g. "media.time".
     pub namespace: String,
-    pub description: String,
     pub version: String,
     /// Must be "remote_mcp" for self-registering MCP services.
     pub kind: String,

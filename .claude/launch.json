@@ -4,7 +4,7 @@
     {
       "name": "web",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "web", "exec", "vite", "dev", "--port", "5173"],
+      "runtimeArgs": ["--filter", "web", "run", "dev", "--", "--port", "5173"],
       "port": 5173
     }
   ]

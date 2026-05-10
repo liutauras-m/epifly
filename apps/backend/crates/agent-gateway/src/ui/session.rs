@@ -9,7 +9,7 @@ use agent_core::{PlanTier, TenantContext};
 use axum::{
     extract::FromRequestParts,
     http::request::Parts,
-    response::{IntoResponse, Redirect, Response},
+    response::{IntoResponse, Response},
 };
 use axum_extra::extract::CookieJar;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
@@ -32,17 +32,6 @@ pub struct SessionUser {
 }
 
 impl SessionUser {
-    pub fn first_name(&self) -> &str {
-        self.name.split_whitespace().next().unwrap_or(&self.name)
-    }
-    pub fn initials(&self) -> String {
-        self.name
-            .split_whitespace()
-            .filter_map(|w| w.chars().next())
-            .take(2)
-            .collect::<String>()
-            .to_uppercase()
-    }
     pub fn plan_tier(&self) -> PlanTier {
         match self.plan.as_str() {
             "pro" => PlanTier::Pro,
@@ -101,15 +90,16 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-/// Axum extractor — auto-redirect to /login on missing/invalid cookie.
+/// Axum extractor — returns 401 on missing/invalid cookie.
+/// The SvelteKit frontend handles the /login redirect client-side.
 impl<S: Send + Sync> FromRequestParts<S> for SessionUser {
     type Rejection = Response;
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let jar = CookieJar::from_request_parts(parts, state)
             .await
-            .map_err(|_| Redirect::to("/login").into_response())?;
+            .map_err(|_| axum::http::StatusCode::UNAUTHORIZED.into_response())?;
         jar.get(COOKIE_NAME)
             .and_then(|c| verify(c.value()))
-            .ok_or_else(|| Redirect::to("/login").into_response())
+            .ok_or_else(|| axum::http::StatusCode::UNAUTHORIZED.into_response())
     }
 }

@@ -102,12 +102,15 @@ impl Modify for SecurityAddon {
 )]
 pub struct ApiDoc;
 
-/// Routes that require no auth (health probe, auth, OpenAPI).
+/// Routes that require no auth (health probe, auth, file download, OpenAPI).
 pub fn public_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/health", get(health::health))
         // Auth: exchange credentials for JWT
         .route("/v1/auth/login", post(auth::login))
+        // File download: UUID token acts as a presigned URL credential (1h TTL, no JWT needed).
+        // This allows the agent loop's resolve_image_path to fetch uploaded files without auth.
+        .route("/v1/files/{token}", get(files::download))
         // Self-registration for external capability services.
         // Auth: if PLATFORM_ADMIN_TOKEN is set the request must carry
         //   `Authorization: Bearer <token>`.  In dev (token unset) all
@@ -204,9 +207,8 @@ pub fn protected_router() -> Router<Arc<AppState>> {
         .route("/v1/capabilities/search", get(search::search))
         // MCP JSON-RPC 2.0
         .route("/mcp", post(mcp::dispatch))
-        // File storage (MinIO-backed)
+        // File storage (MinIO-backed) — upload requires JWT; download is in public_router
         .route("/v1/files", post(files::upload))
-        .route("/v1/files/{token}", get(files::download))
         // ── Audit log ──────────────────────────────────────────────────────
         .route("/v1/audit", get(audit::list_audit))
         // ── Workspace ──────────────────────────────────────────────────────

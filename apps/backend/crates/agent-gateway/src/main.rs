@@ -1,5 +1,6 @@
 use agent_core::{WorkspaceIndexer, indexing::RealFsWatcher};
 use anyhow::Result;
+use std::path::PathBuf;
 use axum::{Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
 use jobs::JobSchedulerService;
 use prometheus::Encoder;

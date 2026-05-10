@@ -988,6 +988,24 @@ body::after {
   100% { transform: translate(-50%, -50%) scale(1);   opacity: 0;    }
 }
 
+/* ── Streaming text cursor ──────────────────────────────────────────────────
+   Replaces the sonar ring once text has started arriving — a blinking caret
+   communicates "still writing" without the noise of full radar rings.        */
+.stream-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 0.85em;
+  background: var(--ember-2);
+  border-radius: 1px;
+  vertical-align: text-bottom;
+  margin-left: 2px;
+  animation: cur-blink 0.9s step-end infinite;
+}
+@keyframes cur-blink {
+  0%, 100% { opacity: 0.9; }
+  50%       { opacity: 0;   }
+}
+
 .message.ai.error::before { background: var(--rust); }
 .message.ai.error { color: var(--ink-2); }
 .message.ai.error .ai-text::before { content: "⚠  "; color: var(--rust); }

@@ -17,7 +17,6 @@ use std::sync::Arc;
 #[derive(Template)]
 #[template(path = "super_admin/list.html")]
 pub struct AdminListView {
-    pub title: &'static str,
     pub user_name: String,
     pub capabilities: Vec<CapabilitySummary>,
     pub flash: Option<String>,
@@ -26,7 +25,6 @@ pub struct AdminListView {
 #[derive(Template)]
 #[template(path = "super_admin/new.html")]
 pub struct AdminNewView {
-    pub title: &'static str,
     pub user_name: String,
     pub error: Option<String>,
     pub manifest_toml: String,
@@ -35,7 +33,6 @@ pub struct AdminNewView {
 #[derive(Template)]
 #[template(path = "super_admin/detail.html")]
 pub struct AdminDetailView {
-    pub title: &'static str,
     pub user_name: String,
     pub capability: CapabilitySummary,
     pub manifest_toml: String,
@@ -60,7 +57,6 @@ pub struct UpdateForm {
 pub async fn index(State(state): State<Arc<AppState>>, user: SessionUser) -> Response {
     let capabilities = state.tool_admin.list();
     let view = AdminListView {
-        title: "Super Admin",
         user_name: user.name.clone(),
         capabilities,
         flash: None,
@@ -83,7 +79,6 @@ prompt_template = "{{input.query}}"
 max_tokens = 2048
 "#;
     let view = AdminNewView {
-        title: "New Capability",
         user_name: user.name.clone(),
         error: None,
         manifest_toml: default_toml.to_string(),
@@ -105,7 +100,6 @@ pub async fn create(
         Ok(summary) => Redirect::to(&format!("/super-admin/{}", summary.name)).into_response(),
         Err(e) => {
             let view = AdminNewView {
-                title: "New Capability",
                 user_name: user.name.clone(),
                 error: Some(e.to_string()),
                 manifest_toml: form.manifest_toml,
@@ -132,7 +126,6 @@ pub async fn detail(
         .get_manifest_toml(&name)
         .unwrap_or_default();
     let view = AdminDetailView {
-        title: "Capability Detail",
         user_name: user.name.clone(),
         capability,
         manifest_toml,
@@ -159,7 +152,6 @@ pub async fn update(
                 .get_manifest_toml(&name)
                 .unwrap_or_default();
             let view = AdminDetailView {
-                title: "Capability Detail",
                 user_name: user.name.clone(),
                 capability,
                 manifest_toml,
@@ -184,7 +176,6 @@ pub async fn update(
                     updated_at: String::new(),
                 });
             let view = AdminDetailView {
-                title: "Capability Detail",
                 user_name: user.name.clone(),
                 capability,
                 manifest_toml: form.manifest_toml,

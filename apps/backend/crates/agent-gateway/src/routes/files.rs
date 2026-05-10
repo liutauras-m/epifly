@@ -1,7 +1,7 @@
 /// File upload / download via MinIO (S3-compatible).
 ///
-/// POST /v1/files          — multipart upload, returns download token
-/// GET  /v1/files/{token}  — stream file back (token-gated, 1h TTL)
+/// POST /v1/files          — multipart upload, returns download token (requires JWT)
+/// GET  /v1/files/{token}  — stream file back (token-gated, 1h TTL; no JWT needed)
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
 use axum::{
@@ -101,10 +101,13 @@ pub async fn upload(
     })))
 }
 
-/// Download a file by token (requires auth; token must belong to the caller's tenant).
+/// Download a file by token.
+///
+/// The UUID token is the credential — no JWT required. Possession of the token
+/// is equivalent to a presigned URL: the token has a 1-hour TTL and is
+/// unguessable (UUID v4, 122 bits of entropy).
 pub async fn download(
     State(state): State<Arc<AppState>>,
-    Extension(tenant): Extension<ResolvedTenant>,
     Path(token): Path<String>,
 ) -> Result<Response, HttpError> {
     let store = state
@@ -114,14 +117,11 @@ pub async fn download(
 
     let object_key = {
         let tokens = state.presigned_tokens.lock().unwrap();
-        let (key, created, ttl, stored_tid) = tokens
+        let (key, created, ttl, _tenant_id) = tokens
             .get(&token)
             .ok_or_else(|| HttpError::not_found("download token"))?;
         if created.elapsed() > *ttl {
             return Err(HttpError::not_found("download token (expired)"));
-        }
-        if stored_tid != tenant.0.tenant_id.as_str() {
-            return Err(HttpError::not_found("download token"));
         }
         key.clone()
     };

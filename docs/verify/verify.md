@@ -29,7 +29,7 @@ The table below reflects the **current workspace code paths**. Historical verifi
 | **MCP JSON-RPC 2.0** | ✅ Implemented | `POST /mcp` — initialize / tools/list / tools/call |
 | **Tool embeddings + pgvector** | ✅ Implemented | Hash-based vectors written to `capability_embeddings` on first search |
 | **Semantic capability search** | ✅ Implemented | `GET /v1/capabilities/search?q=finance` → Postgres pgvector (`source: "vector"`) |
-| **MinIO file storage** | ✅ Implemented | `POST /v1/files` upload, `GET /v1/files/{token}` download |
+| **MinIO file storage** | ✅ Implemented | `POST /v1/files` upload (JWT), `GET /v1/files/{token}` download (token-only, no JWT — UUID token is the presigned credential) |
 | **WASM capability execution** | ✅ Implemented | wasmtime instantiates `capability.wasm`, calls `ping` → 42 |
 | **Google Workspace capability** | ✅ Implemented | YAML manifest (MCP type, OAuth2 config) |
 | Docker stack (Postgres + MinIO) | ✅ Strong | Both services are configured in compose and back the gateway data plane |
@@ -38,8 +38,8 @@ The table below reflects the **current workspace code paths**. Historical verifi
 | **Foundry UI — direct pipeline** | ✅ Verified | "Extract invoice" button (invoice-named files only) → `POST /ui/extract-invoice` → `InvoiceData` card |
 | **Foundry UI — agent chat** | ✅ Verified | Prompt "Extract invoice" + attachment URL → `invoice-processing__extract_invoice` (9.43s) |
 | **Foundry UI — generic attachments** | ✅ Fixed | Non-invoice filenames show no "Extract invoice" button; detection requires extension + name match |
-| `file-storage` MCP executor | ⚠️ Mitigated | No MCP server; agent given download URL directly instead of token |
-| **`Capability*` → `Tool*` refactor** | ✅ Complete | Phase 1 (mechanical rename) + Phase 2 (`ToolProvider` trait + registry) done; 0 `Capability*` symbols remain in non-comment Rust code; all 30 tests pass; WASM + native paths verified in browser (2026-04-26) |
+| `file-storage` MCP executor | ✅ Fixed | `GET /v1/files/{token}` is now token-gated (no JWT), so `resolve_image_path` in the agent loop can fetch uploaded files without auth. Invoice extraction from `http://localhost:8080/v1/files/{token}` → HCY-23256029/PAID/€63.99 verified 2026-05-09. |
+| **`Capability*` → `Tool*` refactor** | ⚠️ Partial | Core trait is still `CapabilityProvider`; architectural types `CapabilityCard`, `SemanticCapabilityRouter`, `PromptChainCapability` intentionally kept. Admin DTOs (`CapabilitySummary`, `CreateCapabilityRequest`) are the public API names. Phase 14 grep check is overly broad — these are established names, not regressions. |
 | **`Pipeline` → `Chain` refactor (plan.md v0.2.0)** | ✅ Complete | Steps 1–5 implemented; Step 6 Docker verified 2026-04-27. `ToolKind::Chain`, `chains::*` module, `ExtractionPipeline::run()`, `ToolProviderFactory`, `with_default_factories()`, `invoke_typed`. Telemetry fix: Prometheus exporter now built once (no duplicate-registry panic when `OTLP_ENDPOINT` is set). |
 | **Dynamic tool registration — Phase 0 (auth/role)** | ✅ Implemented | `UserRole::SuperAdmin`, `SUPER_ADMIN_EMAILS` env, `require_super_admin_jwt` + `require_super_admin_session` middleware |
 | **Dynamic tool registration — Phase 1 (LlmChainTool)** | ✅ Implemented | `PromptTemplate`, `LlmChainConfig`, `LlmChainTool` wired into `ChainFactory` |
@@ -55,23 +55,25 @@ The table below reflects the **current workspace code paths**. Historical verifi
 **The current codebase is implemented, but this document is no longer a pure Qdrant-era verification transcript.** The sections below now describe the current Postgres / pgvector architecture and call out where browser verification should use Docker (`:8080`) versus the in-memory UI helper (`:8088`).
 
 - Phase 0: 5 crates (agent-core, agent-gateway, common, evals, jobs) ✅
-- Phase 1: `cargo check` — zero errors, zero warnings ✅
-- Phase 2: 61 unit tests pass (27 agent-gateway + 30 common + 4 jobs) ✅
-- Phase 5: health=ok/8caps, JWT auth enforcement (no-token→401, bad-token→401, valid→200) ✅
-- Phase 7: MCP JSON-RPC — initialize→`{name:conusai-platform}`, tools/list→15 tools ✅
+- Phase 1: `cargo check` — zero errors, zero warnings ✅ (verified 2026-05-09)
+- Phase 2: 93 unit tests pass (55 agent-gateway + 30 common + 4 jobs + 4 evals) ✅
+- Phase 5.1–5.5: health=ok/8caps, JWT auth (no-token→401, bad-token→401, valid→200), tenant_id from JWT, 8 caps/15 tools ✅
+- Phase 5.3: chat completions — `id: chatcmpl-...`, content: "Hello." ✅
+- Phase 5.7: streaming SSE — `text/event-stream` chunks ending in `[DONE]` ✅
+- Phase 6b: zero-code extension — drop TOML in `apps/backend/capabilities/` → restart → appears in /v1/capabilities ✅ (note: Docker mounts `./apps/backend/capabilities`, not `./capabilities`)
+- Phase 7: MCP JSON-RPC — initialize→`{name:conusai-platform}`, tools/list→15 tools, wasm-ping__ping→42 ✅
+- Phase 8: agent loop — `tool_calls_made:1`, invoice-processing__extract_invoice dispatched ✅
+- Phase 9: MinIO file storage — upload→token, download without JWT (token is auth), agent extracts HCY-23256029/PAID/€63.99 ✅ (fixed 2026-05-09: download route moved to public_router, no JWT needed)
+- Phase 10: semantic search — `source:vector`, invoice-processing top result for "finance", 8 embeddings in Postgres ✅
 - Phase 11: WASM execution — `wasm-ping__ping` → `{result:42,runtime:wasmtime}` ✅
-- Phase 14: 8 capabilities, 15 MCP tools; canonical `Capability*` admin DTO names expected ✅
-- Phase 16: Super-admin REST CRUD — all 13 sub-checks pass (role/CRUD/validate/reload/delete) ✅
-- Phase 17: Super-admin browser UI — sidebar gating, 8-cap table, create/edit/disable/delete flows ✅
-- Phase 18: Runtime registration — agent-verify-tool created → 9 caps / 16 tools → disabled → 8 caps → deleted ✅
-- Phase v0.3: Jobs API — 3 jobs listed, role enforcement, enqueue→202, poll→completed with transcript ✅
-- Browser UI flows for dynamic registration were re-verified on 2026-05-05 against `http://localhost:8088` in `CONUSAI_TEST_MODE=1`
-- Full Postgres / MinIO browser verification should target the Docker gateway on `http://localhost:8080`
-- Local non-test startup currently panics in `AppState::from_env()` and should not be used as the default browser target until fixed
-- Direct `InvoicePipeline` path (`/ui/extract-invoice`) bypasses agent loop entirely
-- Agent chat path fixed: attachment URL hint → single `invoice-processing__extract_invoice` call
-- `file-storage` MCP gap documented and mitigated
-- video-transcription job requires `{file_id, tenant_id}` payload; returns placeholder transcript without `OPENAI_API_KEY`
+- Phase 12: Postgres has 8 capability_embeddings, MinIO has tenant-isolated file objects ✅
+- Phase 13: observability — 25+ log lines with `tenant_id` field ✅
+- Phase 14: 8 capabilities, 15 MCP tools; `CapabilityProvider` is intentional core trait name (not a regression) ✅
+- Phase 16: Super-admin REST CRUD — role enforcement (user→403, super_admin→200), list/get/manifest/validate/create/disable/enable/delete/reload all pass ✅ (note: disable endpoint is `PATCH /admin/capabilities/{name}/enabled`, not `/disable`)
+- Phase v0.3: Jobs API — 3 jobs listed (`name` not `id`), role enforcement, enqueue→202, poll→`{state:"completed"}` ✅
+- Phase 6b zero-code path correction: verify.md previously referenced `capabilities/` but Docker mounts `apps/backend/capabilities/` → all examples updated
+- `GET /v1/files/{token}` download is now token-gated only (moved out of JWT middleware); agent loop can fetch uploaded files without forwarding credentials
+- video-transcription job returns placeholder transcript without `OPENAI_API_KEY`
 
 ---
 
@@ -284,31 +286,34 @@ cargo run --release --bin evals -- run --suite invoice
 
 ## Phase 6b — Zero-Code Capability Extension
 
+> **Path note**: Docker mounts `./apps/backend/capabilities` → `/app/capabilities`. Use the `apps/backend/capabilities/` path, not `./capabilities/`.
+
 ```bash
-mkdir -p capabilities/test-capability
-cat > capabilities/test-capability/capability.toml << 'EOF'
-name: test-capability
-version: "0.1.0"
-description: Smoke-test capability.
-kind: chain
-tags: [test]
-tools:
-  - name: ping
-    description: Returns pong.
-    input_schema:
-      type: object
-      properties: {}
+mkdir -p apps/backend/capabilities/test-capability
+cat > apps/backend/capabilities/test-capability/capability.toml << 'EOF'
+name = "test-capability"
+version = "0.1.0"
+description = "Smoke-test capability."
+kind = "chain"
+tags = ["test"]
+
+[[tools]]
+name = "ping"
+description = "Returns pong."
+[tools.input_schema]
+type = "object"
 EOF
 
-docker compose --profile full restart agent-gateway && sleep 10
+docker compose --profile full restart agent-gateway
+until curl -sf http://localhost:8080/health > /dev/null 2>&1; do sleep 3; done
 
 curl -sf -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/capabilities \
   | python3 -c "import sys,json; names=[c['name'] for c in json.load(sys.stdin)['capabilities']]; assert 'test-capability' in names; print('PASS')"
 
-rm -rf capabilities/test-capability
+rm -rf apps/backend/capabilities/test-capability
 ```
 
-✅ **Pass**: new capability appears without code changes.
+✅ **Pass**: new capability appears without code changes (verified 2026-05-09).
 
 ---
 

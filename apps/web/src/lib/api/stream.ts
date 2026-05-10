@@ -6,6 +6,7 @@ interface StreamChatParams {
   threadId?: string | null;
   workspaceNodeId?: string | null;
   fetch?: typeof globalThis.fetch;
+  signal?: AbortSignal;
 }
 
 interface StreamChatOptions {
@@ -32,6 +33,7 @@ export async function* streamChat(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: params.signal,
       });
 
       if (!res.ok || !res.body) {
@@ -73,7 +75,7 @@ export async function* streamChat(
               }
             }
 
-            const tid = (ev.thread_id as string | null) ?? (ev.id as string | null);
+            const tid = ev.thread_id as string | null;
             if (tid) yield { kind: 'thread_id', id: tid };
           }
         }

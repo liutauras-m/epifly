@@ -1,0 +1,10 @@
+apps/backend/target/
+target/
+apps/web/node_modules/
+node_modules/
+apps/web/.svelte-kit/
+**/.git/
+docs/
+*.md
+.claude/
+.env.local
