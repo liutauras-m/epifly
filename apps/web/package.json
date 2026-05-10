@@ -8,14 +8,19 @@
     "preview": "vite preview",
     "lint": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
-    "test:ui": "vitest --ui"
+    "test:ui": "vitest --ui",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@conusai/types": "workspace:*",
+    "@conusai/sdk": "workspace:*",
+    "@conusai/ui": "workspace:*",
     "@sveltejs/adapter-node": "^5.2.12",
     "@sveltejs/kit": "^2.21.0",
     "svelte": "^5.33.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.49.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "svelte-check": "^4.2.1",
     "typescript": "^5.7.3",

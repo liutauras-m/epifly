@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod bridge;
+pub mod capabilities;
 pub mod chains;
 pub mod context;
 pub mod indexing;
@@ -7,7 +8,6 @@ pub mod llm;
 pub mod memory;
 pub mod prompt;
 pub mod realtime;
-pub mod tools;
 pub mod vector_store;
 
 pub use bridge::ArtifactBridge;
@@ -30,20 +30,21 @@ pub use memory::{
     PostgresAuditStore, PostgresThreadStore, PostgresWorkspaceStore,
 };
 pub use realtime::{RealtimeService, WorkspaceChangeEvent};
-pub use tools::admin::{
+pub use capabilities::admin::{
     AdminLimits, CapabilityAdmin, CapabilitySummary, CreateCapabilityRequest, TestInvokeRequest,
     TestInvokeResponse, UpdateCapabilityRequest, build_admin,
 };
-pub use tools::builtin_tool_card;
-pub use tools::card::CapabilityCard;
-pub use tools::discovery::ToolDiscovery;
-pub use tools::namespace::NamespaceFilter;
-pub use tools::provider::{BulkCapabilityFactory, CapabilityFactory};
-pub use tools::providers::capability_spec::CapabilitySpecFactory;
-pub use tools::registry::ToolRegistry;
-pub use tools::semantic_router::{RouterMetrics, SemanticCapabilityRouter, SemanticRouterConfig};
-pub use tools::store::{FilesystemStore, RegisteredToolState, RegisteredToolStore};
-pub use tools::validator::{
+pub use capabilities::builtin_tool_card;
+pub use capabilities::card::CapabilityCard;
+pub use capabilities::discovery::CapabilityDiscovery;
+pub use capabilities::namespace::NamespaceFilter;
+pub use capabilities::provider::{BulkCapabilityFactory, CapabilityFactory};
+pub use capabilities::providers::capability_spec::CapabilitySpecFactory;
+pub use capabilities::trace_replay::{TraceReplayCapability, TraceReplayFactory, WorkspaceNodeTraceSource};
+pub use capabilities::registry::CapabilityRegistry;
+pub use capabilities::semantic_router::{RouterMetrics, SemanticCapabilityRouter, SemanticRouterConfig};
+pub use capabilities::store::{FilesystemStore, RegisteredToolState, RegisteredToolStore};
+pub use capabilities::validator::{
     RegisteredToolValidationError, RegisteredToolValidator, ValidationReport,
 };
 pub use vector_store::PgVectorStore;

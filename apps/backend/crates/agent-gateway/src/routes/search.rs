@@ -66,7 +66,7 @@ pub async fn search(
 async fn vector_search(
     state: &AppState,
     query: &str,
-    cards: &[agent_core::tools::card::CapabilityCard],
+    cards: &[agent_core::capabilities::card::CapabilityCard],
     limit: usize,
 ) -> anyhow::Result<Vec<Value>> {
     // 1. Refresh capability embeddings for changed cards.
@@ -99,7 +99,7 @@ async fn vector_search(
 /// unchanged cards.
 async fn refresh_capability_embeddings(
     state: &AppState,
-    cards: &[agent_core::tools::card::CapabilityCard],
+    cards: &[agent_core::capabilities::card::CapabilityCard],
 ) -> anyhow::Result<()> {
     for card in cards {
         let content = format!(
@@ -175,7 +175,7 @@ async fn refresh_capability_embeddings(
 fn local_search(
     tenant_id: &str,
     query: &str,
-    cards: &[agent_core::tools::card::CapabilityCard],
+    cards: &[agent_core::capabilities::card::CapabilityCard],
     limit: usize,
 ) -> Value {
     let q = query.to_lowercase();

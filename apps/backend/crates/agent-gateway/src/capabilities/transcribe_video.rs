@@ -1,12 +1,12 @@
 //! `TranscribeVideoCapability` — a `CapabilityProvider` that enqueues a
 //! `VideoTranscriptionJob` via the `JobExecutor` and returns a `task_id` instantly.
 //!
-//! Register it by adding it to the `ToolRegistry` at startup with a synthetic
+//! Register it by adding it to the `CapabilityRegistry` at startup with a synthetic
 //! `CapabilityCard` built by `transcribe_video_card()`.
 
 use agent_core::context::tenant::TenantContext;
-use agent_core::tools::manifest::{ToolDef, ToolKind, ToolManifest};
-use agent_core::tools::provider::CapabilityProvider;
+use agent_core::capabilities::manifest::{ToolDef, ToolKind, ToolManifest};
+use agent_core::capabilities::provider::CapabilityProvider;
 use async_trait::async_trait;
 use jobs::JobExecutor;
 use serde_json::{Value, json};

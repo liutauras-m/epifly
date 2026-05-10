@@ -1,6 +1,6 @@
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
-use agent_core::tools::executor::ToolExecutor;
+use agent_core::capabilities::executor::ToolExecutor;
 use axum::{Extension, Json, extract::State};
 use common::mcp::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use serde_json::{Value, json};

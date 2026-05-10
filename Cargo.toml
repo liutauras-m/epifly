@@ -6,6 +6,7 @@ members = [
     "apps/backend/crates/jobs",
     "apps/backend/crates/agent-gateway",
     "apps/backend/evals",
+    "apps/browser-shell/src-tauri",
 ]
 
 [workspace.package]
@@ -66,7 +67,7 @@ sha2         = { version = "0.10" }
 blake3       = { version = "1" }
 
 # Schema / validation
-schemars     = { version = "0.8", features = ["derive"] }
+schemars     = { version = "0.8", features = ["derive", "chrono"] }
 
 # Base64
 base64       = { version = "0.22" }

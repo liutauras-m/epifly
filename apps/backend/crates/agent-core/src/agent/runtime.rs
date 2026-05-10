@@ -1,23 +1,23 @@
 use super::builder::{Agent, AgentBuilder};
 use crate::context::tenant::TenantContext;
-use crate::tools::registry::ToolRegistry;
+use crate::capabilities::registry::CapabilityRegistry;
 use common::error::HttpError;
 use tracing::{info, instrument};
 
 pub struct AgentRuntime {
     agent: Agent,
-    registry: ToolRegistry,
+    registry: CapabilityRegistry,
 }
 
 impl AgentRuntime {
-    pub fn new(agent: Agent, registry: ToolRegistry) -> Self {
+    pub fn new(agent: Agent, registry: CapabilityRegistry) -> Self {
         Self { agent, registry }
     }
 
     pub fn for_tenant(
         model: impl Into<String>,
         preamble: impl Into<String>,
-        registry: ToolRegistry,
+        registry: CapabilityRegistry,
         tenant: TenantContext,
     ) -> Self {
         let agent = AgentBuilder::build_for_tenant(model, preamble, tenant);
@@ -33,7 +33,7 @@ impl AgentRuntime {
         self.agent.prompt(input).await
     }
 
-    pub fn registry(&self) -> &ToolRegistry {
+    pub fn registry(&self) -> &CapabilityRegistry {
         &self.registry
     }
 }

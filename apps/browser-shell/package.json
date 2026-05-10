@@ -1,0 +1,31 @@
+{
+  "name": "browser-shell",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "check-types": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "dependencies": {
+    "@conusai/types": "workspace:*",
+    "@conusai/sdk": "workspace:*",
+    "@conusai/ui": "workspace:*",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-stronghold": "^2",
+    "@sveltejs/kit": "^2.21.0",
+    "svelte": "^5.33.0"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "^3.0.0",
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@tauri-apps/cli": "^2",
+    "svelte-check": "^4.2.1",
+    "typescript": "^5.7.3",
+    "vite": "^6.3.5"
+  }
+}

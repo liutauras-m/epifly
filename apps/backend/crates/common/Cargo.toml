@@ -31,5 +31,6 @@ chrono.workspace      = true
 ulid.workspace        = true
 bytes.workspace       = true
 async-trait.workspace = true
+schemars.workspace    = true
 utoipa.workspace      = true
 axum.workspace        = true

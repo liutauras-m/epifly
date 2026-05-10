@@ -52,3 +52,14 @@ pnpm-lock.yaml
 # SvelteKit build artifacts
 .svelte-kit/
 build/
+
+# Turborepo
+.turbo/
+
+# pnpm per-package dist
+apps/*/dist
+packages/*/dist
+
+# Tauri shell
+apps/browser-shell/src-tauri/target/
+apps/browser-shell/src-tauri/gen/

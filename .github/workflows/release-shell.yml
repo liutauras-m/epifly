@@ -1,0 +1,238 @@
+name: Release Shell
+
+on:
+  push:
+    tags:
+      - "shell-v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-macos:
+    name: macOS universal + iOS
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - run: rustup show
+
+      - name: Add macOS + iOS targets
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm --filter browser-shell build
+
+      - name: Build macOS universal DMG
+        run: pnpm --filter browser-shell tauri build -- --target universal-apple-darwin
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: Notarize DMG
+        if: env.APPLE_TEAM_ID != ''
+        run: |
+          xcrun notarytool submit \
+            apps/browser-shell/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg \
+            --keychain-profile "ConusAI" --wait
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Build iOS IPA
+        if: env.APPLE_TEAM_ID != ''
+        run: pnpm --filter browser-shell tauri ios build --target aarch64
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: apps/browser-shell/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+
+      - name: Upload iOS IPA
+        if: env.APPLE_TEAM_ID != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: apps/browser-shell/src-tauri/target/release/bundle/ios/*.ipa
+
+  build-windows:
+    name: Windows MSI
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - run: rustup show
+
+      - name: Add Windows target
+        run: rustup target add x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm --filter browser-shell build
+
+      - name: Build Windows MSI
+        run: pnpm --filter browser-shell tauri build -- --target x86_64-pc-windows-msvc
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-msi
+          path: apps/browser-shell/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+
+  build-linux:
+    name: Linux AppImage + deb
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            pkg-config \
+            libssl-dev \
+            cmake \
+            clang
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm --filter browser-shell build
+
+      - name: Build Linux bundles
+        run: pnpm --filter browser-shell tauri build
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: apps/browser-shell/src-tauri/target/release/bundle/appimage/*.AppImage
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-deb
+          path: apps/browser-shell/src-tauri/target/release/bundle/deb/*.deb
+
+  build-android:
+    name: Android AAB + APK
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK 27
+        run: sdkmanager "ndk;27.0.11902837"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - run: rustup show
+
+      - name: Add Android targets
+        run: |
+          rustup target add aarch64-linux-android armv7-linux-androideabi \
+            i686-linux-android x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm --filter browser-shell build
+
+      - name: Build Android AAB
+        run: pnpm --filter browser-shell tauri android build --aab
+        env:
+          CONUSAI_KEYSTORE_PATH: ${{ secrets.ANDROID_KEYSTORE_PATH }}
+          CONUSAI_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          CONUSAI_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          CONUSAI_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.11902837
+
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-aab
+          path: apps/browser-shell/src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-24.04
+    needs: [build-macos, build-windows, build-linux, build-android]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/*
+          generate_release_notes: true

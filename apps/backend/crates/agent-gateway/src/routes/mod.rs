@@ -11,6 +11,7 @@ use utoipa::openapi::security::{ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder
 use utoipa_swagger_ui::SwaggerUi;
 
 mod admin_capabilities;
+mod admin_devices;
 mod admin_jobs;
 pub mod agent;
 mod audit;
@@ -18,6 +19,7 @@ pub mod auth;
 mod capabilities;
 pub mod chat;
 mod files;
+mod shells;
 mod health;
 mod mcp;
 pub mod realtime;
@@ -187,6 +189,10 @@ pub fn admin_router() -> Router<Arc<AppState>> {
         .route("/admin/jobs/{name}", get(admin_jobs::get_job))
         .route("/admin/jobs/{name}/run", post(admin_jobs::run_now))
         .route("/admin/tasks", get(admin_jobs::list_tasks))
+        // ── Device tokens (browser-shell clients) ──────────────────────────
+        .route("/admin/devices", post(admin_devices::issue_device))
+        .route("/admin/devices", get(admin_devices::list_devices))
+        .route("/admin/devices/{id}", delete(admin_devices::revoke_device))
         .layer(middleware::from_fn(require_super_admin_jwt))
 }
 
@@ -236,4 +242,9 @@ pub fn protected_router() -> Router<Arc<AppState>> {
         .route("/v1/threads/{id}/messages", get(threads::get_messages))
         // ── Realtime ────────────────────────────────────────────────────────
         .route("/api/realtime/workspace", get(realtime::realtime_workspace))
+        // ── Shell control (browser-shell WS; gated by feature flag) ─────────
+        .route(
+            "/v1/shells/{device_id}/control",
+            get(shells::shell_control),
+        )
 }

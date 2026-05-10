@@ -9,9 +9,9 @@ use agent_core::{
     CapabilitySummary, CreateCapabilityRequest, RegisteredToolValidator, TestInvokeRequest,
     UpdateCapabilityRequest, ValidationReport,
 };
-use agent_core::tools::card::CapabilityCard;
-use agent_core::tools::manifest::{ToolDef, ToolKind, ToolManifest};
-use agent_core::tools::providers::remote_mcp::RemoteMcpCapability;
+use agent_core::capabilities::card::CapabilityCard;
+use agent_core::capabilities::manifest::{ToolDef, ToolKind, ToolManifest};
+use agent_core::capabilities::providers::remote_mcp::RemoteMcpCapability;
 use axum::{
     Extension, Json,
     extract::{Path, Query, State},
@@ -133,7 +133,7 @@ pub async fn create(
     Extension(tenant): Extension<ResolvedTenant>,
     Json(req): Json<CreateCapabilityRequest>,
 ) -> impl IntoResponse {
-    let manifest = agent_core::tools::manifest::ToolManifest::from_toml(&req.manifest_toml).ok();
+    let manifest = agent_core::capabilities::manifest::ToolManifest::from_toml(&req.manifest_toml).ok();
     match state.tool_admin.create(req, &tenant.0) {
         Ok(summary) => {
             if let Some(m) = manifest
@@ -154,7 +154,7 @@ pub async fn update(
     Path(name): Path<String>,
     Json(req): Json<UpdateCapabilityRequest>,
 ) -> impl IntoResponse {
-    let manifest = agent_core::tools::manifest::ToolManifest::from_toml(&req.manifest_toml).ok();
+    let manifest = agent_core::capabilities::manifest::ToolManifest::from_toml(&req.manifest_toml).ok();
     match state.tool_admin.update(&name, req, &tenant.0) {
         Ok(summary) => {
             if let Some(m) = manifest
@@ -205,7 +205,7 @@ pub async fn reload_one(
     match state.tool_admin.reload(&name, &tenant.0) {
         Ok(summary) => {
             if let Ok(toml) = state.tool_admin.get_manifest_toml(&name)
-                && let Ok(manifest) = agent_core::tools::manifest::ToolManifest::from_toml(&toml)
+                && let Ok(manifest) = agent_core::capabilities::manifest::ToolManifest::from_toml(&toml)
                 && let Err(e) = sync_manifest_embedding(&state, &manifest, None).await
             {
                 warn!(error = %e, capability = %manifest.name, "capability embedding sync failed after reload");
@@ -226,7 +226,7 @@ pub async fn reload_all(
             for summary in state.tool_admin.list() {
                 if let Ok(toml) = state.tool_admin.get_manifest_toml(&summary.name)
                     && let Ok(manifest) =
-                        agent_core::tools::manifest::ToolManifest::from_toml(&toml)
+                        agent_core::capabilities::manifest::ToolManifest::from_toml(&toml)
                     && let Err(e) = sync_manifest_embedding(&state, &manifest, None).await
                 {
                     warn!(error = %e, capability = %manifest.name, "capability embedding sync failed after reload_all");
@@ -482,14 +482,14 @@ pub async fn list_namespaces(
 fn manifest_from_registry(
     state: &Arc<AppState>,
     name: &str,
-) -> Option<agent_core::tools::manifest::ToolManifest> {
+) -> Option<agent_core::capabilities::manifest::ToolManifest> {
     let registry = state.registry.lock().unwrap();
     registry.get(name).map(|c| c.manifest.clone())
 }
 
 async fn sync_manifest_embedding(
     state: &Arc<AppState>,
-    manifest: &agent_core::tools::manifest::ToolManifest,
+    manifest: &agent_core::capabilities::manifest::ToolManifest,
     extra_embedding_text: Option<&str>,
 ) -> anyhow::Result<()> {
     let mut content = manifest.embedding_text();

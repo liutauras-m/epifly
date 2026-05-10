@@ -6,8 +6,8 @@
 use crate::chains::executor;
 use crate::context::tenant::TenantContext;
 use crate::llm::LlmRegistry;
-use crate::tools::manifest::{LlmChainConfig, ToolManifest};
-use crate::tools::provider::CapabilityProvider;
+use crate::capabilities::manifest::{LlmChainConfig, ToolManifest};
+use crate::capabilities::provider::CapabilityProvider;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
