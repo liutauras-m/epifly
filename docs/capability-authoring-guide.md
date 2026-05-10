@@ -42,6 +42,22 @@ No gateway restart is required. No config files need editing. No gateway code ne
 
 ---
 
+## Capability kinds (`ToolKind`)
+
+Every capability TOML file and self-registration manifest must declare a `kind`. The full set of supported kinds is:
+
+| Kind | When to use |
+|---|---|
+| `chain` | Data-driven LLM prompt — logic lives entirely in TOML (`[chain]` block), no Rust needed. Best choice for most new capabilities. |
+| `wasm` | Compiled WebAssembly module bundled with `capability.toml` — for compute-heavy sandboxed logic. |
+| `native` | Built-in in-process tools (e.g. filesystem helpers, cargo runner). **Not loaded from TOML** — registered at startup in code. |
+| `mcp` | In-process MCP adapter that reads a local `capability.toml` and routes calls to a co-located MCP binary. |
+| `docker` | Capability that spins up a Docker container per invocation. |
+| `dynamic_prompt` | DB-backed, versioned prompt capability — store and version prompt templates in Postgres, hot-reload without restarting the gateway. |
+| `remote_mcp` | External MCP service registered via JSON (no TOML on disk). The most common choice for self-registering microservices — see [Option B](#option-b-self-registering-mcp-service) below. |
+
+---
+
 ## Option A: TOML capability file
 
 Drop a `capability.toml` into `apps/backend/capabilities/<name>/` and restart the gateway.  
@@ -51,7 +67,7 @@ Use this for LLM chain tools, WASM tools, or native Rust tools.
 name        = "my-tool"
 version     = "1.0.0"
 description = "Does something useful. Called when the user asks about X."
-kind        = "chain"           # chain | wasm | native
+kind        = "chain"           # chain | wasm | native | mcp | docker | dynamic_prompt
 tags        = ["tag1", "tag2"]
 
 [[tools]]
@@ -252,6 +268,16 @@ async def register_with_retry(max_retries=10, delay=3.0):
 | `GATEWAY_URL` | Base URL of the gateway, e.g. `http://agent-gateway:8080` |
 | `PLATFORM_ADMIN_TOKEN` | Bearer token for registration auth. **Required in production.** Omit in local dev (no-auth mode). |
 | `SERVICE_URL` | Your own service's public URL (used in `endpoint` in the manifest). |
+
+#### Env-var migration (deprecated aliases)
+
+Older versions of the reference service used `CONUSAI_PLATFORM_URL`, `CONUSAI_PLATFORM_TOKEN`, and `CONUSAI_SERVICE_URL`. These are still accepted for one release as fallbacks but emit a deprecation log line at startup. Switch to the canonical names above.
+
+| Deprecated | Canonical replacement |
+|---|---|
+| `CONUSAI_PLATFORM_URL` | `GATEWAY_URL` |
+| `CONUSAI_PLATFORM_TOKEN` | `PLATFORM_ADMIN_TOKEN` |
+| `CONUSAI_SERVICE_URL` | `SERVICE_URL` |
 
 ---
 

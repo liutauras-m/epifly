@@ -237,11 +237,24 @@ async fn build_ctx(
         .map(|m| json!({"role": m.role, "content": m.content}))
         .collect();
 
+    // Default tool-use guard: merged into any caller-provided system prompt.
+    // Prevents Claude from calling tools for unrelated or ambiguous queries.
+    const TOOL_GUARD: &str = "Only call tools when the user's request explicitly requires them. \
+        For general conversation, questions, or anything that can be answered directly, \
+        respond without invoking tools.";
+
     let system_content = req
         .messages
         .iter()
         .find(|m| m.role == "system")
         .map(|m| m.content.clone());
+
+    // Inject the tool guard unless the caller already provides a system prompt
+    // (caller-provided prompts are assumed to already encode the correct behaviour).
+    let system_content = Some(match system_content {
+        Some(existing) => format!("{existing}\n\n{TOOL_GUARD}"),
+        None => TOOL_GUARD.to_string(),
+    });
 
     let base_system = if let Some(ref tid) = thread_id {
         let summary = thread_store
@@ -252,9 +265,7 @@ async fn build_ctx(
             .and_then(|t| t.summary);
         match (system_content, summary) {
             (Some(sys), Some(sum)) => Some(format!("{sys}\n\n[Conversation summary: {sum}]")),
-            (Some(sys), None) => Some(sys),
-            (None, Some(sum)) => Some(format!("[Conversation summary: {sum}]")),
-            (None, None) => None,
+            (sys, _) => sys,
         }
     } else {
         system_content

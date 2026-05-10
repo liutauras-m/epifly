@@ -1,8 +1,9 @@
 name = "runtime-echo"
 version = "0.1.0"
-description = "A runtime-registered echo capability"
+description = "Echo tool that repeats a message back. Used for testing and debugging the agent pipeline."
 kind = "chain"
-tags = ["echo", "runtime"]
+tags = ["echo", "runtime", "test", "debug"]
+search_keywords = ["echo", "repeat", "test", "ping", "debug message"]
 
 [[tools]]
 name = "echo"

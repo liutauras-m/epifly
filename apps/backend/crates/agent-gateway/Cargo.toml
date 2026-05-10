@@ -49,7 +49,10 @@ async-trait.workspace = true
 time                  = "0.3"
 utoipa.workspace      = true
 utoipa-swagger-ui.workspace = true
-askama                = "0.12"
+
+[dev-dependencies]
+wiremock.workspace = true
+tokio = { version = "1", features = ["full"] }
 
 [features]
 default          = []

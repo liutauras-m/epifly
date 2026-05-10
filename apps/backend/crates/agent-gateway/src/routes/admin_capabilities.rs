@@ -614,6 +614,8 @@ pub async fn register_capability(
             namespace: Some(req.namespace.clone()),
             chain: None,
             tenant_scope: req.tenant_scope.clone(),
+            enabled: true,
+            search_keywords: vec![],
         };
 
         // ── Persist to DB ─────────────────────────────────────────────────────

@@ -98,6 +98,19 @@ pub fn tool_definitions_from_manifest(manifest: &ToolManifest) -> Vec<Value> {
 /// If `image_path` is a URL, download it to a temp file and return `(Some(temp), temp_path)`.
 /// If it's a local path, return `(None, original_path)`.
 pub async fn resolve_image_path(image_path: &str) -> anyhow::Result<(Option<PathBuf>, PathBuf)> {
+    // Rewrite /ui/files/{token} URLs to the gateway-internal address.
+    // The frontend embeds window.location.origin (e.g. http://localhost:5175 in dev) but the
+    // gateway must fetch the file through its own loopback — /ui/files supports token-only auth.
+    let rewritten;
+    let image_path = if let Some(path_start) = image_path.find("/ui/files/") {
+        let base = std::env::var("GATEWAY_INTERNAL_URL")
+            .unwrap_or_else(|_| "http://localhost:8080".to_string());
+        rewritten = format!("{}{}", base, &image_path[path_start..]);
+        rewritten.as_str()
+    } else {
+        image_path
+    };
+
     if image_path.starts_with("http://") || image_path.starts_with("https://") {
         let bytes = reqwest::get(image_path)
             .await

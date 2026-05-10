@@ -44,7 +44,7 @@ pub async fn search(
 
     let cards: Vec<_> = {
         let reg = state.registry.lock().unwrap();
-        reg.all_enabled().cloned().collect()
+        reg.enabled_for_tenant(&tenant.0.tenant_id).cloned().collect()
     };
 
     match vector_search(&state, &query.q, &cards, limit).await {
