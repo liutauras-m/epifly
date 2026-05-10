@@ -1,24 +1,25 @@
 # ConusAI Platform — Architecture & Functionality
 
-> **v0.3.2** — Semantic capability router, namespace + tag partitioning, dynamic prompts, bulk capability-spec factory, OTel GenAI metrics, Tower quota middleware. All persistent stores remain Postgres-only.
+> **current workspace snapshot** — Semantic capability router, namespace + tag partitioning, dynamic prompts, bulk capability-spec factory, OTel GenAI metrics, Tower quota middleware, artifact materialisation, browser-shell device tokens, and WS control. Persistent metadata lives in Postgres; workspace bodies and generated artifacts are materialised in MinIO/S3.
 
-A production-grade multitenant AI agent platform. The monorepo contains a **Rust + Rig** backend (`apps/backend/`) and WASM/MCP capabilities. The built-in **Foundry UI** (served by the gateway at `GET /`) provides workspace management, agent chat, file upload, and invoice extraction without a separate frontend app.
+A production-grade multitenant AI agent platform. The monorepo contains a **Rust + Rig** backend (`apps/backend/`), a **SvelteKit web frontend** (`apps/web/`), and a **browser shell** client (`apps/browser-shell/`). The built-in **Foundry UI** (served by the gateway at `GET /`) provides workspace management, agent chat, file upload, and invoice extraction.
 
 ---
 
 ## v0.3.1 Additions
 
-### Postgres-backed stores (replacing in-memory stubs)
+### Persistent stores and content backends (replacing in-memory stubs)
 
-All three persistent stores are Postgres-backed via `sqlx`:
+Persistent metadata is split across Postgres and MinIO/S3:
 
 | Store | Trait | Backend table(s) |
 |---|---|---|
 | `PostgresThreadStore` | `ThreadStore` | `threads`, `messages` |
 | `PostgresWorkspaceStore` | `WorkspaceStore` | `workspace_nodes`, `content_embeddings` |
 | `PostgresAuditStore` | `AuditStore` | `audit_events` |
+| `MinioWorkspaceContent` | `WorkspaceContentStore` | MinIO / S3 objects under `tenants/{tenant_id}/workspaces/{virtual_path}` |
 
-A `PgVectorStore` (`agent_core::vector_store`) backs semantic capability search using the `capability_embeddings` table with a DiskANN vector index (cosine distance, 1536 dims).
+A `PgVectorStore` (`agent_core::vector_store`) backs semantic capability search using the `capability_embeddings` table with cosine distance, namespace + tag filters, and 1536-dim embeddings.
 
 ### Workspace indexer (`agent_core::indexing`)
 
@@ -35,6 +36,10 @@ On startup: if `WORKSPACES_ROOT` is set, `main.rs` spawns an initial index pass 
 
 `RealtimeService` — broadcast service for workspace change events via WebSocket. `WorkspaceChangeEvent` is fanned out to connected subscribers. Exposed at `GET /api/realtime/workspace` (Bearer JWT protected).
 
+### Artifact materialisation (`common::artifact` + `agent_core::bridge`)
+
+`ArtifactBridge` materialises `ToolOutput.artifacts` after tool execution: it uploads file bytes to MinIO, inserts a `workspace_nodes` file row, and best-effort enqueues indexing for text-like MIME types. The bridge is invoked from the agent loop after a capability returns a `ToolOutput` payload.
+
 ### WASM / wasmtime 44
 
 - Target: `wasm32-wasip1` (per `rust-toolchain.toml`)
@@ -44,23 +49,47 @@ On startup: if `WORKSPACES_ROOT` is set, `main.rs` spawns an initial index pass 
 
 | Field | Type | Purpose |
 |---|---|---|
-| `pool` | `Option<PgPool>` | Shared Postgres connection pool |
+| `registry` | `Arc<Mutex<CapabilityRegistry>>` | In-memory capability registry |
+| `rate_limiter` | `RateLimiter` | Per-tenant request limiter |
+| `llm` | `Arc<LlmRegistry>` | Single source of truth for model access |
 | `embedding_service` | `Arc<dyn EmbeddingService>` | Embedding backend for indexing and search |
 | `vector_store` | `Arc<PgVectorStore>` | Postgres pgvector ANN store |
+| `file_store` | `Option<Arc<dyn ObjectStore>>` | MinIO / S3-compatible file store |
+| `thread_store` | `Arc<dyn ThreadStore>` | Persistent conversation memory |
+| `workspace_store` | `Arc<dyn WorkspaceStore>` | Workspace metadata index |
+| `workspace_content` | `Arc<dyn WorkspaceContentStore>` | Workspace markdown body store |
+| `conversation_service` | `Arc<dyn ConversationService>` | Thread lifecycle coordinator |
+| `tool_admin` | `Arc<CapabilityAdmin>` | Capability CRUD / reload facade |
+| `job_registry` | `Arc<JobRegistry>` | Scheduled + background jobs |
+| `job_executor` | `Arc<JobExecutor>` | In-memory task tracker |
+| `job_admin` | `Arc<JobAdmin>` | Job/task administration facade |
+| `pool` | `Option<PgPool>` | Shared Postgres connection pool |
 | `realtime_service` | `Option<Arc<RealtimeService>>` | WebSocket broadcast service |
+| `semantic_router` | `Arc<SemanticCapabilityRouter>` | Pre-filters tools to top-K per turn |
+| `router_quota` | `RouterQuotaConfig` | Per-turn tool / invoke budget |
+| `capability_spec_factory` | `Option<Arc<CapabilitySpecFactory>>` | Bulk capability-spec loader / hot-reload bridge |
+| `artifact_bridge` | `Option<Arc<ArtifactBridge>>` | Materialises tool file artifacts into MinIO + workspace nodes |
 
 ### New REST endpoint (v0.3.1)
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
+| `POST` | `/admin/capabilities/register` | `PLATFORM_ADMIN_TOKEN` bearer | Register a remote MCP capability service |
 | `GET` | `/api/realtime/workspace` | Bearer JWT | WebSocket — workspace change event stream |
 | `GET` | `/v1/threads/{id}/messages` | Bearer JWT | Retrieve messages for a thread |
+| `GET` | `/v1/tasks` | Bearer JWT | List background task statuses |
+| `GET` | `/v1/tasks/{id}` | Bearer JWT | Get a single task status |
+| `GET` | `/v1/tasks/{id}/sse` | Bearer JWT | SSE stream for task lifecycle events |
+| `GET` | `/admin/devices` | `PLATFORM_ADMIN_TOKEN` bearer | List browser-shell device tokens |
+| `POST` | `/admin/devices` | `PLATFORM_ADMIN_TOKEN` bearer | Issue a browser-shell device token |
+| `DELETE` | `/admin/devices/{id}` | `PLATFORM_ADMIN_TOKEN` bearer | Revoke a browser-shell device token |
+| `GET` | `/v1/shells/{device_id}/control` | `CONUSAI_FEATURE_BROWSER_SHELL=1` + device token | Browser-shell WebSocket control channel |
 
 ---
 
 ## v0.3.2 Additions
 
-### Semantic Capability Router (`agent_core::tools::semantic_router`)
+### Semantic Capability Router (`agent_core::capabilities::semantic_router`)
 
 ```
 User message
@@ -86,14 +115,14 @@ Tool definitions → Anthropic / LLM
 Key types:
 | Symbol | Location | Purpose |
 |---|---|---|
-| `SemanticCapabilityRouter` | `tools/semantic_router.rs` | Core router; cache + ANN |
-| `SemanticRouterConfig` | same | top_k, max_distance, namespace, tags_any, cache_ttl |
-| `RouterMetrics` | same | Atomic counters (cache_hits, total_selects, etc.) |
-| `NamespaceFilter` | `tools/namespace.rs` | Any / Exact / Prefix / AnyOf |
+| `SemanticCapabilityRouter` | `capabilities/semantic_router.rs` | Core router; cache + ANN |
+| `SemanticRouterConfig` | same | top_k, max_distance, namespace, tags_any, include_always, cache_ttl_secs |
+| `RouterMetrics` | same | Atomic counters (cache_hits, cache_misses, total_selects) |
+| `NamespaceFilter` | `capabilities/namespace.rs` | Any / Exact / Prefix / AnyOf |
 
 ### Namespace & Tag Partitioning
 
-`ToolManifest` now has `namespace: Option<String>` (dot-separated, e.g. `erp.po`) and `tags: Vec<String>`. The `ToolRegistry` maintains a hierarchical `namespace_index: HashMap<String, Vec<String>>` for fast admin autocomplete (`namespace_children(prefix)`).
+`ToolManifest` now has `namespace: Option<String>` (dot-separated, e.g. `erp.po`), `tags: Vec<String>`, `search_keywords: Vec<String>`, `tenant_scope: Vec<String>`, and `enabled: bool`. The `CapabilityRegistry` maintains a hierarchical `namespace_index: HashMap<String, Vec<String>>` for fast admin autocomplete (`namespace_children(prefix)`).
 
 Validator enforces: dot-separated ASCII slug segments `[a-z][a-z0-9_]*`, ≤ 6 segments, empty string = unnamespaced.
 
@@ -104,7 +133,7 @@ Validator enforces: dot-separated ASCII slug segments `[a-z][a-z0-9_]*`, ≤ 6 s
 
 Migration: `20260507000000_capability_namespaces.up.sql`
 
-### Dynamic Prompts (`agent_core::chains::dynamic_prompt`)
+### Dynamic Prompts (`agent_core::capabilities::providers::dynamic_prompt`)
 
 DB-backed versioned prompt storage. `ToolKind::DynamicPrompt` capabilities load their `LlmChainConfig` (model, prompt_template, system_prompt, etc.) from the `dynamic_prompts` table at runtime. Supports:
 - `load_latest()` — fetches highest version row
@@ -122,13 +151,17 @@ Migration: `20260507000100_dynamic_prompts.up.sql`
 | `GET` | `/admin/capabilities/{name}/prompt/versions` | List all versions |
 | `GET` | `/admin/capabilities/namespaces?prefix=X` | Browse namespace tree |
 
-### Bulk Capability-Spec Factory (`agent_core::tools::providers::capability_spec`)
+### Bulk Capability-Spec Factory (`agent_core::capabilities::providers::capability_spec`)
 
-`CapabilitySpecFactory` implements `BulkCapabilityFactory` — streams rows from `capability_specs` in chunks of 256, batch-embeds descriptions, upserts to `capability_embeddings`, and registers `CapabilityProvider` instances into `ToolRegistry`. Domain partitioning is via `namespace` (e.g. `erp.po`, `crm.lead`, `accounting.gl`); the factory itself is domain-neutral. Supports hot-reload via Postgres `LISTEN capability_specs_changed` (trigger on all mutations).
+`CapabilitySpecFactory` implements `BulkCapabilityFactory` — streams rows from `capability_specs` in chunks of 256, batch-embeds descriptions, upserts to `capability_embeddings`, and registers `CapabilityProvider` instances into `CapabilityRegistry`. Domain partitioning is via `namespace` (e.g. `erp.po`, `crm.lead`, `accounting.gl`); the factory itself is domain-neutral. Supports hot-reload via Postgres `LISTEN capability_specs_changed` (trigger on all mutations).
 
-`ToolRegistry` gains:
+`CapabilityRegistry` gains:
 - `register_bulk_factory(factory)` — register a `BulkCapabilityFactory`
 - `run_bulk_load()` — run all registered factories (boot time)
+
+### Artifact bridge
+
+`ArtifactBridge` (`common::artifact` + `agent_core::bridge`) materialises `ToolOutput.artifacts` after each tool invocation, creating MinIO objects and `workspace_nodes` rows and triggering best-effort indexing for text-like outputs.
 
 Migration: `20260507000200_capability_specs.up.sql`
 
@@ -211,14 +244,14 @@ Env vars: `CONUSAI_MAX_TOOLS_PER_TURN` (default 25), `CONUSAI_MAX_INVOKES_PER_TU
 
 | Layer | Technology | Version |
 |---|---|---|
-| Language | Rust | 1.88 (stable) |
+| Language | Rust | 1.95 (stable) |
 | Edition | Rust 2024 | — |
 | WASM target | `wasm32-wasip1` | — |
 | AI framework | `rig-core` | 0.36 |
 | Rig Postgres | `rig-postgres` | 0.2.5 |
 | HTTP framework | `axum` | 0.8 (+ `axum-extra` 0.10) |
 | Async runtime | `tokio` | 1 (full features) |
-| Vector DB | Postgres + pgvector / DiskANN (via `sqlx`) | pg17 + pgvector |
+| Vector DB | Postgres + pgvector (via `sqlx`) | pg17 + pgvector |
 | Object storage | `object_store` | 0.11 (aws feature) |
 | WASM runtime | `wasmtime` + `wasmtime-wasi` | 44 |
 | Embeddings (optional) | `fastembed` | 5 (feature-gated: `local-embeddings`) |
@@ -241,17 +274,17 @@ Env vars: `CONUSAI_MAX_TOOLS_PER_TURN` (default 25), `CONUSAI_MAX_INVOKES_PER_TU
 
 ## 2. Repository Layout
 
-> Updated to reflect the SvelteKit frontend (`apps/web`) and ConusAI Browser Shell (`apps/shell`) additions.
+> Updated to reflect the SvelteKit frontend (`apps/web`) and browser shell (`apps/browser-shell`) additions.
 
 ```
 conusai-platform/
+├── Cargo.toml                  # workspace definition (apps/backend, apps/web, apps/browser-shell)
 ├── docker-compose.yml          # postgres, minio, gateway, web, jaeger, otel-collector
 ├── renovate.json               # Renovate dependency-update config
 ├── Makefile
 ├── start.sh / stop.sh          # orchestration helpers
 ├── apps/
-│   ├── backend/                # Rust workspace root
-│   │   ├── Cargo.toml          # workspace definition + all shared deps
+│   ├── backend/                # Rust backend crates (common, agent-core, jobs, agent-gateway, evals)
 │   │   ├── Dockerfile          # 4-stage cargo-chef image
 │   │   ├── rust-toolchain.toml
 │   │   ├── crates/
@@ -262,7 +295,7 @@ conusai-platform/
 │   │   ├── evals/              # evaluation framework (invoice + OCR suites)
 │   │   └── capabilities/       # zero-code TOML capability definitions
 │   ├── web/                    # SvelteKit frontend (Node 22, served on port 3000)
-│   └── shell/                  # ConusAI Browser Shell — Tauri 2 app (macOS, Windows, Linux, iOS, Android)
+│   └── browser-shell/          # Browser Shell — SvelteKit + Tauri app
 └── docs/
     ├── arch.md                 # this document
     ├── browser-shell-plan.md   # Browser Shell architecture and implementation roadmap
@@ -270,7 +303,10 @@ conusai-platform/
     ├── ui-design.md
     ├── verify/verify.md
     └── adr/
-        └── 005-workspace-access-control.md
+    ├── 0004-semantic-capability-router-and-dynamic-prompts.md
+    ├── 006-tauri-browser-shell.md
+    ├── 007-capability-module-rename.md
+    └── 008-multi-platform-shell.md
 ```
 
 ---
@@ -298,9 +334,9 @@ conusai-platform/
 
 | Stage | Base | Purpose |
 |---|---|---|
-| `planner` | `rust:1.88-slim` | `cargo chef prepare` → `recipe.json` |
-| `cacher` | `rust:1.88-slim` | `cargo chef cook --release` (dependency layer cache) |
-| `builder` | `rust:1.88-slim` | Full `cargo build --release --bin agent-gateway` |
+| `planner` | `rust:1.95-slim` | `cargo chef prepare` → `recipe.json` |
+| `cacher` | `rust:1.95-slim` | `cargo chef cook --release` (dependency layer cache) |
+| `builder` | `rust:1.95-slim` | Full `cargo build --release --bin agent-gateway` |
 | `gateway` | `debian:bookworm-slim` | Stripped runtime image with binary + assets |
 
 Runtime image: `libssl3`, `ca-certificates`, `curl`; exposes 8080; HEALTHCHECK via `curl /health`.
@@ -308,7 +344,7 @@ Runtime image: `libssl3`, `ca-certificates`, `curl`; exposes 8080; HEALTHCHECK v
 ### rust-toolchain.toml
 
 ```toml
-channel = "stable"               # Rust 1.88
+channel = "stable"               # Rust 1.95
 targets = ["wasm32-wasip1"]      # WASM capability builds
 components = ["rustfmt", "clippy", "rust-src", "rust-analyzer"]
 ```
@@ -319,7 +355,10 @@ components = ["rustfmt", "clippy", "rust-src", "rust-analyzer"]
 |---|---|
 | [docs/ui-design.md](ui-design.md) | Design tokens (colour, type, spacing, motion) and component recipes. |
 | [docs/verify/verify.md](verify/verify.md) | End-to-end verification plan — JWT helpers, curl recipes (Phases 0–14). |
-| [docs/adr/005-workspace-access-control.md](adr/005-workspace-access-control.md) | ADR for private-by-default + selective-sharing ACL model. |
+| [docs/adr/0004-semantic-capability-router-and-dynamic-prompts.md](adr/0004-semantic-capability-router-and-dynamic-prompts.md) | ADR for the semantic router and dynamic prompts. |
+| [docs/adr/006-tauri-browser-shell.md](adr/006-tauri-browser-shell.md) | ADR for the browser-shell client and device-token control channel. |
+| [docs/adr/007-capability-module-rename.md](adr/007-capability-module-rename.md) | ADR for the capability module rename from the old tool-centric layout. |
+| [docs/adr/008-multi-platform-shell.md](adr/008-multi-platform-shell.md) | ADR for the cross-platform browser-shell rollout. |
 
 ---
 
@@ -380,7 +419,7 @@ Single source of truth for all model access. No route, chain, or memory module c
 |---|---|
 | `agent/builder.rs` | `AgentBuilder` — fluent: `model`, `preamble`, `max_tokens`, `with_tenant`, `build`. Enforces `plan.max_tokens()` cap. `build_for_tenant` convenience constructor. `Agent::prompt(text)` attaches `TracingHook` + `max_turns` from plan, calls `rig::Agent::prompt(...).max_turns(...).with_hook(...)`. |
 | `agent/hooks.rs` | `TracingHook { tenant_id, plan, thread_id }` implements `rig::agent::PromptHook<M>`. Emits `info!` on `on_completion_call` and `on_tool_call`. `PermissionHook` — future extension point for ACL checks. |
-| `agent/runtime.rs` | `AgentRuntime { agent: Agent, registry: ToolRegistry }`. `for_tenant(model, preamble, registry, tenant)`. `run(input)`. `map_rig_error(msg)` — pattern-matches Rig error messages to typed `HttpError` variants. |
+| `agent/runtime.rs` | `AgentRuntime { agent: Agent, registry: CapabilityRegistry }`. `for_tenant(model, preamble, registry, tenant)`. `run(input)`. `map_rig_error(msg)` — pattern-matches Rig error messages to typed `HttpError` variants. |
 
 #### Context subsystem (`src/context/`)
 
@@ -390,28 +429,29 @@ Single source of truth for all model access. No route, chain, or memory module c
 | `context/conversation.rs` | `ConversationService` async trait: `create(tenant, node_id?)`, `append_message`, `load_history`, `resolve_for_node` (lazy thread binding), `list(tenant, limit, after)`, `get`. `DefaultConversationService { thread_store, workspace_store }` — coordinates thread create + `WorkspaceStore::bind_thread`. |
 | `context/mod.rs` | `ConversationContext { id: Uuid, system_prompt?, history: Vec<HistoryEntry> }` with `push_user`, `push_assistant`, `to_rig_messages()`. |
 
-#### Tools subsystem (`src/tools/`)
+#### Capabilities subsystem (`src/capabilities/`)
 
 | File | Purpose |
 |---|---|
-| `tools/manifest.rs` | `ToolManifest { name, version, description, kind, tools: Vec<ToolDef>, config, tags, chain: Option<LlmChainConfig> }`. `ToolKind { Mcp, Wasm, Chain, Docker, Native }` (`serde rename_all = "lowercase"`). `ToolDef { name, description, input_schema }`. `LlmChainConfig { model, system_prompt?, prompt_template, vision, max_tokens, output_schema? }`. `from_toml`, `from_file`, `embedding_text`. |
-| `tools/card.rs` | `CapabilityCard { id: Uuid, manifest, source_dir: PathBuf, embedding_id?, enabled, last_error?, registered_at, updated_at, provider: Option<Arc<dyn CapabilityProvider>> }`. |
-| `tools/provider.rs` | `CapabilityProvider` async trait: `manifest()`, `invoke(tool_name, input, tenant) -> Result<Value>`, `tool_definitions()` (default impl — Anthropic format), `invoke_typed<I,O>` (default impl). `CapabilityFactory` trait: `supports(kind, name) -> bool`, `create(card) -> Result<Arc<dyn CapabilityProvider>>`. `invoke_typed_dyn` for `&dyn CapabilityProvider` callers. |
-| `tools/registry.rs` | `ToolRegistry { cards, factories }`. `with_default_factories(llm)` pre-registers `McpFactory`, `WasmFactory`, `ChainFactory(llm)`, `BuiltinFactory`. Lifecycle: `register`, `unregister`, `replace`, `set_enabled`, `reload_capability(dir)`. Queries: `get`, `get_provider`, `all`, `all_enabled`, `search_by_tag`. `load_from_dir(dir)`. |
-| `tools/discovery.rs` | `ToolDiscovery::from_env()` reads `CONUSAI_CAPABILITIES_DIR` (default `./capabilities`). `discover_into(&mut registry)`. |
-| `tools/store.rs` | `RegisteredToolState { enabled, created_at, updated_at }`. `RegisteredToolStore` trait: `list`, `read_manifest`, `write_manifest`, `write_wasm`, `read_state`, `write_state`, `delete`, `capability_dir`. `FilesystemStore` — atomic writes via `.tmp` → rename. |
-| `tools/validator.rs` | `RegisteredToolValidator`: `validate_name` (regex `^[a-z0-9-]{2,64}$`), `validate_manifest`. `ValidationReport { errors: Vec<RegisteredToolValidationError>, warnings: Vec<String> }`. |
-| `tools/admin.rs` | `CapabilityAdmin` — coordinates `FilesystemStore` + `ToolRegistry` + `RegisteredToolValidator` + `AuditStore`. Methods: `list`, `get`, `get_manifest`, `create`, `update`, `set_enabled`, `delete`, `reload_one`, `reload_all`, `test_invoke`. `AdminLimits { max_capabilities: 64, max_manifest_bytes: 65536, max_wasm_bytes: 8 MiB }` (env-overridable). `build_admin(registry, audit_store)` factory. |
-| `tools/executor.rs` | `ToolExecutor::invoke(registry, cap_name, tool_name, input, tenant)`. `#[instrument]` span: `tool.cap`, `tool.name`, `tenant_id`, `error.type`. Metrics: `tool_invocations`, `tool_duration_ms`, `tool_errors`. |
-| `tools/mcp_adapter.rs` | `McpAdapter` — JSON-RPC 2.0 HTTP client: `call`, `list_tools`, `call_tool`. |
-| `tools/wasm_loader.rs` | `WasmToolLoader` (wraps `wasmtime::Engine`). `load(card)`, `invoke_tool(card, tool, input)`. |
-| `tools/providers/chain.rs` | `InvoiceProvider`, `ContractProvider`, `OcrProvider` — thin adapters to `*Pipeline` structs. `PromptChainCapability` path for data-driven manifests with `[chain]` block. `ChainFactory::new(llm)`. |
-| `tools/providers/mcp.rs` | `McpProvider` + `McpFactory`. |
-| `tools/providers/wasm.rs` | `WasmProvider` + `WasmFactory`. |
-| `tools/providers/builtin.rs` | `BuiltinProvider` + `BuiltinFactory`. Routes `read_file`/`write_file`/`run_cargo` to `builtin/{fs,cargo}`. |
-| `tools/builtin/fs.rs` | `read_file` / `write_file` — tenant-scoped via `safe_join`. Uses `tokio::fs`. |
-| `tools/builtin/cargo.rs` | `run_cargo` — allowlisted subcommands (`check`, `test`, `build`, `clippy`, `fmt`) via `tokio::process::Command`; returns `{stdout, stderr, exit_code}`. |
-| `tools/builtin/card.rs` | `builtin_tool_card()` — `CapabilityCard` with `kind: Native` and full JSON schemas for `read_file`, `write_file`, `run_cargo`. |
+| `manifest.rs` | `ToolManifest { name, version, description, kind, tools: Vec<ToolDef>, config, tags, namespace, chain, tenant_scope, enabled, search_keywords }`. `ToolKind { Mcp, Wasm, Chain, Docker, Native, DynamicPrompt, RemoteMcp }` (`serde rename_all = "lowercase"`). `ToolDef { name, description, input_schema }`. `LlmChainConfig { model, system_prompt?, prompt_template, vision, max_tokens, output_schema? }`. `from_toml`, `from_file`, `embedding_text`. |
+| `card.rs` | `CapabilityCard { id: Uuid, manifest, source_dir: PathBuf, embedding_id?, enabled, last_error?, registered_at, updated_at, provider: Option<Arc<dyn CapabilityProvider>> }`. |
+| `provider.rs` | `CapabilityProvider` async trait: `manifest()`, `invoke(tool_name, input, tenant) -> Result<Value>`, `tool_definitions()` (default impl — Anthropic format), `invoke_typed<I,O>` (default impl). `CapabilityFactory` trait: `supports(kind, name) -> bool`, `create(card) -> Result<Arc<dyn CapabilityProvider>>`. `BulkCapabilityFactory` loads many capabilities from a data source. |
+| `registry.rs` | `CapabilityRegistry { cards, factories, bulk_factories, namespace_index }`. `with_default_factories(llm)` pre-registers `McpFactory`, `WasmFactory`, `ChainFactory(llm)`, `BuiltinFactory`; `with_all_factories(llm, pool)` also adds `DynamicPromptFactory` and `TraceReplayFactory` when Postgres is available. Lifecycle: `register`, `unregister`, `replace`, `set_enabled`, `reload_capability(dir)`, `register_bulk_factory`, `run_bulk_load`. Queries: `get`, `get_provider`, `all`, `all_enabled`, `search_by_tag`, `namespace_children(prefix)`. `load_from_dir(dir)`. |
+| `discovery.rs` | `CapabilityDiscovery::from_env()` reads `CONUSAI_CAPABILITIES_DIR` (default `./capabilities`). `discover_into(&mut registry)`. |
+| `store.rs` | `RegisteredToolState { enabled, created_at, updated_at }`. `RegisteredToolStore` trait: `list`, `read_manifest`, `write_manifest`, `write_wasm`, `read_state`, `write_state`, `delete`, `capability_dir`. `FilesystemStore` — atomic writes via `.tmp` → rename. |
+| `validator.rs` | `RegisteredToolValidator`: `validate_name` (regex `^[a-z0-9-]{2,64}$`), `validate_manifest`, `validate_wasm`. `ValidationReport { errors: Vec<RegisteredToolValidationError>, warnings: Vec<String> }`. |
+| `admin.rs` | `CapabilityAdmin` — coordinates `FilesystemStore` + `CapabilityRegistry` + `RegisteredToolValidator` + `AuditStore`. Methods: `list`, `get`, `get_manifest_toml`, `create`, `update`, `set_enabled`, `delete`, `reload`, `reload_all`, `test_invoke`. `AdminLimits { max_capabilities: 64, max_manifest_bytes: 65536, max_wasm_bytes: 8 MiB }` (env-overridable). `build_admin(registry, audit_store)` factory. |
+| `executor.rs` | `ToolExecutor::invoke(registry, cap_name, tool_name, input, tenant)`. `#[instrument]` span: `tool.cap`, `tool.name`, `tenant_id`, `error.type`. Metrics: `tool_invocations`, `tool_duration_ms`, `tool_errors`. |
+| `mcp_adapter.rs` | `McpAdapter` — JSON-RPC 2.0 HTTP client: `call`, `list_tools`, `call_tool`. |
+| `wasm_loader.rs` | `WasmToolLoader` (wraps `wasmtime::Engine`). `load(card)`, `invoke_tool(card, tool, input)`. |
+| `providers/chain.rs` | `InvoiceProvider`, `ContractProvider`, `OcrProvider` — thin adapters to `*Pipeline` structs. `PromptChainCapability` path for data-driven manifests with `[chain]` block. `ChainFactory::new(llm)`. |
+| `providers/dynamic_prompt.rs` | `DynamicPromptCapability` + `DynamicPromptFactory` — DB-backed prompt versioning and runtime loading. |
+| `providers/remote_mcp.rs` | `RemoteMcpCapability` + `RemoteMcpFactory` — self-registered external MCP services. |
+| `providers/wasm.rs` | `WasmProvider` + `WasmFactory`. |
+| `providers/builtin.rs` | `BuiltinProvider` + `BuiltinFactory`. Routes `read_file`/`write_file`/`run_cargo` to `builtin/{fs,cargo}`. |
+| `builtin/fs.rs` | `read_file` / `write_file` — tenant-scoped via `safe_join`. Uses `tokio::fs`. |
+| `builtin/cargo.rs` | `run_cargo` — allowlisted subcommands (`check`, `test`, `build`, `clippy`, `fmt`) via `tokio::process::Command`; returns `{stdout, stderr, exit_code}`. |
+| `builtin/card.rs` | `builtin_tool_card()` — `CapabilityCard` with `kind: Native` and full JSON schemas for `read_file`, `write_file`, `run_cargo`. |
 
 #### Chains (`src/chains/`)
 
@@ -463,9 +503,9 @@ The `PromptTemplate` type lives in `common::prompt::template` and is re-exported
 |---|---|
 | `vector_store/postgres.rs` | `PgVectorStore` — cosine ANN search over `capability_embeddings` and `content_embeddings` tables via direct `sqlx` queries. `CapabilityHit`, `ContentHit` result types. `PgVectorStore::new(pool)` / `PgVectorStore::noop()` (test mode). `vec_to_pg(v)` serialises `f32` slice to Postgres vector literal. |
 
-**Public re-exports** (via `lib.rs`): `Agent`, `AgentBuilder`, `TracingHook`, `PermissionHook`, `map_rig_error`, `ContractData`, `ContractParty`, `ContractPipeline`, `ExtractionPipeline`, `InvoiceData`, `InvoiceLineItem`, `InvoicePipeline`, `PromptChainCapability`, `ConversationService`, `DefaultConversationService`, `PlanTier`, `TenantClaims`, `TenantContext`, `UserRole`, `CapabilityCard`, `ContextBuilder`, `ContextTruncator`, `OldestFirstTruncator`, `MinioWorkspaceContent`, `PostgresAuditStore`, `PostgresThreadStore`, `PostgresWorkspaceStore`, `PgVectorStore`, `EmbeddingService`, `WorkspaceIndexer`, `RealtimeService`, `AdminLimits`, `CapabilitySummary`, `CreateCapabilityRequest`, `CapabilityAdmin`, `TestInvokeRequest`, `TestInvokeResponse`, `UpdateCapabilityRequest`, `build_admin`, `builtin_tool_card`, `ToolDiscovery`, `CapabilityFactory`, `ToolRegistry`, `FilesystemStore`, `RegisteredToolState`, `RegisteredToolStore`, `RegisteredToolValidationError`, `RegisteredToolValidator`, `ValidationReport`, `LlmBinding`, `LlmChunk`, `LlmError`, `CompletionProvider`, `LlmRegistry`, `LlmRequest`, `LlmResponse`, `LlmStream`, `LlmUsage`.
+**Public re-exports** (via `lib.rs`): `Agent`, `AgentBuilder`, `TracingHook`, `PermissionHook`, `map_rig_error`, `ContractData`, `ContractParty`, `ContractPipeline`, `ExtractionPipeline`, `InvoiceData`, `InvoiceLineItem`, `InvoicePipeline`, `PromptChainCapability`, `ConversationService`, `DefaultConversationService`, `PlanTier`, `TenantClaims`, `TenantContext`, `UserRole`, `CapabilityCard`, `ContextBuilder`, `ContextTruncator`, `OldestFirstTruncator`, `MinioWorkspaceContent`, `PostgresAuditStore`, `PostgresThreadStore`, `PostgresWorkspaceStore`, `PgVectorStore`, `EmbeddingService`, `WorkspaceIndexer`, `RealtimeService`, `ArtifactBridge`, `AdminLimits`, `CapabilitySummary`, `CreateCapabilityRequest`, `CapabilityAdmin`, `TestInvokeRequest`, `TestInvokeResponse`, `UpdateCapabilityRequest`, `build_admin`, `builtin_tool_card`, `CapabilityDiscovery`, `CapabilityFactory`, `BulkCapabilityFactory`, `CapabilityRegistry`, `CapabilitySpecFactory`, `FilesystemStore`, `RegisteredToolState`, `RegisteredToolStore`, `RegisteredToolValidationError`, `RegisteredToolValidator`, `ValidationReport`, `LlmBinding`, `LlmChunk`, `LlmError`, `CompletionProvider`, `LlmRegistry`, `LlmRequest`, `LlmResponse`, `LlmStream`, `LlmUsage`, `SemanticCapabilityRouter`, `SemanticRouterConfig`, `RouterMetrics`, `NamespaceFilter`, `TraceReplayCapability`, `TraceReplayFactory`, `WorkspaceNodeTraceSource`.
 
-**Tests (8):** registry register/get/tag-search; manifest embedding text; nonexistent-dir handling; WASM `ping` execution; `PostgresThreadStore` pool construction + query; `PgVectorStore::noop()` returns empty results.
+**Tests (8+):** registry register/get/tag-search; manifest embedding text; nonexistent-dir handling; WASM `ping` execution; `PostgresThreadStore` pool construction + query; `PgVectorStore::noop()` returns empty results; trace replay / remote MCP / capability-spec integration tests in the gateway crate.
 
 ---
 
@@ -507,7 +547,7 @@ The `PromptTemplate` type lives in `common::prompt::template` and is re-exported
 
 `AppState { registry, rate_limiter, llm, file_store: Option<Arc<dyn ObjectStore>>, presigned_tokens, thread_store, audit_store, workspace_store, workspace_content, conversation_service, tool_admin, job_registry, job_executor, job_admin, pool: Option<PgPool>, embedding_service: Arc<dyn EmbeddingService>, vector_store: Arc<PgVectorStore>, realtime_service: Option<Arc<RealtimeService>> }`.
 
-`AppState::from_env()`: `PgPool` → `LlmRegistry` → `ToolRegistry` (with discovery) → MinIO file store → `PostgresThreadStore` → `PostgresAuditStore` → `EmbeddingService` (`EMBEDDING_BACKEND`: `"local"` → `LocalEmbeddingService`, `"openai"` → `OpenAiEmbeddingService`, default → `NoopEmbeddingService`) → `PgVectorStore` → `PostgresWorkspaceStore` → `MinioWorkspaceContent` or `NoopWorkspaceContent` → `DefaultConversationService` → `JobContext/JobRegistry/JobExecutor/JobAdmin` → `RealtimeService`.
+`AppState::from_env()`: `PgPool` → `LlmRegistry` → `CapabilityRegistry` (with discovery) → MinIO file store → `PostgresThreadStore` → `PostgresAuditStore` → `EmbeddingService` (`EMBEDDING_BACKEND`: `"local"` → `LocalEmbeddingService`, `"openai"` → `OpenAiEmbeddingService`, default → `NoopEmbeddingService`) → `PgVectorStore` → `PostgresWorkspaceStore` → `MinioWorkspaceContent` or `NoopWorkspaceContent` → `DefaultConversationService` → `JobContext/JobRegistry/JobExecutor/JobAdmin` → `RealtimeService`.
 
 `AppState::with_in_memory_stores()`: `pool=None`, `file_store=None`, `NoopEmbeddingService`, `PgVectorStore::noop()`, `realtime_service=None`.
 
@@ -612,13 +652,15 @@ Drop a folder with a `capability.toml` (and optionally a `.wasm`) into `capabili
 | `mcp` | External HTTP/stdio process | JSON-RPC 2.0 |
 | `wasm` | Wasmtime (`wasm32-wasip1`) | Exported WASM functions |
 | `chain` (hardcoded) | In-process Rig pipeline | `InvoicePipeline` / `ContractPipeline` / `OcrProvider` |
-| `chain` (data-driven) | `LlmChainTool` via `LlmRegistry` | TOML `[chain]` block + `PromptTemplate` |
+| `chain` (data-driven) | `PromptChainCapability` via `LlmRegistry` | TOML `[chain]` block + `PromptTemplate` |
+| `dynamic_prompt` | DB-backed prompt capability | `dynamic_prompts` table + `DynamicPromptCapability` |
+| `remote_mcp` | Self-registered MCP service | JSON registration + `RemoteMcpCapability` |
 | `docker` | Container (reserved) | TBD |
 | `native` | In-process Rust | `BuiltinProvider` (fs, cargo) |
 
 ### Data-driven chain capabilities
 
-Any `capability.toml` with `kind = "chain"` and a `[chain]` section gets a `LlmChainTool` provider automatically — **no Rust code required**:
+Any `capability.toml` with `kind = "chain"` and a `[chain]` section gets a `PromptChainCapability` provider automatically — **no Rust code required**:
 
 ```toml
 kind = "chain"
@@ -643,6 +685,7 @@ output_schema = { ... }          # optional JSON Schema for response validation
 | `contract-processing/` | chain | `extract_contract`, `summarise_contract` | `ContractPipeline`. |
 | `ocr-service/` | chain | `extract_text` | `OcrProvider`; default model `claude-sonnet-4-6`. |
 | `runtime-echo/` | chain | echo | Minimal chain capability for runtime testing. |
+| `trace.replay` | dynamic_prompt | `replay_session` | Dry-run replay plan derived from `SessionTrace` stored in workspace nodes. |
 | `template-wasm/` | wasm | `ping` | Loads `capability.wasm`; exports `ping() -> i32 = 42`. |
 
 ### Capability selection: `invoice-processing` vs `ocr-service`
@@ -670,6 +713,9 @@ Rich `description` fields in `capability.toml` are loaded verbatim into Anthropi
 | `CONUSAI_MAX_CAPABILITIES` | `64` | Admin limit: max registered capabilities |
 | `CONUSAI_MAX_MANIFEST_BYTES` | `65536` | Admin limit: max manifest size |
 | `CONUSAI_MAX_WASM_BYTES` | `8388608` | Admin limit: max WASM binary size (8 MiB) |
+| `CONUSAI_MAX_TOOLS_PER_TURN` | `25` | Semantic router hard cap: tools exposed per turn |
+| `CONUSAI_MAX_INVOKES_PER_TURN` | `10` | Semantic router hard cap: tool invocations per turn |
+| `CONUSAI_MAX_REPLAYS_PER_TURN` | `3` | Browser-shell replay quota per heartbeat |
 | `DATABASE_URL` | — | Postgres connection string (e.g. `postgres://conusai:conusai@localhost:5432/conusai`) |
 | `EMBEDDING_BACKEND` | — | `openai` → `OpenAiEmbeddingService`; `local` → `LocalEmbeddingService` (fastembed); default → `NoopEmbeddingService` |
 | `MINIO_ENDPOINT` / `S3_ENDPOINT` | — | MinIO/S3 endpoint (enables file + workspace content stores) |
@@ -677,15 +723,20 @@ Rich `description` fields in `capability.toml` are loaded verbatim into Anthropi
 | `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | `minioadmin` | Dev credentials |
 | `ANTHROPIC_API_KEY` | — | Required for all LLM calls |
 | `JWT_SECRET` | — | HS256 key; if unset → dev mode (`X-Tenant-ID`) |
+| `PLATFORM_ADMIN_TOKEN` | — | Static bearer token for `/admin/capabilities/register` and `/admin/devices` |
+| `CONUSAI_FEATURE_BROWSER_SHELL` | `0` | `1` enables browser-shell device endpoints and WebSocket control |
 | `API_KEYS` | — | `<blake3_hex>:<tenant_id>:<plan>` CSV for API key auth |
 | `DEV_PASSWORD` | — | Password for `POST /v1/auth/login` in production mode |
+| `SUPER_ADMIN_EMAILS` | — | Comma-separated list of emails granted `SuperAdmin` role on login |
 | `UI_SESSION_KEY` | (dev secret) | HMAC key for UI session cookies |
 | `WEB_ORIGIN` | `http://localhost:3000` | Allowed CORS origins (comma-separated) |
 | `OTLP_ENDPOINT` | — | OTel collector gRPC endpoint (e.g. `http://localhost:4317`) |
+| `SEMANTIC_ROUTER_TOP_K` | `20` | Top-K capabilities returned by the semantic router |
 | `RUST_LOG` | — | `tracing` filter string |
 | `CONUSAI_LLM__DEFAULT` | `opus` | Global default LLM alias |
 | `CONUSAI_LLM__ALIASES__OPUS__MODEL` | `claude-opus-4-7` | Override opus model id |
 | `CONUSAI_LLM__ALIASES__HAIKU__MODEL` | `claude-haiku-4-5-20251001` | Override haiku model id |
+| `CONUSAI_MCP_ALLOWED_HOSTS` | — | Host allowlist for MCP validation helpers |
 
 ---
 
@@ -696,7 +747,7 @@ Rich `description` fields in `capability.toml` are loaded verbatim into Anthropi
 1. `tokio::main` → `common::telemetry::init("agent-gateway", "info")` — JSON logs + optional OTLP.
 2. `AppState::from_env()`:
    - `CONUSAI_TEST_MODE=1` → `with_in_memory_stores()` (no Docker needed).
-   - Otherwise: `PgPool` → `build_llm_registry()` → `LlmRegistry`; `ToolRegistry::with_default_factories(llm)` pre-seeds four factories; `ToolDiscovery::from_env().discover_into(&mut registry)` loads capabilities; MinIO client via `AmazonS3Builder`; `PostgresThreadStore`, `PostgresAuditStore`, `EmbeddingService`, `PgVectorStore`, `PostgresWorkspaceStore`, `MinioWorkspaceContent`, `RealtimeService`.
+    - Otherwise: `PgPool` → `build_llm_registry()` → `LlmRegistry`; `CapabilityRegistry::with_all_factories(llm, Some(pool.clone()))` pre-seeds factories; `CapabilityDiscovery::from_env().discover_into(&mut registry)` loads on-disk capabilities; `CapabilitySpecFactory::load_batch()` bulk-loads database-backed specs; `SemanticCapabilityRouter` is built; MinIO client via `AmazonS3Builder`; `PostgresThreadStore`, `PostgresAuditStore`, `EmbeddingService`, `PgVectorStore`, `PostgresWorkspaceStore`, `MinioWorkspaceContent`, `JobRegistry`, `JobExecutor`, `JobAdmin`, `RealtimeService`, `ArtifactBridge`.
 3. `verify_llm_providers` — validates all LLM aliases at startup (warn-only).
 4. Router assembled: public + metrics + protected + admin + ui + assets.
 5. Layers applied (outermost first): CORS → `TraceLayer` → `inject_request_id` → `propagate_trace` → (per-router) `extract_api_key` → `extract_tenant` → `enforce_plan`.
@@ -718,7 +769,9 @@ HTTP request
               │     ├─ ThreadStore::messages (history injection)
               │     └─ Anthropic tool_use rounds (≤ plan.max_turns)
               │           ├─ ToolExecutor::invoke(registry, cap, tool, input, tenant)
-              │           │     ├─ chain  → InvoiceProvider / ContractProvider / OcrProvider / LlmChainTool
+              │           │     ├─ chain  → InvoiceProvider / ContractProvider / OcrProvider / PromptChainCapability
+              │           │     ├─ dynamic → DynamicPromptCapability
+              │           │     ├─ remote  → RemoteMcpCapability
               │           │     ├─ wasm   → WasmProvider (wasmtime)
               │           │     ├─ mcp    → McpProvider (JSON-RPC 2.0)
               │           │     └─ native → BuiltinProvider (fs, cargo)
@@ -732,8 +785,9 @@ HTTP request
               ├─ /v1/audit                   → AuditStore::list
               └─ /v1/workspaces              → WorkspaceStore + WorkspaceContentStore
         ├─ admin_router (require_super_admin_jwt)
-        │     ├─ /admin/capabilities/*       → RegisteredToolAdmin CRUD
-        │     └─ /admin/jobs/*, /admin/tasks  → JobAdmin
+          │     ├─ /admin/capabilities/*       → CapabilityAdmin CRUD + dynamic prompt + namespace browsing
+          │     ├─ /admin/devices/*            → browser-shell device tokens
+          │     └─ /admin/jobs/*, /admin/tasks  → JobAdmin
         └─ ui_router
               ├─ /                          → Foundry app shell (Askama)
               ├─ /login, /logout
@@ -885,15 +939,16 @@ docker compose --profile full up -d
 
 ## 13. Design Patterns
 
-- **LLM abstraction layer:** `LlmProvider` trait + `LlmRegistry` with 4-step resolution. Adding a new LLM provider requires one new file in `llm/providers/` — zero changes to routes, chains, or agent loop. `verify_llm_providers` validates registry at startup.
-- **Data-driven chain tools:** `LlmChainConfig` in TOML + `PromptTemplate` + `LlmChainTool` — new LLM-backed tools require only a `capability.toml` with `[chain]` section, no Rust code.
-- **ToolProvider + ToolProviderFactory:** `ToolProvider` (`manifest`, `invoke`, `invoke_typed`, `tool_definitions`) + `ToolProviderFactory` (`supports`, `create`). Four factories pre-registered: `McpFactory`, `WasmFactory`, `ChainFactory(llm)`, `BuiltinFactory`. New capability kind: one new provider + one factory, zero registry changes.
-- **Super-admin capability CRUD:** `RegisteredToolAdmin` (in-process) + `/admin/capabilities/*` (API) + `/super-admin/*` (UI) — create, update, toggle, reload, test-invoke, validate without restart. `FilesystemStore` provides atomic manifest writes (`.tmp` → rename).
+- **LLM abstraction layer:** `CompletionProvider` trait + `LlmRegistry` with 4-step resolution. Adding a new LLM provider requires one new file in `llm/providers/` — zero changes to routes, chains, or agent loop. `verify_llm_providers` validates registry at startup.
+- **Data-driven chain tools:** `LlmChainConfig` in TOML + `PromptTemplate` + `PromptChainCapability` — new LLM-backed tools require only a `capability.toml` with `[chain]` section, no Rust code.
+- **CapabilityProvider + CapabilityFactory:** `CapabilityProvider` (`manifest`, `invoke`, `invoke_typed`, `tool_definitions`) + `CapabilityFactory` (`supports`, `create`). Four factories pre-registered: `McpFactory`, `WasmFactory`, `ChainFactory(llm)`, `BuiltinFactory`; `CapabilityRegistry::with_all_factories()` also adds `DynamicPromptFactory` and `TraceReplayFactory` when Postgres is present.
+- **Super-admin capability CRUD:** `CapabilityAdmin` (in-process) + `/admin/capabilities/*` (API) + `/super-admin/*` (UI) — create, update, toggle, reload, test-invoke, validate without restart. `FilesystemStore` provides atomic manifest writes (`.tmp` → rename). Self-registered remote MCP services use `/admin/capabilities/register`.
+- **Artifact bridge:** `ArtifactBridge` materialises tool-produced files into workspace nodes and MinIO.
 - **Typed ID newtypes:** `ThreadId`, `NodeId`, `TenantId`, `UserId`, `ToolId` — compile-time safety; `serde(transparent)` wire format.
 - **ConversationService:** single source of truth for thread lifecycle. Coordinates `ThreadStore` + `WorkspaceStore::bind_thread`.
 - **Multitenant isolation:** JWT/API-key auth; tenant-prefixed paths/keys/collections; plan-based token limits + rate limits + turn caps; `UserRole` RBAC; `safe_join` path safety.
-- **Persistent memory:** `PostgresThreadStore` (sqlx, `threads`/`messages` tables); auto-summarisation via Haiku background task.
-- **Workspace hierarchy:** folders + conversations as `.md` in MinIO; Postgres `workspace_nodes` + `content_embeddings` tables; private-by-default ACL; per-node thread binding; ContextBuilder ancestor context injection.
+- **Persistent memory:** `PostgresThreadStore` (sqlx, `threads`/`messages` tables); auto-summarisation via Haiku background task; workspace bodies live in MinIO via `WorkspaceContentStore`.
+- **Workspace hierarchy:** folders + conversations as `.md` in MinIO; Postgres `workspace_nodes` + `content_embeddings` tables; private-by-default ACL; per-node thread binding; `ContextBuilder` ancestor context injection.
 - **Observability by default:** structured JSON logs, OTel spans with W3C propagation, `#[instrument]` on every significant async method.
 - **Scheduled + background jobs (v0.3):** `ScheduledJob` trait (cron, `tokio-cron-scheduler`) + `BackgroundJob` trait (on-demand, `JobExecutor` in-memory tracker). `JobRegistry` wires both kinds with shared `JobContext`. `JobSchedulerService` spawns cron loop at startup. SSE polling at `GET /v1/tasks/{id}/sse`. In-memory only; Apalis/Postgres migration-ready (trait unchanged).
 
@@ -901,10 +956,10 @@ docker compose --profile full up -d
 
 ## 14. Status
 
-- **Version:** 0.3.1
+- **Version:** 0.3.1 (current workspace snapshot)
 - **State:** operational, 100% verified end-to-end (per [verify.md](verify/verify.md)).
 
-**Implemented:** multitenancy (JWT + API key + session), `UserRole` (User/Admin/SuperAdmin), `CompletionProvider` + `LlmRegistry` abstraction layer, `AnthropicProvider` via `rig-core` 0.36 + `rig-postgres` 0.2.5, data-driven `PromptChainCapability` + `PromptTemplate`, `ConversationService` trait + `DefaultConversationService`, super-admin capability CRUD API + Foundry UI, invoice + contract + OCR pipelines, YAML/TOML capability discovery, `ToolKind::Chain` + four factories, OpenAI-compatible chat, SSE streaming, tool-calling agent loop (blocking + streaming), MCP JSON-RPC, **Postgres pgvector semantic capability search**, MinIO file storage, WASM execution (wasmtime 44), Google Workspace manifest, evals framework (invoice + OCR), Jaeger/OTLP tracing, per-tenant rate limiting, **Postgres-backed thread/workspace/audit stores**, `gen_ai.*` OTel span attributes, W3C traceparent propagation, native filesystem + cargo tools, cargo-chef Docker image, hierarchical workspace + `content_embeddings`, append-only audit log, Prometheus metrics, OpenAPI + Swagger UI, request-ID correlation, typed ID newtypes, CORS, **scheduled jobs (`ScheduledJob` + `tokio-cron-scheduler`)**, **background tasks (`BackgroundJob` + `JobExecutor` + SSE polling)**, **`TranscribeVideoCapability`** (enqueues `VideoTranscriptionJob` → Whisper API), **`GET /v1/tasks`, `GET /v1/tasks/{id}/sse`, `GET /v1/threads/{id}/messages`, `GET /api/realtime/workspace`**, **`/admin/jobs/*` REST API**, **workspace indexer (`WorkspaceIndexer`, `EmbeddingService`, `RealFsWatcher`)**, **realtime WebSocket service (`RealtimeService`)**, **`runtime-echo` capability**.
+**Implemented:** multitenancy (JWT + API key + session), `UserRole` (User/Admin/SuperAdmin), `CompletionProvider` + `LlmRegistry` abstraction layer, `AnthropicProvider` via `rig-core` 0.36 + `rig-postgres` 0.2.5, data-driven `PromptChainCapability` + `PromptTemplate`, `ConversationService` trait + `DefaultConversationService`, super-admin capability CRUD API + Foundry UI, remote MCP self-registration, invoice + contract + OCR pipelines, TOML/JSON capability discovery, `CapabilityRegistry` + four factories, OpenAI-compatible chat, SSE streaming, tool-calling agent loop (blocking + streaming), MCP JSON-RPC, **Postgres pgvector semantic capability search**, MinIO file storage, WASM execution (wasmtime 44), Google Workspace manifest, evals framework (invoice + OCR), Jaeger/OTLP tracing, per-tenant rate limiting, **Postgres-backed thread/workspace/audit stores**, `gen_ai.*` OTel span attributes, W3C traceparent propagation, native filesystem + cargo tools, cargo-chef Docker image, hierarchical workspace + `content_embeddings`, append-only audit log, Prometheus metrics, OpenAPI + Swagger UI, request-ID correlation, typed ID newtypes, CORS, **scheduled jobs (`ScheduledJob` + `tokio-cron-scheduler`)**, **background tasks (`BackgroundJob` + `JobExecutor` + SSE polling)**, **`TranscribeVideoCapability`** (enqueues `VideoTranscriptionJob` → Whisper API), **`GET /v1/tasks`, `GET /v1/tasks/{id}/sse`, `GET /v1/threads/{id}/messages`, `GET /api/realtime/workspace`**, **browser-shell device tokens + WebSocket control**, **`/admin/jobs/*` REST API**, **workspace indexer (`WorkspaceIndexer`, `EmbeddingService`, `RealFsWatcher`)**, **realtime WebSocket service (`RealtimeService`)**, **`ArtifactBridge`**, **`runtime-echo` capability**, **`TraceReplayCapability`**, **database-backed capability specs**.
 
 **Reserved / future:** `Docker` capability kind, external MCP server federation, multi-instance deployment, audit retention/compaction, billing/quota enforcement, OIDC integration, multi-layer context budgeting, live document mode, agent-callable workspace toolkit, additional LLM providers (OpenAI, Ollama, Bedrock), Apalis/Postgres job persistence, whisper-rs local transcription.
 
@@ -922,12 +977,16 @@ conusai-platform/
 │   ├── arch.md                          # this document
 │   ├── ui-design.md
 │   ├── verify/verify.md
-│   └── adr/005-workspace-access-control.md
+│   └── adr/
+│       ├── 0004-semantic-capability-router-and-dynamic-prompts.md
+│       ├── 006-tauri-browser-shell.md
+│       ├── 007-capability-module-rename.md
+│       └── 008-multi-platform-shell.md
 │
 └── apps/backend/
-    ├── Cargo.toml                       # workspace (resolver = "3"; rust-version = "1.88")
+    ├── Cargo.toml                       # workspace (resolver = "3"; rust-version = "1.95")
     ├── Dockerfile                       # 4-stage cargo-chef
-    ├── rust-toolchain.toml              # stable + wasm32-wasip1
+    ├── rust-toolchain.toml              # stable + wasm32-wasip1 (Rust 1.95)
     │
     ├── crates/
     │   ├── common/

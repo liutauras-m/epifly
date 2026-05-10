@@ -12,7 +12,7 @@ You are an expert AI-agents Rust developer (think: the team that built Claude, C
 
 ---
 
-## v0.2 Canonical Names (breaking renames from v0.1)
+## Canonical Names
 
 | Recommended Name | Explanation |
 |---|---|
@@ -24,6 +24,11 @@ You are an expert AI-agents Rust developer (think: the team that built Claude, C
 | `PromptChainCapability` | Capability implemented via prompt chaining / LLM chains. Clear, descriptive, and self-documenting. |
 | `CapabilityCard` | Registry metadata and introspection record for a capability (replaces `ToolCard`). |
 | `CapabilityAdmin` | Administrative interface for managing the capability registry. |
+| `CapabilityRegistry` | In-memory capability registry and loader. |
+| `SemanticCapabilityRouter` | Pre-filters capabilities to top-K before an LLM turn. |
+| `DynamicPromptCapability` | DB-backed versioned prompt capability. |
+| `TraceReplayCapability` | Capability that turns recorded traces into replay plans. |
+| `ArtifactBridge` | Materialises tool-produced artifacts into workspace nodes and object storage. |
 
 ---
 
@@ -32,14 +37,16 @@ You are an expert AI-agents Rust developer (think: the team that built Claude, C
 ```
 conusai-platform/
 ├── apps/
-│   └── backend/                   ← Rust Cargo workspace
+│   ├── backend/                   ← Rust backend workspace
+│   ├── web/                       ← SvelteKit web frontend
+│   └── browser-shell/             ← Browser-shell client
 ├── docs/                          ← Architecture docs, plan, verify scripts
 ├── docker-compose.yml             ← Profiles: infra | full | observability
 ├── Makefile
 └── start.sh / stop.sh
 ```
 
-> **Frontend note:** A Next.js `apps/web/` frontend (App Router, RSC) and shared `packages/` (config, types, ui) are planned for a future milestone. The current UI is the Foundry server-rendered UI built with Askama, served directly by `agent-gateway`.
+> **Frontend note:** The workspace already contains `apps/web/` and `apps/browser-shell/`. The primary in-product UI remains the Foundry server-rendered UI built with Askama, served directly by `agent-gateway`.
 
 ## 2. Backend (`apps/backend/`)
 
@@ -56,7 +63,7 @@ conusai-platform/
 |----------|--------|
 | Async runtime | `tokio` (full), `tokio-stream` |
 | AI / LLM | `rig-core` **0.36** (Anthropic; native SSE streaming via `CompletionModel::stream()`), `rig-postgres` **0.2.5** |
-| Database / Vector DB | `sqlx` 0.8 (Postgres), `timescale/timescaledb-ha:pg17` + pgvector + DiskANN |
+| Database / Vector DB | `sqlx` 0.8 (Postgres), `timescale/timescaledb-ha:pg17` + pgvector |
 | HTTP server | `axum` 0.8 (ws, multipart), `tower` 0.5, `tower-http` 0.6 (cors, trace, br, fs) |
 | HTTP client | `reqwest` **0.13** (json, stream) |
 | Serialization | `serde`, `serde_json`, `toml` |
@@ -69,11 +76,11 @@ conusai-platform/
 | OpenAPI | `utoipa` 5 (axum_extras, chrono, uuid, ulid), `utoipa-swagger-ui` 9 |
 | Object storage | `object_store` 0.11 (aws/S3/MinIO) |
 | Embeddings (optional) | `fastembed` **5** (feature-gated: `local-embeddings`) |
-| Server-side UI | `askama` 0.12 (Foundry UI; v0.x series; Next.js frontend is a future addon) |
+| Server-side UI | `askama` 0.12 (Foundry UI; server-rendered product surface) |
 | IDs | `ulid` 1.1 (time-sortable, serde) |
 | Utilities | `uuid`, `chrono`, `bytes`, `futures`, `async-trait`, `bon` 3, `clap` 4, `colored` 2 |
 
-- **Rust edition:** 2024 · **Rust version:** 1.88 · **WASM target:** `wasm32-wasip1` · **rust-toolchain components:** `rustfmt`, `clippy`, `rust-src`, `rust-analyzer`
+- **Rust edition:** 2024 · **Rust version:** 1.95 · **WASM target:** `wasm32-wasip1` · **rust-toolchain components:** `rustfmt`, `clippy`, `rust-src`, `rust-analyzer`
 
 ### API Routes
 
@@ -116,6 +123,7 @@ Three router groups — `public_router`, `protected_router` (tenant middleware),
 | GET | `/v1/tasks/{id}/sse` | SSE stream for task lifecycle events |
 | GET | `/v1/threads/{id}/messages` | Paginated message list for a thread |
 | GET | `/api/realtime/workspace` | WebSocket — workspace change event stream |
+| GET | `/v1/shells/{device_id}/control` | Browser-shell WebSocket control channel |
 
 #### Super-admin (`role=super_admin` JWT)
 
@@ -124,6 +132,7 @@ Three router groups — `public_router`, `protected_router` (tenant middleware),
 | GET | `/admin/capabilities` | List all capabilities |
 | POST | `/admin/capabilities` | Register new capability |
 | POST | `/admin/capabilities/reload` | Reload all capabilities |
+| POST | `/admin/capabilities/register` | Register remote MCP capability service |
 | POST | `/admin/capabilities/validate` | Validate capability manifests |
 | POST | `/admin/capabilities/test` | Test-invoke a capability |
 | GET | `/admin/capabilities/{name}` | Get single capability |
@@ -140,6 +149,9 @@ Three router groups — `public_router`, `protected_router` (tenant middleware),
 | GET | `/admin/jobs/{name}` | Get single job summary |
 | POST | `/admin/jobs/{name}/run` | Enqueue a background job immediately |
 | GET | `/admin/tasks` | List all task statuses (admin view) |
+| GET | `/admin/devices` | List browser-shell device tokens |
+| POST | `/admin/devices` | Issue a browser-shell device token |
+| DELETE | `/admin/devices/{id}` | Revoke a browser-shell device token |
 
 ### CORS
 
@@ -149,6 +161,9 @@ Three router groups — `public_router`, `protected_router` (tenant middleware),
 
 - [ADR 0003 - Unified Postgres + CocoIndex](docs/adr/0003-unified-postgres-cocoindex.md)
 - [ADR 0004 - Semantic Capability Router & Dynamic Prompts](docs/adr/0004-semantic-capability-router-and-dynamic-prompts.md)
+- [ADR 006 - Tauri Browser Shell](docs/adr/006-tauri-browser-shell.md)
+- [ADR 007 - Capability Module Rename](docs/adr/007-capability-module-rename.md)
+- [ADR 008 - Multi-Platform Shell](docs/adr/008-multi-platform-shell.md)
 
 ## v0.3.2 New Concepts
 
@@ -156,7 +171,7 @@ Three router groups — `public_router`, `protected_router` (tenant middleware),
 
 `SemanticCapabilityRouter` replaces "send all enabled tools to the LLM". At every agent turn it:
 1. Embeds the user query.
-2. ANN-searches `capability_embeddings` (pgvector DiskANN, cosine) with namespace + tag filters.
+2. ANN-searches `capability_embeddings` (pgvector, cosine) with namespace + tag filters.
 3. Returns the top-K (default 20, max 50) providers whose distance ≤ 0.65.
 4. Results are moka-cached for 60 s (blake3 key = tenant + query + config).
 
@@ -170,11 +185,19 @@ Wire into `AgentBuilder`: `builder.with_semantic_router(router)`.
 
 Capabilities backed by versioned rows in `dynamic_prompts`. Push new versions via `PUT /admin/capabilities/{name}/prompt` without a deploy. The factory is `DynamicPromptFactory`; the provider is `DynamicPromptCapability`.
 
-### Bulk ERP Factory
+### Bulk Capability-Spec Factory
 
 `CapabilitySpecFactory` implements `BulkCapabilityFactory`. Call `registry.run_bulk_load()` at boot to stream all enabled rows from `capability_specs` and embed them in 256-row batches. Hot-reload via `RealtimeService::subscribe_capability_spec_changes()` + `LISTEN capability_specs_changed`.
+
+### Artifact Bridge
+
+`ArtifactBridge` materialises `ToolOutput.artifacts` into MinIO objects and workspace nodes after tool execution. Treat it as part of the agent loop, not as a capability concern.
 
 ### Tower Quota Middleware
 
 `RouterQuotaLayer` on `POST /v1/agent/completions` injects `RouterQuotaConfig` into request extensions. Read `max_tools_per_turn` and `max_invokes_per_turn` from extensions in the agent handler to enforce hard caps. Configured via `CONUSAI_MAX_TOOLS_PER_TURN` / `CONUSAI_MAX_INVOKES_PER_TURN` env vars.
+
+### Browser Shell
+
+Browser-shell device registration is gated by `CONUSAI_FEATURE_BROWSER_SHELL=1` and `PLATFORM_ADMIN_TOKEN`. The WebSocket control channel lives at `GET /v1/shells/{device_id}/control` and uses the browser-shell device token for validation.
 
