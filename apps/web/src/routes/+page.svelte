@@ -42,10 +42,13 @@
 	}
 
 	async function handleUpload(files: File[]) {
+		const added: { id: string; filename: string; size: number }[] = [];
 		for (const file of files) {
 			const result = await sdk.workspaces.upload(file);
 			if (result.error) { toasts.error(`Upload failed: ${result.error.message}`); continue; }
+			if (result.data) added.push({ id: result.data.id, filename: result.data.filename, size: result.data.size });
 		}
+		return added;
 	}
 
 	function onKeydown(e: KeyboardEvent) {

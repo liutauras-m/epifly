@@ -18,7 +18,7 @@
     attachments?: Attachment[];
     inFlight?: boolean;
     onsubmit: (prompt: string, attachments: Attachment[]) => void;
-    onUpload?: (files: File[]) => Promise<void>;
+    onUpload?: (files: File[]) => Promise<Attachment[]>;
   } = $props();
 
   let composerFocused = $state(false);
@@ -38,7 +38,8 @@
   }
 
   async function handleFiles(files: File[]) {
-    await onUpload?.(files);
+    const added = await onUpload?.(files);
+    if (added?.length) attachments = [...attachments, ...added];
   }
 </script>
 
