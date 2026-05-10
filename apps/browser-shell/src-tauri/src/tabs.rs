@@ -11,13 +11,13 @@ pub struct TabSummary {
 }
 
 #[derive(Default)]
-pub struct Tabs {
+pub struct TabManager {
     inner: HashMap<String, TabSummary>,
 }
 
-pub type TabsState = Arc<Mutex<Tabs>>;
+pub type TabManagerState = Arc<Mutex<TabManager>>;
 
-impl Tabs {
+impl TabManager {
     pub fn create(&mut self, app: &AppHandle, url: &str) -> anyhow::Result<String> {
         let id = Ulid::new().to_string();
         let label = format!("tab-{id}");
@@ -72,7 +72,7 @@ impl Tabs {
 #[tauri::command]
 pub fn create_tab(
     app: AppHandle,
-    state: tauri::State<TabsState>,
+    state: tauri::State<TabManagerState>,
     url: String,
 ) -> Result<String, String> {
     state
@@ -83,14 +83,14 @@ pub fn create_tab(
 }
 
 #[tauri::command]
-pub fn close_tab(app: AppHandle, state: tauri::State<TabsState>, id: String) {
+pub fn close_tab(app: AppHandle, state: tauri::State<TabManagerState>, id: String) {
     state.lock().unwrap().close(&app, &id);
 }
 
 #[tauri::command]
 pub fn navigate_tab(
     app: AppHandle,
-    state: tauri::State<TabsState>,
+    state: tauri::State<TabManagerState>,
     id: String,
     url: String,
 ) -> Result<(), String> {
@@ -102,7 +102,7 @@ pub fn navigate_tab(
 }
 
 #[tauri::command]
-pub fn list_tabs(state: tauri::State<TabsState>) -> Vec<TabSummary> {
+pub fn list_tabs(state: tauri::State<TabManagerState>) -> Vec<TabSummary> {
     state.lock().unwrap().list()
 }
 
@@ -110,7 +110,7 @@ pub fn list_tabs(state: tauri::State<TabsState>) -> Vec<TabSummary> {
 #[tauri::command]
 pub fn save_tabs(
     app: AppHandle,
-    state: tauri::State<TabsState>,
+    state: tauri::State<TabManagerState>,
 ) -> Result<(), String> {
     let summaries = state.lock().unwrap().list();
     let json = serde_json::to_string(&summaries).map_err(|e| e.to_string())?;

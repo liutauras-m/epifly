@@ -1,6 +1,6 @@
 {
   "name": "@conusai/types",
-  "version": "0.4.0",
+  "version": "0.6.0",
   "type": "module",
   "exports": {
     ".": {
@@ -9,9 +9,13 @@
     }
   },
   "scripts": {
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit",
+    "openapi:gen": "bash ../../scripts/openapi-to-types.sh",
+    "types:assert-parity": "node scripts/assert-parity.js",
+    "prebuild": "bash ../../scripts/openapi-to-types.sh || true"
   },
   "devDependencies": {
+    "openapi-typescript": "^7.0.0",
     "typescript": "^5.7.0"
   }
 }

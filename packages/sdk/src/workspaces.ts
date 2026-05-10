@@ -1,19 +1,71 @@
-import type { WorkspaceNode } from "@conusai/types";
-import type { ConusaiClient } from "./client.js";
+import type { WorkspaceNode } from '@conusai/types';
+import type { InternalClient } from './client.js';
+import type { ApiResult, WorkspaceContent, UploadResponse } from './types.js';
+import { EP } from './endpoints.js';
 
-export function workspaces(client: ConusaiClient) {
+export function workspaces(client: InternalClient) {
   return {
-    create(node: Partial<WorkspaceNode>): Promise<WorkspaceNode> {
-      return client.request("POST", "/v1/workspaces", node);
+    tree(parentId?: string | null): Promise<ApiResult<WorkspaceNode[]>> {
+      const url = parentId ? `${EP.WORKSPACES_TREE}?parent_id=${parentId}` : EP.WORKSPACES_TREE;
+      return client.call('GET', url);
     },
 
-    tree(parentId?: string): Promise<WorkspaceNode[]> {
-      const qs = parentId ? `?parent_id=${parentId}` : "";
-      return client.request("GET", `/v1/workspaces${qs}`);
+    get(id: string): Promise<ApiResult<WorkspaceNode>> {
+      return client.call('GET', EP.WORKSPACE_NODE(id));
     },
 
-    get(id: string): Promise<WorkspaceNode> {
-      return client.request("GET", `/v1/workspaces/${id}`);
+    create(body: { kind: string; name: string; parent_id?: string | null }): Promise<ApiResult<WorkspaceNode>> {
+      return client.call('POST', EP.WORKSPACES, body);
+    },
+
+    search(q: string, limit = 20): Promise<ApiResult<WorkspaceNode[]>> {
+      return client.call('GET', `${EP.WORKSPACES_SEARCH}?q=${encodeURIComponent(q)}&limit=${limit}`);
+    },
+
+    getContent(id: string): Promise<ApiResult<WorkspaceContent>> {
+      return client.call('GET', EP.WORKSPACE_CONTENT(id));
+    },
+
+    patchContent(id: string, content: string): Promise<ApiResult<WorkspaceNode>> {
+      return client.call('PATCH', EP.WORKSPACE_CONTENT(id), { content });
+    },
+
+    move(id: string, body: { new_parent_id: string | null; new_parent_path: string | null }): Promise<ApiResult<WorkspaceNode>> {
+      return client.call('POST', EP.WORKSPACE_MOVE(id), body);
+    },
+
+    delete(id: string): Promise<ApiResult<null>> {
+      return client.call('DELETE', EP.WORKSPACE_NODE(id));
+    },
+
+    share(id: string, userId: string): Promise<ApiResult<WorkspaceNode>> {
+      return client.call('POST', EP.WORKSPACE_SHARE(id), { user_id: userId });
+    },
+
+    unshare(id: string, userId: string): Promise<ApiResult<WorkspaceNode>> {
+      return client.call('POST', EP.WORKSPACE_UNSHARE(id), { user_id: userId });
+    },
+
+    async upload(file: File): Promise<ApiResult<UploadResponse>> {
+      const token = await client.tokenProvider.get();
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      try {
+        const res = await client.fetch(`${client.baseUrl}${EP.UI_UPLOAD}`, {
+          method: 'POST',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: fd,
+        });
+        if (!res.ok) {
+          let message = `HTTP ${res.status}`;
+          try { const j = await res.json(); message = (j as { error?: string }).error ?? message; } catch {}
+          return { data: null, error: { status: res.status, message } };
+        }
+        const data = await res.json() as UploadResponse;
+        return { data, error: null };
+      } catch (e: unknown) {
+        return { data: null, error: { status: 0, message: e instanceof Error ? e.message : String(e) } };
+      }
     },
   };
 }

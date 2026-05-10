@@ -1,6 +1,7 @@
 // Domain types mirroring crates/common Rust structs.
 // SessionTrace / UserStep mirror common/src/trace.rs.
 // CapabilityCard mirrors agent-core/src/capabilities/card.rs.
+// WorkspaceNode mirrors agent-gateway workspace routes.
 
 export type ToolKind = "mcp" | "wasm" | "llm_chain" | "remote_mcp" | "builtin";
 
@@ -34,11 +35,13 @@ export interface SessionTrace {
 export interface WorkspaceNode {
   id: string;
   parent_id: string | null;
-  kind: "folder" | "file" | "artifact";
+  kind: "folder" | "conversation" | "file" | "artifact";
   name: string;
-  metadata: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
+  virtual_path: string;
+  last_modified: string;
+  created_at?: string;
+  updated_at?: string;
+  metadata?: { thread_id?: string | null } & Record<string, unknown>;
 }
 
 export interface ControlMessage {
