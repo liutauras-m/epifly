@@ -105,12 +105,12 @@ async fn main() -> Result<()> {
 
     // Register dynamic capabilities that depend on runtime services (e.g. JobExecutor).
     {
-        use agent_core::tools::provider::CapabilityProvider;
+        use agent_core::capabilities::provider::CapabilityProvider;
         use capabilities::transcribe_video::TranscribeVideoCapability;
         let provider: Arc<dyn CapabilityProvider> = Arc::new(TranscribeVideoCapability::new(
             Arc::clone(&state.job_executor),
         ));
-        let card = agent_core::tools::card::CapabilityCard::new(
+        let card = agent_core::capabilities::card::CapabilityCard::new(
             provider.manifest().clone(),
             std::path::PathBuf::from("runtime"),
         )

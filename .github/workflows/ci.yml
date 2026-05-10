@@ -12,11 +12,11 @@ env:
 
 defaults:
   run:
-    working-directory: apps/backend
+    working-directory: .
 
 jobs:
   fmt:
-    name: Format
+    name: Rust Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,21 +34,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev cmake clang
 
-      - name: Set up Rust toolchain
-        run: rustup show
+      - run: rustup show
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "apps/backend -> target"
+          workspaces: ". -> apps/backend/target"
 
-      - name: cargo check
-        run: cargo check --workspace --all-targets
-
-      - name: cargo clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo check --workspace --all-targets
+      - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
-    name: Unit Tests
+    name: Rust Unit Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -58,32 +54,104 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev cmake clang
 
-      - name: Set up Rust toolchain
-        run: rustup show
+      - run: rustup show
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "apps/backend -> target"
+          workspaces: ". -> apps/backend/target"
 
-      - name: cargo test (unit only)
-        run: cargo test --workspace --lib
+      - run: cargo test --workspace --lib
+
+  frontend:
+    name: Frontend Build, Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint (biome)
+        run: pnpm -w exec biome check --no-errors-on-unmatched .
+
+      - name: Type check
+        run: pnpm -r check-types
+
+      - name: Test
+        run: pnpm -r test
+
+      - name: Build all packages
+        run: pnpm -r build
+
+  e2e:
+    name: Web E2E (Playwright)
+    runs-on: ubuntu-latest
+    needs: [frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm --filter web exec playwright install --with-deps chromium
+
+      - name: Build web for preview
+        run: pnpm --filter web build
+
+      - name: Run Playwright smoke tests
+        run: pnpm --filter web test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+
+  types-drift:
+    name: OpenAPI types not stale
+    runs-on: ubuntu-latest
+    needs: [check]
+    if: false  # enable once gateway boots in CI
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+      - run: pnpm install --frozen-lockfile
+      - run: just types
+      - run: git diff --exit-code packages/types/src
 
   lint-no-stale-trees:
     name: No stale root capability/crate trees
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: .
     steps:
       - uses: actions/checkout@v4
       - name: Fail if stale root trees reappear
         run: |
           if git ls-files | grep -qE '^(capabilities/|crates/)'; then
-            echo "ERROR: stale root capabilities/ or crates/ tree detected — remove them."
+            echo "ERROR: stale root capabilities/ or crates/ tree detected."
             git ls-files | grep -E '^(capabilities/|crates/)'
             exit 1
           fi
-          echo "Clean — no stale root trees."
+          echo "Clean."
 
   evals:
     name: Invoice Evals
@@ -98,7 +166,6 @@ jobs:
         run: |
           if [ -z "${{ secrets.ANTHROPIC_API_KEY }}" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "ANTHROPIC_API_KEY not set — skipping evals."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -109,23 +176,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev cmake clang
 
-      - name: Set up Rust toolchain
-        if: steps.gate.outputs.skip == 'false'
+      - if: steps.gate.outputs.skip == 'false'
         run: rustup show
 
       - uses: Swatinem/rust-cache@v2
         if: steps.gate.outputs.skip == 'false'
         with:
           shared-key: evals
-          workspaces: "apps/backend -> target"
 
-      - name: cargo build evals
+      - name: Build evals
         if: steps.gate.outputs.skip == 'false'
         run: cargo build --release --bin evals
 
-      - name: Run invoice eval suite
+      - name: Run eval suite
         if: steps.gate.outputs.skip == 'false'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: ./target/release/evals run --suite invoice
+        run: ./apps/backend/target/release/evals run --suite invoice
         continue-on-error: true

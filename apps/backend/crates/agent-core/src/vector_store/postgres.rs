@@ -4,7 +4,7 @@
 /// configuration and filter plumbing.  Executes direct `sqlx` queries against our
 /// custom table schemas (`capability_embeddings`, `content_embeddings`) because
 /// those schemas differ from rig-postgres's built-in document table format.
-use crate::tools::namespace::NamespaceFilter;
+use crate::capabilities::namespace::NamespaceFilter;
 use chrono::{DateTime, Utc};
 use rig_postgres::{PgSearchFilter, PgVectorDistanceFunction};
 use serde_json::Value;

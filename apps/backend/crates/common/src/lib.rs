@@ -12,6 +12,7 @@ pub mod metrics;
 pub mod path_safety;
 pub mod prompt;
 pub mod telemetry;
+pub mod trace;
 pub mod types;
 pub mod wasm;
 

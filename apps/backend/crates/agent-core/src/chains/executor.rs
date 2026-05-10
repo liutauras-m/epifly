@@ -8,7 +8,7 @@ use crate::context::tenant::TenantContext;
 use crate::llm::LlmRegistry;
 use crate::llm::types::{LlmRequest, LlmResponse};
 use crate::prompt::PromptTemplate;
-use crate::tools::manifest::LlmChainConfig;
+use crate::capabilities::manifest::LlmChainConfig;
 use rig::OneOrMany;
 use rig::completion::Message;
 use rig::message::UserContent;

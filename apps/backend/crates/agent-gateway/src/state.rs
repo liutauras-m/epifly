@@ -5,7 +5,7 @@ use agent_core::{
     ConversationService, DefaultConversationService, EmbeddingService, LlmRegistry,
     MinioWorkspaceContent, NamespaceFilter, NoopEmbeddingService, OpenAiEmbeddingService,
     PgVectorStore, PostgresAuditStore, PostgresThreadStore, PostgresWorkspaceStore,
-    RealtimeService, SemanticCapabilityRouter, SemanticRouterConfig, ToolDiscovery, ToolRegistry,
+    RealtimeService, SemanticCapabilityRouter, SemanticRouterConfig, CapabilityDiscovery, CapabilityRegistry,
     build_admin,
 };
 use common::audit::AuditStore;
@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
 pub struct AppState {
-    pub registry: Arc<Mutex<ToolRegistry>>,
+    pub registry: Arc<Mutex<CapabilityRegistry>>,
     pub rate_limiter: RateLimiter,
     /// LLM provider registry — single source of truth for all model access.
     pub llm: Arc<LlmRegistry>,
@@ -133,8 +133,8 @@ impl AppState {
         let vector_store = Arc::new(PgVectorStore::new(pool.clone()));
 
         let mut registry_raw =
-            ToolRegistry::with_all_factories(Arc::clone(&llm), Some(pool.clone()));
-        ToolDiscovery::from_env().discover_into(&mut registry_raw)?;
+            CapabilityRegistry::with_all_factories(Arc::clone(&llm), Some(pool.clone()));
+        CapabilityDiscovery::from_env().discover_into(&mut registry_raw)?;
 
         // Bulk-load capability specs (best-effort; startup continues on failure).
         let capability_spec_factory = Arc::new(CapabilitySpecFactory::new(
@@ -275,8 +275,8 @@ impl AppState {
         info!("CONUSAI_TEST_MODE=1 — using in-memory stores (no Postgres / MinIO)");
 
         let llm = Arc::new(build_llm_registry());
-        let mut registry = ToolRegistry::with_default_factories(Arc::clone(&llm));
-        ToolDiscovery::from_env().discover_into(&mut registry)?;
+        let mut registry = CapabilityRegistry::with_default_factories(Arc::clone(&llm));
+        CapabilityDiscovery::from_env().discover_into(&mut registry)?;
 
         let thread_store: Arc<dyn ThreadStore> = Arc::new(InMemoryThreadStore::new());
         let workspace_store: Arc<dyn WorkspaceStore> = Arc::new(InMemoryWorkspaceStore::new());

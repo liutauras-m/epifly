@@ -7,10 +7,10 @@
 //! Does NOT require a running Postgres instance — uses the in-memory registry path.
 
 use agent_core::{
-    SemanticCapabilityRouter, SemanticRouterConfig, ToolRegistry,
+    SemanticCapabilityRouter, SemanticRouterConfig, CapabilityRegistry,
     context::tenant::{PlanTier, TenantContext},
     indexing::EmbeddingService,
-    tools::{
+    capabilities::{
         card::CapabilityCard,
         manifest::{ToolDef, ToolKind, ToolManifest},
         providers::remote_mcp::RemoteMcpCapability,
@@ -45,7 +45,7 @@ fn make_tenant(id: &str) -> TenantContext {
 }
 
 fn register_remote_mcp(
-    registry: &mut ToolRegistry,
+    registry: &mut CapabilityRegistry,
     name: &str,
     tool_fn: &str,
     endpoint: &str,
@@ -97,7 +97,7 @@ async fn remote_mcp_register_and_invoke_reaches_mock_server() {
         .mount(&mock_server)
         .await;
 
-    let registry = Arc::new(Mutex::new(ToolRegistry::new()));
+    let registry = Arc::new(Mutex::new(CapabilityRegistry::new()));
     {
         let mut reg = registry.lock().unwrap();
         register_remote_mcp(
@@ -141,7 +141,7 @@ async fn remote_mcp_scoped_capability_blocked_for_wrong_tenant() {
         .mount(&mock_server)
         .await;
 
-    let registry = Arc::new(Mutex::new(ToolRegistry::new()));
+    let registry = Arc::new(Mutex::new(CapabilityRegistry::new()));
     {
         let mut reg = registry.lock().unwrap();
         register_remote_mcp(
@@ -184,7 +184,7 @@ async fn remote_mcp_scoped_capability_allowed_for_member_tenant() {
         .mount(&mock_server)
         .await;
 
-    let registry = Arc::new(Mutex::new(ToolRegistry::new()));
+    let registry = Arc::new(Mutex::new(CapabilityRegistry::new()));
     {
         let mut reg = registry.lock().unwrap();
         register_remote_mcp(
@@ -216,7 +216,7 @@ async fn remote_mcp_scoped_capability_allowed_for_member_tenant() {
 /// Hot-reload: after invalidate_all, second select() is a cache miss (no stale results).
 #[tokio::test]
 async fn invalidate_all_flushes_cache_after_reload() {
-    let registry = Arc::new(Mutex::new(ToolRegistry::new()));
+    let registry = Arc::new(Mutex::new(CapabilityRegistry::new()));
     let router = SemanticCapabilityRouter::new(
         Arc::clone(&registry),
         Arc::new(PgVectorStore::noop()),
