@@ -9,6 +9,7 @@ use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer, ExposeHeaders};
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 
+mod auth;
 mod capabilities;
 mod mw;
 mod routes;
@@ -44,9 +45,10 @@ async fn metrics_handler(State(registry): State<Arc<prometheus::Registry>>) -> i
 /// `WEB_ORIGIN` env → comma-separated origins (e.g. `https://app.conusai.com`).
 /// Falls back to `http://localhost:3000` for local dev.
 fn build_cors() -> CorsLayer {
-    // Default includes the SvelteKit dev server and the Tauri iOS/macOS WebView origin.
+    // Comma-separated allowed origins. Set WEB_ORIGIN in the environment (see .env.example).
+    // Falls back to localhost dev origins so the server stays usable without any config.
     let raw = std::env::var("WEB_ORIGIN").unwrap_or_else(|_| {
-        "http://localhost:3000,http://localhost:5173,https://tauri.localhost".into()
+        "http://localhost:3000,http://localhost:5173,https://tauri.localhost,tauri://localhost".into()
     });
 
     let origins: Vec<axum::http::HeaderValue> = raw
@@ -68,6 +70,9 @@ fn build_cors() -> CorsLayer {
             axum::http::header::CONTENT_TYPE,
             axum::http::HeaderName::from_static("x-tenant-id"),
             axum::http::HeaderName::from_static("x-api-key"),
+            // Tauri WKWebView injects the HMAC session token as a header since
+            // WKWebView cannot send Secure cookies over plain HTTP.
+            axum::http::HeaderName::from_static("x-session-token"),
         ]))
         .expose_headers(ExposeHeaders::list([axum::http::HeaderName::from_static(
             "x-request-id",

@@ -11,27 +11,31 @@ use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use std::sync::Arc;
 use tracing::warn;
 
-/// Axum extension key for the resolved tenant.
+/// Axum extension key for the resolved tenant context.
 #[derive(Clone)]
 pub struct ResolvedTenant(pub TenantContext);
 
-/// Middleware: extract tenant from JWT Bearer token.
+/// Middleware: resolve a [`ResolvedTenant`] from the incoming request.
 ///
-/// Behavior depends on whether `JWT_SECRET` is set:
+/// Auth vectors in priority order:
 ///
-/// **Production mode (`JWT_SECRET` set)**: a valid HS256 Bearer JWT is REQUIRED.
-/// `X-Tenant-ID` is ignored. Missing or invalid token → 401.
+/// **Production mode (`JWT_SECRET` set)**
+///   1. `Authorization: Bearer <HS256-JWT>` — external API / machine-to-machine.
+///   2. `conusai_session` cookie — web app, same-origin.
+///   3. `X-Session-Token` header — Tauri WKWebView (cannot attach Secure cookies
+///      to cross-origin HTTP; browser-shell injects the HMAC token as a header).
+///   Anything else → 401.
 ///
-/// **Dev mode (`JWT_SECRET` unset)**: `X-Tenant-ID` header is accepted as a
-/// no-auth tenant claim. With no header, requests fall through to a default
-/// `dev` tenant. This mode must never run in production.
+/// **Dev mode (`JWT_SECRET` unset)**
+///   1. `X-Tenant-ID` header — bare tenant override, no auth check.
+///   2. Session cookie or `X-Session-Token` header (via [`crate::auth`]).
+///   3. Default `dev` tenant (no auth required).
 pub async fn extract_tenant(
     State(_state): State<Arc<AppState>>,
     mut req: Request,
     next: Next,
 ) -> Response {
-    // If the API key middleware already resolved the tenant, skip JWT/cookie auth entirely.
-    // This makes X-API-Key a first-class auth method even in production (JWT_SECRET set).
+    // API-key middleware already resolved the tenant — skip all session auth.
     if req.extensions().get::<ResolvedTenant>().is_some() {
         return next.run(req).await;
     }
@@ -40,8 +44,10 @@ pub async fn extract_tenant(
     let workspace_root = std::env::var("CONUSAI_WORKSPACE_ROOT")
         .unwrap_or_else(|_| "/tmp/conusai/workspaces".into());
 
-    // ── Production mode: JWT_SECRET set → JWT is the ONLY accepted credential.
     if !jwt_secret.is_empty() {
+        // ── Production mode ───────────────────────────────────────────────
+
+        // 1. Bearer JWT (external API clients / machine-to-machine).
         if let Some(token) = bearer_token(&req) {
             return match decode::<TenantClaims>(
                 token,
@@ -62,13 +68,13 @@ pub async fn extract_tenant(
                 }
                 Err(e) => {
                     warn!(error = %e, "JWT decode failed");
-                    return HttpError::auth("invalid token").into_response();
+                    HttpError::auth("invalid token").into_response()
                 }
             };
         }
 
-        // Browser UI fallback: allow signed UI session cookie when Bearer is absent.
-        if let Some(user) = session_user_from_cookie(req.headers().get(header::COOKIE)) {
+        // 2 & 3. Cookie or X-Session-Token header (web + Tauri WKWebView).
+        if let Some(user) = crate::auth::extract_from_headers(req.headers()) {
             req.extensions_mut()
                 .insert(ResolvedTenant(user.tenant_context()));
             return next.run(req).await;
@@ -76,39 +82,25 @@ pub async fn extract_tenant(
 
         HttpError::auth("authentication required").into_response()
     } else {
-        // ── Dev mode: JWT_SECRET unset. Accept X-Tenant-ID, otherwise prefer the
-        // UI session cookie so /v1/* and /ui/* share the same tenant + user_id.
+        // ── Dev mode ─────────────────────────────────────────────────────
+
         let header_tid = req
             .headers()
             .get("X-Tenant-ID")
             .and_then(|v| v.to_str().ok())
             .map(String::from);
-        let session = session_user_from_cookie(req.headers().get(header::COOKIE));
 
         let tenant = if let Some(tid) = header_tid {
             TenantContext::new(tid, None::<&str>, PlanTier::Free, workspace_root)
-        } else if let Some(user) = session {
+        } else if let Some(user) = crate::auth::extract_from_headers(req.headers()) {
             user.tenant_context()
         } else {
             TenantContext::new("dev", None::<&str>, PlanTier::Enterprise, workspace_root)
         };
+
         req.extensions_mut().insert(ResolvedTenant(tenant));
         next.run(req).await
     }
-}
-
-fn session_user_from_cookie(
-    cookie_header: Option<&axum::http::HeaderValue>,
-) -> Option<crate::ui::session::SessionUser> {
-    cookie_header
-        .and_then(|v| v.to_str().ok())
-        .and_then(|cookies| {
-            cookies.split(';').find_map(|c| {
-                let c = c.trim();
-                c.strip_prefix("conusai_session=")
-                    .and_then(crate::ui::session::verify)
-            })
-        })
 }
 
 fn bearer_token(req: &Request) -> Option<&str> {

@@ -1,10 +1,31 @@
-apps/backend/target/
+# ── Rust build artifacts ──────────────────────────────────────────────────────
 target/
-apps/web/node_modules/
+apps/backend/target/
+apps/browser-shell/src-tauri/target/
+apps/browser-shell/src-tauri/gen/
+
+# ── Node / frontend ───────────────────────────────────────────────────────────
 node_modules/
+**/node_modules/
+apps/browser-shell/.svelte-kit/
+apps/browser-shell/build/
+apps/browser-shell/.env*
+apps/web/node_modules/
 apps/web/.svelte-kit/
+
+# ── VCS & IDE ─────────────────────────────────────────────────────────────────
 **/.git/
+**/.gitignore
+**/.gitattributes
+
+# ── Secrets & local config ────────────────────────────────────────────────────
+.env.local
+**/.env.local
+.claude/
+
+# ── Docs & non-source ─────────────────────────────────────────────────────────
 docs/
 *.md
-.claude/
-.env.local
+e2e/
+test-results/
+scripts/

@@ -1,11 +1,14 @@
+mod chat_stream;
 mod device_auth;
 mod recorder;
 mod registration;
 mod tabs;
 pub mod telemetry;
 
+use chat_stream::StreamRegistry;
 use device_auth::{DeviceAuthHandle, DeviceAuthService, DeviceTokenProvider};
 use recorder::RecorderStateHandle;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tabs::TabManagerState;
 use tauri::{Emitter, Manager};
@@ -78,6 +81,7 @@ pub fn run() {
         .manage(tabs_state)
         .manage(recorder_state)
         .manage(token_state)
+        .manage(Arc::new(Mutex::new(HashMap::<String, tokio::task::JoinHandle<()>>::new())) as StreamRegistry)
         .invoke_handler(tauri::generate_handler![
             tabs::create_tab,
             tabs::close_tab,
@@ -94,6 +98,8 @@ pub fn run() {
             device_auth::get_device_token,
             device_auth::clear_device_token,
             registration::upload_trace_cmd,
+            chat_stream::chat_stream_start,
+            chat_stream::chat_stream_abort,
         ])
         .setup(|app| {
             let api_base = std::env::var("CONUSAI_API_BASE")

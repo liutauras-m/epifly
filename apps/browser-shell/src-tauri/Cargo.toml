@@ -32,6 +32,7 @@ blake3     = { workspace = true }
 anyhow     = { workspace = true }
 reqwest    = { workspace = true }
 base64     = { workspace = true }
+futures-util = { version = "0.3" }
 # WebDriver automation for E2E tests — debug builds only, gated by feature.
 # Crate by danielraffel; adds a W3C WebDriver server to drive WKWebView on macOS.
 [target.'cfg(all(debug_assertions, target_os = "macos"))'.dependencies]

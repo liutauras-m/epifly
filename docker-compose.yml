@@ -86,6 +86,7 @@ services:
       WORKSPACES_ROOT: "/app/workspaces"
       OTLP_ENDPOINT: "http://conusai-otel:4317"
       UI_SESSION_KEY: "${UI_SESSION_KEY:-conusai-foundry-dev-secret-change-me-32b}"
+      WEB_ORIGIN: "${WEB_ORIGIN:-http://localhost:3000,http://localhost:5173,https://tauri.localhost,tauri://localhost}"
       EMBEDDING_BACKEND: "local"
     ports:
       - "8080:8080"

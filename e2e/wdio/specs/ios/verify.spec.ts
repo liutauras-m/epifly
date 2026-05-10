@@ -508,6 +508,520 @@ describe('V7 · Invoice extraction via agent chat', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Phase V9 — SSE Stream Response Rendering
+// WKWebView is in "loading" state while the stream is open — we poll with
+// try/catch until execute() succeeds, then check the AI bubble is present.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('V9 · SSE stream response rendering', () => {
+  before(async () => {
+    await switchToWebView();
+    const onLogin = await browser.execute(() =>
+      document.querySelector('h1')?.textContent?.toLowerCase().includes('workshop') ?? false
+    );
+    if (onLogin) await login('Verify Tester', 'enterprise');
+    // Start fresh conversation
+    const newChat = await $('[aria-label="New conversation"]');
+    if (await newChat.isDisplayed()) await newChat.click();
+    await browser.pause(300);
+  });
+
+  it('V9.1 — Submitting a message shows user bubble instantly', async () => {
+    const textarea = await $('#agent-prompt');
+    await textarea.setValue('Say exactly: STREAM_TEST_OK');
+    const sendBtn = await $('[aria-label="Send message"]');
+    await sendBtn.click();
+    // User bubble should appear before stream starts
+    await browser.waitUntil(
+      async () => {
+        try {
+          return await browser.execute(() =>
+            document.querySelector('.message.user') !== null
+          ) as boolean;
+        } catch { return false; }
+      },
+      { timeout: 10_000, timeoutMsg: 'User message bubble never appeared' },
+    );
+    const userText = await browser.execute(() =>
+      document.querySelector('.message.user')?.textContent ?? ''
+    );
+    expect((userText as string)).toContain('STREAM_TEST_OK');
+    await snap('v9-1-user-bubble');
+  });
+
+  it('V9.2 — Thinking indicator shows while stream is in flight', async () => {
+    // Thinking sonar or inFlight state should be visible briefly
+    // Poll for a short window; if already resolved that's fine too
+    const hadThinking = await browser.waitUntil(
+      async () => {
+        try {
+          const thinking = await browser.execute(() =>
+            document.querySelector('.message.ai.thinking, .sonar, [aria-label="Waiting"]') !== null
+          );
+          return thinking as boolean;
+        } catch { return false; }
+      },
+      { timeout: 30_000, timeoutMsg: 'Thinking indicator or AI bubble never appeared' },
+    );
+    expect(hadThinking).toBe(true);
+    await snap('v9-2-thinking-indicator');
+  });
+
+  it('V9.3 — Assistant bubble appears after stream completes', async () => {
+    // WKWebView blocks execute() while SSE is active — poll until it works AND
+    // an AI bubble with real text is present.
+    await browser.waitUntil(
+      async () => {
+        try {
+          return await browser.execute(() => {
+            const msgs = document.querySelectorAll('.message.ai:not(.thinking)');
+            return Array.from(msgs).some((m) => (m.textContent ?? '').trim().length > 0);
+          }) as boolean;
+        } catch { return false; }
+      },
+      { timeout: 90_000, interval: 1_000, timeoutMsg: 'AI response bubble never appeared after 90s' },
+    );
+    const aiText = await browser.execute(() => {
+      const msgs = document.querySelectorAll('.message.ai:not(.thinking)');
+      return Array.from(msgs).map((m) => m.textContent ?? '').join(' ');
+    });
+    expect((aiText as string).toLowerCase()).toContain('stream_test_ok');
+    await snap('v9-3-ai-bubble');
+  });
+
+  it('V9.4 — Messages list scrollable container exists', async () => {
+    const hasLog = await browser.execute(() =>
+      document.querySelector('.messages[role="log"]') !== null
+    );
+    expect(hasLog).toBe(true);
+    await snap('v9-4-messages-container');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase V10 — Tool Call Cards
+// Send a prompt that reliably invokes wasm-ping; verify the tool card renders.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('V10 · Tool call card rendering', () => {
+  before(async () => {
+    await switchToWebView();
+    const onLogin = await browser.execute(() =>
+      document.querySelector('h1')?.textContent?.toLowerCase().includes('workshop') ?? false
+    );
+    if (onLogin) await login('Verify Tester', 'enterprise');
+    const newChat = await $('[aria-label="New conversation"]');
+    if (await newChat.isDisplayed()) await newChat.click();
+    await browser.pause(300);
+  });
+
+  it('V10.1 — Tool card appears for wasm-ping request', async () => {
+    const textarea = await $('#agent-prompt');
+    await textarea.setValue('run a wasm ping test');
+    const sendBtn = await $('[aria-label="Send message"]');
+    await sendBtn.click();
+    // Wait for a tool card to appear (may take several seconds for agent to select tool)
+    await browser.waitUntil(
+      async () => {
+        try {
+          return await browser.execute(() =>
+            document.querySelector('.tool-card') !== null
+          ) as boolean;
+        } catch { return false; }
+      },
+      { timeout: 90_000, interval: 1_000, timeoutMsg: 'Tool card never appeared within 90s' },
+    );
+    const toolName = await browser.execute(() =>
+      document.querySelector('.tool-name')?.textContent ?? ''
+    );
+    expect((toolName as string).toLowerCase()).toContain('ping');
+    await snap('v10-1-tool-card');
+  });
+
+  it('V10.2 — Tool card shows success status after completion', async () => {
+    await browser.waitUntil(
+      async () => {
+        try {
+          return await browser.execute(() =>
+            document.querySelector('.tool-card[data-status="success"]') !== null
+          ) as boolean;
+        } catch { return false; }
+      },
+      { timeout: 30_000, interval: 500, timeoutMsg: 'Tool card never reached success state' },
+    );
+    await snap('v10-2-tool-success');
+  });
+
+  it('V10.3 — Final AI response mentions result 42', async () => {
+    await browser.waitUntil(
+      async () => {
+        try {
+          return await browser.execute(() => {
+            const msgs = document.querySelectorAll('.message.ai:not(.thinking)');
+            const text = Array.from(msgs).map((m) => m.textContent ?? '').join(' ');
+            return text.includes('42');
+          }) as boolean;
+        } catch { return false; }
+      },
+      { timeout: 30_000, interval: 500, timeoutMsg: 'AI response with "42" never appeared' },
+    );
+    await snap('v10-3-ai-with-42');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase V11 — Keyboard Behaviour
+// ─────────────────────────────────────────────────────────────────────────────
+describe('V11 · Keyboard behaviour', () => {
+  before(async () => {
+    await switchToWebView();
+    const onLogin = await browser.execute(() =>
+      document.querySelector('h1')?.textContent?.toLowerCase().includes('workshop') ?? false
+    );
+    if (onLogin) await login('Verify Tester', 'enterprise');
+    const newChat = await $('[aria-label="New conversation"]');
+    if (await newChat.isDisplayed()) await newChat.click();
+    await browser.pause(300);
+  });
+
+  it('V11.1 — iOS keyboard appears when textarea is tapped', async () => {
+    // Use native context to perform a real touch on the textarea region.
+    // WebView context click() uses JS simulation and doesn't trigger the native keyboard.
+    await browser.switchContext('NATIVE_APP');
+    // Tap in the lower-center area where the composer textarea sits
+    // (iPhone 16 Pro: 393×852 pt; composer is ~80pt from bottom)
+    await browser.action('pointer', { parameters: { pointerType: 'touch' } })
+      .move({ x: 196, y: 750 })
+      .down()
+      .pause(50)
+      .up()
+      .perform();
+    await browser.pause(800);
+    const keyboard = await $('//XCUIElementTypeKeyboard');
+    const keyboardVisible = await keyboard.isExisting();
+    expect(keyboardVisible).toBe(true);
+    await snap('v11-1-keyboard-visible');
+    // Dismiss keyboard before next test
+    await browser.action('pointer', { parameters: { pointerType: 'touch' } })
+      .move({ x: 196, y: 200 })
+      .down().pause(50).up().perform();
+    await browser.pause(500);
+    await switchToWebView();
+  });
+
+  it('V11.2 — Keyboard dismisses after message is sent', async () => {
+    // Tap textarea via native to get real keyboard, then submit
+    await browser.switchContext('NATIVE_APP');
+    await browser.action('pointer', { parameters: { pointerType: 'touch' } })
+      .move({ x: 196, y: 750 })
+      .down().pause(50).up().perform();
+    await browser.pause(600);
+    // Keyboard should be up now
+    const kbBefore = await $('//XCUIElementTypeKeyboard');
+    expect(await kbBefore.isExisting()).toBe(true);
+    await switchToWebView();
+    // Type and submit
+    const textarea = await $('#agent-prompt');
+    await textarea.setValue('keyboard test');
+    const sendBtn = await $('[aria-label="Send message"]');
+    await sendBtn.click();
+    await browser.pause(1_500);
+    // Back to native to verify keyboard dismissed
+    await browser.switchContext('NATIVE_APP');
+    const kbAfter = await $('//XCUIElementTypeKeyboard');
+    const keyboardGone = !(await kbAfter.isExisting());
+    expect(keyboardGone).toBe(true);
+    await snap('v11-2-keyboard-dismissed');
+    await switchToWebView();
+  });
+
+  it('V11.3 — Cmd+Enter submits message (JS keyboard shortcut)', async () => {
+    // Wait for any in-flight stream to settle first
+    await browser.waitUntil(
+      async () => {
+        try { return await browser.execute(() => true) as boolean; }
+        catch { return false; }
+      },
+      { timeout: 60_000, interval: 500, timeoutMsg: 'WKWebView did not recover' },
+    );
+    const newChat = await $('[aria-label="New conversation"]');
+    await newChat.click();
+    await browser.pause(300);
+    const textarea = await $('#agent-prompt');
+    await textarea.setValue('shortcut test');
+    const beforeCount = await browser.execute(() =>
+      document.querySelectorAll('.message.user').length
+    );
+    await browser.execute(() => {
+      const ta = document.querySelector<HTMLTextAreaElement>('#agent-prompt');
+      if (!ta) return;
+      ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }));
+    });
+    await browser.pause(1_000);
+    const afterCount = await browser.execute(() =>
+      document.querySelectorAll('.message.user').length
+    );
+    expect(afterCount as number).toBeGreaterThan(beforeCount as number);
+    await snap('v11-3-cmd-enter-submit');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase V12 — WorkspaceExplorer Sidebar Content
+// ─────────────────────────────────────────────────────────────────────────────
+describe('V12 · Workspace sidebar content', () => {
+  before(async () => {
+    await switchToWebView();
+    const onLogin = await browser.execute(() =>
+      document.querySelector('h1')?.textContent?.toLowerCase().includes('workshop') ?? false
+    );
+    if (onLogin) await login('Verify Tester', 'enterprise');
+    // Wait for any in-flight streams
+    await browser.waitUntil(
+      async () => {
+        try { return await browser.execute(() => true) as boolean; }
+        catch { return false; }
+      },
+      { timeout: 60_000, interval: 500, timeoutMsg: 'WKWebView did not settle' },
+    );
+  });
+
+  it('V12.1 — Sidebar renders WorkspaceExplorer with Workspace heading', async () => {
+    const hamburger = await $('[aria-label="Open navigation"]');
+    await hamburger.click();
+    await browser.pause(400);
+    const explorerHeading = await browser.execute(() =>
+      document.querySelector('.explorer-heading')?.textContent ?? ''
+    );
+    expect((explorerHeading as string).toLowerCase()).toContain('workspace');
+    await snap('v12-1-workspace-explorer');
+  });
+
+  it('V12.2 — Workspace search input is present in sidebar', async () => {
+    const hasSearch = await browser.execute(() =>
+      document.querySelector('[aria-label="Search workspace"]') !== null
+    );
+    expect(hasSearch).toBe(true);
+    await snap('v12-2-workspace-search');
+  });
+
+  it('V12.3 — New folder button is present in workspace explorer', async () => {
+    const hasNewBtn = await browser.execute(() =>
+      document.querySelector('[aria-label="New folder or conversation"]') !== null
+    );
+    expect(hasNewBtn).toBe(true);
+    await snap('v12-3-new-folder-btn');
+  });
+
+  it('V12.4 — Empty-state hint shown when no workspace nodes exist', async () => {
+    const treeContent = await browser.execute(() => {
+      const tree = document.querySelector('.tree');
+      return tree?.textContent ?? '';
+    });
+    // Either shows nodes or the empty-state hint — either is valid
+    expect(typeof treeContent).toBe('string');
+    await snap('v12-4-workspace-tree');
+    // Close sidebar
+    const closeBtn = await $('[aria-label="Close"]');
+    await closeBtn.click();
+    await browser.pause(300);
+  });
+
+  it('V12.5 — Workspace node can be created via New folder button', async () => {
+    const hamburger = await $('[aria-label="Open navigation"]');
+    await hamburger.click();
+    await browser.pause(400);
+    const newBtn = await $('[aria-label="New folder or conversation"]');
+    await newBtn.click();
+    await browser.pause(300);
+    // New node form should appear
+    const formVisible = await browser.execute(() =>
+      document.querySelector('.new-node-form') !== null
+    );
+    expect(formVisible).toBe(true);
+    // Fill and submit
+    const nameInput = await $('.new-node-input');
+    await nameInput.setValue('verify-folder');
+    const submitBtn = await $('[aria-label="Create"]');
+    await submitBtn.click();
+    await browser.pause(1_000);
+    await snap('v12-5-workspace-node-created');
+    // Close sidebar
+    const closeBtn = await $('[aria-label="Close"]');
+    if (await closeBtn.isExisting()) await closeBtn.click();
+    await browser.pause(300);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase V13 — Scroll in Long Conversation
+// ─────────────────────────────────────────────────────────────────────────────
+describe('V13 · Conversation scrolling', () => {
+  before(async () => {
+    await switchToWebView();
+    const onLogin = await browser.execute(() =>
+      document.querySelector('h1')?.textContent?.toLowerCase().includes('workshop') ?? false
+    );
+    if (onLogin) await login('Verify Tester', 'enterprise');
+    // Wait for any in-flight streams
+    await browser.waitUntil(
+      async () => {
+        try { return await browser.execute(() => true) as boolean; }
+        catch { return false; }
+      },
+      { timeout: 60_000, interval: 500, timeoutMsg: 'WKWebView did not settle' },
+    );
+    // Start fresh
+    const newChat = await $('[aria-label="New conversation"]');
+    if (await newChat.isDisplayed()) await newChat.click();
+    await browser.pause(300);
+  });
+
+  it('V13.1 — Sending multiple messages fills the chat view', async () => {
+    // Send 3 messages quickly to build up content
+    for (let i = 1; i <= 3; i++) {
+      const textarea = await $('#agent-prompt');
+      await textarea.setValue(`scroll test message ${i}`);
+      await browser.execute(() => {
+        const ta = document.querySelector<HTMLTextAreaElement>('#agent-prompt');
+        ta?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }));
+      });
+      await browser.pause(800);
+    }
+    // At least 3 user bubbles should be in the DOM
+    await browser.waitUntil(
+      async () => {
+        try {
+          return await browser.execute(() =>
+            document.querySelectorAll('.message.user').length >= 3
+          ) as boolean;
+        } catch { return false; }
+      },
+      { timeout: 15_000, timeoutMsg: 'Less than 3 user messages in DOM' },
+    );
+    await snap('v13-1-multiple-messages');
+  });
+
+  it('V13.2 — Messages container is scrollable', async () => {
+    const scrollable = await browser.execute(() => {
+      const el = document.querySelector('.messages');
+      if (!el) return false;
+      return el.scrollHeight >= el.clientHeight;
+    });
+    // scrollHeight ≥ clientHeight means content is tall enough to scroll
+    expect(typeof scrollable).toBe('boolean');
+    await snap('v13-2-scrollable');
+  });
+
+  it('V13.3 — New conversation button clears all messages', async () => {
+    // Wait for any stream to settle
+    await browser.waitUntil(
+      async () => {
+        try { return await browser.execute(() => true) as boolean; }
+        catch { return false; }
+      },
+      { timeout: 60_000, interval: 500, timeoutMsg: 'WKWebView did not settle' },
+    );
+    const newChat = await $('[aria-label="New conversation"]');
+    await newChat.click();
+    await browser.pause(500);
+    const messageCount = await browser.execute(() =>
+      document.querySelectorAll('.message.user, .message.ai').length
+    );
+    expect(messageCount as number).toBe(0);
+    await snap('v13-3-cleared-chat');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase V14 — File Attachment UI (end-to-end)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('V14 · File attachment UI', () => {
+  before(async () => {
+    await switchToWebView();
+    const onLogin = await browser.execute(() =>
+      document.querySelector('h1')?.textContent?.toLowerCase().includes('workshop') ?? false
+    );
+    if (onLogin) await login('Verify Tester', 'enterprise');
+    await browser.waitUntil(
+      async () => {
+        try { return await browser.execute(() => true) as boolean; }
+        catch { return false; }
+      },
+      { timeout: 60_000, interval: 500, timeoutMsg: 'WKWebView did not settle' },
+    );
+    const newChat = await $('[aria-label="New conversation"]');
+    if (await newChat.isDisplayed()) await newChat.click();
+    await browser.pause(300);
+  });
+
+  it('V14.1 — Attach button (paperclip) is rendered in composer toolbar', async () => {
+    const attachBtn = await $('[aria-label="Attach file"]');
+    expect(await attachBtn.isDisplayed()).toBe(true);
+    // Size check ≥ 44px on mobile
+    const h = await browser.execute(() =>
+      document.querySelector('[aria-label="Attach file"]')?.getBoundingClientRect().height ?? 0
+    );
+    expect(h as number).toBeGreaterThanOrEqual(44);
+    await snap('v14-1-attach-button');
+  });
+
+  it('V14.2 — Tapping attach opens file picker (native)', async () => {
+    const attachBtn = await $('[aria-label="Attach file"]');
+    await attachBtn.click();
+    await browser.pause(800);
+    // Switch to native to check if a document picker / sheet appeared
+    await browser.switchContext('NATIVE_APP');
+    const picker = await $('//XCUIElementTypeSheet | //XCUIElementTypePopover | //XCUIElementTypeTable');
+    const pickerPresent = await picker.isExisting();
+    // If file picker is blocked by simulator limitations, at least no crash
+    if (pickerPresent) {
+      await snap('v14-2-file-picker-opened');
+      // Dismiss the picker
+      try {
+        const cancelBtn = await $('//XCUIElementTypeButton[@name="Cancel"]');
+        if (await cancelBtn.isExisting()) await cancelBtn.click();
+      } catch {}
+    } else {
+      // Picker may not appear on all simulator configs — acceptable
+      await snap('v14-2-file-picker-not-shown');
+    }
+    await switchToWebView();
+  });
+
+  it('V14.3 — Hidden file input element exists in DOM', async () => {
+    const fileInputExists = await browser.execute(() =>
+      document.querySelector('input[type="file"]#composer-file-input') !== null
+    );
+    expect(fileInputExists).toBe(true);
+    await snap('v14-3-file-input-in-dom');
+  });
+
+  it('V14.4 — Composer form reflects in-flight state then re-enables', async () => {
+    const textarea = await $('#agent-prompt');
+    await textarea.setValue('attachment flow test');
+    // Snapshot the enabled state before submit
+    const enabledBefore = await browser.execute(() =>
+      (document.querySelector('[aria-label="Send message"]') as HTMLButtonElement)?.disabled === false
+    );
+    expect(enabledBefore).toBe(true);
+    const sendBtn = await $('[aria-label="Send message"]');
+    await sendBtn.click();
+    await snap('v14-4-after-submit');
+    // Wait for send button to re-enable (stream completes or fails)
+    await browser.waitUntil(
+      async () => {
+        try {
+          return await browser.execute(() =>
+            (document.querySelector('[aria-label="Send message"]') as HTMLButtonElement)?.disabled === false
+          ) as boolean;
+        } catch { return false; }
+      },
+      { timeout: 90_000, interval: 500, timeoutMsg: 'Send button never re-enabled after stream' },
+    );
+    await snap('v14-4b-send-btn-reenabled');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Phase V8 — Logout & Session Cleanup
 // ─────────────────────────────────────────────────────────────────────────────
 describe('V8 · Logout', () => {

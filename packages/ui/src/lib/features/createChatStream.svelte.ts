@@ -1,4 +1,5 @@
-import type { ConusSdk } from '@conusai/sdk';
+import type { ChatStreamDelta, ConusSdk } from '@conusai/sdk';
+import type { StreamChatParams } from '@conusai/sdk';
 
 export interface ChatMessage {
   role: 'user' | 'ai' | 'thinking';
@@ -17,7 +18,9 @@ export interface ToolCardEntry {
 const INACTIVITY_TIMEOUT_MS = 45_000;
 let wordSeq = 0;
 
-export function createChatStream(sdk: ConusSdk) {
+export type CustomStreamFn = (params: StreamChatParams) => AsyncGenerator<ChatStreamDelta>;
+
+export function createChatStream(sdk: ConusSdk, options?: { streamFn?: CustomStreamFn }) {
   let messages = $state<ChatMessage[]>([]);
   let toolCards = $state(new Map<string, ToolCardEntry>());
   let inFlight = $state(false);
@@ -82,13 +85,18 @@ export function createChatStream(sdk: ConusSdk) {
     try {
       messages = messages.filter(m => m.role !== 'thinking');
 
-      for await (const delta of sdk.chat.stream({
+      const streamParams: StreamChatParams = {
         message: prompt,
         threadId: activeThreadId,
         workspaceNodeId: opts.workspaceNodeId,
         attachmentIds: opts.attachmentIds,
         signal,
-      })) {
+      };
+      const gen = options?.streamFn
+        ? options.streamFn(streamParams)
+        : sdk.chat.stream(streamParams);
+
+      for await (const delta of gen) {
         lastActivityTime = Date.now();
 
         if (delta.kind === 'text') {
