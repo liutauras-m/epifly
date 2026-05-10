@@ -4,6 +4,40 @@
    Hairline rules. Generous negative space. Type-led, not chrome-led.
    ─────────────────────────────────────────────────────────────────────────── */
 
+/* ── Self-hosted fonts (CSP-safe, Tauri offline-friendly) ─────────────────── */
+@font-face {
+  font-family: "Fraunces";
+  src: url("./assets/fonts/Fraunces-Variable.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+  font-feature-settings: "ss01" on;
+}
+
+@font-face {
+  font-family: "Switzer";
+  src: url("./assets/fonts/Switzer-Variable.woff2") format("woff2");
+  font-weight: 400 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("./assets/fonts/JetBrainsMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("./assets/fonts/JetBrainsMono-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* ── Tokens · Paper (default) ─────────────────────────────────────────────── */
 :root,
 :root[data-theme="paper"] {
@@ -94,6 +128,8 @@
   --r-md:   14px;   /* composer, cards, toasts */
   --r-lg:   20px;   /* larger panels */
   --r-full: 9999px; /* circles */
+
+  --foundry-version: "2026.05";
 }
 
 /* ── Reset ────────────────────────────────────────────────────────────────── */

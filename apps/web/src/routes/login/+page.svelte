@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { PageData, ActionData } from './$types';
+	import logoDark from '@conusai/ui/assets/images/conusai-logo-darkmode.png';
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 </script>
 
@@ -8,7 +9,7 @@
 <div class="login-page">
 	<aside class="login-poster">
 		<div class="poster-brand">
-			<img src="/images/conusai-logo-darkmode.png" alt="ConusAI" class="poster-logo">
+			<img src={logoDark} alt="ConusAI" class="poster-logo">
 		</div>
 		<h1 class="poster-tagline">An <em>agent workshop</em> for operators who build with intent.</h1>
 		<div class="poster-meta">

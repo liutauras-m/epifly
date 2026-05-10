@@ -1,13 +1,13 @@
-mod keychain;
+mod device_auth;
 mod recorder;
 mod registration;
 mod tabs;
 pub mod telemetry;
 
-use keychain::DeviceTokenHandle;
+use device_auth::{DeviceAuthHandle, DeviceAuthService, DeviceTokenProvider};
 use recorder::RecorderStateHandle;
 use std::sync::{Arc, Mutex};
-use tabs::TabsState;
+use tabs::TabManagerState;
 use tauri::{Emitter, Manager};
 
 // JS injected into every child webview (tab content) to forward DOM events to
@@ -48,13 +48,13 @@ const RECORDER_BRIDGE_JS: &str = r#"
 "#;
 
 pub fn run() {
-    let tabs_state: TabsState = Arc::new(Mutex::new(tabs::Tabs::default()));
+    let tabs_state: TabManagerState = Arc::new(Mutex::new(tabs::TabManager::default()));
     let recorder_state: RecorderStateHandle =
         Arc::new(Mutex::new(recorder::RecorderState::new()));
-    let token_state: DeviceTokenHandle = Arc::new(Mutex::new(keychain::DeviceTokenState(
-        // Allow bootstrap via env var; frontend will overwrite from Stronghold once loaded.
+    // Allow bootstrap via env var; frontend will overwrite from Stronghold once loaded.
+    let token_state: DeviceAuthHandle = Arc::new(DeviceAuthService::new(
         std::env::var("CONUSAI_DEVICE_TOKEN").ok(),
-    )));
+    ));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -80,14 +80,15 @@ pub fn run() {
             recorder::recorder_stop,
             recorder::recorder_status,
             recorder::capture_tab_screenshot,
-            keychain::set_device_token,
-            keychain::get_device_token,
+            device_auth::set_device_token,
+            device_auth::get_device_token,
+            device_auth::clear_device_token,
             registration::upload_trace_cmd,
         ])
         .setup(|app| {
             let api_base = std::env::var("CONUSAI_API_BASE")
                 .unwrap_or_else(|_| "http://localhost:8080".to_owned());
-            let token_handle = app.state::<DeviceTokenHandle>().inner().clone();
+            let token_handle = app.state::<DeviceAuthHandle>().inner().clone();
             let app_handle = app.handle().clone();
 
             tauri::async_runtime::spawn(async move {
@@ -100,7 +101,7 @@ pub fn run() {
                 // Give the frontend a moment to load the token from Stronghold.
                 tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
 
-                let token = token_handle.lock().unwrap().0.clone();
+                let token = token_handle.token();
                 if let Some(token) = token {
                     if let Err(e) =
                         registration::register_capability(&api_base, &token).await

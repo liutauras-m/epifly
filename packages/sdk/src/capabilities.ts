@@ -1,5 +1,7 @@
-import type { CapabilityCard } from "@conusai/types";
-import type { ConusaiClient } from "./client.js";
+import type { CapabilityCard } from '@conusai/types';
+import type { InternalClient } from './client.js';
+import type { ApiResult } from './types.js';
+import { EP } from './endpoints.js';
 
 export interface RegisterCapabilityRequest {
   capability_id: string;
@@ -9,18 +11,18 @@ export interface RegisterCapabilityRequest {
   tenant_scope: string[];
 }
 
-export function capabilities(client: ConusaiClient) {
+export function capabilities(client: InternalClient) {
   return {
-    list(): Promise<CapabilityCard[]> {
-      return client.request("GET", "/api/capabilities");
+    list(): Promise<ApiResult<CapabilityCard[]>> {
+      return client.call('GET', EP.CAPABILITIES);
     },
 
-    search(q: string, limit = 10): Promise<CapabilityCard[]> {
-      return client.request("GET", `/api/capabilities/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+    search(q: string, limit = 10): Promise<ApiResult<CapabilityCard[]>> {
+      return client.call('GET', `${EP.CAPABILITIES_SEARCH}?q=${encodeURIComponent(q)}&limit=${limit}`);
     },
 
-    register(manifest: RegisterCapabilityRequest): Promise<void> {
-      return client.request("POST", "/admin/capabilities/register", manifest);
+    register(manifest: RegisterCapabilityRequest): Promise<ApiResult<void>> {
+      return client.call('POST', '/admin/capabilities/register', manifest);
     },
   };
 }

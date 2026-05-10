@@ -113,16 +113,14 @@ pub async fn upload_trace(
 /// Tauri command: upload a completed trace and return the workspace node id.
 #[tauri::command]
 pub async fn upload_trace_cmd(
-    token_state: tauri::State<'_, crate::keychain::DeviceTokenHandle>,
+    token_state: tauri::State<'_, crate::device_auth::DeviceAuthHandle>,
     trace: SessionTrace,
 ) -> Result<String, String> {
+    use crate::device_auth::DeviceTokenProvider;
     let api_base = std::env::var("CONUSAI_API_BASE")
         .unwrap_or_else(|_| "http://localhost:8080".to_owned());
     let token = token_state
-        .lock()
-        .unwrap()
-        .0
-        .clone()
+        .token()
         .ok_or("no device token — cannot upload trace")?;
     upload_trace(&api_base, &token, &trace)
         .await

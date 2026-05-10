@@ -8,6 +8,8 @@ export const EP = {
   WORKSPACE_SHARE: (id: string) => `/v1/workspaces/${id}/share`,
   WORKSPACE_UNSHARE: (id: string) => `/v1/workspaces/${id}/unshare`,
   WORKSPACE_MOVE: (id: string) => `/v1/workspaces/${id}/move`,
+  CAPABILITIES: '/v1/capabilities',
+  CAPABILITIES_SEARCH: '/v1/capabilities/search',
   UI_STREAM: '/ui/stream',
   UI_UPLOAD: '/ui/upload',
   UI_EXTRACT_INVOICE: '/ui/extract-invoice',

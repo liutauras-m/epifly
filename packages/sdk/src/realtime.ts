@@ -1,9 +1,9 @@
-import type { ConusaiClient } from "./client.js";
+import type { InternalClient } from './client.js';
 
 const BASE_DELAY_MS = 500;
 const MAX_DELAY_MS = 30_000;
 
-export function realtime(client: ConusaiClient) {
+export function realtime(client: InternalClient) {
   return {
     subscribe(): WebSocket {
       let ws: WebSocket;
@@ -11,14 +11,10 @@ export function realtime(client: ConusaiClient) {
       let closed = false;
 
       function connect() {
-        const url = client.baseUrl.replace(/^http/, "ws") + "/api/realtime/workspace";
+        const url = client.baseUrl.replace(/^http/, 'ws') + '/api/realtime/workspace';
         ws = new WebSocket(url);
-
-        ws.addEventListener("open", () => {
-          delay = BASE_DELAY_MS;
-        });
-
-        ws.addEventListener("close", () => {
+        ws.addEventListener('open', () => { delay = BASE_DELAY_MS; });
+        ws.addEventListener('close', () => {
           if (!closed) {
             const jitter = Math.random() * delay * 0.2;
             setTimeout(connect, delay + jitter);
@@ -31,14 +27,9 @@ export function realtime(client: ConusaiClient) {
 
       return new Proxy({} as WebSocket, {
         get(_, prop) {
-          if (prop === "close") {
-            return () => {
-              closed = true;
-              ws?.close();
-            };
-          }
+          if (prop === 'close') return () => { closed = true; ws?.close(); };
           const val = (ws as never)[prop];
-          return typeof val === "function" ? val.bind(ws) : val;
+          return typeof val === 'function' ? val.bind(ws) : val;
         },
       });
     },

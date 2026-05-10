@@ -1,7 +1,7 @@
-import { EP } from './endpoints';
-import type { ChatStreamDelta } from './types';
+import { EP } from './endpoints.js';
+import type { ChatStreamDelta } from './types.js';
 
-interface StreamChatParams {
+export interface StreamChatParams {
   message: string;
   threadId?: string | null;
   workspaceNodeId?: string | null;
@@ -9,15 +9,11 @@ interface StreamChatParams {
   signal?: AbortSignal;
 }
 
-interface StreamChatOptions {
-  reconnect?: boolean; // default true
-}
-
 const BACKOFF = [200, 600, 1800];
 
 export async function* streamChat(
   params: StreamChatParams,
-  opts: StreamChatOptions = {}
+  opts: { reconnect?: boolean } = {}
 ): AsyncGenerator<ChatStreamDelta> {
   const { reconnect = true } = opts;
   const fetchFn = params.fetch ?? globalThis.fetch;
@@ -36,11 +32,7 @@ export async function* streamChat(
         signal: params.signal,
       });
 
-      if (!res.ok || !res.body) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-
-      // Success — reset reconnect counter
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
       attempts = 0;
 
       const reader = res.body.getReader();
@@ -80,11 +72,10 @@ export async function* streamChat(
           }
         }
       }
-      return; // clean end
+      return;
     } catch (e: unknown) {
       if (!reconnect || attempts >= BACKOFF.length) throw e;
       const delay = BACKOFF[attempts++];
-      console.warn(`[streamChat] reconnect attempt ${attempts} in ${delay}ms:`, e);
       await new Promise(r => setTimeout(r, delay));
     }
   }
