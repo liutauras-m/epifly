@@ -2,6 +2,7 @@ mod keychain;
 mod recorder;
 mod registration;
 mod tabs;
+pub mod telemetry;
 
 use keychain::DeviceTokenHandle;
 use recorder::RecorderStateHandle;
@@ -72,12 +73,16 @@ pub fn run() {
             tabs::close_tab,
             tabs::navigate_tab,
             tabs::list_tabs,
+            tabs::save_tabs,
+            tabs::restore_tabs,
             recorder::recorder_start,
             recorder::recorder_record_step,
             recorder::recorder_stop,
             recorder::recorder_status,
+            recorder::capture_tab_screenshot,
             keychain::set_device_token,
             keychain::get_device_token,
+            registration::upload_trace_cmd,
         ])
         .setup(|app| {
             let api_base = std::env::var("CONUSAI_API_BASE")

@@ -68,6 +68,9 @@ impl Modify for SecurityAddon {
             common::error::ErrorEnvelope,
             common::error::ApiErrorBody,
             common::error::ApiErrorKind,
+            admin_devices::IssueDeviceRequest,
+            admin_devices::IssueDeviceResponse,
+            admin_devices::DeviceSummary,
         )
     ),
     paths(
@@ -90,6 +93,9 @@ impl Modify for SecurityAddon {
         workspaces::share_node,
         workspaces::unshare_node,
         files::upload,
+        admin_devices::issue_device,
+        admin_devices::list_devices,
+        admin_devices::revoke_device,
     ),
     tags(
         (name = "auth", description = "Authentication"),
@@ -100,6 +106,7 @@ impl Modify for SecurityAddon {
         (name = "workspaces", description = "Hierarchical workspace management"),
         (name = "audit", description = "Audit log"),
         (name = "files", description = "File storage"),
+        (name = "admin", description = "Platform administration (device tokens, etc.)"),
     ),
 )]
 pub struct ApiDoc;

@@ -16,6 +16,7 @@ use common::error::HttpError;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::sync::Arc;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 fn pool(state: &AppState) -> Result<&PgPool, HttpError> {
@@ -47,20 +48,24 @@ fn require_platform_admin(headers: &HeaderMap) -> Result<(), HttpError> {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct IssueDeviceRequest {
+    /// Tenant this device belongs to.
     pub tenant_id: String,
+    /// Human-readable label for the device.
     pub device_label: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct IssueDeviceResponse {
+    /// UUID of the newly created device token record.
     pub id: String,
+    /// Plaintext token — shown once; store it securely.
     pub token: String,
     pub device_label: String,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, ToSchema, sqlx::FromRow)]
 pub struct DeviceSummary {
     pub id: Option<String>,
     pub tenant_id: String,
@@ -69,6 +74,18 @@ pub struct DeviceSummary {
     pub last_seen: Option<DateTime<Utc>>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/admin/devices",
+    request_body = IssueDeviceRequest,
+    responses(
+        (status = 201, description = "Device token issued", body = IssueDeviceResponse),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Browser shell feature not enabled"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "admin",
+)]
 pub async fn issue_device(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -104,6 +121,17 @@ pub async fn issue_device(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/devices",
+    responses(
+        (status = 200, description = "List of active device tokens", body = Vec<DeviceSummary>),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Browser shell feature not enabled"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "admin",
+)]
 pub async fn list_devices(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -123,6 +151,20 @@ pub async fn list_devices(
     Ok(Json(rows))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/admin/devices/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Device token UUID to revoke"),
+    ),
+    responses(
+        (status = 204, description = "Token revoked"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Browser shell feature not enabled"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "admin",
+)]
 pub async fn revoke_device(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

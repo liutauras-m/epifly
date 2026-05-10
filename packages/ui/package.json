@@ -7,7 +7,8 @@
       "types": "./src/lib/index.ts",
       "svelte": "./src/lib/index.ts",
       "import": "./src/lib/index.ts"
-    }
+    },
+    "./src/lib/tokens.css": "./src/lib/tokens.css"
   },
   "scripts": {
     "build": "vite build",

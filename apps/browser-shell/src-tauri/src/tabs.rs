@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use ulid::Ulid;
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TabSummary {
     pub id: String,
     pub url: String,
@@ -22,9 +22,17 @@ impl Tabs {
         let id = Ulid::new().to_string();
         let label = format!("tab-{id}");
 
+        let data_dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| anyhow::anyhow!("app_data_dir: {e}"))?
+            .join("tabs")
+            .join(&label);
+
         WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url.parse()?))
             .title("ConusAI Browser")
             .initialization_script(crate::recorder_bridge_js())
+            .data_directory(data_dir)
             .build()?;
 
         self.inner.insert(
@@ -96,4 +104,37 @@ pub fn navigate_tab(
 #[tauri::command]
 pub fn list_tabs(state: tauri::State<TabsState>) -> Vec<TabSummary> {
     state.lock().unwrap().list()
+}
+
+/// Serialize the current tab list to `$APP_DATA/tabs.json`.
+#[tauri::command]
+pub fn save_tabs(
+    app: AppHandle,
+    state: tauri::State<TabsState>,
+) -> Result<(), String> {
+    let summaries = state.lock().unwrap().list();
+    let json = serde_json::to_string(&summaries).map_err(|e| e.to_string())?;
+    let path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("tabs.json");
+    std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+/// Read `$APP_DATA/tabs.json` and return the persisted tab summaries.
+/// The JS caller is responsible for recreating tabs via `create_tab`.
+#[tauri::command]
+pub fn restore_tabs(app: AppHandle) -> Result<Vec<TabSummary>, String> {
+    let path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("tabs.json");
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let data = std::fs::read(&path).map_err(|e| e.to_string())?;
+    serde_json::from_slice(&data).map_err(|e| e.to_string())
 }

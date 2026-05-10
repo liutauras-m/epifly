@@ -1,0 +1,28 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:base"],
+  "packageRules": [
+    {
+      "description": "Tauri plugins — weekly minor/patch updates, grouped",
+      "matchPackagePatterns": ["^tauri-plugin-"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "Tauri plugins",
+      "schedule": ["before 6am on monday"],
+      "rangeStrategy": "pin"
+    },
+    {
+      "description": "Tauri plugins — pin patch versions (high churn risk)",
+      "matchPackagePatterns": ["^tauri-plugin-"],
+      "matchUpdateTypes": ["patch"],
+      "rangeStrategy": "pin"
+    },
+    {
+      "description": "SvelteKit and Svelte — weekly minor/patch updates",
+      "matchPackageNames": ["@sveltejs/kit", "svelte"],
+      "matchPackagePatterns": ["^@sveltejs/"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "SvelteKit and Svelte",
+      "schedule": ["before 6am on monday"]
+    }
+  ]
+}

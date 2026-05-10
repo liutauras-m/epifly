@@ -241,25 +241,32 @@ Env vars: `CONUSAI_MAX_TOOLS_PER_TURN` (default 25), `CONUSAI_MAX_INVOKES_PER_TU
 
 ## 2. Repository Layout
 
+> Updated to reflect the SvelteKit frontend (`apps/web`) and ConusAI Browser Shell (`apps/shell`) additions.
+
 ```
 conusai-platform/
-├── docker-compose.yml          # postgres, minio, gateway, jaeger, otel-collector
+├── docker-compose.yml          # postgres, minio, gateway, web, jaeger, otel-collector
+├── renovate.json               # Renovate dependency-update config
 ├── Makefile
 ├── start.sh / stop.sh          # orchestration helpers
 ├── apps/
-│   └── backend/                # Rust workspace root
-│       ├── Cargo.toml          # workspace definition + all shared deps
-│       ├── Dockerfile          # 4-stage cargo-chef image
-│       ├── rust-toolchain.toml
-│       ├── crates/
-│       │   ├── common/         # shared types, error, telemetry, memory traits
-│       │   ├── agent-core/     # agent runtime, LLM abstraction, tool registry, chains, memory impls
-│       │   ├── jobs/           # ScheduledJob / BackgroundJob traits, JobExecutor, JobSchedulerService
-│       │   └── agent-gateway/  # Axum HTTP gateway, UI, OpenAPI docs
-│       ├── evals/              # evaluation framework (invoice + OCR suites)
-│       └── capabilities/       # zero-code TOML capability definitions
+│   ├── backend/                # Rust workspace root
+│   │   ├── Cargo.toml          # workspace definition + all shared deps
+│   │   ├── Dockerfile          # 4-stage cargo-chef image
+│   │   ├── rust-toolchain.toml
+│   │   ├── crates/
+│   │   │   ├── common/         # shared types, error, telemetry, memory traits
+│   │   │   ├── agent-core/     # agent runtime, LLM abstraction, tool registry, chains, memory impls
+│   │   │   ├── jobs/           # ScheduledJob / BackgroundJob traits, JobExecutor, JobSchedulerService
+│   │   │   └── agent-gateway/  # Axum HTTP gateway, UI, OpenAPI docs
+│   │   ├── evals/              # evaluation framework (invoice + OCR suites)
+│   │   └── capabilities/       # zero-code TOML capability definitions
+│   ├── web/                    # SvelteKit frontend (Node 22, served on port 3000)
+│   └── shell/                  # ConusAI Browser Shell — Tauri 2 app (macOS, Windows, Linux, iOS, Android)
 └── docs/
     ├── arch.md                 # this document
+    ├── browser-shell-plan.md   # Browser Shell architecture and implementation roadmap
+    ├── browser-shell-user-guide.md  # End-user installation and usage guide
     ├── ui-design.md
     ├── verify/verify.md
     └── adr/
@@ -280,8 +287,9 @@ conusai-platform/
 | `agent-gateway` | (built locally) | 8080 | full | HTTP API + UI gateway |
 | `jaeger` | `jaegertracing/all-in-one:1.58` | 16686 (UI), 14317 (OTLP) | observability, full | Distributed trace UI |
 | `otel-collector` | `otel/opentelemetry-collector-contrib:0.123.0` | 4317 (gRPC), 4318 (HTTP) | observability, full | OTLP receiver / Jaeger exporter |
+| `web` | `node:22-slim` | 3000 | full | SvelteKit frontend (`apps/web/build`) |
 
-- **Profiles:** `infra` (core services), `full` (everything), `observability` (tracing stack).
+- **Profiles:** `infra` (core services only), `full` (everything, including `web` SvelteKit app), `observability` (tracing stack).
 - **Volumes:** `postgres_data:/var/lib/postgresql/data`, `minio_data:/data`, `./capabilities:/app/capabilities:ro`, `./workspaces:/app/workspaces:rw`.
 - **MinIO dev creds:** `minioadmin` / `minioadmin`.
 - All services declare healthchecks; `agent-gateway` depends on `postgres` (healthy) and `minio-init` (completed).
@@ -907,6 +915,7 @@ docker compose --profile full up -d
 ```
 conusai-platform/
 ├── docker-compose.yml
+├── renovate.json
 ├── Makefile
 ├── start.sh / stop.sh
 ├── docs/

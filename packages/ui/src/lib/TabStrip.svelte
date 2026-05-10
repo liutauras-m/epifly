@@ -26,11 +26,14 @@
       onclick={() => onselect?.(tab.id)}
     >
       <span class="tab-label">{tab.label}</span>
-      <button
+      <span
         class="tab-close"
+        role="button"
+        tabindex="0"
         aria-label="Close tab {tab.label}"
         onclick={(e) => { e.stopPropagation(); onclose?.(tab.id); }}
-      >×</button>
+        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onclose?.(tab.id); } }}
+      >×</span>
     </button>
   {/each}
   <button class="tab-new" aria-label="New tab" onclick={() => oncreate?.()}>+</button>

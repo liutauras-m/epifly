@@ -33,6 +33,27 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "entitlements": "macos/entitlements.plist",
+      "exceptionDomain": "",
+      "frameworks": [],
+      "minimumSystemVersion": "12.0",
+      "signingIdentity": null
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
+      "signCommand": null
+    },
+    "iOS": {
+      "developmentTeam": null,
+      "minimumSystemVersion": "16.0",
+      "frameworks": []
+    },
+    "android": {
+      "minSdkVersion": 26
+    }
   }
 }

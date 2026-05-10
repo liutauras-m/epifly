@@ -79,19 +79,47 @@ async fn handle_shell_ws(
         }
     }
 
+    // Read per-turn replay quota from env (default 3).
+    let max_replays: u32 = std::env::var("CONUSAI_MAX_REPLAYS_PER_TURN")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
+
     let (mut sender, mut receiver) = socket.split();
+    let mut replays_this_turn: u32 = 0;
 
     while let Some(Ok(msg)) = receiver.next().await {
         match msg {
             Message::Text(text) => {
                 match serde_json::from_str::<ControlMessage>(&text) {
                     Ok(ControlMessage { kind: ControlKind::Heartbeat, .. }) => {
+                        // Reset per-turn replay counter on each heartbeat.
+                        replays_this_turn = 0;
                         let ack = serde_json::to_string(&ControlMessage {
                             kind: ControlKind::Ack,
                             payload: serde_json::Value::Null,
                         })
                         .unwrap_or_default();
                         let _ = sender.send(Message::Text(ack.into())).await;
+                    }
+                    Ok(ControlMessage { kind: ControlKind::Replay, payload }) => {
+                        replays_this_turn += 1;
+                        if replays_this_turn > max_replays {
+                            warn!(
+                                device_id,
+                                limit = max_replays,
+                                "replay quota exceeded; closing connection"
+                            );
+                            let stop = serde_json::to_string(&ControlMessage {
+                                kind: ControlKind::Stop,
+                                payload: serde_json::json!({ "reason": "replay_quota_exceeded" }),
+                            })
+                            .unwrap_or_default();
+                            let _ = sender.send(Message::Text(stop.into())).await;
+                            let _ = sender.send(Message::Close(None)).await;
+                            break;
+                        }
+                        info!(device_id, replay_n = replays_this_turn, payload = ?payload, "received replay message");
                     }
                     Ok(msg) => {
                         info!(device_id, kind = ?msg.kind, "received shell message");

@@ -554,18 +554,43 @@ pub async fn register_capability(
     Json(req): Json<CapabilityRegisterRequest>,
 ) -> Result<impl IntoResponse, HttpError> {
     // ── Service-token auth ────────────────────────────────────────────────────
-    // If PLATFORM_ADMIN_TOKEN is set, the caller must present it as
-    // `Authorization: Bearer <token>`.  In dev (env var unset) any call is
+    // Accepts EITHER:
+    //   1. `Authorization: Bearer <PLATFORM_ADMIN_TOKEN>` (static platform token), OR
+    //   2. `X-Device-Token: <plaintext>` validated via blake3 hash lookup in the DB.
+    // In dev (PLATFORM_ADMIN_TOKEN unset and no X-Device-Token) any call is
     // accepted so zero-config self-registration works out of the box.
     let platform_token = std::env::var("PLATFORM_ADMIN_TOKEN").unwrap_or_default();
     if !platform_token.is_empty() {
-        let provided = headers
+        let bearer_ok = headers
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.strip_prefix("Bearer "))
-            .unwrap_or("");
-        if provided != platform_token {
-            return Err(HttpError::auth("invalid or missing PLATFORM_ADMIN_TOKEN"));
+            .map(|provided| provided == platform_token)
+            .unwrap_or(false);
+
+        if !bearer_ok {
+            // Try X-Device-Token fallback.
+            let device_token = headers
+                .get("x-device-token")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+
+            let device_ok = if !device_token.is_empty() {
+                if let Some(pool) = &state.pool {
+                    crate::routes::admin_devices::validate_device_token(pool, device_token)
+                        .await
+                        .unwrap_or(None)
+                        .is_some()
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if !device_ok {
+                return Err(HttpError::auth("invalid or missing PLATFORM_ADMIN_TOKEN"));
+            }
         }
     }
 

@@ -5,7 +5,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
-  import type { UserStep } from "@conusai/types";
+  import type { SessionTrace } from "@conusai/types";
 
   let tabs = $state<Tab[]>([]);
   let activeTabId = $state<string | undefined>(undefined);
@@ -13,6 +13,9 @@
   let stepCount = $state(0);
   let toasts = $state<Toast[]>([]);
   let shellReady = $state(false);
+
+  // Screenshot polling: capture once per second while recording.
+  let screenshotInterval: ReturnType<typeof setInterval> | undefined;
 
   function addToast(message: string, kind: Toast["kind"] = "info") {
     const id = crypto.randomUUID();
@@ -28,6 +31,7 @@
     const unlistenPromise = listen("shell-ready", async () => {
       shellReady = true;
       await loadTokenFromStronghold();
+      await restorePersistedTabs();
     });
 
     return () => {
@@ -52,11 +56,25 @@
     }
   }
 
+  async function restorePersistedTabs() {
+    try {
+      const saved = await invoke<Tab[]>("restore_tabs");
+      for (const tab of saved) {
+        const id = await invoke<string>("create_tab", { url: tab.url });
+        tabs = [...tabs, { id, label: tab.label, url: tab.url }];
+        if (!activeTabId) activeTabId = id;
+      }
+    } catch {
+      // No persisted tabs — fresh start.
+    }
+  }
+
   async function handleNewTab() {
     try {
       const id = await invoke<string>("create_tab", { url: "https://example.com" });
       tabs = [...tabs, { id, label: "New Tab", url: "https://example.com" }];
       activeTabId = id;
+      await invoke("save_tabs");
     } catch (e) {
       addToast(`Failed to open tab: ${e}`, "error");
     }
@@ -66,12 +84,40 @@
     await invoke("close_tab", { id });
     tabs = tabs.filter((t) => t.id !== id);
     if (activeTabId === id) activeTabId = tabs[0]?.id;
+    await invoke("save_tabs");
+  }
+
+  function startScreenshotPolling() {
+    if (!activeTabId) return;
+    const tabId = activeTabId;
+    screenshotInterval = setInterval(async () => {
+      if (recorderState !== "recording") {
+        stopScreenshotPolling();
+        return;
+      }
+      try {
+        // Capture screenshot of active tab; Rust returns base64 PNG.
+        // The recorder_record_step bridge in the tab webview already filters PII fields;
+        // this screenshot is stored alongside the current step (best-effort).
+        await invoke("capture_tab_screenshot", { tabId });
+      } catch {
+        // Screenshot capture is best-effort — ignore failures silently.
+      }
+    }, 1000);
+  }
+
+  function stopScreenshotPolling() {
+    if (screenshotInterval !== undefined) {
+      clearInterval(screenshotInterval);
+      screenshotInterval = undefined;
+    }
   }
 
   async function handleStartRecording() {
     await invoke("recorder_start");
     recorderState = "recording";
     stepCount = 0;
+    startScreenshotPolling();
 
     const interval = setInterval(async () => {
       if (recorderState !== "recording") {
@@ -86,11 +132,14 @@
   }
 
   async function handleStopRecording() {
+    stopScreenshotPolling();
     recorderState = "uploading";
     try {
-      const trace = await invoke("recorder_stop");
+      const trace = await invoke<SessionTrace | null>("recorder_stop");
       if (trace) {
-        addToast("Trace saved to workspace", "success");
+        // ArtifactBridge upload: POST /v1/files then POST /v1/workspaces.
+        const nodeId = await invoke<string>("upload_trace_cmd", { trace });
+        addToast(`Trace saved — workspace node ${nodeId.slice(0, 8)}…`, "success");
       }
     } catch (e) {
       addToast(`Upload failed: ${e}`, "error");
