@@ -1,8 +1,8 @@
-use crate::context::tenant::TenantContext;
 use crate::capabilities::builtin::{cargo, fs};
 use crate::capabilities::card::CapabilityCard;
 use crate::capabilities::manifest::{ToolKind, ToolManifest};
 use crate::capabilities::provider::{CapabilityFactory, CapabilityProvider};
+use crate::context::tenant::TenantContext;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;

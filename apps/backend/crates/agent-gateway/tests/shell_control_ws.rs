@@ -95,5 +95,8 @@ fn ack_round_trips() {
 fn unknown_kind_fails_to_deserialize() {
     let raw = r#"{"kind":"Unknown","payload":null}"#;
     let result: Result<ControlMessage, _> = serde_json::from_str(raw);
-    assert!(result.is_err(), "unknown ControlKind must fail to deserialize");
+    assert!(
+        result.is_err(),
+        "unknown ControlKind must fail to deserialize"
+    );
 }

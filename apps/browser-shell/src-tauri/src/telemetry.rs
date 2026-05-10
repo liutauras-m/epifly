@@ -3,8 +3,8 @@
 /// Reads `OTLP_ENDPOINT` env var (default `http://localhost:4318`).
 /// Errors are silently ignored — telemetry is non-critical.
 pub async fn emit_span(name: &str, attrs: &[(&str, &str)]) {
-    let endpoint = std::env::var("OTLP_ENDPOINT")
-        .unwrap_or_else(|_| "http://localhost:4318".to_owned());
+    let endpoint =
+        std::env::var("OTLP_ENDPOINT").unwrap_or_else(|_| "http://localhost:4318".to_owned());
 
     let platform = if cfg!(target_os = "macos") {
         "macos"

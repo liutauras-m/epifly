@@ -5,13 +5,13 @@
 
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
+use agent_core::capabilities::card::CapabilityCard;
+use agent_core::capabilities::manifest::{ToolDef, ToolKind, ToolManifest};
+use agent_core::capabilities::providers::remote_mcp::RemoteMcpCapability;
 use agent_core::{
     CapabilitySummary, CreateCapabilityRequest, RegisteredToolValidator, TestInvokeRequest,
     UpdateCapabilityRequest, ValidationReport,
 };
-use agent_core::capabilities::card::CapabilityCard;
-use agent_core::capabilities::manifest::{ToolDef, ToolKind, ToolManifest};
-use agent_core::capabilities::providers::remote_mcp::RemoteMcpCapability;
 use axum::{
     Extension, Json,
     extract::{Path, Query, State},
@@ -133,7 +133,8 @@ pub async fn create(
     Extension(tenant): Extension<ResolvedTenant>,
     Json(req): Json<CreateCapabilityRequest>,
 ) -> impl IntoResponse {
-    let manifest = agent_core::capabilities::manifest::ToolManifest::from_toml(&req.manifest_toml).ok();
+    let manifest =
+        agent_core::capabilities::manifest::ToolManifest::from_toml(&req.manifest_toml).ok();
     match state.tool_admin.create(req, &tenant.0) {
         Ok(summary) => {
             if let Some(m) = manifest
@@ -154,7 +155,8 @@ pub async fn update(
     Path(name): Path<String>,
     Json(req): Json<UpdateCapabilityRequest>,
 ) -> impl IntoResponse {
-    let manifest = agent_core::capabilities::manifest::ToolManifest::from_toml(&req.manifest_toml).ok();
+    let manifest =
+        agent_core::capabilities::manifest::ToolManifest::from_toml(&req.manifest_toml).ok();
     match state.tool_admin.update(&name, req, &tenant.0) {
         Ok(summary) => {
             if let Some(m) = manifest
@@ -205,7 +207,8 @@ pub async fn reload_one(
     match state.tool_admin.reload(&name, &tenant.0) {
         Ok(summary) => {
             if let Ok(toml) = state.tool_admin.get_manifest_toml(&name)
-                && let Ok(manifest) = agent_core::capabilities::manifest::ToolManifest::from_toml(&toml)
+                && let Ok(manifest) =
+                    agent_core::capabilities::manifest::ToolManifest::from_toml(&toml)
                 && let Err(e) = sync_manifest_embedding(&state, &manifest, None).await
             {
                 warn!(error = %e, capability = %manifest.name, "capability embedding sync failed after reload");
@@ -596,12 +599,16 @@ pub async fn register_capability(
 
     // ── Validate ──────────────────────────────────────────────────────────────
     if !is_valid_capability_id(&req.capability_id) {
-        return Err(HttpError::validation("capability_id",
+        return Err(HttpError::validation(
+            "capability_id",
             "capability_id must start with [a-z] and contain only [a-z0-9._-] (max 128 chars)",
         ));
     }
     if req.kind != "remote_mcp" {
-        return Err(HttpError::validation("kind", "only kind=remote_mcp is supported for self-registration"));
+        return Err(HttpError::validation(
+            "kind",
+            "only kind=remote_mcp is supported for self-registration",
+        ));
     }
     let endpoint = req.endpoint.as_deref().ok_or_else(|| {
         HttpError::validation("endpoint", "endpoint is required for kind=remote_mcp")
@@ -664,7 +671,7 @@ pub async fn register_capability(
                 "#,
             )
             .bind(&req.namespace)
-            .bind(&t.name)        // ← actual tool function name, not service name
+            .bind(&t.name) // ← actual tool function name, not service name
             .bind(&t.description)
             .bind(&t.input_schema)
             .bind(endpoint)

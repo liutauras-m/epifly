@@ -4,9 +4,9 @@
 //! Register it by adding it to the `CapabilityRegistry` at startup with a synthetic
 //! `CapabilityCard` built by `transcribe_video_card()`.
 
-use agent_core::context::tenant::TenantContext;
 use agent_core::capabilities::manifest::{ToolDef, ToolKind, ToolManifest};
 use agent_core::capabilities::provider::CapabilityProvider;
+use agent_core::context::tenant::TenantContext;
 use async_trait::async_trait;
 use jobs::JobExecutor;
 use serde_json::{Value, json};

@@ -47,7 +47,10 @@ fn auth_http_error_has_401_status() {
 
 // ── require_platform_admin ────────────────────────────────────────────────────
 
-fn check_platform_admin(auth_header: Option<&str>, token_env: &str) -> Result<(), common::error::HttpError> {
+fn check_platform_admin(
+    auth_header: Option<&str>,
+    token_env: &str,
+) -> Result<(), common::error::HttpError> {
     let expected = token_env.to_string();
     if expected.is_empty() {
         return Ok(());
@@ -58,7 +61,9 @@ fn check_platform_admin(auth_header: Option<&str>, token_env: &str) -> Result<()
     if bearer == expected {
         Ok(())
     } else {
-        Err(common::error::HttpError::auth("invalid platform admin token"))
+        Err(common::error::HttpError::auth(
+            "invalid platform admin token",
+        ))
     }
 }
 

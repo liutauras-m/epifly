@@ -19,10 +19,15 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+#[allow(clippy::result_large_err)]
 fn pool(state: &AppState) -> Result<&PgPool, HttpError> {
-    state.pool.as_ref().ok_or_else(|| HttpError::internal("no database pool", None))
+    state
+        .pool
+        .as_ref()
+        .ok_or_else(|| HttpError::internal("no database pool", None))
 }
 
+#[allow(clippy::result_large_err)]
 pub(crate) fn require_shell_feature() -> Result<(), HttpError> {
     if std::env::var("CONUSAI_FEATURE_BROWSER_SHELL").as_deref() == Ok("1") {
         Ok(())
@@ -31,6 +36,7 @@ pub(crate) fn require_shell_feature() -> Result<(), HttpError> {
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn require_platform_admin(headers: &HeaderMap) -> Result<(), HttpError> {
     let expected = std::env::var("PLATFORM_ADMIN_TOKEN").unwrap_or_default();
     if expected.is_empty() {
@@ -174,13 +180,11 @@ pub async fn revoke_device(
     require_platform_admin(&headers)?;
     let pool = pool(&state)?;
 
-    sqlx::query(
-        "UPDATE device_tokens SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL",
-    )
-    .bind(id)
-    .execute(pool)
-    .await
-    .map_err(|e| HttpError::internal(e.to_string(), None))?;
+    sqlx::query("UPDATE device_tokens SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL")
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(|e| HttpError::internal(e.to_string(), None))?;
 
     Ok(StatusCode::NO_CONTENT)
 }

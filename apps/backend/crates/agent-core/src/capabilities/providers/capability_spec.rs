@@ -14,17 +14,17 @@
 //! The caller (e.g. `RealtimeService`) listens on the `capability_specs_changed` PG channel
 //! and calls `reload_one(namespace, tool_name)` on any INSERT/UPDATE/DELETE.
 
-use crate::chains::dynamic_prompt::DynamicPromptCapability;
-use crate::chains::llm_chain::PromptChainCapability;
-use crate::context::tenant::TenantContext;
-use crate::indexing::EmbeddingService;
-use crate::llm::LlmRegistry;
 use crate::capabilities::card::CapabilityCard;
 use crate::capabilities::manifest::{LlmChainConfig, ToolDef, ToolKind, ToolManifest};
 use crate::capabilities::provider::{BulkCapabilityFactory, CapabilityFactory, CapabilityProvider};
 use crate::capabilities::providers::remote_mcp::RemoteMcpCapability;
 use crate::capabilities::providers::wasm::WasmProvider;
 use crate::capabilities::registry::CapabilityRegistry;
+use crate::chains::dynamic_prompt::DynamicPromptCapability;
+use crate::chains::llm_chain::PromptChainCapability;
+use crate::context::tenant::TenantContext;
+use crate::indexing::EmbeddingService;
+use crate::llm::LlmRegistry;
 use crate::vector_store::PgVectorStore;
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -249,10 +249,7 @@ impl CapabilitySpecFactory {
                 let endpoint = row.payload["endpoint"]
                     .as_str()
                     .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "remote_mcp spec '{}' missing payload.endpoint",
-                            cap_name
-                        )
+                        anyhow::anyhow!("remote_mcp spec '{}' missing payload.endpoint", cap_name)
                     })?
                     .to_string();
                 RemoteMcpCapability::new(manifest, endpoint)

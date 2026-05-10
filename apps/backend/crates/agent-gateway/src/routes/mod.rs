@@ -19,11 +19,11 @@ pub mod auth;
 mod capabilities;
 pub mod chat;
 mod files;
-mod shells;
 mod health;
 mod mcp;
 pub mod realtime;
 mod search;
+mod shells;
 mod tasks;
 mod threads;
 mod workspaces;
@@ -250,8 +250,5 @@ pub fn protected_router() -> Router<Arc<AppState>> {
         // ── Realtime ────────────────────────────────────────────────────────
         .route("/api/realtime/workspace", get(realtime::realtime_workspace))
         // ── Shell control (browser-shell WS; gated by feature flag) ─────────
-        .route(
-            "/v1/shells/{device_id}/control",
-            get(shells::shell_control),
-        )
+        .route("/v1/shells/{device_id}/control", get(shells::shell_control))
 }

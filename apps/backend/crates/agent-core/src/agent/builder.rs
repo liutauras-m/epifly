@@ -1,6 +1,6 @@
 use crate::agent::hooks::TracingHook;
-use crate::context::tenant::TenantContext;
 use crate::capabilities::semantic_router::SemanticCapabilityRouter;
+use crate::context::tenant::TenantContext;
 use rig::client::ProviderClient;
 use rig::client::completion::CompletionClient;
 use rig::completion::Prompt;

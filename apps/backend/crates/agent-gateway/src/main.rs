@@ -1,9 +1,9 @@
 use agent_core::{WorkspaceIndexer, indexing::RealFsWatcher};
 use anyhow::Result;
-use std::path::PathBuf;
 use axum::{Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
 use jobs::JobSchedulerService;
 use prometheus::Encoder;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer, ExposeHeaders};
 use tower_http::trace::TraceLayer;
@@ -45,8 +45,9 @@ async fn metrics_handler(State(registry): State<Arc<prometheus::Registry>>) -> i
 /// Falls back to `http://localhost:3000` for local dev.
 fn build_cors() -> CorsLayer {
     // Default includes the SvelteKit dev server and the Tauri iOS/macOS WebView origin.
-    let raw = std::env::var("WEB_ORIGIN")
-        .unwrap_or_else(|_| "http://localhost:3000,http://localhost:5173,https://tauri.localhost".into());
+    let raw = std::env::var("WEB_ORIGIN").unwrap_or_else(|_| {
+        "http://localhost:3000,http://localhost:5173,https://tauri.localhost".into()
+    });
 
     let origins: Vec<axum::http::HeaderValue> = raw
         .split(',')
@@ -73,7 +74,6 @@ fn build_cors() -> CorsLayer {
         )]))
         .allow_credentials(true)
 }
-
 
 #[tokio::main]
 async fn main() -> Result<()> {

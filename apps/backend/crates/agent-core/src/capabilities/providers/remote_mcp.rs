@@ -5,10 +5,10 @@
 //! It is created by `POST /admin/capabilities/register` and stored in
 //! `capability_specs` with strategy = "remote_mcp".
 
-use crate::context::tenant::TenantContext;
-use crate::capabilities::mcp_adapter::McpAdapter;
 use crate::capabilities::manifest::ToolManifest;
+use crate::capabilities::mcp_adapter::McpAdapter;
 use crate::capabilities::provider::CapabilityProvider;
+use crate::context::tenant::TenantContext;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;

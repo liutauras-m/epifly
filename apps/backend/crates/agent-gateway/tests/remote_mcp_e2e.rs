@@ -7,14 +7,14 @@
 //! Does NOT require a running Postgres instance — uses the in-memory registry path.
 
 use agent_core::{
-    SemanticCapabilityRouter, SemanticRouterConfig, CapabilityRegistry,
-    context::tenant::{PlanTier, TenantContext},
-    indexing::EmbeddingService,
+    CapabilityRegistry, SemanticCapabilityRouter, SemanticRouterConfig,
     capabilities::{
         card::CapabilityCard,
         manifest::{ToolDef, ToolKind, ToolManifest},
         providers::remote_mcp::RemoteMcpCapability,
     },
+    context::tenant::{PlanTier, TenantContext},
+    indexing::EmbeddingService,
     vector_store::PgVectorStore,
 };
 use async_trait::async_trait;
@@ -68,7 +68,7 @@ fn register_remote_mcp(
         chain: None,
         tenant_scope: scope,
         enabled: true,
-            search_keywords: vec![],
+        search_keywords: vec![],
     };
     let card = CapabilityCard::new(manifest.clone(), std::path::PathBuf::from("."));
     let provider = RemoteMcpCapability::new(manifest, endpoint.to_string());
@@ -165,7 +165,10 @@ async fn remote_mcp_scoped_capability_blocked_for_wrong_tenant() {
         .invoke("acme-only__secret_op", &json!({}), Some(&other_tenant))
         .await;
 
-    assert!(result.is_err(), "out-of-scope tenant must not invoke a scoped capability");
+    assert!(
+        result.is_err(),
+        "out-of-scope tenant must not invoke a scoped capability"
+    );
     mock_server.verify().await;
 }
 
@@ -230,7 +233,10 @@ async fn invalidate_all_flushes_cache_after_reload() {
     let _ = router.select("anything", Some(&tenant)).await.unwrap();
 
     assert_eq!(
-        router.metrics.cache_misses.load(std::sync::atomic::Ordering::Relaxed),
+        router
+            .metrics
+            .cache_misses
+            .load(std::sync::atomic::Ordering::Relaxed),
         2,
         "both calls after invalidation must be cache misses"
     );

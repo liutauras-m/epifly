@@ -4,11 +4,11 @@
 //! Takes a `LlmChainConfig` and a render context (JSON), renders the prompt template,
 //! calls the LLM, and returns a JSON value.
 
+use crate::capabilities::manifest::LlmChainConfig;
 use crate::context::tenant::TenantContext;
 use crate::llm::LlmRegistry;
 use crate::llm::types::{LlmRequest, LlmResponse};
 use crate::prompt::PromptTemplate;
-use crate::capabilities::manifest::LlmChainConfig;
 use rig::OneOrMany;
 use rig::completion::Message;
 use rig::message::UserContent;

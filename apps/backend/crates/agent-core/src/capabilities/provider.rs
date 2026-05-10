@@ -1,6 +1,6 @@
-use crate::context::tenant::TenantContext;
 use crate::capabilities::card::CapabilityCard;
 use crate::capabilities::manifest::{ToolKind, ToolManifest};
+use crate::context::tenant::TenantContext;
 use async_trait::async_trait;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;

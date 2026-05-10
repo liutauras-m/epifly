@@ -28,6 +28,7 @@ pub async fn require_super_admin_jwt(
 }
 
 /// Middleware for UI routes (session cookie): requires `role = "super_admin"`.
+#[allow(dead_code)]
 pub async fn require_super_admin_session(
     user: SessionUser,
     req: Request<Body>,

@@ -5,8 +5,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager};
 use ulid::Ulid;
 
-#[path = "telemetry.rs"]
-pub mod telemetry;
+use crate::telemetry;
 
 pub struct Recorder {
     trace_id: String,
@@ -122,10 +121,7 @@ pub async fn recorder_start(state: tauri::State<'_, RecorderStateHandle>) -> Res
 }
 
 #[tauri::command]
-pub fn recorder_record_step(
-    state: tauri::State<RecorderStateHandle>,
-    step: UserStep,
-) {
+pub fn recorder_record_step(state: tauri::State<RecorderStateHandle>, step: UserStep) {
     state.lock().unwrap().record_step(step);
 }
 
@@ -154,10 +150,7 @@ pub fn recorder_status(state: tauri::State<RecorderStateHandle>) -> serde_json::
 /// Until the dependency is upgraded this command returns an error. The PNG
 /// encoder and base64 helpers below are ready for when it becomes available.
 #[tauri::command]
-pub async fn capture_tab_screenshot(
-    app: AppHandle,
-    tab_id: String,
-) -> Result<String, String> {
+pub async fn capture_tab_screenshot(app: AppHandle, tab_id: String) -> Result<String, String> {
     let label = format!("tab-{tab_id}");
     let _win = app
         .get_webview_window(&label)
@@ -181,11 +174,7 @@ pub async fn capture_tab_screenshot(
 // ---------------------------------------------------------------------------
 
 #[allow(dead_code)]
-fn encode_png_uncompressed(
-    rgba: &[u8],
-    width: u32,
-    height: u32,
-) -> Result<Vec<u8>, &'static str> {
+fn encode_png_uncompressed(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, &'static str> {
     // Build raw filtered image data (filter byte 0x00 before each row).
     let stride = (width * 4) as usize;
     let mut raw: Vec<u8> = Vec::with_capacity((stride + 1) * height as usize);

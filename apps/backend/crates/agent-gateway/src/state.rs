@@ -1,11 +1,11 @@
 use crate::mw::{RateLimiter, RouterQuotaConfig};
 use agent_core::llm::providers::anthropic::AnthropicProvider;
 use agent_core::{
-    ArtifactBridge, BulkCapabilityFactory, CapabilityAdmin, CapabilitySpecFactory,
-    ConversationService, DefaultConversationService, EmbeddingService, LlmRegistry,
-    MinioWorkspaceContent, NamespaceFilter, NoopEmbeddingService, OpenAiEmbeddingService,
-    PgVectorStore, PostgresAuditStore, PostgresThreadStore, PostgresWorkspaceStore,
-    RealtimeService, SemanticCapabilityRouter, SemanticRouterConfig, CapabilityDiscovery, CapabilityRegistry,
+    ArtifactBridge, BulkCapabilityFactory, CapabilityAdmin, CapabilityDiscovery,
+    CapabilityRegistry, CapabilitySpecFactory, ConversationService, DefaultConversationService,
+    EmbeddingService, LlmRegistry, MinioWorkspaceContent, NamespaceFilter, NoopEmbeddingService,
+    OpenAiEmbeddingService, PgVectorStore, PostgresAuditStore, PostgresThreadStore,
+    PostgresWorkspaceStore, RealtimeService, SemanticCapabilityRouter, SemanticRouterConfig,
     build_admin,
 };
 use common::audit::AuditStore;
@@ -77,7 +77,7 @@ impl AppState {
         let database_url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgres://conusai:conusai@localhost:5432/conusai".into());
 
-        if std::env::var_os("PLATFORM_ADMIN_TOKEN").map_or(true, |v| v.is_empty())
+        if std::env::var_os("PLATFORM_ADMIN_TOKEN").is_none_or(|v| v.is_empty())
             && !cfg!(debug_assertions)
         {
             tracing::warn!(
@@ -207,9 +207,9 @@ impl AppState {
         ));
 
         // ── ArtifactBridge (Phase 4) ──────────────────────────────────────────
-        let artifact_bridge = file_store.as_ref().map(|fs| {
-            ArtifactBridge::new(pool.clone(), Arc::clone(fs))
-        });
+        let artifact_bridge = file_store
+            .as_ref()
+            .map(|fs| ArtifactBridge::new(pool.clone(), Arc::clone(fs)));
 
         // ── Hot-reload wiring (Phase 5) ───────────────────────────────────────
         // Consume LISTEN/NOTIFY events and call reload_one on the in-process registry.
@@ -225,7 +225,8 @@ impl AppState {
                     match factory.reload_one(&reg, &namespace, &tool_name).await {
                         Ok(()) => {
                             tracing::info!(
-                                namespace, tool_name,
+                                namespace,
+                                tool_name,
                                 "capability hot-reloaded via LISTEN/NOTIFY"
                             );
                             router.invalidate_all().await;

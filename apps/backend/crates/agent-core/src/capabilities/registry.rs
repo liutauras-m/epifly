@@ -280,14 +280,14 @@ impl CapabilityRegistry {
                     // state.json can disable a card at runtime, but cannot re-enable a card
                     // that the manifest already declares disabled (enabled = false in TOML).
                     card.enabled = card.enabled && state_enabled;
-                    if card.enabled {
-                        if let Some(factory) = self.factory_for(&card) {
-                            match factory.create(card.clone()) {
-                                Ok(provider) => card.provider = Some(provider),
-                                Err(e) => {
-                                    warn!(name = %card.manifest.name, error = %e, "factory failed");
-                                    card.last_error = Some(e.to_string());
-                                }
+                    if card.enabled
+                        && let Some(factory) = self.factory_for(&card)
+                    {
+                        match factory.create(card.clone()) {
+                            Ok(provider) => card.provider = Some(provider),
+                            Err(e) => {
+                                warn!(name = %card.manifest.name, error = %e, "factory failed");
+                                card.last_error = Some(e.to_string());
                             }
                         }
                     }

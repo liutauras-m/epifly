@@ -1,6 +1,6 @@
 use super::builder::{Agent, AgentBuilder};
-use crate::context::tenant::TenantContext;
 use crate::capabilities::registry::CapabilityRegistry;
+use crate::context::tenant::TenantContext;
 use common::error::HttpError;
 use tracing::{info, instrument};
 

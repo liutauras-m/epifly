@@ -2,15 +2,15 @@
 //! to the concrete extraction pipelines (`InvoicePipeline`, `ContractPipeline`),
 //! or to the generic `PromptChainCapability` when a `[chain]` block is present in the manifest.
 
+use crate::capabilities::card::CapabilityCard;
+use crate::capabilities::executor::resolve_image_path;
+use crate::capabilities::manifest::{ToolKind, ToolManifest};
+use crate::capabilities::provider::{CapabilityFactory, CapabilityProvider};
 use crate::chains::contract::ContractPipeline;
 use crate::chains::invoice::InvoicePipeline;
 use crate::chains::llm_chain::PromptChainCapability;
 use crate::context::tenant::TenantContext;
 use crate::llm::LlmRegistry;
-use crate::capabilities::card::CapabilityCard;
-use crate::capabilities::executor::resolve_image_path;
-use crate::capabilities::manifest::{ToolKind, ToolManifest};
-use crate::capabilities::provider::{CapabilityFactory, CapabilityProvider};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::sync::Arc;

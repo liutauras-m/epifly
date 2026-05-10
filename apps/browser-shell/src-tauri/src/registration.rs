@@ -40,10 +40,12 @@ pub async fn register_capability(api_base: &str, device_token: &str) -> anyhow::
 /// Uploads a completed SessionTrace to the workspace as a file node.
 ///
 /// Steps (per plan §4.6):
+///
 ///   1. Serialize trace → JSON bytes
 ///   2. POST /v1/files (multipart) → FileToken
 ///   3. POST /v1/workspaces to create a file workspace node
-///   Returns the workspace node id.
+///
+/// Returns the workspace node id.
 pub async fn upload_trace(
     api_base: &str,
     device_token: &str,
@@ -76,10 +78,7 @@ pub async fn upload_trace(
     }
 
     let file_token: serde_json::Value = file_res.json().await?;
-    let file_token_id = file_token["id"]
-        .as_str()
-        .unwrap_or_default()
-        .to_owned();
+    let file_token_id = file_token["id"].as_str().unwrap_or_default().to_owned();
 
     // 2. Create a workspace node pointing at the uploaded file.
     let node_body = serde_json::json!({
@@ -117,8 +116,8 @@ pub async fn upload_trace_cmd(
     trace: SessionTrace,
 ) -> Result<String, String> {
     use crate::device_auth::DeviceTokenProvider;
-    let api_base = std::env::var("CONUSAI_API_BASE")
-        .unwrap_or_else(|_| "http://localhost:8080".to_owned());
+    let api_base =
+        std::env::var("CONUSAI_API_BASE").unwrap_or_else(|_| "http://localhost:8080".to_owned());
     let token = token_state
         .token()
         .ok_or("no device token — cannot upload trace")?;

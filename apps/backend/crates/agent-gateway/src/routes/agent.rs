@@ -1021,23 +1021,21 @@ async fn resolve_and_invoke(
         .await?;
 
     // Phase 4 — ArtifactBridge: materialise any file artifacts into MinIO + workspace.
-    if let Some(ref bridge) = state.artifact_bridge {
-        if let Ok(tool_out) =
+    if let Some(ref bridge) = state.artifact_bridge
+        && let Ok(tool_out) =
             serde_json::from_value::<common::artifact::ToolOutput>(raw_result.clone())
-        {
-            if !tool_out.artifacts.is_empty() {
-                let tool_short = full_tool_name.split("__").next().unwrap_or(full_tool_name);
-                let _ = bridge
-                    .process_if_artifacts(
-                        &tenant.0.tenant_id,
-                        tenant.0.user_id.as_deref(),
-                        tool_short,
-                        None,
-                        &tool_out,
-                    )
-                    .await;
-            }
-        }
+        && !tool_out.artifacts.is_empty()
+    {
+        let tool_short = full_tool_name.split("__").next().unwrap_or(full_tool_name);
+        let _ = bridge
+            .process_if_artifacts(
+                &tenant.0.tenant_id,
+                tenant.0.user_id.as_deref(),
+                tool_short,
+                None,
+                &tool_out,
+            )
+            .await;
     }
 
     Ok(raw_result)

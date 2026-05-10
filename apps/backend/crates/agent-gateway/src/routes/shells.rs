@@ -7,7 +7,10 @@
 use crate::routes::admin_devices::{require_shell_feature, validate_device_token};
 use crate::state::AppState;
 use axum::{
-    extract::{Path, Query, State, WebSocketUpgrade, ws::{Message, WebSocket}},
+    extract::{
+        Path, Query, State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
+    },
     response::IntoResponse,
 };
 use common::error::HttpError;
@@ -49,11 +52,7 @@ pub async fn shell_control(
         .ok_or_else(|| HttpError::internal("no database pool", None))?
         .clone();
 
-    let token = query
-        .device_token
-        .as_deref()
-        .unwrap_or("")
-        .to_owned();
+    let token = query.device_token.as_deref().unwrap_or("").to_owned();
 
     Ok(ws.on_upgrade(move |socket| handle_shell_ws(socket, device_id, token, pool)))
 }
@@ -92,7 +91,10 @@ async fn handle_shell_ws(
         match msg {
             Message::Text(text) => {
                 match serde_json::from_str::<ControlMessage>(&text) {
-                    Ok(ControlMessage { kind: ControlKind::Heartbeat, .. }) => {
+                    Ok(ControlMessage {
+                        kind: ControlKind::Heartbeat,
+                        ..
+                    }) => {
                         // Reset per-turn replay counter on each heartbeat.
                         replays_this_turn = 0;
                         let ack = serde_json::to_string(&ControlMessage {
@@ -102,7 +104,10 @@ async fn handle_shell_ws(
                         .unwrap_or_default();
                         let _ = sender.send(Message::Text(ack.into())).await;
                     }
-                    Ok(ControlMessage { kind: ControlKind::Replay, payload }) => {
+                    Ok(ControlMessage {
+                        kind: ControlKind::Replay,
+                        payload,
+                    }) => {
                         replays_this_turn += 1;
                         if replays_this_turn > max_replays {
                             warn!(

@@ -34,14 +34,14 @@ impl TraceSource for WorkspaceNodeTraceSource {
             .parse::<uuid::Uuid>()
             .map_err(|_| anyhow::anyhow!("invalid trace_node_id"))?;
 
-        let row: Option<(Option<Vec<u8>>,)> = sqlx::query_as(
-            "SELECT content FROM workspace_nodes WHERE id = $1"
-        )
-        .bind(uuid)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<(Option<Vec<u8>>,)> =
+            sqlx::query_as("SELECT content FROM workspace_nodes WHERE id = $1")
+                .bind(uuid)
+                .fetch_optional(&self.pool)
+                .await?;
 
-        let (content,) = row.ok_or_else(|| anyhow::anyhow!("trace node {trace_node_id} not found"))?;
+        let (content,) =
+            row.ok_or_else(|| anyhow::anyhow!("trace node {trace_node_id} not found"))?;
         let content = content.unwrap_or_default();
         Ok(serde_json::from_slice(&content)?)
     }
@@ -99,7 +99,11 @@ impl CapabilityProvider for TraceReplayCapability {
 
         let plan_text = self
             .inner
-            .invoke("dynamic_prompt", &serde_json::json!({ "prompt": prompt }), tenant)
+            .invoke(
+                "dynamic_prompt",
+                &serde_json::json!({ "prompt": prompt }),
+                tenant,
+            )
             .await?;
 
         Ok(serde_json::json!({

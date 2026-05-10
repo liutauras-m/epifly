@@ -3,11 +3,11 @@
 //! Capabilities with `kind = "dynamic_prompt"` are created by this factory.
 //! The factory requires a Postgres pool; without one it rejects creation.
 
-use crate::chains::dynamic_prompt::DynamicPromptCapability;
-use crate::llm::LlmRegistry;
 use crate::capabilities::card::CapabilityCard;
 use crate::capabilities::manifest::ToolKind;
 use crate::capabilities::provider::{CapabilityFactory, CapabilityProvider};
+use crate::chains::dynamic_prompt::DynamicPromptCapability;
+use crate::llm::LlmRegistry;
 use sqlx::PgPool;
 use std::sync::Arc;
 

@@ -19,11 +19,11 @@
 //! let result = router.invoke("cap__tool", &input, Some(&tenant)).await?;
 //! ```
 
-use crate::context::tenant::TenantContext;
-use crate::indexing::EmbeddingService;
 use crate::capabilities::namespace::NamespaceFilter;
 use crate::capabilities::provider::CapabilityProvider;
 use crate::capabilities::registry::CapabilityRegistry;
+use crate::context::tenant::TenantContext;
+use crate::indexing::EmbeddingService;
 use crate::vector_store::PgVectorStore;
 use common::metrics;
 use rig::completion::ToolDefinition;
@@ -335,19 +335,17 @@ impl SemanticCapabilityRouter {
             //    for the capability whose original name sanitises to `cap_name`.
             //    (A naïve `replace('_', '.')` fails when the name contains real underscores,
             //    e.g. `media_time_get_current_time` ≠ `media.time.get.current.time`.)
-            let card = registry
-                .get(cap_name)
-                .or_else(|| {
-                    registry
-                        .all()
-                        .find(|card| card.manifest.name.replace('.', "_") == cap_name)
-                });
+            let card = registry.get(cap_name).or_else(|| {
+                registry
+                    .all()
+                    .find(|card| card.manifest.name.replace('.', "_") == cap_name)
+            });
 
             // Enforce tenant visibility before resolving the provider.
-            if let (Some(t), Some(c)) = (tenant, &card) {
-                if !c.is_visible_to(&t.tenant_id) {
-                    return Err(anyhow::anyhow!("no provider for capability '{cap_name}'"));
-                }
+            if let (Some(t), Some(c)) = (tenant, &card)
+                && !c.is_visible_to(&t.tenant_id)
+            {
+                return Err(anyhow::anyhow!("no provider for capability '{cap_name}'"));
             }
 
             card.and_then(|c| registry.get_provider(&c.manifest.name))
@@ -455,9 +453,9 @@ fn parse_tool_name(full: &str) -> anyhow::Result<(&str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::tenant::{PlanTier, TenantContext};
     use crate::capabilities::manifest::{ToolDef, ToolKind, ToolManifest};
     use crate::capabilities::registry::CapabilityRegistry;
+    use crate::context::tenant::{PlanTier, TenantContext};
     use async_trait::async_trait;
     use std::sync::{Arc, Mutex};
 
@@ -671,7 +669,7 @@ mod tests {
                 chain: None,
                 tenant_scope: vec![],
                 enabled: true,
-            search_keywords: vec![],
+                search_keywords: vec![],
             };
             let card = crate::capabilities::card::CapabilityCard::new(
                 manifest.clone(),

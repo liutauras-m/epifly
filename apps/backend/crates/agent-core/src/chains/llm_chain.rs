@@ -3,11 +3,11 @@
 //! Any capability with `kind = "chain"` and a `[chain]` block in its manifest uses
 //! this provider instead of a bespoke Rust implementation.
 
+use crate::capabilities::manifest::{LlmChainConfig, ToolManifest};
+use crate::capabilities::provider::CapabilityProvider;
 use crate::chains::executor;
 use crate::context::tenant::TenantContext;
 use crate::llm::LlmRegistry;
-use crate::capabilities::manifest::{LlmChainConfig, ToolManifest};
-use crate::capabilities::provider::CapabilityProvider;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;

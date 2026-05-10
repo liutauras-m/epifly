@@ -27,7 +27,9 @@ pub struct DeviceAuthService {
 
 impl DeviceAuthService {
     pub fn new(initial: Option<String>) -> Self {
-        Self { inner: Arc::new(RwLock::new(initial)) }
+        Self {
+            inner: Arc::new(RwLock::new(initial)),
+        }
     }
 
     /// E2E test bypass: when `CONUSAI_E2E=1` is set at launch, inject a synthetic
@@ -148,7 +150,9 @@ mod tests {
     fn mock_provider_satisfies_trait() {
         struct MockProvider(Option<String>);
         impl DeviceTokenProvider for MockProvider {
-            fn token(&self) -> Option<String> { self.0.clone() }
+            fn token(&self) -> Option<String> {
+                self.0.clone()
+            }
         }
 
         fn needs_provider(p: &dyn DeviceTokenProvider) -> bool {

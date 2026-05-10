@@ -47,19 +47,19 @@ impl TabManager {
     }
 
     pub fn close(&mut self, app: &AppHandle, id: &str) {
-        if self.inner.remove(id).is_some() {
-            if let Some(w) = app.get_webview_window(&format!("tab-{id}")) {
-                let _ = w.close();
-            }
+        if self.inner.remove(id).is_some()
+            && let Some(w) = app.get_webview_window(&format!("tab-{id}"))
+        {
+            let _ = w.close();
         }
     }
 
     pub fn navigate(&mut self, app: &AppHandle, id: &str, url: &str) -> anyhow::Result<()> {
-        if let Some(tab) = self.inner.get_mut(id) {
-            if let Some(w) = app.get_webview_window(&format!("tab-{id}")) {
-                w.navigate(url.parse()?)?;
-                tab.url = url.to_owned();
-            }
+        if let Some(tab) = self.inner.get_mut(id)
+            && let Some(w) = app.get_webview_window(&format!("tab-{id}"))
+        {
+            w.navigate(url.parse()?)?;
+            tab.url = url.to_owned();
         }
         Ok(())
     }
@@ -108,10 +108,7 @@ pub fn list_tabs(state: tauri::State<TabManagerState>) -> Vec<TabSummary> {
 
 /// Serialize the current tab list to `$APP_DATA/tabs.json`.
 #[tauri::command]
-pub fn save_tabs(
-    app: AppHandle,
-    state: tauri::State<TabManagerState>,
-) -> Result<(), String> {
+pub fn save_tabs(app: AppHandle, state: tauri::State<TabManagerState>) -> Result<(), String> {
     let summaries = state.lock().unwrap().list();
     let json = serde_json::to_string(&summaries).map_err(|e| e.to_string())?;
     let path = app
