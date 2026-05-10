@@ -112,7 +112,7 @@ test.describe('chat stream', () => {
     let uploadCalled = false;
     await page.route('**/ui/upload', async (route) => {
       uploadCalled = true;
-      await route.fulfill({ status: 200, body: JSON.stringify({ id: 'file-1' }) });
+      await route.fulfill({ status: 200, body: JSON.stringify({ id: 'file-1', filename: 'test.txt', size: 5, content_type: 'text/plain', download_url: '/v1/files/file-1' }) });
     });
 
     // Dispatch a real DragEvent with DataTransfer files on the composer form
