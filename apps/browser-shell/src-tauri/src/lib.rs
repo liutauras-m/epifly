@@ -47,6 +47,7 @@ const RECORDER_BRIDGE_JS: &str = r#"
 })();
 "#;
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let tabs_state: TabManagerState = Arc::new(Mutex::new(tabs::TabManager::default()));
     let recorder_state: RecorderStateHandle =
@@ -56,7 +57,17 @@ pub fn run() {
         std::env::var("CONUSAI_DEVICE_TOKEN").ok(),
     ));
 
-    tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default();
+
+    // WebDriver automation server — debug builds, macOS, with `e2e` feature only.
+    // Exposes a W3C WebDriver endpoint so WebdriverIO can drive the WKWebView.
+    #[cfg(all(debug_assertions, target_os = "macos", feature = "e2e"))]
+    {
+        builder = builder.plugin(tauri_plugin_webdriver_automation::init());
+    }
+
+    builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_stronghold::Builder::new(|password| {
