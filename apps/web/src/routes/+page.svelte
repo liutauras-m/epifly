@@ -5,7 +5,7 @@
 	import { sdk } from '$lib/sdk';
 	import { toasts } from '@conusai/ui/stores';
 	import { provideCapabilityRendererRegistry } from '@conusai/ui/capabilities';
-	import { AgentChatStream, AgentChatComposer, WorkspaceExplorer, createChatStream } from '@conusai/ui/features';
+	import { AgentChatStream, AgentChatComposer, WorkspaceExplorer, createChatStream, type Attachment } from '@conusai/ui/features';
 	import { ThemeSwitcher } from '@conusai/ui';
 	import favicon from '@conusai/ui/assets/images/favicon.png';
 
@@ -30,11 +30,12 @@
 		goto(`?ws=${node.id}`, { replaceState: true, keepFocus: true, noScroll: true });
 	}
 
-	function handleSubmit(prompt: string) {
+	function handleSubmit(prompt: string, attachments: Attachment[] = []) {
 		if (!prompt.trim()) return;
 		showChat = true;
 		chatStream.send(prompt, {
 			workspaceNodeId: selectedNodeId,
+			attachmentIds: attachments.map(a => a.id),
 			onThreadId(id) {
 				recents = [{ id, title: prompt.slice(0, 60) }, ...recents.filter(r => r.id !== id)].slice(0, 20);
 			},

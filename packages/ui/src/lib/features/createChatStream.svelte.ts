@@ -39,7 +39,7 @@ export function createChatStream(sdk: ConusSdk) {
 
   async function send(
     prompt: string,
-    opts: { workspaceNodeId?: string | null; onThreadId?: (id: string) => void } = {}
+    opts: { workspaceNodeId?: string | null; attachmentIds?: string[]; onThreadId?: (id: string) => void } = {}
   ) {
     if (inFlight || !prompt.trim()) return;
     inFlight = true;
@@ -86,6 +86,7 @@ export function createChatStream(sdk: ConusSdk) {
         message: prompt,
         threadId: activeThreadId,
         workspaceNodeId: opts.workspaceNodeId,
+        attachmentIds: opts.attachmentIds,
         signal,
       })) {
         lastActivityTime = Date.now();

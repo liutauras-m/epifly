@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { sdk } from '$lib/sdk';
 	import { provideCapabilityRendererRegistry } from '@conusai/ui/capabilities';
-	import { AgentChatStream, AgentChatComposer, WorkspaceExplorer, createChatStream } from '@conusai/ui/features';
+	import { AgentChatStream, AgentChatComposer, WorkspaceExplorer, createChatStream, type Attachment } from '@conusai/ui/features';
 	import { modeStore } from '@conusai/ui/stores';
 	import TraceReplayCapability from '$lib/TraceReplayCapability.svelte';
 	import type { WorkspaceNode } from '@conusai/types';
@@ -59,10 +59,13 @@
 		}
 	}
 
-	function handleSubmit(prompt: string) {
+	function handleSubmit(prompt: string, attachments: Attachment[] = []) {
 		if (!prompt.trim()) return;
 		showChat = true;
-		chatStream.send(prompt, { workspaceNodeId: selectedNodeId });
+		chatStream.send(prompt, {
+			workspaceNodeId: selectedNodeId,
+			attachmentIds: attachments.map(a => a.id),
+		});
 	}
 
 	function initials(name: string) {

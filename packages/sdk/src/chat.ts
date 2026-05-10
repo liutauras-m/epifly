@@ -5,6 +5,7 @@ export interface StreamChatParams {
   message: string;
   threadId?: string | null;
   workspaceNodeId?: string | null;
+  attachmentIds?: string[];
   fetch?: typeof globalThis.fetch;
   signal?: AbortSignal;
 }
@@ -24,6 +25,7 @@ export async function* streamChat(
       const body: Record<string, unknown> = { message: params.message };
       if (params.threadId) body.thread_id = params.threadId;
       if (params.workspaceNodeId) body.workspace_node_id = params.workspaceNodeId;
+      if (params.attachmentIds?.length) body.attachment_ids = params.attachmentIds;
 
       const res = await fetchFn(EP.UI_STREAM, {
         method: 'POST',

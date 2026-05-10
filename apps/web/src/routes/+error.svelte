@@ -21,7 +21,7 @@
 		justify-content: center;
 		min-height: 100dvh;
 		padding: 2rem;
-		background: var(--bg, #f5f0eb);
+		background: var(--paper);
 	}
 	.error-inner {
 		display: flex;
@@ -43,7 +43,7 @@
 	.error-back {
 		margin-top: 0.5rem;
 		font-size: 0.875rem;
-		color: var(--accent, #0d9488);
+		color: var(--ember);
 		text-decoration: none;
 	}
 	.error-back:hover {
