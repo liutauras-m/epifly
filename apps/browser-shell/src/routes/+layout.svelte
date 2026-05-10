@@ -1,49 +1,42 @@
 <script lang="ts">
 	import '@conusai/ui/foundry.css';
-	import { AppShell, TabStrip, RecorderControls, ToastHost, ThemeProvider, LiveAnnouncer } from '@conusai/ui';
+	import { AppShell, TabStrip, RecorderControls, ThemeProvider, LiveAnnouncer } from '@conusai/ui';
 	import { toasts } from '@conusai/ui/stores';
 	import { invoke } from '@tauri-apps/api/core';
 	import { emit, listen } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
 	import type { SessionTrace } from '@conusai/types';
 
-	async function handleThemeChange(theme: string) {
-		await emit('theme-change', { theme });
-	}
+	// Detect mobile at render time — safe because adapter-static means no SSR.
+	let isMobile = $state(typeof window !== 'undefined' ? window.innerWidth <= 640 : false);
 
 	let tabs = $state<{ id: string; label: string; url: string }[]>([]);
 	let activeTabId = $state<string | undefined>(undefined);
 	let recorderState = $state<'idle' | 'recording' | 'uploading'>('idle');
 	let stepCount = $state(0);
-	let shellReady = $state(false);
 
 	let screenshotInterval: ReturnType<typeof setInterval> | undefined;
 
-	onMount(() => {
-		const unlistenPromise = listen('shell-ready', async () => {
-			shellReady = true;
-			await loadTokenFromStronghold();
-			await restorePersistedTabs();
-		});
-		return () => { unlistenPromise.then(fn => fn()); };
-	});
-
-	async function loadTokenFromStronghold() {
-		try {
-			const { Client } = await import('@tauri-apps/plugin-stronghold');
-			const { appDataDir } = await import('@tauri-apps/api/path');
-			const vaultPath = (await appDataDir()) + '/conusai.stronghold';
-			const client = await Client.load(vaultPath, 'conusai-shell-v1');
-			const store = client.getStore('tokens');
-			const raw = await store.get('device_token');
-			if (raw) {
-				const token = new TextDecoder().decode(new Uint8Array(raw));
-				await invoke('set_device_token', { token });
-			}
-		} catch {
-			// Vault not yet provisioned — page will show LoginPanel.
-		}
+	async function handleThemeChange(theme: string) {
+		await emit('theme-change', { theme });
 	}
+
+	onMount(() => {
+		// Update on resize (e.g. Simulator window resize in dev).
+		const mq = window.matchMedia('(max-width: 640px)');
+		const onMq = (e: MediaQueryListEvent) => { isMobile = e.matches; };
+		mq.addEventListener('change', onMq);
+
+		// Desktop only: listen for shell-ready to restore tabs.
+		const unlistenPromise = !isMobile ? listen('shell-ready', async () => {
+			await restorePersistedTabs();
+		}) : Promise.resolve(() => {});
+
+		return () => {
+			mq.removeEventListener('change', onMq);
+			unlistenPromise.then(fn => fn());
+		};
+	});
 
 	async function restorePersistedTabs() {
 		try {
@@ -53,9 +46,7 @@
 				tabs = [...tabs, { id, label: tab.title, url: tab.url }];
 				if (!activeTabId) activeTabId = id;
 			}
-		} catch {
-			// No persisted tabs.
-		}
+		} catch { /* No persisted tabs. */ }
 	}
 
 	async function handleNewTab() {
@@ -64,9 +55,7 @@
 			tabs = [...tabs, { id, label: 'New Tab', url: 'https://example.com' }];
 			activeTabId = id;
 			await invoke('save_tabs');
-		} catch (e) {
-			toasts.error(`Failed to open tab: ${e}`);
-		}
+		} catch (e) { toasts.error(`Failed to open tab: ${e}`); }
 	}
 
 	async function handleCloseTab(id: string) {
@@ -110,56 +99,62 @@
 				const nodeId = await invoke<string>('upload_trace_cmd', { trace });
 				toasts.success(`Trace saved — workspace node ${nodeId.slice(0, 8)}…`);
 			}
-		} catch (e) {
-			toasts.error(`Upload failed: ${e}`);
-		} finally {
-			recorderState = 'idle';
-			stepCount = 0;
-		}
+		} catch (e) { toasts.error(`Upload failed: ${e}`); }
+		finally { recorderState = 'idle'; stepCount = 0; }
 	}
 
 	let { children } = $props();
 </script>
 
 <ThemeProvider onThemeChange={handleThemeChange}>
-<AppShell title="ConusAI Browser">
-	{#snippet sidebar()}
-		<div class="shell-sidebar">
-			<div class="sidebar-header">
-				<span class="logo">ConusAI</span>
-				{#if !shellReady}
-					<span class="status-dot loading" title="Connecting…"></span>
-				{:else}
-					<span class="status-dot ready" title="Connected"></span>
-				{/if}
-			</div>
-			<RecorderControls
-				state={recorderState}
-				{stepCount}
-				onstart={handleStartRecording}
-				onstop={handleStopRecording}
-			/>
-		</div>
-	{/snippet}
-
-	<div class="shell-content">
-		<TabStrip
-			{tabs}
-			{activeTabId}
-			onselect={(id) => (activeTabId = id)}
-			onclose={handleCloseTab}
-			oncreate={handleNewTab}
-		/>
-		<div class="page">
+	{#if isMobile}
+		<!-- Mobile: no AppShell chrome, children own the full screen -->
+		<div class="mobile-root">
 			{@render children()}
 		</div>
-	</div>
-</AppShell>
+	{:else}
+		<!-- Desktop: full AppShell with tabs + recorder -->
+		<AppShell title="ConusAI Browser">
+			{#snippet sidebar()}
+				<div class="shell-sidebar">
+					<div class="sidebar-header">
+						<span class="logo">ConusAI</span>
+					</div>
+					<RecorderControls
+						state={recorderState}
+						{stepCount}
+						onstart={handleStartRecording}
+						onstop={handleStopRecording}
+					/>
+				</div>
+			{/snippet}
 
-<LiveAnnouncer />
+			<div class="shell-content">
+				<TabStrip
+					{tabs}
+					activeId={activeTabId}
+					onselect={(id) => (activeTabId = id)}
+					onclose={handleCloseTab}
+					oncreate={handleNewTab}
+				/>
+				<div class="page">
+					{@render children()}
+				</div>
+			</div>
+		</AppShell>
+	{/if}
+
+	<LiveAnnouncer />
 </ThemeProvider>
 
 <style>
+	.mobile-root {
+		display: flex;
+		flex-direction: column;
+		height: 100dvh;
+		overflow: hidden;
+	}
+
 	.shell-sidebar {
 		display: flex;
 		flex-direction: column;
@@ -179,26 +174,6 @@
 		font-size: 18px;
 		color: var(--ember);
 		flex: 1;
-	}
-
-	.status-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-	}
-
-	.status-dot.loading {
-		background: var(--ink-muted);
-		animation: pulse 1.2s ease-in-out infinite;
-	}
-
-	.status-dot.ready {
-		background: #22c55e;
-	}
-
-	@keyframes pulse {
-		0%, 100% { opacity: 1; }
-		50% { opacity: 0.3; }
 	}
 
 	.shell-content {
