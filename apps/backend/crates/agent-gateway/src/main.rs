@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use axum::{Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
 use jobs::JobSchedulerService;
 use prometheus::Encoder;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer, ExposeHeaders};
 use tower_http::trace::TraceLayer;
