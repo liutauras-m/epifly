@@ -58,7 +58,9 @@ impl Default for SemanticRouterConfig {
             top_k: 20,
             namespace: NamespaceFilter::Any,
             tags_any: vec![],
-            max_distance: 0.65,
+            // nomic-embed-text cosine distances: related ≈ 0.10-0.30, unrelated > 0.40.
+            // 0.38 keeps high-confidence matches and drops spurious cross-lingual hits.
+            max_distance: 0.38,
             include_always: vec![],
             cache_ttl_secs: 60,
         }
@@ -333,14 +335,22 @@ impl SemanticCapabilityRouter {
             //    for the capability whose original name sanitises to `cap_name`.
             //    (A naïve `replace('_', '.')` fails when the name contains real underscores,
             //    e.g. `media_time_get_current_time` ≠ `media.time.get.current.time`.)
-            registry
-                .get_provider(cap_name)
+            let card = registry
+                .get(cap_name)
                 .or_else(|| {
                     registry
                         .all()
                         .find(|card| card.manifest.name.replace('.', "_") == cap_name)
-                        .and_then(|card| registry.get_provider(&card.manifest.name))
-                })
+                });
+
+            // Enforce tenant visibility before resolving the provider.
+            if let (Some(t), Some(c)) = (tenant, &card) {
+                if !c.is_visible_to(&t.tenant_id) {
+                    return Err(anyhow::anyhow!("no provider for capability '{cap_name}'"));
+                }
+            }
+
+            card.and_then(|c| registry.get_provider(&c.manifest.name))
                 .ok_or_else(|| anyhow::anyhow!("no provider for capability '{cap_name}'"))?
         };
 
@@ -660,6 +670,8 @@ mod tests {
                 namespace: None,
                 chain: None,
                 tenant_scope: vec![],
+                enabled: true,
+            search_keywords: vec![],
             };
             let card = crate::tools::card::CapabilityCard::new(
                 manifest.clone(),

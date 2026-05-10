@@ -24,12 +24,13 @@ pub struct CapabilityCard {
 impl CapabilityCard {
     pub fn new(manifest: ToolManifest, source_dir: std::path::PathBuf) -> Self {
         let now = SystemTime::now();
+        let enabled = manifest.enabled;
         Self {
             id: Uuid::new_v4(),
             manifest,
             source_dir,
             embedding_id: None,
-            enabled: true,
+            enabled,
             last_error: None,
             registered_at: now,
             updated_at: now,

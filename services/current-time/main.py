@@ -100,7 +100,7 @@ MANIFEST = {
     "description": "Returns current server time with optional IANA timezone support.",
     "version": "1.0.0",
     "kind": "remote_mcp",
-    "endpoint": os.getenv("CONUSAI_SERVICE_URL", "http://current-time:8082") + "/mcp",
+    "endpoint": (os.getenv("SERVICE_URL") or os.getenv("CONUSAI_SERVICE_URL", "http://current-time:8082")) + "/mcp",
     "tools": [
         {
             "name": "get_current_time",
@@ -127,8 +127,16 @@ MANIFEST = {
 
 
 async def register_with_retry(max_retries: int = 10, delay: float = 3.0) -> None:
-    platform_url = os.environ.get("CONUSAI_PLATFORM_URL", "http://agent-gateway:8080")
-    token = os.environ.get("CONUSAI_PLATFORM_TOKEN", "")
+    # Canonical names: GATEWAY_URL / PLATFORM_ADMIN_TOKEN.
+    # CONUSAI_PLATFORM_URL / CONUSAI_PLATFORM_TOKEN kept as one-release fallbacks.
+    _conusai_url = os.environ.get("CONUSAI_PLATFORM_URL")
+    _conusai_token = os.environ.get("CONUSAI_PLATFORM_TOKEN")
+    if _conusai_url and not os.environ.get("GATEWAY_URL"):
+        print("[current-time] CONUSAI_PLATFORM_URL is deprecated; use GATEWAY_URL", flush=True)
+    if _conusai_token and not os.environ.get("PLATFORM_ADMIN_TOKEN"):
+        print("[current-time] CONUSAI_PLATFORM_TOKEN is deprecated; use PLATFORM_ADMIN_TOKEN", flush=True)
+    platform_url = os.environ.get("GATEWAY_URL") or _conusai_url or "http://agent-gateway:8080"
+    token = os.environ.get("PLATFORM_ADMIN_TOKEN") or _conusai_token or ""
     url = f"{platform_url}/admin/capabilities/register"
 
     headers = {}

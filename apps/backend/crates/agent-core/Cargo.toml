@@ -39,6 +39,9 @@ async-recursion        = { version = "1" }
 moka.workspace         = true
 blake3.workspace       = true
 
+[dev-dependencies]
+proptest.workspace = true
+
 [features]
 default          = []
 local-embeddings = ["dep:fastembed"]

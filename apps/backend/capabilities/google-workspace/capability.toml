@@ -2,6 +2,7 @@ name = "google-workspace"
 version = "0.1.0"
 description = "Google Workspace integration — read/write Google Docs, Sheets, Drive files, and send Gmail messages via the Google API (OAuth2)."
 kind = "mcp"
+enabled = false
 tags = ["productivity", "google", "docs", "sheets", "gmail"]
 
 [[tools]]

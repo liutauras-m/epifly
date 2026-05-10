@@ -47,6 +47,12 @@ chrono.workspace      = true
 axum-extra            = { version = "0.10", features = ["cookie", "multipart"] }
 async-trait.workspace = true
 time                  = "0.3"
+utoipa.workspace      = true
+utoipa-swagger-ui.workspace = true
+
+[dev-dependencies]
+wiremock.workspace = true
+tokio = { version = "1", features = ["full"] }
 
 [features]
 default          = []

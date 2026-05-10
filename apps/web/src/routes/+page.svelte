@@ -420,7 +420,7 @@
 		let prompt = val;
 		if (pendingAttachments.length) {
 			const origin = window.location.origin;
-			const lines = pendingAttachments.map((a) => `- ${a.filename} (image_path: ${origin}/v1/files/${a.id})`).join('\n');
+			const lines = pendingAttachments.map((a) => `- ${a.filename} (image_path: ${origin}/ui/files/${a.id})`).join('\n');
 			prompt = `${val}\n\n[Attached files]\n${lines}`;
 		}
 		inputValue = '';

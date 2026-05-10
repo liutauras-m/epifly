@@ -192,6 +192,17 @@ impl ToolRegistry {
         self.cards.values().filter(|c| c.enabled)
     }
 
+    /// Enabled cards visible to `tenant_id`.
+    /// Empty `tenant_scope` = global; non-empty requires membership.
+    pub fn enabled_for_tenant<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> impl Iterator<Item = &'a CapabilityCard> {
+        self.cards
+            .values()
+            .filter(move |c| c.enabled && c.is_visible_to(tenant_id))
+    }
+
     pub fn len(&self) -> usize {
         self.cards.len()
     }
@@ -262,13 +273,19 @@ impl ToolRegistry {
             match ToolManifest::from_file(&manifest_path) {
                 Ok(manifest) => {
                     let mut card = CapabilityCard::new(manifest, cap_dir);
-                    card.enabled = state_enabled;
-                    if let Some(factory) = self.factory_for(&card) {
-                        match factory.create(card.clone()) {
-                            Ok(provider) => card.provider = Some(provider),
-                            Err(e) => {
-                                warn!(name = %card.manifest.name, error = %e, "factory failed");
-                                card.last_error = Some(e.to_string());
+                    // state.json can disable a card at runtime, but cannot re-enable a card
+                    // that the manifest already declares disabled (enabled = false in TOML).
+                    // state.json can disable a card at runtime, but cannot re-enable a card
+                    // that the manifest already declares disabled (enabled = false in TOML).
+                    card.enabled = card.enabled && state_enabled;
+                    if card.enabled {
+                        if let Some(factory) = self.factory_for(&card) {
+                            match factory.create(card.clone()) {
+                                Ok(provider) => card.provider = Some(provider),
+                                Err(e) => {
+                                    warn!(name = %card.manifest.name, error = %e, "factory failed");
+                                    card.last_error = Some(e.to_string());
+                                }
                             }
                         }
                     }
@@ -314,6 +331,8 @@ mod tests {
             namespace: None,
             chain: None,
             tenant_scope: vec![],
+            enabled: true,
+            search_keywords: vec![],
         };
         CapabilityCard::new(manifest, std::path::PathBuf::from("/tmp"))
     }
@@ -376,6 +395,8 @@ mod tests {
             namespace: if ns.is_empty() { None } else { Some(ns.into()) },
             chain: None,
             tenant_scope: vec![],
+            enabled: true,
+            search_keywords: vec![],
         };
         CapabilityCard::new(manifest, std::path::PathBuf::from("/tmp"))
     }
@@ -424,5 +445,79 @@ mod tests {
         assert!(erp_children.contains(&"po".to_string()));
         assert!(erp_children.contains(&"gl".to_string()));
         assert!(!erp_children.contains(&"payroll".to_string()));
+    }
+
+    fn make_scoped_card(name: &str, scope: Vec<String>) -> CapabilityCard {
+        let manifest = ToolManifest {
+            name: name.into(),
+            version: "0.1.0".into(),
+            description: "scoped test".into(),
+            kind: ToolKind::Chain,
+            tools: vec![],
+            config: serde_json::Value::Null,
+            tags: vec![],
+            namespace: None,
+            chain: None,
+            tenant_scope: scope,
+            enabled: true,
+            search_keywords: vec![],
+        };
+        CapabilityCard::new(manifest, std::path::PathBuf::from("/tmp"))
+    }
+
+    #[test]
+    fn enabled_for_tenant_global_tool_visible_to_all() {
+        let mut r = ToolRegistry::new();
+        r.register(make_scoped_card("global", vec![]));
+        assert_eq!(r.enabled_for_tenant("acme").count(), 1);
+        assert_eq!(r.enabled_for_tenant("other").count(), 1);
+    }
+
+    #[test]
+    fn enabled_for_tenant_scoped_tool_hidden_from_non_member() {
+        let mut r = ToolRegistry::new();
+        r.register(make_scoped_card("scoped", vec!["acme".into()]));
+        assert_eq!(r.enabled_for_tenant("acme").count(), 1);
+        assert_eq!(r.enabled_for_tenant("other").count(), 0);
+    }
+
+    #[test]
+    fn enabled_for_tenant_disabled_tool_never_visible() {
+        let mut r = ToolRegistry::new();
+        r.register(make_scoped_card("dis", vec![]));
+        r.set_enabled("dis", false);
+        assert_eq!(r.enabled_for_tenant("acme").count(), 0);
+    }
+
+    #[test]
+    fn enabled_for_tenant_mixed_tools() {
+        let mut r = ToolRegistry::new();
+        r.register(make_scoped_card("global", vec![]));
+        r.register(make_scoped_card("for-acme", vec!["acme".into()]));
+        r.register(make_scoped_card("for-beta", vec!["beta".into()]));
+        assert_eq!(r.enabled_for_tenant("acme").count(), 2);
+        assert_eq!(r.enabled_for_tenant("beta").count(), 2);
+        assert_eq!(r.enabled_for_tenant("other").count(), 1);
+    }
+
+    #[cfg(test)]
+    mod proptest_scope {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn scope_filter_invariant(
+                scope in proptest::collection::vec("[a-z]{1,10}", 0..5),
+                tenant_id in "[a-z]{1,10}",
+            ) {
+                let card = make_scoped_card("t", scope.clone());
+                let expected = scope.is_empty() || scope.contains(&tenant_id);
+                assert_eq!(card.is_visible_to(&tenant_id), expected);
+                let mut r = ToolRegistry::new();
+                r.register(card);
+                assert_eq!(r.enabled_for_tenant(&tenant_id).count(), if expected { 1 } else { 0 });
+            }
+        }
     }
 }

@@ -29,7 +29,7 @@ pub async fn list_capabilities(
     let model = std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| "claude-opus-4-7".into());
     let plan_max_turns = tenant.0.plan.max_turns();
     let caps: Vec<Value> = registry
-        .all_enabled()
+        .enabled_for_tenant(&tenant.0.tenant_id)
         .map(|card| {
             let supported_tools: Vec<_> =
                 card.manifest.tools.iter().map(|t| t.name.clone()).collect();

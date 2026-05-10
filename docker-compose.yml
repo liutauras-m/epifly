@@ -102,9 +102,13 @@ services:
     container_name: conusai-current-time
     restart: unless-stopped
     environment:
-      CONUSAI_PLATFORM_URL: "http://conusai-gateway:8080"
-      CONUSAI_PLATFORM_TOKEN: "${PLATFORM_ADMIN_TOKEN:-}"
-      CONUSAI_SERVICE_URL: "http://conusai-current-time:8082"
+      GATEWAY_URL: "http://conusai-gateway:8080"
+      PLATFORM_ADMIN_TOKEN: "${PLATFORM_ADMIN_TOKEN:-}"
+      SERVICE_URL: "http://conusai-current-time:8082"
+      # Deprecated aliases — kept for one release, remove after migration:
+      # CONUSAI_PLATFORM_URL: "http://conusai-gateway:8080"
+      # CONUSAI_PLATFORM_TOKEN: "${PLATFORM_ADMIN_TOKEN:-}"
+      # CONUSAI_SERVICE_URL: "http://conusai-current-time:8082"
       # CONUSAI_TENANT_SCOPE: "tenant-abc,tenant-xyz"  # uncomment to scope to specific tenants
     ports:
       - "8082:8082"

@@ -226,6 +226,8 @@ impl CapabilitySpecFactory {
             namespace: Some(row.namespace.clone()),
             chain: chain_cfg,
             tenant_scope: row.tenant_scope.clone(),
+            enabled: true,
+            search_keywords: vec![],
         };
         let card = CapabilityCard::new(manifest.clone(), source_dir);
 
@@ -412,6 +414,8 @@ mod tests {
             namespace: Some("test".into()),
             chain: None,
             tenant_scope: vec![],
+            enabled: true,
+            search_keywords: vec![],
         }
     }
 

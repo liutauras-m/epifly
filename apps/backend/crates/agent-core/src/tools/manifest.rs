@@ -46,6 +46,17 @@ pub struct ToolManifest {
     /// Empty = global (all tenants). Non-empty = only these tenant IDs see this capability.
     #[serde(default)]
     pub tenant_scope: Vec<String>,
+    /// Set to false in capability.toml to disable without deleting the directory.
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    /// Extra terms/phrases injected into the embedding text only — not shown to Claude.
+    /// Use for synonyms, example queries, and routing hints like "use when user mentions invoice".
+    #[serde(default)]
+    pub search_keywords: Vec<String>,
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -96,9 +107,15 @@ impl ToolManifest {
             .map(|t| format!("  - {}: {}", t.name, t.description))
             .collect::<Vec<_>>()
             .join("\n");
-        format!(
-            "Tool: {}\nDescription: {}\nKind: {:?}\nTools:\n{}",
-            self.name, self.description, self.kind, tools
-        )
+        let mut parts = vec![
+            format!("Capability: {}", self.name),
+            format!("Description: {}", self.description),
+            format!("Tags: {}", self.tags.join(", ")),
+            format!("Tools:\n{tools}"),
+        ];
+        if !self.search_keywords.is_empty() {
+            parts.push(format!("Keywords: {}", self.search_keywords.join(", ")));
+        }
+        parts.join("\n")
     }
 }

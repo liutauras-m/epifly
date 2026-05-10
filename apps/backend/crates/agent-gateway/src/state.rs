@@ -77,6 +77,16 @@ impl AppState {
         let database_url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgres://conusai:conusai@localhost:5432/conusai".into());
 
+        if std::env::var_os("PLATFORM_ADMIN_TOKEN").map_or(true, |v| v.is_empty())
+            && !cfg!(debug_assertions)
+        {
+            tracing::warn!(
+                config = "missing",
+                env = "PLATFORM_ADMIN_TOKEN",
+                "/admin/capabilities/register is OPEN in a non-debug build"
+            );
+        }
+
         let pool = common::db::create_pool(&database_url)
             .await
             .map_err(|e| common::error::ConusAiError::Database(e.to_string()))?;

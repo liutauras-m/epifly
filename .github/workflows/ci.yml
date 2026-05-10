@@ -68,6 +68,23 @@ jobs:
       - name: cargo test (unit only)
         run: cargo test --workspace --lib
 
+  lint-no-stale-trees:
+    name: No stale root capability/crate trees
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail if stale root trees reappear
+        run: |
+          if git ls-files | grep -qE '^(capabilities/|crates/)'; then
+            echo "ERROR: stale root capabilities/ or crates/ tree detected — remove them."
+            git ls-files | grep -E '^(capabilities/|crates/)'
+            exit 1
+          fi
+          echo "Clean — no stale root trees."
+
   evals:
     name: Invoice Evals
     runs-on: ubuntu-latest

@@ -46,6 +46,8 @@ impl TranscribeVideoCapability {
             namespace: None,
             chain: None,
             tenant_scope: vec![],
+            enabled: true,
+            search_keywords: vec![],
         };
 
         Self { manifest, executor }
