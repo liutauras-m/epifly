@@ -28,9 +28,30 @@
 	onMount(() => {
 		const raw = localStorage.getItem('conusai_shell_user');
 		if (raw) {
-			try { user = JSON.parse(raw); } catch { /* corrupt — re-login */ }
+			try {
+				user = JSON.parse(raw);
+				if (user) issueSessionCookie(user.name, user.plan).catch(() => {});
+			} catch { /* corrupt — re-login */ }
 		}
 	});
+
+	async function issueSessionCookie(name: string, plan: string) {
+		// Generate an HMAC-SHA256 signed session cookie matching the backend's
+		// session.rs format so /ui/* endpoints can authenticate the WKWebView.
+		const UI_SESSION_KEY = import.meta.env.VITE_UI_SESSION_KEY ?? 'conusai-foundry-dev-secret-change-me-32b';
+		const exp = Math.floor(Date.now() / 1000) + 7 * 86_400; // 7 days
+		const payload = JSON.stringify({ name, plan, role: 'user', exp });
+		const payloadB64 = btoa(payload).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+		const key = await crypto.subtle.importKey(
+			'raw', new TextEncoder().encode(UI_SESSION_KEY),
+			{ name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+		);
+		const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payloadB64));
+		const mac = btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+		const apiBase = import.meta.env.VITE_API_BASE ?? '';
+		const domain = apiBase ? new URL(apiBase).hostname : 'localhost';
+		document.cookie = `conusai_session=${payloadB64}.${mac}; path=/; domain=${domain}; SameSite=None; Secure`;
+	}
 
 	function handleBegin() {
 		const name = nameInput.trim();
@@ -41,6 +62,7 @@
 		nameError = '';
 		user = { name, plan: planInput };
 		localStorage.setItem('conusai_shell_user', JSON.stringify(user));
+		issueSessionCookie(name, planInput).catch(() => {/* cookie is best-effort */});
 	}
 
 	function handleLogout() {
@@ -453,6 +475,7 @@
 		align-items: center;
 		gap: var(--s-2);
 		padding: var(--s-3) var(--s-4);
+		padding-bottom: max(var(--s-3), env(safe-area-inset-bottom));
 		border-top: 1px solid var(--rule);
 	}
 
@@ -615,6 +638,8 @@
 			z-index: 100;
 			transform: translateX(-100%);
 			width: min(80vw, 300px);
+			/* Prevent user-chip from hiding behind the home indicator */
+			padding-bottom: env(safe-area-inset-bottom);
 		}
 
 		.sidebar.open {

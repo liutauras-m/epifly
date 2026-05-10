@@ -44,7 +44,9 @@ async fn metrics_handler(State(registry): State<Arc<prometheus::Registry>>) -> i
 /// `WEB_ORIGIN` env → comma-separated origins (e.g. `https://app.conusai.com`).
 /// Falls back to `http://localhost:3000` for local dev.
 fn build_cors() -> CorsLayer {
-    let raw = std::env::var("WEB_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into());
+    // Default includes the SvelteKit dev server and the Tauri iOS/macOS WebView origin.
+    let raw = std::env::var("WEB_ORIGIN")
+        .unwrap_or_else(|_| "http://localhost:3000,http://localhost:5173,https://tauri.localhost".into());
 
     let origins: Vec<axum::http::HeaderValue> = raw
         .split(',')

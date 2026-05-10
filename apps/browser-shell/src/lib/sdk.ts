@@ -12,8 +12,12 @@ const tauriTokenProvider = {
   },
 };
 
+// VITE_API_BASE is baked in at build time (set in .env.local or as a build env var).
+// Defaults to '' (same-origin) which only works in dev proxy mode; always set it for iOS/desktop builds.
+const API_BASE = import.meta.env.VITE_API_BASE ?? '';
+
 export const sdk = createConusSdk({
   fetch: globalThis.fetch.bind(globalThis),
-  baseUrl: '',
+  baseUrl: API_BASE,
   tokenProvider: tauriTokenProvider,
 });

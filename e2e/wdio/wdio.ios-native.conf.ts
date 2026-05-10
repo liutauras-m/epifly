@@ -34,7 +34,10 @@ const APP_PATH = process.env.IOS_APP_PATH ?? path.resolve(
 
 export const config: Options.Testrunner = {
   runner: 'local',
-  specs: [path.join(__dirname, 'specs/ios/native.spec.ts')],
+  specs: [
+    path.join(__dirname, 'specs/ios/native.spec.ts'),
+    path.join(__dirname, 'specs/ios/verify.spec.ts'),
+  ],
   maxInstances: 1,
 
   hostname: '127.0.0.1',
@@ -61,6 +64,11 @@ export const config: Options.Testrunner = {
         }
       : {}),
   }] as WebdriverIO.Capabilities[],
+
+  before(_caps, _specs, browser) {
+    // Set W3C script timeout so browser.executeAsync() has time to complete network calls.
+    return browser.setTimeout({ script: 30_000 });
+  },
 
   logLevel: 'warn',
   bail: 0,
