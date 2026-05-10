@@ -63,3 +63,8 @@ packages/*/dist
 # Tauri shell
 apps/browser-shell/src-tauri/target/
 apps/browser-shell/src-tauri/gen/
+
+# Test artifacts
+test-results/
+playwright-report/
+
