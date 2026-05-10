@@ -4,30 +4,58 @@ import { test, expect } from '@playwright/test';
 // Requires: TAURI_WEBDRIVER_URL env set by the test runner (see e2e/helpers/tauri.ts).
 
 test.describe('shell: login', () => {
-  test('LoginPanel renders when no device token is set', async ({ page }) => {
+  test.beforeEach(async () => {
+    if (!process.env.TAURI_WEBDRIVER_URL) test.skip();
+  });
+  test('workshop login renders when no session is stored', async ({ page }) => {
     await page.goto('tauri://localhost');
-    await expect(page.getByText('ConusAI Browser Shell')).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByLabel('Device token')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Connect' })).toBeVisible();
+    // Clear any persisted session so the login form is shown.
+    await page.evaluate(() => localStorage.removeItem('conusai_shell_user'));
+    await page.reload();
+    await expect(page.getByRole('heading', { name: /workshop/i })).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('#name-input')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Begin' })).toBeVisible();
   });
 
-  test('Connect button is disabled when token field is empty', async ({ page }) => {
+  test('Begin button is enabled only when name is filled', async ({ page }) => {
     await page.goto('tauri://localhost');
-    await expect(page.getByRole('button', { name: 'Connect' })).toBeDisabled();
+    await page.evaluate(() => localStorage.removeItem('conusai_shell_user'));
+    await page.reload();
+    // Empty name → button still renders (validation fires on submit, not on blur).
+    // Fill name → button stays enabled.
+    await page.locator('#name-input').fill('Test Operator');
+    await expect(page.getByRole('button', { name: 'Begin' })).toBeVisible();
   });
 
-  test('invalid token shows error message', async ({ page }) => {
+  test('submitting name + plan persists session and shows workspace', async ({ page }) => {
     await page.goto('tauri://localhost');
-    await page.getByLabel('Device token').fill('invalid-token');
-    await page.getByRole('button', { name: 'Connect' }).click();
-    await expect(page.getByRole('alert')).toBeVisible({ timeout: 5000 });
+    await page.evaluate(() => localStorage.removeItem('conusai_shell_user'));
+    await page.reload();
+    await page.locator('#name-input').fill('Shell Tester');
+    await page.locator('input[name="plan"][value="enterprise"]').check();
+    await page.getByRole('button', { name: 'Begin' }).click();
+    // After login the workspace/greeting screen should appear.
+    await expect(page.getByText('Shell Tester')).toBeVisible({ timeout: 8_000 });
   });
 
-  test('E2E bypass: CONUSAI_E2E=1 pre-authenticates', async ({ page }) => {
-    // When launched with CONUSAI_E2E=1 env, the shell skips LoginPanel
-    // and shows the workspace view directly. This is gated via device_auth bypass.
-    if (!process.env.CONUSAI_E2E) test.skip();
+  test('session persists across reload', async ({ page }) => {
     await page.goto('tauri://localhost');
-    await expect(page.locator('.shell-workspace')).toBeVisible({ timeout: 10_000 });
+    await page.evaluate(() =>
+      localStorage.setItem('conusai_shell_user', JSON.stringify({ name: 'Reload User', plan: 'pro' }))
+    );
+    await page.reload();
+    // Should skip login and land on workspace directly.
+    await expect(page.getByText('Reload User')).toBeVisible({ timeout: 8_000 });
+  });
+
+  test('logout clears session and returns to login', async ({ page }) => {
+    await page.goto('tauri://localhost');
+    await page.evaluate(() =>
+      localStorage.setItem('conusai_shell_user', JSON.stringify({ name: 'Logout User', plan: 'pro' }))
+    );
+    await page.reload();
+    await expect(page.getByText('Logout User')).toBeVisible({ timeout: 8_000 });
+    await page.getByRole('button', { name: 'Sign out' }).click();
+    await expect(page.getByRole('heading', { name: /workshop/i })).toBeVisible({ timeout: 5_000 });
   });
 });
