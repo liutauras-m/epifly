@@ -42,7 +42,7 @@
 			</div>
 
 			{#if form?.error}
-				<div class="empty-hint" style="color:var(--rust);margin-bottom:var(--s-3)">{form.error}</div>
+				<div class="empty-hint" style="color:var(--danger);margin-bottom:var(--s-3)">{form.error}</div>
 			{/if}
 
 			<button class="submit" type="submit">

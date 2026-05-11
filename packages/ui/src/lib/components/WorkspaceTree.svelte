@@ -49,7 +49,7 @@
     border-radius: 6px;
     font-size: 13px;
     color: var(--ink-2);
-    transition: background var(--duration-short) var(--ease-out);
+    transition: background var(--dur-1) var(--ease-out);
     min-height: 32px;
   }
 

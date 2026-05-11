@@ -1,4 +1,4 @@
-/// Semantic capability search backed by Postgres pgvector ANN retrieval.
+/// Semantic capability search backed by Qdrant ANN retrieval.
 ///
 /// GET /v1/capabilities/search?q=finance&limit=5
 ///

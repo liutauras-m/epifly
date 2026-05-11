@@ -23,7 +23,7 @@ Additionally, many enterprise clients need to customise agent behaviour per-cust
 Introduce `SemanticCapabilityRouter` as the single entry point for resolving capabilities per agent turn:
 
 - Embed the user query with the same model used for capability indexing.
-- ANN search `capability_embeddings` table using pgvector + DiskANN.
+- ANN search `capability_embeddings` collection in Qdrant with cosine distance.
 - Apply namespace/tag filters and cosine distance threshold (≤ 0.65 by default).
 - Return top-K (≤ 50) providers; pass only their tool definitions to the LLM.
 - Cache results with a 60s moka TTL keyed by blake3(tenant_id + query + config).
@@ -39,14 +39,14 @@ Extend `ToolManifest` with `namespace: Option<String>` (dot-separated slug) and 
 
 ### 3. Dynamic Prompts
 
-`ToolKind::DynamicPrompt` capabilities load their `LlmChainConfig` from a `dynamic_prompts` Postgres table at runtime. Admins can:
+`ToolKind::DynamicPrompt` capabilities load their `LlmChainConfig` from a `dynamic_prompts` redb table at runtime. Admins can:
 - Push a new prompt version via the REST API without redeploying.
 - Roll back by pinning to an older version.
 - A/B test by creating two capabilities pointing to different versions.
 
 ### 4. Bulk ERP Factory
 
-`CapabilitySpecFactory` (implements `BulkCapabilityFactory`) streams from `capability_specs` at boot, generating `CapabilityProvider` + embeddings in 256-row batches. Hot-reload via Postgres `LISTEN capability_specs_changed` means changes propagate in < 1s without restart. The factory is domain-neutral; ERP is the first vertical, partitioned by `namespace = 'erp.*'`.
+`CapabilitySpecFactory` (implements `BulkCapabilityFactory`) streams from `capability_specs` (redb) at boot, generating `CapabilityProvider` + embeddings in 256-row batches. Hot-reload via in-process `tokio::sync::broadcast` channels means changes propagate in < 1s without restart. The factory is domain-neutral; ERP is the first vertical, partitioned by `namespace = 'erp.*'`.
 
 ### 5. OTel GenAI Metrics
 

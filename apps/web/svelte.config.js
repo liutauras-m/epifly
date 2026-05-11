@@ -1,5 +1,7 @@
 import adapter from '@sveltejs/adapter-node';
 
+const BACKEND_ORIGIN = new URL(process.env.CONUSAI_BACKEND_URL ?? 'http://localhost:8080').origin;
+
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
 	kit: {
@@ -16,7 +18,7 @@ const config = {
 			mode: 'nonce',
 			directives: {
 				'default-src': ['self'],
-				'connect-src': ['self', 'wss:'],
+				'connect-src': ['self', 'wss:', BACKEND_ORIGIN],
 				'img-src': ['self', 'data:', 'blob:'],
 				'script-src': ['self'],
 				'style-src': ['self', 'unsafe-inline'],

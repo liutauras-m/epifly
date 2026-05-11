@@ -1,104 +1,56 @@
 /* ───────────────────────────────────────────────────────────────────────────
    ConusAI · Foundry design system
-   Editorial-industrial. Cream paper or carbon ink. One teal accent.
-   Hairline rules. Generous negative space. Type-led, not chrome-led.
+   Epifly brand. Orange fire. Geist precision. Clean surfaces.
    ─────────────────────────────────────────────────────────────────────────── */
 
 /* ── Self-hosted fonts (CSP-safe, Tauri offline-friendly) ─────────────────── */
 @font-face {
-  font-family: "Fraunces";
-  src: url("./assets/fonts/Fraunces-Variable.woff2") format("woff2");
-  font-weight: 300 700;
-  font-style: normal;
-  font-display: swap;
-  font-feature-settings: "ss01" on;
-}
-
-@font-face {
-  font-family: "Switzer";
-  src: url("./assets/fonts/Switzer-Variable.woff2") format("woff2");
-  font-weight: 400 600;
+  font-family: "Geist";
+  src: url("./assets/fonts/Geist-Variable.woff2") format("woff2");
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 
 @font-face {
-  font-family: "JetBrains Mono";
-  src: url("./assets/fonts/JetBrainsMono-Regular.woff2") format("woff2");
-  font-weight: 400;
+  font-family: "Geist Mono";
+  src: url("./assets/fonts/GeistMono-Variable.woff2") format("woff2");
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
 }
 
-@font-face {
-  font-family: "JetBrains Mono";
-  src: url("./assets/fonts/JetBrainsMono-Medium.woff2") format("woff2");
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-
-/* ── Tokens · Paper (default) ─────────────────────────────────────────────── */
-:root,
-:root[data-theme="paper"] {
-  --ink:        #14110D;
-  --ink-2:      #3A332B;
-  --ink-3:      #6E6357;
-  --paper:      #FAF9F5;
-  --paper-2:    #F0ECE6;
-  --paper-3:    #E6E1D9;
-  --rule:       #D6CAB0;
-  --seam:       #C2B391;
-  --vignette:   radial-gradient(ellipse at 18% 8%, rgba(128,205,198,0.06), transparent 45%);
-  --grain-blend: overlay;
-  --grain-opacity: 0.03;
-}
-
-/* ── Tokens · Forge (dark) ────────────────────────────────────────────────── */
-:root[data-theme="forge"] {
-  --ink:        #F4EEE3;
-  --ink-2:      #C8BFAE;
-  --ink-3:      #8A8174;
-  --paper:      #100E0B;
-  --paper-2:    #181612;
-  --paper-3:    #211E18;
-  --rule:       #2A251E;
-  --seam:       #3A3328;
-  --vignette:   radial-gradient(ellipse at 18% 8%, rgba(128,205,198,0.08), transparent 50%);
-  --grain-blend: soft-light;
-  --grain-opacity: 0.05;
-}
-
-/* ── Tokens · Shared accents ──────────────────────────────────────────────── */
+/* ── Tokens · Shared (non-theme) ──────────────────────────────────────────── */
 :root {
-  /* Brand accent */
-  --ember:      #80cdc6;
-  --ember-2:    #5aada6;
-  --ember-soft: rgba(128, 205, 198, 0.10);
-  --ember-glow: rgba(128, 205, 198, 0.28);
+  /* Brand */
+  --ember:      #FF6200;
+  --ember-2:    #E05500;
+  --ember-soft: rgba(255, 98, 0, 0.10);
+  --ember-glow: rgba(255, 98, 0, 0.22);
 
-  /* Semantic colours */
-  --steel:      #5C6B7A;
-  --rust:       #8B2E0E;
-  --moss:       #4A6B3A;
-  --success:    #1a7f4b;
+  /* Secondary accent */
+  --cyan:      #00D4FF;
+  --cyan-soft: rgba(0, 212, 255, 0.10);
+
+  /* Semantic */
+  --success:      #1a7f4b;
   --success-soft: rgba(26, 127, 75, 0.13);
-  --danger:     #b32400;
-  --danger-soft: rgba(179, 36, 0, 0.13);
+  --danger:       #b32400;
+  --danger-soft:  rgba(179, 36, 0, 0.13);
 
-  /* Shadows / overlays */
-  --shadow-sm:  rgba(0, 0, 0, 0.12);
-  --shadow-md:  rgba(0, 0, 0, 0.18);
-  --backdrop:   rgba(0, 0, 0, 0.40);
+  /* Overlays */
+  --shadow-sm: rgba(0, 0, 0, 0.08);
+  --shadow-md: rgba(0, 0, 0, 0.12);
+  --backdrop:  rgba(0, 0, 0, 0.40);
 
   /* Login poster */
-  --poster-gradient: linear-gradient(135deg, #80cdc6 0%, #3d8a85 60%, #102826 100%);
-  --poster-hi:       rgba(200, 240, 238, 0.22);
-  --poster-em:       rgba(210, 255, 252, 0.92);
+  --poster-gradient: linear-gradient(135deg, #FF6200 0%, #E05500 60%, #111111 100%);
+  --poster-hi:       rgba(255, 150, 80, 0.22);
+  --poster-em:       rgba(255, 255, 255, 0.92);
 
-  --font-display: "Fraunces", "Tiempos Headline", "Iowan Old Style", Georgia, serif;
-  --font-body:    "Switzer", "Söhne", "Inter Tight", system-ui, sans-serif;
-  --font-mono:    "JetBrains Mono", "Berkeley Mono", "IBM Plex Mono", ui-monospace, monospace;
+  --font-display: "Geist", system-ui, sans-serif;
+  --font-body:    "Geist", system-ui, sans-serif;
+  --font-mono:    "Geist Mono", ui-monospace, monospace;
 
   --t-display: clamp(40px, 5.4vw, 56px);
   --t-h1:      28px;
@@ -109,25 +61,23 @@
   --t-mono:    13px;
 
   --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px;
-  --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 72px;
+  --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 64px;
 
   --rail: 240px;
   --gutter: 64px;
   --composer-w: 720px;
 
-  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --ease-in:  cubic-bezier(0.6, 0, 0.7, 0.2);
+  --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in:     cubic-bezier(0.6, 0, 0.7, 0.2);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --dur-1: 120ms; --dur-2: 200ms; --dur-3: 320ms; --dur-4: 520ms;
 
-  /* Radius scale — nested radius principle:
-     inner element r = outer r − padding_gap.
-     Editorial restraint: we use corners only where they signal interactivity. */
-  --r-xs:   4px;    /* badges, micro elements */
-  --r-sm:   8px;    /* buttons, pills, small inputs */
-  --r-md:   14px;   /* composer, cards, toasts */
-  --r-lg:   20px;   /* larger panels */
-  --r-full: 9999px; /* circles */
+  --r-xs:   6px;
+  --r-sm:   10px;
+  --r-md:   14px;
+  --r-lg:   20px;
+  --r-xl:   28px;
+  --r-full: 9999px;
 
   --foundry-version: "2026.05";
 }
@@ -141,7 +91,6 @@ body {
   font-family: var(--font-body);
   font-size: var(--t-body);
   line-height: 1.55;
-  font-feature-settings: "ss01", "ss02", "cv11";
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow: hidden;
@@ -153,20 +102,6 @@ button { cursor: pointer; }
 a { color: inherit; text-decoration: none; }
 ul, ol { list-style: none; padding: 0; margin: 0; }
 ::selection { background: var(--ember-soft); color: var(--ink); }
-
-/* ── Atmosphere ───────────────────────────────────────────────────────────── */
-body::before {
-  content: ""; position: fixed; inset: 0; pointer-events: none;
-  background: var(--vignette);
-  z-index: 0;
-}
-body::after {
-  content: ""; position: fixed; inset: 0; pointer-events: none;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.5 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
-  opacity: var(--grain-opacity);
-  mix-blend-mode: var(--grain-blend);
-  z-index: 1;
-}
 
 /* ── Mono labels ──────────────────────────────────────────────────────────── */
 .label-mono {
@@ -331,10 +266,9 @@ body::after {
   color: var(--paper);
   display: flex; align-items: center; justify-content: center;
   font-family: var(--font-display);
-  font-weight: 500;
+  font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.02em;
-  font-variation-settings: "opsz" 14, "SOFT" 30;
   border-radius: var(--r-full);
   flex-shrink: 0;
 }
@@ -392,9 +326,8 @@ body::after {
 .greeting-text {
   font-family: var(--font-display);
   font-size: var(--t-display);
-  font-weight: 400;
+  font-weight: 700;
   letter-spacing: -0.022em;
-  font-variation-settings: "opsz" 96, "SOFT" 30, "WONK" 0;
   color: var(--ink);
   line-height: 1.05;
   opacity: 0;
@@ -607,7 +540,7 @@ body::after {
   display: inline-flex; align-items: center; justify-content: center;
   color: var(--ink-3);
 }
-.attachment-remove:hover { color: var(--rust); }
+.attachment-remove:hover { color: var(--danger); }
 .attachment-size { color: var(--ink-3); font-family: var(--font-mono); font-size: 11px; }
 .attachment-extract {
   padding: 1px 7px; border-radius: var(--r-xs);
@@ -1044,9 +977,9 @@ body::after {
   50%       { opacity: 0;   }
 }
 
-.message.ai.error::before { background: var(--rust); }
+.message.ai.error::before { background: var(--danger); }
 .message.ai.error { color: var(--ink-2); }
-.message.ai.error .ai-text::before { content: "⚠  "; color: var(--rust); }
+.message.ai.error .ai-text::before { content: "⚠  "; color: var(--danger); }
 
 /* ── Thinking message — dot sits in the AI message row ── */
 .message.ai.thinking {
@@ -1120,7 +1053,7 @@ body::after {
 }
 .tool-card[data-status="error"] {
   animation: card-flash-error var(--dur-4) var(--ease-out) forwards;
-  border-left: 2.5px solid var(--rust);
+  border-left: 2.5px solid var(--danger);
 }
 @keyframes card-flash-success {
   0%   { box-shadow: 0 0 0 0 rgba(26,127,75,0.5); }
@@ -1144,7 +1077,7 @@ body::after {
   width: 6px; height: 6px;
   flex-shrink: 0;
   border-radius: var(--r-full);
-  background: var(--steel);
+  background: var(--ink-3);
   transition: background var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out);
 }
 .tool-card[data-status="running"] .tool-dot {
@@ -1157,7 +1090,7 @@ body::after {
   box-shadow: 0 0 0 3px var(--success-soft);
 }
 .tool-card[data-status="error"] .tool-dot {
-  background: var(--rust);
+  background: var(--danger);
   box-shadow: 0 0 0 3px var(--danger-soft);
 }
 @keyframes dot-pulse {
@@ -1204,30 +1137,24 @@ body::after {
   padding: var(--s-7) var(--s-7);
   overflow: hidden;
 }
-.login-poster::after {
-  content: ""; position: absolute; inset: 0;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.6 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
-  opacity: 0.18; mix-blend-mode: overlay; pointer-events: none;
-}
 .poster-brand {
   display: flex; align-items: center; gap: var(--s-3);
   font-family: var(--font-display);
   font-size: 18px;
-  letter-spacing: -0.01em;
-  font-variation-settings: "opsz" 14, "SOFT" 30;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 .poster-brand .sigil { width: 28px; height: 28px; }
 .poster-tagline {
   font-family: var(--font-display);
   font-size: clamp(36px, 4.4vw, 56px);
+  font-weight: 700;
   line-height: 1.05;
-  font-variation-settings: "opsz" 96, "SOFT" 30, "WONK" 0;
   letter-spacing: -0.025em;
   max-width: 540px;
 }
 .poster-tagline em {
   font-style: italic;
-  font-variation-settings: "opsz" 96, "SOFT" 100, "WONK" 1;
   color: var(--poster-em);
 }
 .poster-meta {
@@ -1257,9 +1184,8 @@ body::after {
   font-family: var(--font-display);
   font-size: 38px;
   line-height: 1.1;
-  font-weight: 400;
+  font-weight: 700;
   letter-spacing: -0.02em;
-  font-variation-settings: "opsz" 96, "SOFT" 30, "WONK" 0;
   margin: 0 0 var(--s-6);
   color: var(--ink);
 }
@@ -1277,7 +1203,7 @@ body::after {
   width: 100%;
   font-family: var(--font-display);
   font-size: 22px;
-  font-variation-settings: "opsz" 24, "SOFT" 30;
+  font-weight: 400;
   padding: var(--s-3) 0;
   border-bottom: 1px solid var(--rule);
   transition: border-color var(--dur-2) var(--ease-out);
@@ -1369,7 +1295,7 @@ body::after {
   animation: toast-in var(--dur-3) var(--ease-spring) forwards;
   max-width: 360px;
 }
-.toast-error { border-left-color: var(--rust); }
+.toast-error { border-left-color: var(--danger); }
 .toast.out { opacity: 0; transform: translateY(4px); transition: opacity 0.25s var(--ease-in), transform 0.25s var(--ease-in); }
 @keyframes toast-in {
   to { opacity: 1; transform: translateY(0) scale(1); }

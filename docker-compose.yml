@@ -83,7 +83,7 @@ services:
     environment:
       QDRANT_URL: "http://conusai-qdrant:6334"
       S3_ENDPOINT: "http://conusai-rustfs:9000"
-      S3_BUCKET: "${S3_BUCKET:-workspace}"
+      S3_BUCKET: "workspace"
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-minioadmin}"
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-minioadmin}"
       REDB_PATH: "/data/conusai.redb"
@@ -122,7 +122,7 @@ services:
   web:
     image: node:22-slim
     container_name: conusai-web
-    profiles: ["web"]
+    profiles: ["web", "full"]
     working_dir: /app
     command: node apps/web/build
     volumes:

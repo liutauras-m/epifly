@@ -29,8 +29,8 @@ No gateway restart is required. No config files need editing. No gateway code ne
 ┌─────────────────────────────────────────────────────────┐
 │  ConusAI Gateway                                        │
 │                                                        │
-│  • Stores tool row in capability_specs (Postgres)       │
-│  • Hot-reloads in-memory registry via LISTEN/NOTIFY     │
+│  • Stores tool row in capability_specs (redb)           │
+│  • Hot-reloads in-memory registry via tokio broadcast   │
 │  • Embeds description with fastembed for semantic search │
 │                                                        │
 │  At query time:                                        │
@@ -53,7 +53,7 @@ Every capability TOML file and self-registration manifest must declare a `kind`.
 | `native` | Built-in in-process tools (e.g. filesystem helpers, cargo runner). **Not loaded from TOML** — registered at startup in code. |
 | `mcp` | In-process MCP adapter that reads a local `capability.toml` and routes calls to a co-located MCP binary. |
 | `docker` | Capability that spins up a Docker container per invocation. |
-| `dynamic_prompt` | DB-backed, versioned prompt capability — store and version prompt templates in Postgres, hot-reload without restarting the gateway. |
+| `dynamic_prompt` | DB-backed, versioned prompt capability — store and version prompt templates in redb, hot-reload without restarting the gateway. |
 | `remote_mcp` | External MCP service registered via JSON (no TOML on disk). The most common choice for self-registering microservices — see [Option B](#option-b-self-registering-mcp-service) below. |
 
 ---

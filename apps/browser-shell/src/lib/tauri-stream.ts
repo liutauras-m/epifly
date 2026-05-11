@@ -26,6 +26,7 @@ export async function* streamChatTauri(params: {
   sessionToken: string;
   threadId?: string | null;
   workspaceNodeId?: string | null;
+  attachmentIds?: string[];
   signal?: AbortSignal;
 }): AsyncGenerator<ChatStreamDelta> {
   const streamId = await invoke<string>('chat_stream_start', {
@@ -33,6 +34,7 @@ export async function* streamChatTauri(params: {
     sessionToken: params.sessionToken,
     threadId: params.threadId ?? null,
     workspaceNodeId: params.workspaceNodeId ?? null,
+    attachmentIds: params.attachmentIds ?? [],
     apiBase: API_BASE,
   });
 

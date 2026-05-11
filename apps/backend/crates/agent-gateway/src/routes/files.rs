@@ -45,7 +45,7 @@ pub async fn upload(
     let store = state
         .file_store
         .as_ref()
-        .ok_or_else(|| HttpError::agent("file storage not configured (MINIO_ENDPOINT missing?)"))?;
+        .ok_or_else(|| HttpError::agent("file storage not configured (S3_ENDPOINT missing?)"))?;
 
     let field = multipart
         .next_field()

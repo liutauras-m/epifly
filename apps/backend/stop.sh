@@ -8,7 +8,7 @@ Usage:
   ./stop.sh [wipe] [profile]
 
 Profiles:
-  infra          Postgres + MinIO (+ minio-init)
+  infra          Qdrant + RustFS (+ rustfs-init)
   full           Full stack (gateway + infra + observability)
   observability  Jaeger + OTel collector
 

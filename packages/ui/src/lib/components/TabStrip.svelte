@@ -67,7 +67,7 @@
     cursor: pointer;
     white-space: nowrap;
     max-width: 180px;
-    transition: background var(--duration-short) var(--ease-out);
+    transition: background var(--dur-1) var(--ease-out);
   }
 
   .tab:hover { background: var(--paper-3); }

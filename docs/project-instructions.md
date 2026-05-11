@@ -62,8 +62,8 @@ conusai-platform/
 | Category | Crates |
 |----------|--------|
 | Async runtime | `tokio` (full), `tokio-stream` |
-| AI / LLM | `rig-core` **0.36** (Anthropic; native SSE streaming via `CompletionModel::stream()`), `rig-postgres` **0.2.5** |
-| Database / Vector DB | `sqlx` 0.8 (Postgres), `timescale/timescaledb-ha:pg17` + pgvector |
+| AI / LLM | `rig-core` **0.36** (Anthropic; native SSE streaming via `CompletionModel::stream()`), `rig-qdrant` **0.2.5** |
+| Database / Vector DB | `redb` 4 (embedded KV, postcard codec), `qdrant-client` 1 + `rig-qdrant` 0.2.5 (768-d cosine ANN) |
 | HTTP server | `axum` 0.8 (ws, multipart), `tower` 0.5, `tower-http` 0.6 (cors, trace, br, fs) |
 | HTTP client | `reqwest` **0.13** (json, stream) |
 | Serialization | `serde`, `serde_json`, `toml` |
@@ -103,7 +103,7 @@ Three router groups — `public_router`, `protected_router` (tenant middleware),
 | POST | `/v1/chat/completions` | OpenAI-compatible chat, optional SSE stream |
 | POST | `/v1/agent/completions` | Thread-aware agent completions with tool calls |
 | GET | `/v1/capabilities` | List registered capabilities |
-| GET | `/v1/capabilities/search` | Semantic capability search (Postgres pgvector ANN) |
+| GET | `/v1/capabilities/search` | Semantic capability search (Qdrant ANN) |
 | POST | `/mcp` | MCP JSON-RPC 2.0 tool dispatch |
 | POST | `/v1/files` | Multipart file upload (MinIO-backed) |
 | GET | `/v1/files/{token}` | Token-gated file download (Bearer JWT required) |
@@ -159,11 +159,12 @@ Three router groups — `public_router`, `protected_router` (tenant middleware),
 
 ## Architecture Decisions
 
-- [ADR 0003 - Unified Postgres + CocoIndex](docs/adr/0003-unified-postgres-cocoindex.md)
+- [ADR 0003 - Unified Postgres + CocoIndex](docs/adr/0003-unified-postgres-cocoindex.md) *(superseded by ADR 0009)*
 - [ADR 0004 - Semantic Capability Router & Dynamic Prompts](docs/adr/0004-semantic-capability-router-and-dynamic-prompts.md)
 - [ADR 006 - Tauri Browser Shell](docs/adr/006-tauri-browser-shell.md)
 - [ADR 007 - Capability Module Rename](docs/adr/007-capability-module-rename.md)
 - [ADR 008 - Multi-Platform Shell](docs/adr/008-multi-platform-shell.md)
+- [ADR 009 - redb + Qdrant + RustFS](docs/adr/0009-redb-qdrant-rustfs.md)
 
 ## v0.3.2 New Concepts
 
@@ -171,7 +172,7 @@ Three router groups — `public_router`, `protected_router` (tenant middleware),
 
 `SemanticCapabilityRouter` replaces "send all enabled tools to the LLM". At every agent turn it:
 1. Embeds the user query.
-2. ANN-searches `capability_embeddings` (pgvector, cosine) with namespace + tag filters.
+2. ANN-searches `capability_embeddings` (Qdrant, cosine) with namespace + tag filters.
 3. Returns the top-K (default 20, max 50) providers whose distance ≤ 0.65.
 4. Results are moka-cached for 60 s (blake3 key = tenant + query + config).
 
@@ -179,7 +180,7 @@ Wire into `AgentBuilder`: `builder.with_semantic_router(router)`.
 
 ### Namespaces
 
-`ToolManifest.namespace` is a dot-separated slug (`erp.po`, `accounting.gl`). Use `NamespaceFilter` variants (`Any`, `Exact`, `Prefix`, `AnyOf`) for routing and SQL filtering. Validated by `RegisteredToolValidator::validate_namespace`.
+`ToolManifest.namespace` is a dot-separated slug (`erp.po`, `accounting.gl`). Use `NamespaceFilter` variants (`Any`, `Exact`, `Prefix`, `AnyOf`) for routing and payload filtering. Validated by `RegisteredToolValidator::validate_namespace`.
 
 ### Dynamic Prompts (`ToolKind::DynamicPrompt`)
 
@@ -187,11 +188,11 @@ Capabilities backed by versioned rows in `dynamic_prompts`. Push new versions vi
 
 ### Bulk Capability-Spec Factory
 
-`CapabilitySpecFactory` implements `BulkCapabilityFactory`. Call `registry.run_bulk_load()` at boot to stream all enabled rows from `capability_specs` and embed them in 256-row batches. Hot-reload via `RealtimeService::subscribe_capability_spec_changes()` + `LISTEN capability_specs_changed`.
+`CapabilitySpecFactory` implements `BulkCapabilityFactory`. Call `registry.run_bulk_load()` at boot to stream all enabled rows from `capability_specs` (redb) and embed them in 256-row batches. Hot-reload via `RealtimeService::subscribe_capability_spec_changes()` backed by in-process tokio broadcast channels.
 
 ### Artifact Bridge
 
-`ArtifactBridge` materialises `ToolOutput.artifacts` into MinIO objects and workspace nodes after tool execution. Treat it as part of the agent loop, not as a capability concern.
+`ArtifactBridge` materialises `ToolOutput.artifacts` into RustFS objects and workspace nodes after tool execution. Treat it as part of the agent loop, not as a capability concern.
 
 ### Tower Quota Middleware
 

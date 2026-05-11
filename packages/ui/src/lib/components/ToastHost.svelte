@@ -50,7 +50,7 @@
     color: var(--ink);
     font-size: 13px;
     box-shadow: 0 4px 16px rgba(0,0,0,0.12);
-    animation: slide-in var(--duration-base) var(--ease-out);
+    animation: slide-in var(--dur-2) var(--ease-out);
   }
 
   .toast.success { border-color: var(--success); background: var(--success-soft); }

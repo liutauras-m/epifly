@@ -3,6 +3,7 @@ import type { ChatStreamDelta } from './types.js';
 
 export interface StreamChatParams {
   message: string;
+  baseUrl: string;
   threadId?: string | null;
   workspaceNodeId?: string | null;
   attachmentIds?: string[];
@@ -27,7 +28,7 @@ export async function* streamChat(
       if (params.workspaceNodeId) body.workspace_node_id = params.workspaceNodeId;
       if (params.attachmentIds?.length) body.attachment_ids = params.attachmentIds;
 
-      const res = await fetchFn(EP.UI_STREAM, {
+      const res = await fetchFn(`${params.baseUrl}${EP.UI_STREAM}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

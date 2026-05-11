@@ -36,8 +36,8 @@
     border: 1px solid var(--rule);
     border-radius: 8px;
     background: var(--paper-2);
-    transition: border-color var(--duration-short) var(--ease-out),
-                box-shadow var(--duration-short) var(--ease-out);
+    transition: border-color var(--dur-1) var(--ease-out),
+                box-shadow var(--dur-1) var(--ease-out);
   }
 
   .capability-card[role="button"] {

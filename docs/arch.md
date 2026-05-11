@@ -1,666 +1,613 @@
 # ConusAI Platform — Architecture & Functionality
 
-> **current workspace snapshot** — Semantic capability router, namespace + tag partitioning, dynamic prompts, bulk capability-spec factory, OTel GenAI metrics, Tower quota middleware, artifact materialisation, browser-shell device tokens, and WS control. Persistent metadata lives in Postgres; workspace bodies and generated artifacts are materialised in MinIO/S3.
+> **Current workspace snapshot (v0.4.0 — May 2026).** Production-grade multitenant AI agent platform built as a **pnpm + Cargo monorepo**. Persistent metadata lives in a single embedded **redb** key-value store, vectors live in **Qdrant**, content lives in **RustFS** (S3-compatible object storage), and the cross-platform client is a **SvelteKit + Tauri** Browser Shell that runs on macOS, Windows, Linux, iOS, and Android.
 
-A production-grade multitenant AI agent platform. The monorepo contains a **Rust + Rig** backend (`apps/backend/`), a **SvelteKit web frontend** (`apps/web/`), and a **browser shell** client (`apps/browser-shell/`). The built-in **Foundry UI** (served by the gateway at `GET /`) provides workspace management, agent chat, file upload, and invoice extraction.
+The monorepo packages:
 
----
-
-## v0.3.1 Additions
-
-### Persistent stores and content backends (replacing in-memory stubs)
-
-Persistent metadata is split across Postgres and MinIO/S3:
-
-| Store | Trait | Backend table(s) |
+| Path | Stack | Role |
 |---|---|---|
-| `PostgresThreadStore` | `ThreadStore` | `threads`, `messages` |
-| `PostgresWorkspaceStore` | `WorkspaceStore` | `workspace_nodes`, `content_embeddings` |
-| `PostgresAuditStore` | `AuditStore` | `audit_events` |
-| `MinioWorkspaceContent` | `WorkspaceContentStore` | MinIO / S3 objects under `tenants/{tenant_id}/workspaces/{virtual_path}` |
-
-A `PgVectorStore` (`agent_core::vector_store`) backs semantic capability search using the `capability_embeddings` table with cosine distance, namespace + tag filters, and 1536-dim embeddings.
-
-### Workspace indexer (`agent_core::indexing`)
-
-| File | Purpose |
-|---|---|
-| `coco_indexer.rs` | `WorkspaceIndexer` — crawls workspace filesystem, chunks content, generates embeddings, upserts to `content_embeddings` via pgvector |
-| `embedding_service.rs` | `EmbeddingService` trait; `OpenAiEmbeddingService` (default, `text-embedding-3-small`, 1536 dims); `NoopEmbeddingService` (test mode) |
-| `local_embedding_service.rs` | `LocalEmbeddingService` — feature-gated (`local-embeddings`), uses `fastembed` 5 for on-device embeddings |
-| `real_fs_watcher.rs` | `RealFsWatcher` — watches filesystem for changes, triggers re-indexing at configurable intervals |
-
-On startup: if `WORKSPACES_ROOT` is set, `main.rs` spawns an initial index pass then starts `RealFsWatcher`. Embedding backend selected via `EMBEDDING_BACKEND` env (`local` → `LocalEmbeddingService`, `openai` → `OpenAiEmbeddingService`, default → `NoopEmbeddingService`).
-
-### Realtime service (`agent_core::realtime`)
-
-`RealtimeService` — broadcast service for workspace change events via WebSocket. `WorkspaceChangeEvent` is fanned out to connected subscribers. Exposed at `GET /api/realtime/workspace` (Bearer JWT protected).
-
-### Artifact materialisation (`common::artifact` + `agent_core::bridge`)
-
-`ArtifactBridge` materialises `ToolOutput.artifacts` after tool execution: it uploads file bytes to MinIO, inserts a `workspace_nodes` file row, and best-effort enqueues indexing for text-like MIME types. The bridge is invoked from the agent loop after a capability returns a `ToolOutput` payload.
-
-### WASM / wasmtime 44
-
-- Target: `wasm32-wasip1` (per `rust-toolchain.toml`)
-- `WasmToolLoader` wraps wasmtime 44 API
-
-### New `AppState` fields (v0.3.1)
-
-| Field | Type | Purpose |
-|---|---|---|
-| `registry` | `Arc<Mutex<CapabilityRegistry>>` | In-memory capability registry |
-| `rate_limiter` | `RateLimiter` | Per-tenant request limiter |
-| `llm` | `Arc<LlmRegistry>` | Single source of truth for model access |
-| `embedding_service` | `Arc<dyn EmbeddingService>` | Embedding backend for indexing and search |
-| `vector_store` | `Arc<PgVectorStore>` | Postgres pgvector ANN store |
-| `file_store` | `Option<Arc<dyn ObjectStore>>` | MinIO / S3-compatible file store |
-| `thread_store` | `Arc<dyn ThreadStore>` | Persistent conversation memory |
-| `workspace_store` | `Arc<dyn WorkspaceStore>` | Workspace metadata index |
-| `workspace_content` | `Arc<dyn WorkspaceContentStore>` | Workspace markdown body store |
-| `conversation_service` | `Arc<dyn ConversationService>` | Thread lifecycle coordinator |
-| `tool_admin` | `Arc<CapabilityAdmin>` | Capability CRUD / reload facade |
-| `job_registry` | `Arc<JobRegistry>` | Scheduled + background jobs |
-| `job_executor` | `Arc<JobExecutor>` | In-memory task tracker |
-| `job_admin` | `Arc<JobAdmin>` | Job/task administration facade |
-| `pool` | `Option<PgPool>` | Shared Postgres connection pool |
-| `realtime_service` | `Option<Arc<RealtimeService>>` | WebSocket broadcast service |
-| `semantic_router` | `Arc<SemanticCapabilityRouter>` | Pre-filters tools to top-K per turn |
-| `router_quota` | `RouterQuotaConfig` | Per-turn tool / invoke budget |
-| `capability_spec_factory` | `Option<Arc<CapabilitySpecFactory>>` | Bulk capability-spec loader / hot-reload bridge |
-| `artifact_bridge` | `Option<Arc<ArtifactBridge>>` | Materialises tool file artifacts into MinIO + workspace nodes |
-
-### New REST endpoint (v0.3.1)
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `POST` | `/admin/capabilities/register` | `PLATFORM_ADMIN_TOKEN` bearer | Register a remote MCP capability service |
-| `GET` | `/api/realtime/workspace` | Bearer JWT | WebSocket — workspace change event stream |
-| `GET` | `/v1/threads/{id}/messages` | Bearer JWT | Retrieve messages for a thread |
-| `GET` | `/v1/tasks` | Bearer JWT | List background task statuses |
-| `GET` | `/v1/tasks/{id}` | Bearer JWT | Get a single task status |
-| `GET` | `/v1/tasks/{id}/sse` | Bearer JWT | SSE stream for task lifecycle events |
-| `GET` | `/admin/devices` | `PLATFORM_ADMIN_TOKEN` bearer | List browser-shell device tokens |
-| `POST` | `/admin/devices` | `PLATFORM_ADMIN_TOKEN` bearer | Issue a browser-shell device token |
-| `DELETE` | `/admin/devices/{id}` | `PLATFORM_ADMIN_TOKEN` bearer | Revoke a browser-shell device token |
-| `GET` | `/v1/shells/{device_id}/control` | `CONUSAI_FEATURE_BROWSER_SHELL=1` + device token | Browser-shell WebSocket control channel |
-
----
-
-## v0.3.2 Additions
-
-### Semantic Capability Router (`agent_core::capabilities::semantic_router`)
-
-```
-User message
-    │
-    ▼
-SemanticCapabilityRouter::select(query, tenant)
-    │  ┌─────────────────────────────────────┐
-    │  │ 1. blake3 cache-key lookup (moka)   │
-    │  │ 2. embed query (EmbeddingService)   │
-    │  │ 3. ANN search (PgVectorStore top-K) │
-    │  │ 4. namespace + tag filter           │
-    │  │ 5. distance threshold (≤ 0.65)      │
-    │  │ 6. include_always overrides         │
-    │  └─────────────────────────────────────┘
-    │
-    ▼
-Vec<Arc<dyn CapabilityProvider>>  (top-K, ≤ 50)
-    │
-    ▼
-Tool definitions → Anthropic / LLM
-```
-
-Key types:
-| Symbol | Location | Purpose |
-|---|---|---|
-| `SemanticCapabilityRouter` | `capabilities/semantic_router.rs` | Core router; cache + ANN |
-| `SemanticRouterConfig` | same | top_k, max_distance, namespace, tags_any, include_always, cache_ttl_secs |
-| `RouterMetrics` | same | Atomic counters (cache_hits, cache_misses, total_selects) |
-| `NamespaceFilter` | `capabilities/namespace.rs` | Any / Exact / Prefix / AnyOf |
-
-### Namespace & Tag Partitioning
-
-`ToolManifest` now has `namespace: Option<String>` (dot-separated, e.g. `erp.po`), `tags: Vec<String>`, `search_keywords: Vec<String>`, `tenant_scope: Vec<String>`, and `enabled: bool`. The `CapabilityRegistry` maintains a hierarchical `namespace_index: HashMap<String, Vec<String>>` for fast admin autocomplete (`namespace_children(prefix)`).
-
-Validator enforces: dot-separated ASCII slug segments `[a-z][a-z0-9_]*`, ≤ 6 segments, empty string = unnamespaced.
-
-**New DB columns:**
-- `capability_embeddings.namespace TEXT NOT NULL DEFAULT ''`
-- `capability_embeddings.tags TEXT[] NOT NULL DEFAULT '{}'`
-- Indexes: `cap_embed_ns_idx`, `cap_embed_tags_idx` (GIN)
-
-Migration: `20260507000000_capability_namespaces.up.sql`
-
-### Dynamic Prompts (`agent_core::capabilities::providers::dynamic_prompt`)
-
-DB-backed versioned prompt storage. `ToolKind::DynamicPrompt` capabilities load their `LlmChainConfig` (model, prompt_template, system_prompt, etc.) from the `dynamic_prompts` table at runtime. Supports:
-- `load_latest()` — fetches highest version row
-- `with_pinned_version(n)` — pins to specific version
-- `invalidate()` — clears moka cache entry
-- 60s TTL moka cache per capability name + version
-
-Migration: `20260507000100_dynamic_prompts.up.sql`
-
-**New admin endpoints:**
-| Method | Path | Description |
-|---|---|---|
-| `PUT` | `/admin/capabilities/{name}/prompt` | Upsert prompt version |
-| `GET` | `/admin/capabilities/{name}/prompt?version=N` | Fetch prompt (latest or pinned) |
-| `GET` | `/admin/capabilities/{name}/prompt/versions` | List all versions |
-| `GET` | `/admin/capabilities/namespaces?prefix=X` | Browse namespace tree |
-
-### Bulk Capability-Spec Factory (`agent_core::capabilities::providers::capability_spec`)
-
-`CapabilitySpecFactory` implements `BulkCapabilityFactory` — streams rows from `capability_specs` in chunks of 256, batch-embeds descriptions, upserts to `capability_embeddings`, and registers `CapabilityProvider` instances into `CapabilityRegistry`. Domain partitioning is via `namespace` (e.g. `erp.po`, `crm.lead`, `accounting.gl`); the factory itself is domain-neutral. Supports hot-reload via Postgres `LISTEN capability_specs_changed` (trigger on all mutations).
-
-`CapabilityRegistry` gains:
-- `register_bulk_factory(factory)` — register a `BulkCapabilityFactory`
-- `run_bulk_load()` — run all registered factories (boot time)
-
-### Artifact bridge
-
-`ArtifactBridge` (`common::artifact` + `agent_core::bridge`) materialises `ToolOutput.artifacts` after each tool invocation, creating MinIO objects and `workspace_nodes` rows and triggering best-effort indexing for text-like outputs.
-
-Migration: `20260507000200_capability_specs.up.sql`
-
-### OTel GenAI Metrics
-
-New metrics in `common::metrics`:
-| Metric | Type | Description |
-|---|---|---|
-| `gen_ai.semantic_router.cache_hit` | Counter | Cache hits |
-| `gen_ai.semantic_router.top_k` | Histogram | Capabilities selected per turn |
-| `gen_ai.semantic_router.distance` | Histogram | Cosine distance of top-1 hit |
-| `gen_ai.tool.calls` | Counter | Total tool calls dispatched |
-| `capability_router_select_seconds` | Histogram | Router select latency |
-| `capability_invoke_seconds` | Histogram | Capability invocation latency |
-
-### Tower Quota Middleware (`agent_gateway::mw::router_quota`)
-
-`RouterQuotaLayer` wraps the `/v1/agent/completions` route, injecting `RouterQuotaConfig` into request extensions for per-turn tool/invoke budget enforcement.
-
-Env vars: `CONUSAI_MAX_TOOLS_PER_TURN` (default 25), `CONUSAI_MAX_INVOKES_PER_TURN` (default 10).
-
-### New `AppState` fields (v0.3.2)
-
-| Field | Type | Purpose |
-|---|---|---|
-| `semantic_router` | `Arc<SemanticCapabilityRouter>` | Pre-filters tools to top-K per turn |
-
-### Realtime Capability-Spec Hot-reload
-
-`RealtimeService::subscribe_capability_spec_changes()` returns an unbounded channel receiver for `(namespace, tool_name)` tuples. The caller spawns a task that calls `CapabilitySpecFactory::reload_one(registry, ns, tool_name)` on each notification.
-
----
-
-## v0.3 Additions (2026-05-05)
-
-| Concept | Canonical name | Location |
-|---|---|---|
-| Cron-driven job trait | `ScheduledJob` | `jobs::ScheduledJob` |
-| On-demand async job trait | `BackgroundJob` | `jobs::BackgroundJob` |
-| In-memory task tracker | `JobExecutor` | `jobs::JobExecutor` |
-| Task lifecycle event | `TaskEvent` | `jobs::TaskEvent` |
-| Task status snapshot | `TaskStatus` | `jobs::TaskStatus` |
-| Job + executor registry | `JobRegistry` | `jobs::JobRegistry` |
-| Cron scheduler service | `JobSchedulerService` | `jobs::JobSchedulerService` |
-| Admin facade | `JobAdmin` | `jobs::JobAdmin` |
-| Video transcription | `TranscribeVideoCapability` | `agent_gateway::capabilities::TranscribeVideoCapability` |
-
-### New REST endpoints (v0.3)
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `GET` | `/v1/tasks` | tenant JWT | List background task statuses |
-| `GET` | `/v1/tasks/{id}` | tenant JWT | Get a single task status |
-| `GET` | `/v1/tasks/{id}/sse` | tenant JWT | SSE stream for task lifecycle events |
-| `GET` | `/admin/jobs` | super_admin JWT | List all registered jobs |
-| `GET` | `/admin/jobs/{name}` | super_admin JWT | Get single job summary |
-| `POST` | `/admin/jobs/{name}/run` | super_admin JWT | Enqueue a background job immediately |
-| `GET` | `/admin/tasks` | super_admin JWT | List all task statuses (admin view) |
-
----
-
-## v0.2 Breaking Renames
-
-| Old name (v0.1) | New canonical name (v0.2) | Location |
-|---|---|---|
-| `GeneralAgent` | `Agent` | `agent_core::Agent` |
-| `GeneralAgentBuilder` | `AgentBuilder` | `agent_core::AgentBuilder` |
-| `LlmProvider` | `CompletionProvider` | `agent_core::CompletionProvider` |
-| `ToolProvider` | `CapabilityProvider` | `agent_core::tools::provider::CapabilityProvider` |
-| `ToolProviderFactory` | `CapabilityFactory` | `agent_core::tools::provider::CapabilityFactory` |
-| `LlmChainTool` | `PromptChainCapability` | `agent_core::PromptChainCapability` |
-| `RegisteredToolCard` / `ToolCard` | `CapabilityCard` | `agent_core::CapabilityCard` |
-| `RegisteredToolAdmin` | `CapabilityAdmin` | `agent_core::CapabilityAdmin` |
-
-**Askama v0.x UI decision:** the Foundry server-rendered UI remains Askama for the v0.x series. A Next.js frontend is an optional future addon that can consume existing `/v1/*`, SSE, and MCP endpoints.
+| `apps/backend/` | Rust 1.95, Axum 0.8, Rig 0.36 | Multitenant agent gateway, capability registry, jobs, indexer, OpenAPI/MCP, Foundry UI |
+| `apps/web/` | SvelteKit 2, Svelte 5, Node 22 | Public web app (Node adapter); SSR session bridge to gateway |
+| `apps/browser-shell/` | SvelteKit + Tauri 2 (Rust) | Cross-platform desktop + mobile shell: tabs, session recorder, device auth |
+| `packages/sdk/` | TypeScript | Typed gateway client (`createConusSdk`); endpoints, streaming, types |
+| `packages/types/` | TypeScript | Shared domain types mirroring Rust crates (`SessionTrace`, `WorkspaceNode`, `CapabilityCard`, `ControlMessage`) |
+| `packages/ui/` | Svelte 5 component library | Design system, stores, capability renderer registry, features (chat, workspace, auth) |
+| `services/current-time/` | Python (FastAPI) | Reference self-registering MCP capability service |
+| `e2e/` | Playwright + WDIO + Appium | Cross-platform end-to-end suites (web, iOS web, shell-macos, native iOS) |
 
 ---
 
 ## 1. Technology Stack
 
+### Backend (Rust)
+
 | Layer | Technology | Version |
 |---|---|---|
-| Language | Rust | 1.95 (stable) |
-| Edition | Rust 2024 | — |
-| WASM target | `wasm32-wasip1` | — |
+| Language | Rust (edition 2024) | 1.95 stable |
+| WASM target | `wasm32-wasip1` + Component Model | wasmtime 44 |
 | AI framework | `rig-core` | 0.36 |
-| Rig Postgres | `rig-postgres` | 0.2.5 |
-| HTTP framework | `axum` | 0.8 (+ `axum-extra` 0.10) |
-| Async runtime | `tokio` | 1 (full features) |
-| Vector DB | Postgres + pgvector (via `sqlx`) | pg17 + pgvector |
-| Object storage | `object_store` | 0.11 (aws feature) |
-| WASM runtime | `wasmtime` + `wasmtime-wasi` | 44 |
-| Embeddings (optional) | `fastembed` | 5 (feature-gated: `local-embeddings`) |
-| Auth | `jsonwebtoken` | 9 |
-| Templates | `askama` | 0.12 |
+| HTTP framework | `axum` (+ `axum-extra`, `tower`, `tower-http`) | 0.8 |
+| Async runtime | `tokio` | 1.x (full features) |
+| **Metadata store** | **`redb`** (embedded KV, postcard serde) | 2.x |
+| **Vector DB** | **`qdrant-client`** (Qdrant 1.17) | 1.x |
+| Object storage | `object_store` (AWS feature) → RustFS / MinIO / S3 | 0.11 |
+| Embeddings | `fastembed` (feature `local-embeddings`) or OpenAI HTTP | 5.x |
+| Auth | `jsonwebtoken`, `hmac`, `sha2`, `blake3` | 9 / 0.12 / 0.10 / 1 |
+| Templates | `askama` (gateway UI) | 0.12 |
 | OpenAPI | `utoipa` + `utoipa-swagger-ui` | 5 / 9 |
-| Observability | `opentelemetry` + OTLP + Prometheus | 0.27 |
-| **Scheduled jobs** | **`tokio-cron-scheduler`** | **0.13** |
-| Configuration | `figment` | 0.10 |
-| Hashing | `sha2` 0.10, `blake3` 1, `hmac` 0.12 | — |
-| Builder patterns | `bon` | 3 |
-| IDs | `ulid` 1.1, `uuid` 1 | — |
-| Serde | `serde` 1, `serde_json` 1, `toml` 0.8 | — |
-| Schema validation | `schemars` 0.8 | — |
-| Encoding | `base64` 0.22 | — |
-| Error handling | `thiserror` 2, `anyhow` 1 | — |
-| Futures | `futures` 0.3, `tokio-stream` 0.1 | — |
+| Observability | `opentelemetry` 0.27 (OTLP + Prometheus) | — |
+| Scheduled jobs | `tokio-cron-scheduler` | 0.13 |
+| Config | `figment` (TOML + env, prefix `CONUSAI_`) | 0.10 |
+| Caching | `moka` (futures) | 0.12 |
+| Builder DSL | `bon` | 3 |
+| IDs | `ulid`, `uuid` v4/v5 | 1.1 / 1 |
+| Errors | `thiserror` 2, `anyhow` 1 | — |
+| Wire format | `serde_json` 1, `toml` 0.8, `postcard` 1 | — |
+
+### Frontend (Web + Shell)
+
+| Layer | Technology | Version |
+|---|---|---|
+| Package manager | **pnpm** (workspaces) | 10.13 |
+| Build / orchestration | **Turborepo** | — |
+| Linter / formatter | **Biome** | — |
+| Web framework | SvelteKit (Node adapter) | 2.21 |
+| Shell framework | SvelteKit (Static adapter) inside Tauri 2 | — |
+| Component runtime | Svelte | 5.33 (runes) |
+| Tauri plugins | `dialog`, `stronghold` (secure device-token storage) | 2.x |
+| Type checking | `svelte-check` + `typescript` | 5.7 |
+| Unit tests | `vitest` | 2.1 |
+| E2E (web/shell-web/ios-web) | `@playwright/test` | ≥ 1.49 |
+| E2E (native shells) | `webdriverio` + `appium` + `appium-xcuitest-driver` | 9.x / 3.4 / 11.3 |
+
+### Infrastructure services
+
+| Service | Image | Purpose |
+|---|---|---|
+| `qdrant` | `qdrant/qdrant:v1.17.0` | Vector ANN (collections `capability_embeddings`, `content_embeddings`, 768-dim cosine) |
+| `rustfs` | `quay.io/minio/minio:RELEASE.2025-04-22` (MinIO drop-in for RustFS S3 API) | S3-compatible object storage; default bucket `workspace` |
+| `rustfs-init` | (same) | Creates the `workspace` bucket on first start |
+| `marker-api` | `ghcr.io/vikparuchuri/marker:latest` (profile `marker`) | PDF → markdown conversion service |
+| `agent-gateway` | built from `apps/backend/Dockerfile` | HTTP API + Foundry UI |
+| `current-time` | built from `services/current-time/` | Demo self-registering MCP service |
+| `web` | `node:22-slim` (profile `web`) | SvelteKit Node build |
+| `jaeger` | `jaegertracing/all-in-one:1.58` (profile `observability`) | Trace UI |
+| `otel-collector` | `otel/opentelemetry-collector-contrib:0.123` (profile `observability`) | OTLP gRPC/HTTP receiver |
 
 ---
 
 ## 2. Repository Layout
 
-> Updated to reflect the SvelteKit frontend (`apps/web`) and browser shell (`apps/browser-shell`) additions.
-
 ```
 conusai-platform/
-├── Cargo.toml                  # workspace definition (apps/backend, apps/web, apps/browser-shell)
-├── docker-compose.yml          # postgres, minio, gateway, web, jaeger, otel-collector
-├── renovate.json               # Renovate dependency-update config
-├── Makefile
-├── start.sh / stop.sh          # orchestration helpers
+├── Cargo.toml                  # Rust workspace (apps/backend/crates/*, evals, src-tauri)
+├── package.json                # pnpm workspace + scripts
+├── pnpm-workspace.yaml         # apps/* and packages/*
+├── pnpm-lock.yaml
+├── turbo.json                  # Turborepo task graph
+├── biome.json                  # Linter/formatter config
+├── playwright.config.ts        # Top-level e2e config (projects: web, ios, shell-macos)
+├── docker-compose.yml          # qdrant, rustfs, gateway, current-time, web, jaeger, otel
+├── justfile, Makefile, start.sh, stop.sh   # Orchestration helpers
+├── rust-toolchain.toml         # stable + wasm32-wasip1
+├── renovate.json
+│
 ├── apps/
-│   ├── backend/                # Rust backend crates (common, agent-core, jobs, agent-gateway, evals)
-│   │   ├── Dockerfile          # 4-stage cargo-chef image
+│   ├── backend/                            # Rust agent gateway monolith
+│   │   ├── Dockerfile                      # 4-stage cargo-chef build
 │   │   ├── rust-toolchain.toml
+│   │   ├── start.sh / stop.sh / start-verify.sh
+│   │   ├── scripts/                        # otel-collector.yaml etc.
+│   │   ├── capabilities/                   # On-disk capability bundles (TOML + WASM)
 │   │   ├── crates/
-│   │   │   ├── common/         # shared types, error, telemetry, memory traits
-│   │   │   ├── agent-core/     # agent runtime, LLM abstraction, tool registry, chains, memory impls
-│   │   │   ├── jobs/           # ScheduledJob / BackgroundJob traits, JobExecutor, JobSchedulerService
-│   │   │   └── agent-gateway/  # Axum HTTP gateway, UI, OpenAPI docs
-│   │   ├── evals/              # evaluation framework (invoice + OCR suites)
-│   │   └── capabilities/       # zero-code TOML capability definitions
-│   ├── web/                    # SvelteKit frontend (Node 22, served on port 3000)
-│   └── browser-shell/          # Browser Shell — SvelteKit + Tauri app
+│   │   │   ├── common/                     # Shared types, error, telemetry, MCP, audit, artifact, trace, memory traits
+│   │   │   ├── agent-core/                 # LLM registry, capability registry, semantic router, indexing, stores
+│   │   │   ├── jobs/                       # ScheduledJob + BackgroundJob traits, JobExecutor, scheduler
+│   │   │   └── agent-gateway/              # Axum HTTP + WS + UI + middleware + routes
+│   │   └── evals/                          # Eval CLI (invoice, OCR runners + scorers)
+│   │
+│   ├── web/                                # SvelteKit public app
+│   │   ├── src/
+│   │   │   ├── app.html, app.d.ts, hooks.server.ts
+│   │   │   ├── lib/
+│   │   │   │   ├── sdk.ts                  # Wraps @conusai/sdk for the browser
+│   │   │   │   └── server/{env,session}.ts # SSR-only session HMAC + env validation
+│   │   │   ├── routes/                     # +page, +layout, +error, login/, logout/
+│   │   │   └── tests/
+│   │   ├── e2e/smoke.test.ts
+│   │   ├── svelte.config.js, vite.config.ts, playwright.config.ts
+│   │   └── package.json
+│   │
+│   └── browser-shell/                      # Tauri 2 cross-platform shell
+│       ├── src/                            # SvelteKit (static adapter) UI
+│       │   ├── lib/
+│       │   │   ├── TraceReplayCapability.svelte   # Renderer registered for the `trace.replay` capability
+│       │   │   ├── tauri-stream.ts                # Bridge agent SSE → Svelte store via Tauri events
+│       │   │   ├── sdk.ts                         # SDK bound to gateway base URL
+│       │   │   └── mobile/                        # MobileShell + responsive variants
+│       │   └── routes/                            # +layout, +page
+│       └── src-tauri/                      # Tauri Rust core
+│           ├── Cargo.toml, build.rs, tauri.conf.json
+│           ├── capabilities/{main,ios}-capability.json
+│           ├── icons/, macos/, gen/, e2e/
+│           └── src/
+│               ├── main.rs                 # Entry point → `browser_shell_lib::run()`
+│               ├── lib.rs                  # Tauri builder; injects RECORDER_BRIDGE_JS into tabs
+│               ├── tabs.rs                 # TabManager — multi-webview tab strip
+│               ├── recorder.rs             # SessionRecorder impl; click/input/submit capture; PII redaction
+│               ├── chat_stream.rs          # StreamRegistry — forwards backend SSE to webview as Tauri events
+│               ├── device_auth.rs          # DeviceAuthService + Stronghold-backed token cache
+│               ├── registration.rs         # First-run pairing: POST /admin/devices and persist token
+│               └── telemetry.rs
+│
+├── packages/                               # Shared TS libs (pnpm workspace)
+│   ├── types/src/{domain.ts,index.ts}      # SessionTrace, UserStep, WorkspaceNode, CapabilityCard, ControlMessage, FileToken
+│   ├── sdk/src/                            # Typed client (auth, capabilities, chat, chatApi, client, endpoints, files, glyphs, realtime, shells, threads, types, ui, workspaces)
+│   └── ui/src/lib/
+│       ├── tokens.css, foundry.css         # Design tokens + global styles
+│       ├── assets/                         # Logo, favicon, fonts
+│       ├── stores/                         # featureFlags, modeStore, themeStore, toast
+│       ├── utils/                          # LiveAnnouncer, actions, markdown
+│       ├── capabilities/                   # CapabilityRendererRegistry (per-capability Svelte renderers)
+│       ├── components/                     # AppShell, ArtifactPreview, CapabilityCard, CommandPalette, RecorderControls, TabStrip, ThemeProvider, ThemeScript, ThemeSwitcher, ToastHost, WorkspaceTree
+│       └── features/
+│           ├── AgentChatComposer.svelte
+│           ├── AgentChatStream.svelte
+│           ├── ToolCallCard.svelte
+│           ├── WorkspaceExplorer.svelte
+│           ├── createChatStream.svelte.ts  # Svelte 5 runes-based SSE store
+│           ├── auth/LoginPanel.svelte
+│           └── workspace/{ConfirmDialog,MoveDialog,NewNodeDialog,ShareDialog}.svelte
+│
+├── services/
+│   └── current-time/                       # Self-registering MCP demo (FastAPI + httpx)
+│
+├── e2e/                                    # Top-level cross-platform e2e
+│   ├── fixtures/seed-workspace.ts
+│   ├── helpers/tauri.ts
+│   ├── web/                                # Playwright web suite
+│   ├── ios/{features,responsive}.spec.ts   # iOS Safari (Playwright)
+│   ├── shell-macos/{login,tabs}.spec.ts    # Tauri macOS (Playwright tauri-driver)
+│   └── wdio/                               # WebdriverIO: macos/ios/ios-native configs
+│
+├── workspaces/                             # Tenant workspace mount (indexed by WorkspaceIndexer)
+├── docker/                                 # Auxiliary compose overlays / configs
+├── scripts/                                # generate-icons.py, generate-logo-variants.py, openapi-to-types.sh, png-to-svg.py
+│
 └── docs/
-    ├── arch.md                 # this document
-    ├── browser-shell-plan.md   # Browser Shell architecture and implementation roadmap
-    ├── browser-shell-user-guide.md  # End-user installation and usage guide
-    ├── ui-design.md
-    ├── verify/verify.md
+    ├── arch.md                             # this document
+    ├── plan.md, improve-plan.md, ui-plan.md, ui-design.md
+    ├── auth-plan.md
+    ├── browser-shell-plan.md, browser-shell-user-guide.md
+    ├── capability-authoring-guide.md, capability-gaps-plan.md, capability-gaps-pan.md
+    ├── project-instructions.md
+    ├── branding/
+    ├── ops/signing.md
+    ├── tasks/{agent-memory,agent-migration,app,browser-shell-task,coding-agent,
+    │          generative-survey-cap,generic-agent,hi-performance-task,job-plan,
+    │          local-embeddings,sql-migrations,ui-task}.md
+    ├── verify/{verify.md, files/}
     └── adr/
-    ├── 0004-semantic-capability-router-and-dynamic-prompts.md
-    ├── 006-tauri-browser-shell.md
-    ├── 007-capability-module-rename.md
-    └── 008-multi-platform-shell.md
+        ├── 0003-unified-postgres-cocoindex.md
+        ├── 0003-unified-postgres-vector-search.md
+        ├── 0004-semantic-capability-router-and-dynamic-prompts.md
+        ├── 006-tauri-browser-shell.md
+        ├── 007-capability-module-rename.md
+        └── 008-multi-platform-shell.md
 ```
 
 ---
 
-## 3. Infrastructure
+## 3. High-Level Architecture
 
-### docker-compose.yml (v3.9)
-
-| Service | Image | Ports | Profiles | Purpose |
-|---|---|---|---|---|
-| `postgres` | `timescale/timescaledb-ha:pg17` | 5432 | infra, full | Primary DB — threads, workspaces, audit, pgvector embeddings |
-| `minio` | `quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z` | 9000 (S3), 9001 (Console) | infra, full | S3-compatible object storage |
-| `minio-init` | (same) | — | full | Creates bucket `conusai` on first start |
-| `agent-gateway` | (built locally) | 8080 | full | HTTP API + UI gateway |
-| `jaeger` | `jaegertracing/all-in-one:1.58` | 16686 (UI), 14317 (OTLP) | observability, full | Distributed trace UI |
-| `otel-collector` | `otel/opentelemetry-collector-contrib:0.123.0` | 4317 (gRPC), 4318 (HTTP) | observability, full | OTLP receiver / Jaeger exporter |
-| `web` | `node:22-slim` | 3000 | full | SvelteKit frontend (`apps/web/build`) |
-
-- **Profiles:** `infra` (core services only), `full` (everything, including `web` SvelteKit app), `observability` (tracing stack).
-- **Volumes:** `postgres_data:/var/lib/postgresql/data`, `minio_data:/data`, `./capabilities:/app/capabilities:ro`, `./workspaces:/app/workspaces:rw`.
-- **MinIO dev creds:** `minioadmin` / `minioadmin`.
-- All services declare healthchecks; `agent-gateway` depends on `postgres` (healthy) and `minio-init` (completed).
-
-### Dockerfile — 4-stage cargo-chef build
-
-| Stage | Base | Purpose |
-|---|---|---|
-| `planner` | `rust:1.95-slim` | `cargo chef prepare` → `recipe.json` |
-| `cacher` | `rust:1.95-slim` | `cargo chef cook --release` (dependency layer cache) |
-| `builder` | `rust:1.95-slim` | Full `cargo build --release --bin agent-gateway` |
-| `gateway` | `debian:bookworm-slim` | Stripped runtime image with binary + assets |
-
-Runtime image: `libssl3`, `ca-certificates`, `curl`; exposes 8080; HEALTHCHECK via `curl /health`.
-
-### rust-toolchain.toml
-
-```toml
-channel = "stable"               # Rust 1.95
-targets = ["wasm32-wasip1"]      # WASM capability builds
-components = ["rustfmt", "clippy", "rust-src", "rust-analyzer"]
 ```
-
-### Documentation files
-
-| File | Purpose |
-|---|---|
-| [docs/ui-design.md](ui-design.md) | Design tokens (colour, type, spacing, motion) and component recipes. |
-| [docs/verify/verify.md](verify/verify.md) | End-to-end verification plan — JWT helpers, curl recipes (Phases 0–14). |
-| [docs/adr/0004-semantic-capability-router-and-dynamic-prompts.md](adr/0004-semantic-capability-router-and-dynamic-prompts.md) | ADR for the semantic router and dynamic prompts. |
-| [docs/adr/006-tauri-browser-shell.md](adr/006-tauri-browser-shell.md) | ADR for the browser-shell client and device-token control channel. |
-| [docs/adr/007-capability-module-rename.md](adr/007-capability-module-rename.md) | ADR for the capability module rename from the old tool-centric layout. |
-| [docs/adr/008-multi-platform-shell.md](adr/008-multi-platform-shell.md) | ADR for the cross-platform browser-shell rollout. |
+                             ┌──────────────────────────────────────────────────────────┐
+                             │                      Clients                             │
+                             │                                                          │
+                             │  apps/web (SvelteKit + Node SSR)                         │
+                             │  apps/browser-shell (Tauri: macOS, Win, Linux, iOS, And) │
+                             │  Foundry UI (Askama, served by gateway)                  │
+                             │  External API clients (JWT or X-API-Key)                 │
+                             └──────────────────────────┬───────────────────────────────┘
+                                                        │  HTTPS / WSS
+                                                        ▼
+            ┌──────────────────────────────────────────────────────────────────────────┐
+            │  agent-gateway  (Axum 0.8)                                               │
+            │                                                                          │
+            │  Middleware stack:                                                       │
+            │   TraceLayer → request_id → propagate_trace → api_key → tenant → plan    │
+            │                                                                          │
+            │  Routers: public · /metrics · protected · admin (super-admin) · ui       │
+            │                                                                          │
+            │  Per-turn agent loop:                                                    │
+            │   ConversationService.resolve_for_node → ContextBuilder (6 kB ancestor   │
+            │   context) → SemanticCapabilityRouter.select (Qdrant ANN, top-K) →       │
+            │   RouterQuotaLayer enforces budget → CapabilityProvider.invoke           │
+            │   → ArtifactBridge materialises files → WorkspaceStore.index_content     │
+            └─────────────────┬─────────────────────────────────────────────┬──────────┘
+                              │                                             │
+                              │ Capabilities (dynamic + on-disk + DB)       │ Storage
+                              ▼                                             ▼
+   ┌──────────────────────────────────────────────┐   ┌─────────────────────────────────────┐
+   │  CapabilityRegistry (Arc<Mutex>)             │   │  RedbMetadataStore (single .redb)   │
+   │                                              │   │   - threads / messages              │
+   │  Factories:                                  │   │   - workspace_nodes + idx_path      │
+   │   - McpFactory          (HTTP JSON-RPC 2.0)  │   │   - audit_events                    │
+   │   - WasmFactory         (wasmtime 44)        │   │                                     │
+   │   - ChainFactory(llm)   (PromptChain + Rig)  │   │  QdrantVectorStore (HTTP/gRPC)      │
+   │   - BuiltinFactory      (fs, cargo)          │   │   - capability_embeddings           │
+   │   - DynamicPromptFactory (redb-backed)       │   │   - content_embeddings              │
+   │   - RemoteMcpFactory    (self-registered)    │   │   - 768-dim cosine                  │
+   │   - TraceReplayFactory  (replay session)     │   │                                     │
+   │                                              │   │  RustFsContentStore (object_store)  │
+   │  Bulk: CapabilitySpecFactory                 │   │   - tenants/{id}/workspaces/{path}  │
+   │   - streams capability_specs rows            │   │                                     │
+   │   - hot-reload via redb broadcast            │   │  Files: object_store::AmazonS3      │
+   │                                              │   │   - tenants/{id}/{uuid}/{name}      │
+   │  Built-in: WorkspaceProvider                 │   │                                     │
+   │   (workspace__save_document / list_folders)  │   │  HttpMarkerClient (PDF → markdown)  │
+   └──────────────────────────────────────────────┘   └─────────────────────────────────────┘
+                              │                                             ▲
+                              ▼                                             │
+   ┌──────────────────────────────────────────────┐                         │
+   │  LlmRegistry (single source of truth)        │                         │
+   │   Providers: AnthropicProvider (Rig)         │                         │
+   │   4-step alias resolution:                   │                         │
+   │     1. tenant.preferred_model                │                         │
+   │     2. caller-supplied alias / model         │                         │
+   │     3. plan.default_alias()                  │                         │
+   │     4. registry default binding              │                         │
+   └──────────────────────────────────────────────┘                         │
+                                                                            │
+   ┌──────────────────────────────────────────────┐                         │
+   │  Jobs (cron + on-demand)                     │                         │
+   │   ScheduledJob:                              │                         │
+   │     - CapabilityHealthCheckJob (*/5 min)     │                         │
+   │     - AuditLogCleanupJob       (02:00)       │                         │
+   │   BackgroundJob:                             │                         │
+   │     - VideoTranscriptionJob (Whisper API)    │ ───── enqueues ─────────┘
+   │   JobExecutor — in-memory tracker + SSE      │
+   └──────────────────────────────────────────────┘
+```
 
 ---
 
-## 4. Crates
+## 4. Backend Crates
+
+The Rust workspace is rooted at the **monorepo root** (`/Cargo.toml`) and contains: `apps/backend/crates/{common,agent-core,jobs,agent-gateway}`, `apps/backend/evals`, and `apps/browser-shell/src-tauri`.
 
 ### 4.1 `crates/common` — Shared Utilities
 
-**Purpose:** foundational types and newtypes, unified error hierarchy, HTTP error envelope, telemetry bootstrap, MCP JSON-RPC 2.0 types, WASM loader, layered config, path safety, audit log trait, memory store traits + in-memory implementations, OpenTelemetry metric helpers.
-
-**Key dependencies:** `tokio`, `serde`/`serde_json`, `figment`, `thiserror`/`anyhow`, `tracing`, `tracing-subscriber`, `opentelemetry` 0.27, `opentelemetry_sdk`, `opentelemetry-otlp`, `opentelemetry-prometheus`, `prometheus`, `tracing-opentelemetry`, `wasmtime` 44, `reqwest` 0.13, `uuid`, `chrono`, `ulid`, `async-trait`, `axum`, `utoipa`.
+**Modules** (`src/`):
 
 | File | Purpose |
 |---|---|
-| `src/lib.rs` | Re-exports all modules; `prelude` with `Result`, `ConusAiError`. |
-| `src/types.rs` | Typed ID newtypes — ULID-backed `ThreadId`, `NodeId`; string-backed `TenantId`, `UserId`, `ToolId`. All `serde(transparent)`. |
-| `src/error.rs` | `ConusAiError` enum: `Config`, `Tool`, `Wasm`, `WasmRuntime(String)`, `Mcp`, `Rig(String)`, `Storage`, `Validation`, `NotFound`, `Api { status, message }`, `Io`, `Other`. HTTP error envelope: `ErrorEnvelope { error: ApiErrorBody }` + `ApiErrorKind` discriminated union (`Authentication`, `RateLimit { retry_after }`, `NotFound`, `Validation { field }`, `Agent`, `Internal { request_id }`). `HttpError` builder with `IntoResponse`. All schemas registered via `utoipa::ToSchema`. |
-| `src/config/mod.rs` | `AppConfig { server, capabilities_dir, telemetry, llm }`. `LlmConfig { default, aliases: HashMap<String, LlmAliasConfig>, providers: LlmProvidersConfig }`. `AnthropicProviderConfig { api_key_env, base_url, api_version }`. Default aliases: `opus → anthropic/claude-opus-4-7`, `haiku → anthropic/claude-haiku-4-5-20251001`. Loaded via `figment` (TOML + env override with `CONUSAI_` prefix). |
-| `src/telemetry.rs` | `TelemetryGuard` (RAII shutdown). `init(service_name, log_level) -> (TelemetryGuard, prometheus::Registry)`. JSON `tracing-subscriber` + optional OTLP trace/metrics export. Single `SdkMeterProvider` with Prometheus + OTLP `PeriodicReader` (avoids duplicate-registry panic). |
-| `src/http_client.rs` | `build_client()` → `reqwest::Client` (60 s timeout, UA `conusai-platform/0.1`). |
-| `src/mcp.rs` | `JsonRpcRequest` / `JsonRpcResponse` / `JsonRpcError` (JSON-RPC 2.0). |
-| `src/wasm.rs` | `WasmLoader` wrapping `wasmtime::Engine`: `load_bytes`, `load_file`, `new_store`. |
-| `src/db.rs` | `create_pool(database_url) -> PgPool`. `PostgresPool` type alias for `sqlx::PgPool`. Shared Postgres connection pool construction. |
-| `src/limits.rs` | `MAX_PROMPT_TOKENS=128k`, `MAX_RESPONSE_TOKENS=16k`, `MAX_CAPABILITY_SIZE_BYTES=50 MB`, `MAX_WASM_SIZE_BYTES=10 MB`, `REQUEST_TIMEOUT_SECS=120`, `MAX_CONCURRENT_AGENTS=64`, `MAX_MESSAGES_PER_THREAD=10_000`, `MAX_MESSAGES_BEFORE_SUMMARY=50`. |
-| `src/path_safety.rs` | `safe_join(root, rel)` — rejects path components containing `..`. `join_under_tenant(root, tenant_id, rel)`. |
-| `src/audit.rs` | `AuditEvent { id (ULID), tenant_id, timestamp, action, tool?, status, duration_ms?, metadata }`. `AuditStore` async trait: `append`, `list(tenant, limit)`. |
-| `src/metrics.rs` | OTel metric definitions: `tool_invocations`, `tool_errors`, `tool_duration_ms` on meter `conusai.agent`; `storage_duration_ms`, `storage_errors` on meter `conusai.storage`; `llm_requests`, `llm_input_tokens`, `llm_output_tokens`. `record_error(span, err)`. `kv(k, v)` convenience constructor. |
-| `src/memory/thread.rs` | `Thread { id (ThreadId/ULID), tenant_id, title, created_at, last_active, message_count, summary, metadata }`. `Message { role, content, tool_calls, timestamp, seq }`. `ToolCall { id, name, input, output }`. |
-| `src/memory/workspace.rs` | `NodeKind { Folder, Conversation, File }`. `WorkspaceNode { id (ULID), tenant_id, owner_id, parent_id, kind, name, virtual_path, last_modified, shared_with, metadata }`. Helpers: `new_folder`, `new_conversation`, `validate_name` (rejects empty/>255/`/`/`\`/`..`/leading `.`; enforces `.md` for conversations), `join_virtual_path`, `effective_user_id` (maps `None` → `"__dev__"`). |
-| `src/memory/store.rs` | `ThreadStore` trait: `create`, `get`, `messages`, `append`, `list(after cursor)`, `set_summary`, `set_title`. `WorkspaceStore` trait: `create_folder`, `create_conversation`, `list_accessible_children`, `get_accessible_node`, `get_ancestors`, `move_node`, `delete_node`, `share_node`, `unshare_node`, `bump_last_modified`, `search_nodes`, `index_content`, `bind_thread`. `WorkspaceContentStore` trait: `read`, `write`, `delete`. All take `tenant_id: &str` + `user_id: &str`. |
-| `src/memory/inmem.rs` | `InMemoryThreadStore`, `InMemoryWorkspaceStore`, `InMemoryWorkspaceContent`, `InMemoryAuditStore` — zero-dependency `Mutex<HashMap<…>>` implementations. Full ACL, recursive delete, substring search. Activated via `CONUSAI_TEST_MODE=1`. |
-
-**Tests (22):** path-traversal rejection, safe joins, MCP serialization, `ApiError` fields, limit invariants, thread/message/tool-call serde roundtrips, `WorkspaceNode` serde, every `validate_name` branch, `join_virtual_path`, `effective_user_id`.
-
----
+| `lib.rs` | Re-exports modules + `prelude` (`Result`, `ConusAiError`, tracing macros) |
+| `types.rs` | Typed ID newtypes — `ThreadId`/`NodeId` (ULID-backed), `TenantId`/`UserId`/`ToolId` (string-backed). All `serde(transparent)` |
+| `error.rs` | `ConusAiError` (`Config`, `Tool`, `Wasm`, `WasmRuntime`, `Mcp`, `Rig`, `Storage`, `Validation`, `NotFound`, `Api{status,message}`, `Io`, `Other`). `ErrorEnvelope` + `ApiErrorBody` + `ApiErrorKind` (`Authentication`, `RateLimit{retry_after}`, `NotFound`, `Validation{field}`, `Agent`, `Internal{request_id}`). `HttpError` builder + `IntoResponse`. All `ToSchema` for OpenAPI |
+| `config/mod.rs` | `AppConfig { server, capabilities_dir, telemetry, llm }`. `LlmConfig { default, aliases, providers }`. Figment TOML + env (`CONUSAI_` prefix) |
+| `telemetry.rs` | `init(service, log_level) -> (TelemetryGuard, prometheus::Registry)`. JSON tracing-subscriber + OTLP traces + single `SdkMeterProvider` (Prometheus + OTLP `PeriodicReader`) |
+| `http_client.rs` | `build_client()` — `reqwest` with 60 s timeout, UA `conusai-platform/0.1` |
+| `mcp.rs` | `JsonRpcRequest` / `JsonRpcResponse` / `JsonRpcError` (JSON-RPC 2.0) |
+| `wasm.rs` | `WasmLoader` wrapping `wasmtime::Engine` |
+| `limits.rs` | Hardcoded caps: `MAX_PROMPT_TOKENS=128k`, `MAX_RESPONSE_TOKENS=16k`, `MAX_CAPABILITY_SIZE_BYTES=50 MB`, `MAX_WASM_SIZE_BYTES=10 MB`, `REQUEST_TIMEOUT_SECS=120`, `MAX_CONCURRENT_AGENTS=64`, `MAX_MESSAGES_PER_THREAD=10_000`, `MAX_MESSAGES_BEFORE_SUMMARY=50` |
+| `path_safety.rs` | `safe_join(root, rel)` — rejects `..`; `join_under_tenant(root, tenant_id, rel)` |
+| `audit.rs` | `AuditEvent { id (ULID), tenant_id, timestamp, action, tool?, status, duration_ms?, metadata }`; `AuditStore` async trait (`append`, `list(tenant, limit)`) |
+| `metrics.rs` | OTel meters `conusai.agent` (`tool_invocations`, `tool_errors`, `tool_duration_ms`, `llm_requests`, `llm_input_tokens`, `llm_output_tokens`, semantic router + GenAI counters/histograms) and `conusai.storage` (`storage_duration_ms`, `storage_errors`) |
+| `eval.rs` | Eval framework shared types |
+| `artifact.rs` | **`Artifact { name, mime_type, data?, source_url?, metadata }`** and **`ToolOutput { content, artifacts, metadata }`** — canonical tool result envelope materialised by `ArtifactBridge` |
+| `trace.rs` | **Browser-shell session capture types**: `StepKind` (Click/Input/Submit/Navigate/Scroll), `UserStep`, `SessionTrace`, `SessionRecorder` trait (Tauri/headless/mobile), `TraceSource` trait (load JSON from any backing store) |
+| `prompt/template.rs` | `PromptTemplate` — `{{key.subkey}}` mustache-like interpolation over `serde_json::Value`. No external template engine |
+| `memory/thread.rs` | `Thread { id, tenant_id, title, created_at, last_active, message_count, summary, metadata }`; `Message { role, content, tool_calls, timestamp, seq }`; `ToolCall { id, name, input, output }` |
+| `memory/workspace.rs` | `NodeKind { Folder, Conversation, File }`; `WorkspaceNode { id, tenant_id, owner_id, parent_id, kind, name, virtual_path, last_modified, shared_with, metadata }`; helpers `new_folder`, `new_conversation`, `validate_name`, `join_virtual_path`, `effective_user_id` |
+| `memory/store.rs` | `ThreadStore`, `WorkspaceStore`, `WorkspaceContentStore` async traits — all take `tenant_id` + `user_id`. ACL: `tenant_id = X AND (owner_id = U OR shared_with @> [U])` |
+| `memory/inmem.rs` | `InMemoryThreadStore`, `InMemoryWorkspaceStore`, `InMemoryWorkspaceContent`, `InMemoryAuditStore` — zero-dependency `Mutex<HashMap<…>>`; activated by `CONUSAI_TEST_MODE=1` |
+| `memory/tests.rs` | Lib tests covering serde + ACL + validation |
 
 ### 4.2 `crates/agent-core` — Agent Runtime
 
-**Purpose:** LLM abstraction layer, Rig integration, tool registry + discovery, tool execution (MCP, WASM, chain, native), tenant context, conversation service, invoice/contract/OCR pipelines, Postgres-backed stores (thread, workspace, audit, vector), MinIO workspace content, workspace indexer + embedding service, realtime broadcast service, workspace context builder, prompt templating, agent hooks, super-admin capability CRUD.
+**Top-level modules** (`src/`): `agent`, `bridge`, `capabilities`, `chains`, `context`, `indexing`, `llm`, `memory`, `prompt`, `realtime`, `store`, `vector_store`.
 
-**Key dependencies:** all `common` deps + `rig-core` 0.36, `rig-postgres` 0.2.5, `schemars` 0.8, `base64` 0.22, `sha2`, `blake3`, `bon` 3, `object_store` 0.11.
+#### LLM abstraction (`src/llm/`)
 
-#### LLM abstraction layer (`src/llm/`)
-
-Single source of truth for all model access. No route, chain, or memory module constructs a provider client directly.
+Single source of truth for all model access — no route, chain, or hook constructs a provider client directly.
 
 | File | Purpose |
 |---|---|
-| `llm/types.rs` | `LlmRequest` (builder via `bon`): `model`, `messages: Vec<rig::Message>`, `temperature`, `max_tokens`, `tools: Vec<Value>`, `tenant: Option<TenantId>`. `LlmResponse { content, usage: Option<LlmUsage>, finish_reason }`. `LlmUsage { input_tokens, output_tokens }`. `LlmChunk { delta, finish_reason }`. `LlmStream = Pin<Box<dyn Stream<Item=Result<LlmChunk, LlmError>> + Send>>`. `LlmBinding { provider: String, model: String }`. |
-| `llm/error.rs` | `LlmError`: `Config(String)`, `Request(String)`, `Response(String)`, `UnknownAlias { alias }`, `ProviderNotFound { name }`, `Streaming(String)`. |
-| `llm/provider.rs` | `CompletionProvider` async trait (dyn-safe via `async_trait`): `name()`, `supports_tools()` (default true), `supports_vision()` (default false), `supports_streaming()` (default true), `complete(req) -> Result<LlmResponse>`, `stream(req) -> Result<LlmStream>`. |
-| `llm/registry.rs` | `LlmRegistry { providers, aliases, default: LlmBinding }`. Resolution order in `resolve_binding(alias_or_model, tenant)`: (1) `tenant.preferred_model`, (2) caller-supplied alias/model, (3) `tenant.plan.default_alias()`, (4) `self.default`. `from_config(LlmConfig, providers_map)`. `verify_llm_providers` validates all aliases at startup. |
-| `llm/providers/anthropic.rs` | `AnthropicProvider { client: rig::providers::anthropic::Client }`. `from_env()` reads `ANTHROPIC_API_KEY`. `supports_vision() = true`. `stream()` uses Rig 0.36 native SSE (`CompletionModel::stream`) mapping `StreamedAssistantContent::Text` → `LlmChunk`. All calls `#[instrument]`. |
-| `llm/streaming.rs` | OpenAI-compatible SSE stream helpers. |
+| `types.rs` | `LlmRequest` (`bon` builder: `model`, `messages: Vec<rig::Message>`, `temperature`, `max_tokens`, `tools: Vec<Value>`, `tenant`), `LlmResponse { content, usage, finish_reason }`, `LlmUsage`, `LlmChunk`, `LlmStream` (`Pin<Box<dyn Stream<Item=Result<LlmChunk,LlmError>> + Send>>`), `LlmBinding { provider, model }` |
+| `error.rs` | `LlmError`: `Config`, `Request`, `Response`, `UnknownAlias`, `ProviderNotFound`, `Streaming` |
+| `provider.rs` | `CompletionProvider` async trait: `name`, `supports_tools`, `supports_vision`, `supports_streaming`, `complete`, `stream` |
+| `registry.rs` | `LlmRegistry { providers, aliases, default }`; 4-step `resolve_binding` (tenant → caller → plan → default); `verify_llm_providers` validates at boot |
+| `streaming.rs` | OpenAI-compatible SSE helpers |
+| `providers/anthropic.rs` | `AnthropicProvider` wrapping `rig::providers::anthropic::Client`; `from_env()` reads `ANTHROPIC_API_KEY`; streams via Rig 0.36 native SSE (`CompletionModel::stream` → `StreamedAssistantContent::Text` → `LlmChunk`); `supports_vision = true` |
 
 #### Agent subsystem (`src/agent/`)
 
 | File | Purpose |
 |---|---|
-| `agent/builder.rs` | `AgentBuilder` — fluent: `model`, `preamble`, `max_tokens`, `with_tenant`, `build`. Enforces `plan.max_tokens()` cap. `build_for_tenant` convenience constructor. `Agent::prompt(text)` attaches `TracingHook` + `max_turns` from plan, calls `rig::Agent::prompt(...).max_turns(...).with_hook(...)`. |
-| `agent/hooks.rs` | `TracingHook { tenant_id, plan, thread_id }` implements `rig::agent::PromptHook<M>`. Emits `info!` on `on_completion_call` and `on_tool_call`. `PermissionHook` — future extension point for ACL checks. |
-| `agent/runtime.rs` | `AgentRuntime { agent: Agent, registry: CapabilityRegistry }`. `for_tenant(model, preamble, registry, tenant)`. `run(input)`. `map_rig_error(msg)` — pattern-matches Rig error messages to typed `HttpError` variants. |
+| `builder.rs` | `Agent`, `AgentBuilder` (`model`, `preamble`, `max_tokens`, `with_tenant`, `build`). Enforces `plan.max_tokens()`. `prompt(text)` attaches `TracingHook` and `plan.max_turns()` |
+| `hooks.rs` | `TracingHook { tenant_id, plan, thread_id }` implements `rig::agent::PromptHook<M>` (`on_completion_call`, `on_tool_call`). `PermissionHook` for future ACL checks |
+| `runtime.rs` | `AgentRuntime`; `map_rig_error(msg)` pattern-matches Rig error strings to typed `HttpError` |
 
 #### Context subsystem (`src/context/`)
 
 | File | Purpose |
 |---|---|
-| `context/tenant.rs` | `UserRole { User, Admin, SuperAdmin }` (default `User`). `PlanTier { Free, Pro, Enterprise }` with `max_tokens()` (4k/16k/128k), `max_turns()` (3/8/20), `rate_limit_rpm()` (10/60/600), `default_alias()` (`haiku`/`opus`/`opus`). `TenantContext { tenant_id, user_id, plan, role, workspace_root, preferred_model? }` with `tenant_root()`, `safe_path(rel)`, `storage_prefix()`, `system_prompt()`, `span_fields()`. `TenantClaims { sub, tenant_id, plan, role, exp }` for JWT decode. |
-| `context/conversation.rs` | `ConversationService` async trait: `create(tenant, node_id?)`, `append_message`, `load_history`, `resolve_for_node` (lazy thread binding), `list(tenant, limit, after)`, `get`. `DefaultConversationService { thread_store, workspace_store }` — coordinates thread create + `WorkspaceStore::bind_thread`. |
-| `context/mod.rs` | `ConversationContext { id: Uuid, system_prompt?, history: Vec<HistoryEntry> }` with `push_user`, `push_assistant`, `to_rig_messages()`. |
+| `tenant.rs` | `UserRole { User, Admin, SuperAdmin }`, `PlanTier { Free, Pro, Enterprise }` with `max_tokens()` (4 k / 16 k / 128 k), `max_turns()` (3 / 8 / 20), `rate_limit_rpm()` (10 / 60 / 600), `default_alias()` (`haiku` / `opus` / `opus`). `TenantContext { tenant_id, user_id, plan, role, workspace_root, preferred_model }` with `tenant_root`, `safe_path`, `storage_prefix`, `system_prompt`, `span_fields`. `TenantClaims { sub, tenant_id, plan, role, exp }` |
+| `conversation.rs` | `ConversationService` trait: `create`, `append_message`, `load_history`, `resolve_for_node` (lazy bind), `list`, `get`. `DefaultConversationService { thread_store, workspace_store }` |
+| `mod.rs` | `ConversationContext` — message history → `rig::Message` |
 
 #### Capabilities subsystem (`src/capabilities/`)
 
 | File | Purpose |
 |---|---|
-| `manifest.rs` | `ToolManifest { name, version, description, kind, tools: Vec<ToolDef>, config, tags, namespace, chain, tenant_scope, enabled, search_keywords }`. `ToolKind { Mcp, Wasm, Chain, Docker, Native, DynamicPrompt, RemoteMcp }` (`serde rename_all = "lowercase"`). `ToolDef { name, description, input_schema }`. `LlmChainConfig { model, system_prompt?, prompt_template, vision, max_tokens, output_schema? }`. `from_toml`, `from_file`, `embedding_text`. |
-| `card.rs` | `CapabilityCard { id: Uuid, manifest, source_dir: PathBuf, embedding_id?, enabled, last_error?, registered_at, updated_at, provider: Option<Arc<dyn CapabilityProvider>> }`. |
-| `provider.rs` | `CapabilityProvider` async trait: `manifest()`, `invoke(tool_name, input, tenant) -> Result<Value>`, `tool_definitions()` (default impl — Anthropic format), `invoke_typed<I,O>` (default impl). `CapabilityFactory` trait: `supports(kind, name) -> bool`, `create(card) -> Result<Arc<dyn CapabilityProvider>>`. `BulkCapabilityFactory` loads many capabilities from a data source. |
-| `registry.rs` | `CapabilityRegistry { cards, factories, bulk_factories, namespace_index }`. `with_default_factories(llm)` pre-registers `McpFactory`, `WasmFactory`, `ChainFactory(llm)`, `BuiltinFactory`; `with_all_factories(llm, pool)` also adds `DynamicPromptFactory` and `TraceReplayFactory` when Postgres is available. Lifecycle: `register`, `unregister`, `replace`, `set_enabled`, `reload_capability(dir)`, `register_bulk_factory`, `run_bulk_load`. Queries: `get`, `get_provider`, `all`, `all_enabled`, `search_by_tag`, `namespace_children(prefix)`. `load_from_dir(dir)`. |
-| `discovery.rs` | `CapabilityDiscovery::from_env()` reads `CONUSAI_CAPABILITIES_DIR` (default `./capabilities`). `discover_into(&mut registry)`. |
-| `store.rs` | `RegisteredToolState { enabled, created_at, updated_at }`. `RegisteredToolStore` trait: `list`, `read_manifest`, `write_manifest`, `write_wasm`, `read_state`, `write_state`, `delete`, `capability_dir`. `FilesystemStore` — atomic writes via `.tmp` → rename. |
-| `validator.rs` | `RegisteredToolValidator`: `validate_name` (regex `^[a-z0-9-]{2,64}$`), `validate_manifest`, `validate_wasm`. `ValidationReport { errors: Vec<RegisteredToolValidationError>, warnings: Vec<String> }`. |
-| `admin.rs` | `CapabilityAdmin` — coordinates `FilesystemStore` + `CapabilityRegistry` + `RegisteredToolValidator` + `AuditStore`. Methods: `list`, `get`, `get_manifest_toml`, `create`, `update`, `set_enabled`, `delete`, `reload`, `reload_all`, `test_invoke`. `AdminLimits { max_capabilities: 64, max_manifest_bytes: 65536, max_wasm_bytes: 8 MiB }` (env-overridable). `build_admin(registry, audit_store)` factory. |
-| `executor.rs` | `ToolExecutor::invoke(registry, cap_name, tool_name, input, tenant)`. `#[instrument]` span: `tool.cap`, `tool.name`, `tenant_id`, `error.type`. Metrics: `tool_invocations`, `tool_duration_ms`, `tool_errors`. |
-| `mcp_adapter.rs` | `McpAdapter` — JSON-RPC 2.0 HTTP client: `call`, `list_tools`, `call_tool`. |
-| `wasm_loader.rs` | `WasmToolLoader` (wraps `wasmtime::Engine`). `load(card)`, `invoke_tool(card, tool, input)`. |
-| `providers/chain.rs` | `InvoiceProvider`, `ContractProvider`, `OcrProvider` — thin adapters to `*Pipeline` structs. `PromptChainCapability` path for data-driven manifests with `[chain]` block. `ChainFactory::new(llm)`. |
-| `providers/dynamic_prompt.rs` | `DynamicPromptCapability` + `DynamicPromptFactory` — DB-backed prompt versioning and runtime loading. |
-| `providers/remote_mcp.rs` | `RemoteMcpCapability` + `RemoteMcpFactory` — self-registered external MCP services. |
-| `providers/wasm.rs` | `WasmProvider` + `WasmFactory`. |
-| `providers/builtin.rs` | `BuiltinProvider` + `BuiltinFactory`. Routes `read_file`/`write_file`/`run_cargo` to `builtin/{fs,cargo}`. |
-| `builtin/fs.rs` | `read_file` / `write_file` — tenant-scoped via `safe_join`. Uses `tokio::fs`. |
-| `builtin/cargo.rs` | `run_cargo` — allowlisted subcommands (`check`, `test`, `build`, `clippy`, `fmt`) via `tokio::process::Command`; returns `{stdout, stderr, exit_code}`. |
-| `builtin/card.rs` | `builtin_tool_card()` — `CapabilityCard` with `kind: Native` and full JSON schemas for `read_file`, `write_file`, `run_cargo`. |
+| `manifest.rs` | `ToolManifest { name, version, description, kind, tools, config, tags, namespace, chain, tenant_scope, enabled, search_keywords }`; `ToolKind { Mcp, Wasm, Chain, Docker, Native, DynamicPrompt, RemoteMcp }`; `ToolDef`; `LlmChainConfig { model, system_prompt?, prompt_template, vision, max_tokens, output_schema? }`; `from_toml`, `from_file`, `embedding_text` |
+| `card.rs` | `CapabilityCard { id, manifest, source_dir, embedding_id?, enabled, last_error?, registered_at, updated_at, provider }` |
+| `provider.rs` | `CapabilityProvider` async trait (`manifest`, `invoke`, `tool_definitions`, `invoke_typed`); `CapabilityFactory` trait (`supports`, `create`); `BulkCapabilityFactory` trait |
+| `registry.rs` | `CapabilityRegistry { cards, factories, bulk_factories, namespace_index }`. `with_default_factories(llm)` registers Mcp/Wasm/Chain/Builtin; `with_all_factories(llm)` also adds `DynamicPromptFactory`, `TraceReplayFactory`, `RemoteMcpFactory`. Mutators: `register`, `unregister`, `replace`, `set_enabled`, `reload_capability`, `register_bulk_factory`, `run_bulk_load`. Queries: `get`, `get_provider`, `all`, `all_enabled`, `search_by_tag`, `namespace_children(prefix)` |
+| `discovery.rs` | `CapabilityDiscovery::from_env()` reads `CONUSAI_CAPABILITIES_DIR` (default `./capabilities`); `discover_into(&mut registry)` |
+| `store.rs` | `RegisteredToolState`, `RegisteredToolStore` trait; `FilesystemStore` (atomic `.tmp`→ rename writes) |
+| `validator.rs` | `RegisteredToolValidator` (regex `^[a-z0-9-]{2,64}$`, manifest + WASM size), `ValidationReport` |
+| `admin.rs` | `CapabilityAdmin` — coordinates `FilesystemStore` + registry + validator + audit store. `AdminLimits` env-overridable. `build_admin()` factory |
+| `executor.rs` | `ToolExecutor::invoke(registry, cap, tool, input, tenant)` — `#[instrument]`; emits `tool_invocations`, `tool_duration_ms`, `tool_errors` metrics |
+| `mcp_adapter.rs` | `McpAdapter` — JSON-RPC 2.0 HTTP client (`call`, `list_tools`, `call_tool`) |
+| `wasm_loader.rs` | `WasmToolLoader` wrapping wasmtime 44 (Component Model) |
+| **`namespace.rs`** | `NamespaceFilter { Any, Exact, Prefix, AnyOf }` + dot-segment validator (`[a-z][a-z0-9_]*`, ≤ 6 segments) |
+| **`embedding.rs`** | Helpers to chunk manifest text and persist via `EmbeddingService` + `QdrantVectorStore` |
+| **`semantic_router.rs`** | `SemanticCapabilityRouter` — blake3 query-cache (moka, default 60 s TTL) → embed → Qdrant ANN top-K → namespace + tag filter → distance threshold (≤ 0.65) → `include_always` overrides. Returns ≤ `top_k` `Arc<dyn CapabilityProvider>`. `SemanticRouterConfig { top_k, max_distance, namespace, tags_any, include_always, cache_ttl_secs }`. `RouterMetrics` (atomic counters) |
+| **`trace_replay.rs`** | `TraceReplayCapability` — replays a `SessionTrace` against an LLM to produce a dry-run plan. `TraceReplayFactory`. `WorkspaceNodeTraceSource` loads JSON from a workspace conversation |
+| `providers/mcp.rs` | `McpProvider` + `McpFactory` |
+| `providers/wasm.rs` | `WasmProvider` + `WasmFactory` |
+| `providers/chain.rs` | Hardcoded chain adapters (`InvoiceProvider`, `ContractProvider`, `OcrProvider`) plus the data-driven `PromptChainCapability` path; `ChainFactory::new(llm)` |
+| `providers/builtin.rs` | `BuiltinProvider` + `BuiltinFactory` — routes to `builtin/{fs,cargo}` |
+| `providers/dynamic_prompt.rs` | `DynamicPromptCapability` + `DynamicPromptFactory` — loads versioned `LlmChainConfig` from the `dynamic_prompts` redb table; `load_latest`, `with_pinned_version(n)`, `invalidate`. 60 s moka cache |
+| `providers/remote_mcp.rs` | `RemoteMcpCapability` + `RemoteMcpFactory` — self-registered external MCP services |
+| `providers/capability_spec.rs` | `CapabilitySpecFactory` (`BulkCapabilityFactory`) — streams rows from `capability_specs` in 256-row chunks, batch-embeds, upserts to Qdrant, and registers `CapabilityProvider` instances. Hot-reload via in-process broadcast from `RedbMetadataStore` |
+| `builtin/fs.rs` | `read_file` / `write_file` — tenant-scoped `safe_join`; `tokio::fs` |
+| `builtin/cargo.rs` | `run_cargo` — allowlisted subcommands (`check`, `test`, `build`, `clippy`, `fmt`) via `tokio::process::Command` |
+| `builtin/card.rs` | `builtin_tool_card()` — `CapabilityCard` (`kind = Native`) with full JSON schemas |
 
 #### Chains (`src/chains/`)
 
 | File | Purpose |
 |---|---|
-| `chains/extraction.rs` | `ExtractionPipeline` async trait: `model_id()`, `system_prompt()`, `run(bytes: Vec<u8>, tenant?) -> Result<Output>`. Default: `extract_from_bytes`, `extract_as_value`. Dyn-compatible. |
-| `chains/invoice.rs` | `InvoiceLineItem`, `InvoiceData` (~20 fields, `JsonSchema`). `InvoicePipeline::new()` (default `claude-opus-4-7`), `with_model`, `with_tenant`. Private `run_extraction` — base64, Claude vision, strict JSON schema prompt, strip markdown fences, parse. Implements `ExtractionPipeline`. |
-| `chains/contract.rs` | `ContractParty`, `ContractData`. `ContractPipeline` — same structure as invoice. |
-| `chains/llm_chain.rs` | `PromptChainCapability { manifest, cfg: LlmChainConfig, prompt: PromptTemplate, llm: Arc<LlmRegistry> }`. `invoke` renders `prompt_template` with `{{input.*}}` / `{{tenant.*}}` via `PromptTemplate`, calls `LlmRegistry::resolve` + provider `complete`, optionally validates against `output_schema`. Enables zero-code `kind=chain` capabilities from TOML alone. |
+| `extraction.rs` | `ExtractionPipeline` async trait — base64 + Claude vision + strict JSON schema; default `extract_from_bytes`, `extract_as_value` |
+| `invoice.rs` | `InvoicePipeline`, `InvoiceData`, `InvoiceLineItem` (~ 20 fields, `JsonSchema`); default `claude-opus-4-7`; png/jpeg/jpg/pdf |
+| `contract.rs` | `ContractPipeline`, `ContractData`, `ContractParty` |
+| `llm_chain.rs` | `PromptChainCapability { manifest, cfg: LlmChainConfig, prompt: PromptTemplate, llm: Arc<LlmRegistry> }` — renders `{{input.*}}` / `{{tenant.*}}`, calls `LlmRegistry::resolve` + `CompletionProvider::complete`, optional `output_schema` validation. Zero-code TOML capabilities |
+| `dynamic_prompt.rs` | Helpers wiring DB rows into `PromptChainCapability` at runtime |
+| `executor.rs` | Chain dispatcher shared between the hardcoded pipelines |
 
-#### Prompt subsystem (`src/prompt/`)
+#### Prompt (`src/prompt/mod.rs`)
 
-The `PromptTemplate` type lives in `common::prompt::template` and is re-exported from `agent_core::prompt`. This allows cross-crate reuse without a direct `agent-core` dependency.
+Re-exports `common::prompt::PromptTemplate` (lightweight `{{key.subkey}}` mustache over `serde_json::Value`; missing paths → empty string).
 
-| File | Purpose |
-|---|---|
-| `common/src/prompt/template.rs` | `PromptTemplate` — lightweight `{{key.subkey}}` mustache-like interpolation over `serde_json::Value` context. Dot-separated path resolution; missing paths → empty string. No external template engine dependency. |
-| `agent-core/src/prompt/mod.rs` | Re-exports `common::prompt::PromptTemplate` for backwards-compatible import paths. |
-
-#### Memory subsystem (`src/memory/`)
+#### Memory (`src/memory/`)
 
 | File | Purpose |
 |---|---|
-| `memory/postgres_thread_store.rs` | `PostgresThreadStore` implements `ThreadStore`. Tables: `threads`, `messages`. Background auto-summarisation when `message_count % MAX_MESSAGES_BEFORE_SUMMARY == 0`. All methods `#[instrument]`. |
-| `memory/postgres_workspace_store.rs` | `PostgresWorkspaceStore` implements `WorkspaceStore`. Tables: `workspace_nodes`, `content_embeddings`. Access filter: `tenant_id = X AND (owner_id = U OR shared_with @> ARRAY[U])`. `search_nodes` uses full-text + substring fallback. `index_content` stores content chunks as embeddings. |
-| `memory/postgres_audit_store.rs` | `PostgresAuditStore` implements `AuditStore`. Table: `audit_events`. `list` returns newest-first with optional cursor. |
-| `memory/minio_workspace_content.rs` | `MinioWorkspaceContent` implements `WorkspaceContentStore` via `Arc<dyn ObjectStore>`. Keys: `tenants/{tenant_id}/workspaces/{virtual_path}`. `read` returns `""` on `NotFound`. `delete` is best-effort. |
-| `memory/context_builder.rs` | `ContextBuilder { store, content, truncator: Arc<dyn ContextTruncator> }`. `build_for_node(tenant, node_id, max_chars)` — walks ancestors, loads `CONTEXT.md` / `README.md` from MinIO per folder, loads conversation body; joins with `\n\n---\n\n`; delegates truncation to injected `ContextTruncator`; prefixes `# Workspace context\n`. `with_truncator(t)` builder for custom strategies. Never errors hard. Used by `routes/agent.rs` with `max_chars = 6000`. |
-| `memory/truncator.rs` | `ContextTruncator` strategy trait: `truncate(sections, max_chars)`. `OldestFirstTruncator` (default) — removes sections from the front until budget fits; preserves last section. Pluggable: inject any `Arc<dyn ContextTruncator>` for alternate RAG policies. |
+| `mod.rs` | Re-exports |
+| `context_builder.rs` | `ContextBuilder { store, content, truncator }`. `build_for_node(tenant, node_id, max_chars)` — walks ancestors, loads `CONTEXT.md` / `README.md` from object store per folder, loads conversation body, joins with `\n\n---\n\n`, delegates to `ContextTruncator`. Prefixes `# Workspace context\n`. Used by `routes/agent.rs` with `max_chars = 6000` |
+| `truncator.rs` | `ContextTruncator` strategy trait; `OldestFirstTruncator` (default) — drops oldest sections, preserves last |
 
-#### Indexing subsystem (`src/indexing/`)
+#### Indexing (`src/indexing/`)
 
 | File | Purpose |
 |---|---|
-| `indexing/coco_indexer.rs` | `WorkspaceIndexer` — crawls workspace filesystem, chunks content, generates embeddings, upserts to `content_embeddings` table with pgvector |
-| `indexing/embedding_service.rs` | `EmbeddingService` trait; `OpenAiEmbeddingService` (default, `text-embedding-3-small`, EMBEDDING_DIMS=1536); `NoopEmbeddingService` (test mode) |
-| `indexing/local_embedding_service.rs` | `LocalEmbeddingService` — feature-gated (`local-embeddings`), uses `fastembed` 5 crate for on-device inference |
-| `indexing/real_fs_watcher.rs` | `RealFsWatcher` — watches filesystem for changes, triggers incremental re-indexing |
+| `coco_indexer.rs` | `WorkspaceIndexer` — crawls `WORKSPACES_ROOT`, chunks content, generates embeddings, upserts into Qdrant `content_embeddings` |
+| `embedding_service.rs` | `EmbeddingService` trait; `OpenAiEmbeddingService` (default, `text-embedding-3-small`, 1536 dims — collapsed/projected to 768-dim Qdrant); `NoopEmbeddingService` |
+| `local_embedding_service.rs` | `LocalEmbeddingService` (feature `local-embeddings`) using `fastembed` 5 — on-device, defaults to `nomic-embed-text` (768 dims), cached in `apps/backend/.fastembed_cache/` |
+| `real_fs_watcher.rs` | `RealFsWatcher::spawn(indexer)` — polls filesystem for changes and triggers incremental re-indexing |
 
-#### Realtime subsystem (`src/realtime/`)
+#### Realtime (`src/realtime/mod.rs`)
 
-| File | Purpose |
-|---|---|
-| `realtime/` | `RealtimeService` — tokio broadcast channel service for `WorkspaceChangeEvent`. Gateway holds `Option<Arc<RealtimeService>>`; `None` in test mode. |
+`RealtimeService` — multi-channel tokio broadcast:
+- `WorkspaceChangeEvent` fanned out to WS subscribers (`GET /api/realtime/workspace`).
+- `subscribe_capability_spec_changes() -> mpsc::Receiver<(namespace, tool_name)>` — fed by `RedbMetadataStore`'s in-process broadcast; consumed by `main.rs` which calls `CapabilitySpecFactory::reload_one(...)`.
 
-#### Vector store (`src/vector_store/`)
+#### Bridge (`src/bridge/`)
 
-| File | Purpose |
-|---|---|
-| `vector_store/postgres.rs` | `PgVectorStore` — cosine ANN search over `capability_embeddings` and `content_embeddings` tables via direct `sqlx` queries. `CapabilityHit`, `ContentHit` result types. `PgVectorStore::new(pool)` / `PgVectorStore::noop()` (test mode). `vec_to_pg(v)` serialises `f32` slice to Postgres vector literal. |
+`ArtifactBridge { file_store, workspace_content }` — after each tool invocation that returns a `ToolOutput`, uploads each `Artifact` to RustFS, inserts a `workspace_nodes` row (`kind = File`), and best-effort enqueues indexing for text-like MIME types.
 
-**Public re-exports** (via `lib.rs`): `Agent`, `AgentBuilder`, `TracingHook`, `PermissionHook`, `map_rig_error`, `ContractData`, `ContractParty`, `ContractPipeline`, `ExtractionPipeline`, `InvoiceData`, `InvoiceLineItem`, `InvoicePipeline`, `PromptChainCapability`, `ConversationService`, `DefaultConversationService`, `PlanTier`, `TenantClaims`, `TenantContext`, `UserRole`, `CapabilityCard`, `ContextBuilder`, `ContextTruncator`, `OldestFirstTruncator`, `MinioWorkspaceContent`, `PostgresAuditStore`, `PostgresThreadStore`, `PostgresWorkspaceStore`, `PgVectorStore`, `EmbeddingService`, `WorkspaceIndexer`, `RealtimeService`, `ArtifactBridge`, `AdminLimits`, `CapabilitySummary`, `CreateCapabilityRequest`, `CapabilityAdmin`, `TestInvokeRequest`, `TestInvokeResponse`, `UpdateCapabilityRequest`, `build_admin`, `builtin_tool_card`, `CapabilityDiscovery`, `CapabilityFactory`, `BulkCapabilityFactory`, `CapabilityRegistry`, `CapabilitySpecFactory`, `FilesystemStore`, `RegisteredToolState`, `RegisteredToolStore`, `RegisteredToolValidationError`, `RegisteredToolValidator`, `ValidationReport`, `LlmBinding`, `LlmChunk`, `LlmError`, `CompletionProvider`, `LlmRegistry`, `LlmRequest`, `LlmResponse`, `LlmStream`, `LlmUsage`, `SemanticCapabilityRouter`, `SemanticRouterConfig`, `RouterMetrics`, `NamespaceFilter`, `TraceReplayCapability`, `TraceReplayFactory`, `WorkspaceNodeTraceSource`.
-
-**Tests (8+):** registry register/get/tag-search; manifest embedding text; nonexistent-dir handling; WASM `ping` execution; `PostgresThreadStore` pool construction + query; `PgVectorStore::noop()` returns empty results; trace replay / remote MCP / capability-spec integration tests in the gateway crate.
-
----
-
-### 4.3 `crates/jobs` — Scheduled + Background Job Infrastructure
-
-**Purpose:** Provides two traits (`ScheduledJob` for cron-driven jobs and `BackgroundJob` for on-demand async tasks), an in-memory executor with `TaskStatus` tracking, SSE-ready broadcast channels, a `JobSchedulerService` backed by `tokio-cron-scheduler`, and a `JobAdmin` facade consumed by the gateway admin routes.
-
-**Key dependencies:** `common` (for `AuditStore`), `tokio`, `tokio-cron-scheduler` 0.13, `async-trait`, `uuid`, `chrono`, `reqwest` (multipart for Whisper API calls).
-
-**Dependency design:** `jobs` depends only on `common`, NOT on `agent-core`. This avoids a circular dependency (`agent-core` → `jobs` → `agent-core`). Gateway-level capabilities that need both (`TranscribeVideoCapability`) live in `agent-gateway`.
+#### Store (`src/store/`) — **persistent backends**
 
 | File | Purpose |
 |---|---|
-| `src/job.rs` | `TaskState { Queued, Running, Completed, Failed }`. `TaskStatus { id, job_name, state, created/updated_at, result?, error? }`. `ScheduledJob` async trait: `name`, `cron`, `enabled` (default `true`), `run(ctx)`. `BackgroundJob` async trait: `name`, `run(input, ctx)`. |
-| `src/context.rs` | `JobContext { audit_store, minio_endpoint?, bucket? }`. Cheap to `Clone` (all `Arc`). Shared across all job invocations. |
-| `src/registry.rs` | `JobRegistry { scheduled: Vec<Arc<dyn ScheduledJob>>, background: HashMap<String, Arc<dyn BackgroundJob>>, ctx }`. `register_scheduled`, `register_background`. |
-| `src/scheduler.rs` | `JobSchedulerService::start(registry)` — iterates `registered_jobs()`, creates a `tokio_cron_scheduler::Job` per enabled job, wires `Arc<JobContext>` into each async closure, starts scheduler. |
-| `src/executor.rs` | `JobExecutor { tasks: RwLock<HashMap<Uuid, TaskStatus>>, channels: RwLock<HashMap<Uuid, Sender<TaskEvent>>> }`. `enqueue(job_name, input)` → `task_id`; spawns `tokio::spawn` that calls `BackgroundJob::run`, updates state, broadcasts `TaskEvent`. `get_status`, `list_tasks`, `subscribe` (SSE). |
-| `src/admin.rs` | `JobAdmin { registry, executor }`. `list_jobs() -> Vec<JobSummary>`, `get_job(name)`, `run_now(name, input) -> Uuid`, `list_tasks(limit)`, `get_task(id)`. |
-| `src/jobs/capability_health_check.rs` | `CapabilityHealthCheckJob` — cron `"0 */5 * * * *"`. Pings MinIO `/minio/health/live`. Logs warnings on failure. |
-| `src/jobs/audit_log_cleanup.rs` | `AuditLogCleanupJob` — cron `"0 0 2 * * *"`. Reads `AUDIT_RETENTION_DAYS` (default 30). Placeholder — logs intent; full `delete_before` trait method is a future PR. |
-| `src/jobs/video_transcription.rs` | `VideoTranscriptionJob` — downloads file from MinIO, calls OpenAI Whisper API (`OPENAI_API_KEY`), or returns a placeholder transcript. Output: `{ file_id, tenant_id, transcript, chars }`. |
+| `redb_metadata.rs` | **`RedbMetadataStore`** — single embedded redb database implementing `ThreadStore` + `WorkspaceStore` + `AuditStore`. Tables (all postcard-serialised): `threads (tenant_id, thread_id)`, `messages (tenant_id, thread_id, seq)`, `workspace_nodes (tenant_id, node_id)`, `idx_nodes_by_path (tenant_id, virtual_path) → node_id`, `audit_events (tenant_id, ts_micros, event_id)`. Single write transaction per mutation; non-blocking snapshot reads. In-process broadcast channel for capability-spec changes. Constructors: `open(path)`, `in_memory()` |
+| `qdrant_vector.rs` | **`QdrantVectorStore`** — Qdrant gRPC client. Collections `capability_embeddings` and `content_embeddings`, both 768-dim cosine. Bootstraps collections on connect. `CapabilityHit` + `ContentHit` DTOs match the old `PgVectorStore` interface so callers (semantic router, indexer) need only a type swap. `connect(url)` for production, `noop()` for test mode |
+| `rustfs_content.rs` | **`RustFsContentStore`** — implements `WorkspaceContentStore` via `object_store::AmazonS3`. Keys `tenants/{tenant_id}/workspaces/{virtual_path}`. Env: `S3_ENDPOINT`, `S3_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`. Falls back to `NoopWorkspaceContent` when not configured |
+| `marker.rs` | **`MarkerClient`** trait + `HttpMarkerClient` (`reqwest` multipart POST to `{MARKER_URL}/convert`) + `NoopMarkerClient` — used by capabilities that need PDF → markdown |
 
-**Tests (4):** echo job completes with result, fail job records error message, unknown job returns `Err`, `list_tasks` returns all enqueued task IDs.
+#### Vector store façade (`src/vector_store/mod.rs`)
 
----
+Re-exports `QdrantVectorStore` as the canonical vector backend.
 
-### 4.4 `crates/agent-gateway` — HTTP API + Foundry UI
+**Public `lib.rs` re-exports:** `Agent`, `AgentBuilder`, `TracingHook`, `PermissionHook`, `map_rig_error`, `ArtifactBridge`, capability admin/CRUD types, `CapabilityDiscovery`, `CapabilityFactory`, `BulkCapabilityFactory`, `CapabilityRegistry`, `CapabilitySpecFactory`, `SemanticCapabilityRouter` + config + metrics, `NamespaceFilter`, `TraceReplayCapability`/`Factory`/`WorkspaceNodeTraceSource`, `RegisteredToolStore`/`Validator`, contract/invoice/OCR pipelines, `PromptChainCapability`, `ConversationService`/`Default…`, `PlanTier`/`TenantClaims`/`TenantContext`/`UserRole`, `ContextBuilder`/`ContextTruncator`/`OldestFirstTruncator`, `EmbeddingService`/`Noop`/`OpenAi`/`LocalEmbeddingService` (feature-gated)/`WorkspaceIndexer`, `RealtimeService`/`WorkspaceChangeEvent`, **`HttpMarkerClient`/`MarkerClient`/`NoopMarkerClient`/`QdrantVectorStore`/`RedbMetadataStore`/`RustFsContentStore`**, LLM types.
 
-**Purpose:** OpenAI-compatible chat/agent endpoints, tool calling, MCP dispatch, capability search, file upload/download, JWT + API key + session auth, rate limiting, plan enforcement, request-ID correlation, Prometheus metrics endpoint, OpenAPI/Swagger UI, Foundry server-rendered UI, super-admin capability management UI, job admin API, task polling + SSE.
+### 4.3 `crates/jobs`
 
-**Key dependencies:** all above + `jobs`, `axum-extra` 0.10 (cookies, multipart), `tower` 0.5, `tower-http` 0.6 (cors, trace, compression, ServeDir), `jsonwebtoken` 9, `blake3` 1, `hmac` 0.12, `askama` 0.12, `utoipa` 5, `utoipa-swagger-ui` 9, `time` 0.3.
+**Dependency design:** depends only on `common` (never on `agent-core`) — gateway-owned capabilities that need both (e.g. `TranscribeVideoCapability`) live in `agent-gateway`.
 
-#### `src/main.rs`
+| File | Purpose |
+|---|---|
+| `job.rs` | `TaskState { Queued, Running, Completed, Failed }`, `TaskStatus`, `TaskEvent`, `ScheduledJob` (`name`, `cron`, `enabled`, `run(ctx)`), `BackgroundJob` (`name`, `run(input, ctx)`) |
+| `context.rs` | `JobContext { audit_store, minio_endpoint?, bucket? }` — `Arc`-cheap clone |
+| `registry.rs` | `JobRegistry { scheduled, background, ctx }`; `register_scheduled`, `register_background` |
+| `scheduler.rs` | `JobSchedulerService::start(registry)` — uses `tokio-cron-scheduler` 0.13 to spawn each enabled `ScheduledJob` |
+| `executor.rs` | `JobExecutor { tasks: RwLock<HashMap<Uuid, TaskStatus>>, channels: RwLock<HashMap<Uuid, Sender<TaskEvent>>> }` — `enqueue` → `task_id`, `get_status`, `list_tasks`, `subscribe` (SSE) |
+| `admin.rs` | `JobAdmin { registry, executor }` — `list_jobs`, `get_job`, `run_now`, `list_tasks`, `get_task` |
+| `jobs/capability_health_check.rs` | Cron `0 */5 * * * *` — probes MinIO/RustFS `/minio/health/live` |
+| `jobs/audit_log_cleanup.rs` | Cron `0 0 2 * * *` — reads `AUDIT_RETENTION_DAYS` (default 30) |
+| `jobs/video_transcription.rs` | `VideoTranscriptionJob` — downloads from RustFS, calls OpenAI Whisper (`OPENAI_API_KEY`) or returns placeholder; output `{ file_id, tenant_id, transcript, chars }` |
 
-`tokio::main`. Initialises telemetry (JSON logs + optional OTLP). Builds `AppState::from_env()`. Verifies LLM providers. Registers `TranscribeVideoCapability` (needs `Arc<JobExecutor>` from state). Starts `JobSchedulerService` (cron loop). Resolves `assets_dir`. Assembles full router with layered middleware. Binds `CONUSAI_SERVER__HOST:PORT`.
+### 4.4 `crates/agent-gateway`
 
-#### `src/state.rs`
+#### Entry point (`src/main.rs`)
 
-`AppState { registry, rate_limiter, llm, file_store: Option<Arc<dyn ObjectStore>>, presigned_tokens, thread_store, audit_store, workspace_store, workspace_content, conversation_service, tool_admin, job_registry, job_executor, job_admin, pool: Option<PgPool>, embedding_service: Arc<dyn EmbeddingService>, vector_store: Arc<PgVectorStore>, realtime_service: Option<Arc<RealtimeService>> }`.
+1. `common::telemetry::init("agent-gateway", "info")` → JSON logs + OTLP + Prometheus registry.
+2. `AppState::from_env()` — see below.
+3. Spawn capability-spec hot-reload listener (subscribes to `RealtimeService`).
+4. Register the runtime-only `TranscribeVideoCapability` (needs `Arc<JobExecutor>`).
+5. `verify_llm_providers` (warn-only).
+6. `JobSchedulerService::start` (cron loop).
+7. If `WORKSPACES_ROOT` is set, spawn an initial `WorkspaceIndexer::index_once` + `RealFsWatcher::spawn`.
+8. Assemble router: `public_router` ∪ `/metrics` ∪ `protected_router` (with full middleware stack) ∪ `ui_router` ∪ `admin_router` ∪ static `/assets` (`ServeDir`).
+9. Apply outer layers: `build_cors()` → `TraceLayer::new_for_http()`.
+10. `axum::serve` on `0.0.0.0:8080`.
 
-`AppState::from_env()`: `PgPool` → `LlmRegistry` → `CapabilityRegistry` (with discovery) → MinIO file store → `PostgresThreadStore` → `PostgresAuditStore` → `EmbeddingService` (`EMBEDDING_BACKEND`: `"local"` → `LocalEmbeddingService`, `"openai"` → `OpenAiEmbeddingService`, default → `NoopEmbeddingService`) → `PgVectorStore` → `PostgresWorkspaceStore` → `MinioWorkspaceContent` or `NoopWorkspaceContent` → `DefaultConversationService` → `JobContext/JobRegistry/JobExecutor/JobAdmin` → `RealtimeService`.
+#### `AppState` (`src/state.rs`)
 
-`AppState::with_in_memory_stores()`: `pool=None`, `file_store=None`, `NoopEmbeddingService`, `PgVectorStore::noop()`, `realtime_service=None`.
+```rust
+pub struct AppState {
+    pub registry: Arc<Mutex<CapabilityRegistry>>,
+    pub rate_limiter: RateLimiter,
+    pub llm: Arc<LlmRegistry>,
+    pub file_store: Option<Arc<dyn ObjectStore>>,            // RustFS / S3 (uploads)
+    pub presigned_tokens: Mutex<HashMap<String, (String, Instant, Duration, String)>>,
+    pub device_tokens: Mutex<HashMap<String, DeviceToken>>,  // blake3(token) → record
+    pub thread_store: Arc<dyn ThreadStore>,                  // RedbMetadataStore
+    pub audit_store: Arc<dyn AuditStore>,                    // RedbMetadataStore
+    pub workspace_store: Arc<dyn WorkspaceStore>,            // RedbMetadataStore
+    pub workspace_content: Arc<dyn WorkspaceContentStore>,   // RustFsContentStore | Noop
+    pub conversation_service: Arc<dyn ConversationService>,
+    pub tool_admin: Arc<CapabilityAdmin>,
+    pub job_registry: Arc<JobRegistry>,
+    pub job_executor: Arc<JobExecutor>,
+    pub job_admin: Arc<JobAdmin>,
+    pub embedding_service: Arc<dyn EmbeddingService>,
+    pub vector_store: Arc<QdrantVectorStore>,
+    pub realtime_service: Arc<RealtimeService>,
+    pub semantic_router: Arc<SemanticCapabilityRouter>,
+    pub router_quota: RouterQuotaConfig,
+    pub capability_spec_factory: Option<Arc<CapabilitySpecFactory>>,
+    pub artifact_bridge: Option<Arc<ArtifactBridge>>,
+}
+```
 
-`build_job_registry(ctx)` — pre-registers `CapabilityHealthCheckJob`, `AuditLogCleanupJob` (scheduled) and `VideoTranscriptionJob` (background).
+`from_env()` boot order:
 
-#### `src/capabilities/transcribe_video.rs`
+1. `CONUSAI_TEST_MODE=1` → `with_in_memory_stores()` (no external services).
+2. Warn if `PLATFORM_ADMIN_TOKEN` is unset in non-debug builds.
+3. `LlmRegistry` (Anthropic provider; default binding `anthropic / claude-haiku-4-5`).
+4. **`RedbMetadataStore::open(REDB_PATH)`** (default `/data/conusai.redb`) — shared across `ThreadStore`/`WorkspaceStore`/`AuditStore`.
+5. **`QdrantVectorStore::connect(QDRANT_URL)`** (default `http://qdrant:6334`).
+6. **`RustFsContentStore::from_env()`** for workspace content; `init_file_store()` for general file uploads (both default to `http://rustfs:9000`, bucket `workspace`, credentials `minioadmin/minioadmin` for dev).
+7. `EmbeddingService` from `EMBEDDING_BACKEND` (`local` → fastembed if feature compiled, else noop; `openai` or unset → OpenAI; anything else → config error).
+8. `CapabilityRegistry::with_all_factories(llm)` → `CapabilityDiscovery::from_env().discover_into(...)` → `CapabilitySpecFactory::load_batch(...)` → register `WorkspaceProvider`.
+9. `SemanticCapabilityRouter` (env `SEMANTIC_ROUTER_TOP_K` default 20; `include_always = ["workspace"]`).
+10. `DefaultConversationService`, `CapabilityAdmin`.
+11. `JobContext` + `build_job_registry` (pre-registers `CapabilityHealthCheckJob`, `AuditLogCleanupJob`, `VideoTranscriptionJob`) + `JobExecutor` + `JobAdmin`.
+12. `ArtifactBridge` (only if `file_store` is `Some`).
+13. `RealtimeService::new()` and `RouterQuotaConfig::from_env()`.
 
-`TranscribeVideoCapability { manifest, executor: Arc<JobExecutor> }` implements `CapabilityProvider`. Tool `transcribe(file_id)` enqueues a `VideoTranscriptionJob` and returns `{ task_id, status: "queued", poll_url }` instantly. Registered at startup (not from TOML).
+#### Auth subsystem (`src/auth/`)
+
+| File | Purpose |
+|---|---|
+| `verifier.rs` | `SessionUser { name, plan, role, exp }`, `sign(user)`/`verify(token)` HMAC-SHA256 (`UI_SESSION_KEY`). `SESSION_HEADER = "x-session-token"`. `COOKIE_NAME = "conusai_session"`. TTL 86 400 s |
+| `extractor.rs` | `extract_from_headers(headers)` — tries `conusai_session` cookie, then `X-Session-Token` header (used by Tauri WKWebView which cannot send Secure cookies cross-origin). Axum `FromRequestParts for SessionUser` returns 401 if neither |
+| `mod.rs` | Re-exports |
 
 #### Middleware (`src/mw/`)
 
-| File | Middleware | Purpose |
-|---|---|---|
-| `mw/api_key.rs` | `extract_api_key` | Reads `X-API-Key`; hashes with BLAKE3; validates against `API_KEYS` env (`<blake3_hex>:<tenant_id>:<plan>` CSV). Sets `ResolvedTenant` if valid; falls through to JWT if absent; rejects 401 if present but invalid. |
-| `mw/tenant.rs` | `extract_tenant` | Skips if `ResolvedTenant` already set. Production (`JWT_SECRET` set): HS256 Bearer JWT or session cookie. Dev: `X-Tenant-ID` header or `dev` default + Enterprise plan. Inserts `ResolvedTenant(TenantContext)` extension. |
-| `mw/plan.rs` | `enforce_plan` | Validates `ResolvedTenant` has a recognised `PlanTier`. Runs after `api_key` + `tenant`. |
-| `mw/admin.rs` | `require_super_admin_jwt` / `require_super_admin_session` | Enforces `role = SuperAdmin` from JWT extension or session cookie. Applied to `/admin/*` and `/super-admin/*` routes. |
-| `mw/rate_limit.rs` | `RateLimiter` | Per-tenant 60-second sliding window. `check(tenant_id, limit_rpm) -> bool`. Plan-based limits: Free 10 / Pro 60 / Enterprise 600 RPM. |
-| `mw/request_id.rs` | `inject_request_id` | Reads `X-Request-ID` or generates UUID. Echoes in response header. For JSON 4xx/5xx bodies, injects `request_id` into `{"error": {...}}` (reads + rewrites body up to 1 MiB). |
-| `mw/trace.rs` | `propagate_trace` | Extracts W3C `traceparent`/`tracestate` via `TraceContextPropagator`; sets as parent span. |
-
-**Middleware stack order** (outer → inner):
-`TraceLayer` → `inject_request_id` → `propagate_trace` → `extract_api_key` → `extract_tenant` → `enforce_plan`
+| File | Purpose |
+|---|---|
+| `request_id.rs` | `inject_request_id` — reads `X-Request-ID` or generates UUID; echoes header; rewrites JSON 4xx/5xx error bodies (up to 1 MiB) with `error.request_id` |
+| `trace.rs` | `propagate_trace` — extracts W3C `traceparent`/`tracestate` via `TraceContextPropagator` |
+| `api_key.rs` | `extract_api_key` — reads `X-API-Key`; BLAKE3-hashes; validates against `API_KEYS` env (`<blake3_hex>:<tenant_id>:<plan>` CSV); sets `ResolvedTenant`; rejects 401 if header present but invalid |
+| `tenant.rs` | `extract_tenant` — skips if `ResolvedTenant` already set; production (`JWT_SECRET` set): HS256 Bearer JWT or session cookie/header (via `auth::extractor`); dev: `X-Tenant-ID` or `dev` default + Enterprise plan |
+| `plan.rs` | `enforce_plan` — validates `PlanTier` after auth |
+| `admin.rs` | `require_super_admin_jwt` / `require_super_admin_session` for `/admin/*` and `/super-admin/*` |
+| `rate_limit.rs` | `RateLimiter` — per-tenant 60 s sliding window; plan-based RPM caps |
+| **`router_quota.rs`** | `RouterQuotaConfig { max_tools_per_turn (env `CONUSAI_MAX_TOOLS_PER_TURN`, default 25), max_invokes_per_turn (env `CONUSAI_MAX_INVOKES_PER_TURN`, default 10) }` + `RouterQuotaLayer` Tower layer applied to `/v1/agent/completions` |
 
 #### Routes (`src/routes/`)
 
-**Router assembly:**
-- `public_router()` — `/health`, `POST /v1/auth/login`, `GET /docs`, `GET /openapi.json`
-- `protected_router()` — all `/v1/*`, `/mcp`, and `/api/realtime/*` routes behind full middleware stack
-- `admin_router()` — `/admin/*` routes behind `require_super_admin_jwt`
-- `ui_router()` — `/`, `/login`, `/logout`, `/ui/*`, `/super-admin/*`
-- `GET /metrics` — Prometheus text exposition (no auth)
-- `nest_service("/assets", ServeDir)` — static assets
+`routes::mod` assembles four sub-routers:
 
-| File | Endpoint(s) | Purpose |
-|---|---|---|
-| `routes/health.rs` | `GET /health` | Returns `{status, version (CARGO_PKG_VERSION), capabilities}`. Utoipa-documented. |
-| `routes/auth.rs` | `POST /v1/auth/login` | `{email, password, tenant_id?}` → HS256 JWT (`{access_token, token_type, expires_in: 86400, tenant_id}`). Dev: issues JWT for any non-empty email. Production: validates `DEV_PASSWORD`. Claims: `sub`, `tenant_id`, `plan`, `role`, `exp`. |
-| `routes/chat.rs` | `POST /v1/chat/completions` | OpenAI-compatible chat. Blocking: returns `ChatResponse`. Streaming: SSE with OpenAI delta chunks. Rate-limited; `max_tokens` clamped by plan. |
-| `routes/agent.rs` | `POST /v1/agent/completions` | Thread-aware tool-calling loop. Blocking + streaming (`"stream": true`) modes. Thread resolution: explicit `thread_id` wins; else workspace node `metadata.thread_id` (lazy `bind_thread`). History load + summary injection + `ContextBuilder` preamble (6000 chars). Anthropic `tool_use` rounds (≤ `max_turns`, capped by plan). Streaming: SSE OpenAI chunks + `tool_call_start` / `tool_call_result` events. After every turn: `WorkspaceStore::index_content` (last 30 msgs). `gen_ai.*` span attributes. Returns `thread_id` in response. |
-| `routes/capabilities.rs` | `GET /v1/capabilities` | Lists all enabled capabilities (name, version, description, kind, tags, tools). |
-| `routes/search.rs` | `GET /v1/capabilities/search?q=&limit=` | Semantic search via Postgres pgvector ANN. On each request, capability cards are upserted into `capability_embeddings` (hash-based change detection). Query is embedded and top-N retrieved via cosine ANN. Falls back to local substring match on failure. `limit` default 5, max 20. Returns `{source: "vector"}` on fast path. |
-| `routes/mcp.rs` | `POST /mcp` | JSON-RPC 2.0. Methods: `initialize`, `tools/list`, `tools/call` (`capability__tool` slug split). |
-| `routes/files.rs` | `POST /v1/files`, `GET /v1/files/{token}` | Multipart upload to MinIO at `tenants/{tenant_id}/{uuid}/{filename}`; returns 1-h TTL download token. Bearer-JWT-protected token-gated streaming download. |
-| `routes/audit.rs` | `GET /v1/audit?limit=` | Lists `AuditEvent`s newest-first. Default 50, max 500. Returns `{events, count}`. |
-| `routes/workspaces.rs` | workspace routes | `create`, `tree`, `search`, `get_node`, `delete_node`, `get_content`, `patch_content`, `move_node` (POST), `share_node` (POST), `unshare_node` (POST `/v1/workspaces/{id}/unshare`). |
-| `routes/threads.rs` | `GET /v1/threads/{id}/messages` | Returns paginated message list for a thread. |
-| `routes/realtime.rs` | `GET /api/realtime/workspace` | WebSocket upgrade; broadcasts `WorkspaceChangeEvent` to the caller via `RealtimeService`. |
-| `routes/admin_capabilities.rs` | 11 admin routes | `list`, `get_one`, `get_manifest`, `create`, `update`, `set_enabled`, `delete_one`, `reload_one`, `reload_all`, `validate`, `test_invoke`. All require `super_admin` JWT role. |
-| `routes/admin_jobs.rs` | 4 admin routes | `list_jobs` (`GET /admin/jobs`), `get_job` (`GET /admin/jobs/{name}`), `run_now` (`POST /admin/jobs/{name}/run`), `list_tasks` (`GET /admin/tasks`). All require `super_admin` JWT role. |
+- **`public_router()`** — no auth: `GET /health`, `POST /v1/auth/login`, `GET /v1/files/{token}` (UUID presigned), `POST /admin/capabilities/register` (gated by `PLATFORM_ADMIN_TOKEN` when set), Swagger UI at `/docs` + `/openapi.json`.
+- **`protected_router()`** — full middleware stack:
+  - `POST /v1/chat/completions` (`chat.rs`) — OpenAI-compatible chat (blocking + SSE).
+  - `POST /v1/agent/completions` (`agent.rs`) — thread-aware tool-calling loop. Wrapped by `RouterQuotaLayer`. Resolves thread (explicit → workspace node metadata → lazy bind), loads history + summary, runs `ContextBuilder` (6000 chars), executes ≤ `plan.max_turns` Anthropic `tool_use` rounds, calls `SemanticCapabilityRouter.select` + `ToolExecutor.invoke`, materialises artifacts via `ArtifactBridge`, indexes last 30 messages into Qdrant. SSE emits OpenAI chunks plus `tool_call_start` / `tool_call_result` events. Span attributes include `gen_ai.*`.
+  - `GET /v1/capabilities` (`capabilities.rs`).
+  - `GET /v1/capabilities/search?q=&limit=` (`search.rs`) — Qdrant ANN; falls back to local substring match on failure; max limit 20.
+  - `POST /mcp` (`mcp.rs`) — JSON-RPC 2.0 dispatcher (`initialize`, `tools/list`, `tools/call` with `capability__tool` slug split).
+  - `POST /v1/files` (`files.rs`) — multipart → RustFS at `tenants/{tenant_id}/{uuid}/{filename}`; returns 1 h TTL UUID download token.
+  - `GET /v1/audit?limit=` (`audit.rs`) — newest-first, max 500.
+  - `POST/GET/PATCH/DELETE /v1/workspaces/...` (`workspaces.rs`) — `create`, `tree`, `search`, `get_node`, `delete_node`, `get_content`, `patch_content`, `move`, `share`, `unshare`.
+  - `GET /v1/tasks`, `GET /v1/tasks/{id}`, `GET /v1/tasks/{id}/sse` (`tasks.rs`) — task polling + SSE.
+  - `GET /v1/threads/{id}/messages` (`threads.rs`).
+  - `GET /api/realtime/workspace` (`realtime.rs`) — WS subscriber on `RealtimeService`.
+  - `GET /v1/shells/{device_id}/control` (`shells.rs`) — browser-shell WS control channel (gated by `CONUSAI_FEATURE_BROWSER_SHELL=1`; validates device token in query; sends `Heartbeat`/`Replay`/`Stop`/`Ack` `ControlMessage`s; enforces `CONUSAI_MAX_REPLAYS_PER_TURN`, default 3).
+- **`admin_router()`** — `require_super_admin_jwt`:
+  - Capability CRUD: list, create, reload all, validate, test, get one, get manifest, update, set enabled, delete, reload one.
+  - Dynamic prompt: `PUT /admin/capabilities/{name}/prompt`, `GET /admin/capabilities/{name}/prompt[?version=N]`, `GET /admin/capabilities/{name}/prompt/versions`.
+  - Namespace browser: `GET /admin/capabilities/namespaces?prefix=`.
+  - Jobs: `GET /admin/jobs`, `GET /admin/jobs/{name}`, `POST /admin/jobs/{name}/run`, `GET /admin/tasks`.
+  - Devices (`admin_devices.rs`): `POST /admin/devices` (issue browser-shell pairing token; returns plaintext once, stores blake3 hash), `GET /admin/devices`, `DELETE /admin/devices/{id}`.
+- **`ui_router()`** — Foundry server-rendered UI (see below).
 
-**OpenAPI** — `ApiDoc` with `#[derive(OpenApi)]`. Security schemes: `bearer_auth` (HS256 JWT), `api_key_auth` (X-API-Key header), `cookie_auth` (conusai_session cookie). Swagger UI at `/docs`; spec JSON at `/openapi.json`.
+OpenAPI: `ApiDoc` registers `bearer_auth` (HS256 JWT), `api_key_auth` (`X-API-Key`), and `cookie_auth` (`conusai_session`) security schemes. Tags: `auth`, `chat`, `agent`, `capabilities`, `mcp`, `workspaces`, `audit`, `files`, `admin`.
 
-#### UI Routes (`src/ui/`)
+#### Built-in capabilities owned by the gateway (`src/capabilities/`)
 
-| File | Endpoint(s) | Purpose |
-|---|---|---|
-| `ui/routes.rs` | — | `ui_router()` — assembles all UI routes. Super-admin sub-router guarded by `require_super_admin_session`. |
-| `ui/handlers/auth.rs` | `GET /login`, `POST /login`, `GET /logout` | Login form: name + plan + (super-admin password for elevated role). Signs `SessionUser` cookie via `ui/session.rs`. |
-| `ui/session.rs` | — | `SessionUser { name, plan, role, exp }`. HMAC-SHA256 signed, base64url-encoded as `payload.sig`. `UI_SESSION_KEY` env (default dev secret). `TTL_SECS = 86400`. Axum `FromRequestParts` extractor auto-redirects to `/login` on missing/invalid/expired cookie. `SessionUser::tenant_context()` → `TenantContext(tenant_id = CONUSAI_UI_TENANT_ID ∥ "dev")`. |
-| `ui/handlers/app.rs` | `GET /` | Renders `app.html` (Askama) with recent threads, capabilities, workspace tree, user info. |
-| `ui/handlers/chat.rs` | `POST /ui/stream` | SSE stream — `{message, thread_id?, model?, workspace_node_id?}` → in-process `agent::stream_agent`. |
-| `ui/handlers/upload.rs` | `POST /ui/upload` | Multipart → MinIO. Returns `{id, filename, size, download_url}`. |
-| `ui/handlers/invoice.rs` | `POST /ui/extract-invoice` | Token → MinIO bytes → `InvoicePipeline::extract_from_bytes` → `InvoiceData` JSON. No agent loop. |
-| `ui/handlers/super_admin.rs` | `/super-admin/*` | Askama-rendered capability management: list, new form, create, detail, update, toggle, delete, reload. Delegates to `RegisteredToolAdmin`. |
+| File | Purpose |
+|---|---|
+| `workspace.rs` | **`WorkspaceProvider`** — registered with `include_always = ["workspace"]` so it survives semantic router pruning. Tools: `workspace__save_document(folder_name, filename, content)` (creates folder if missing; appends `.md`) and `workspace__list_folders()`. Backed by `WorkspaceStore` + `WorkspaceContentStore` |
+| `transcribe_video.rs` | `TranscribeVideoCapability` — `transcribe(file_id)` enqueues `VideoTranscriptionJob` via `JobExecutor`, returns `{task_id, status:"queued", poll_url}` |
+| `mod.rs` | Re-exports |
 
-**Templates** (`templates/`): `app.html`, `login.html`, `partials/composer.html`, `shared/head.html`, `super_admin/{layout,list,new,detail}.html`.
+#### Foundry UI (`src/ui/`)
 
-**Assets** (`assets/`):
-- `css/style.css` — design system + workspace styles (~1320 lines; editorial paper-canvas aesthetic)
-- `js/app.js` — streaming + composer + workspace-select handler (~660 lines)
-- `js/workspace.js` — tree + search + dialogs + context menu (~750 lines)
-- `icons/icons.svg` — SVG sprite
-- `images/` — favicon, logo light/dark
+| File | Purpose |
+|---|---|
+| `routes.rs` | `ui_router()` — `/`, `/login`, `/logout`, `/ui/*`, `/super-admin/*` (the latter gated by `require_super_admin_session`) |
+| `session.rs` | HMAC-SHA256 signed session cookie (re-exported from `auth::verifier`) |
+| `handlers/auth.rs` | `GET /login`, `POST /login`, `GET /logout` |
+| `handlers/app.rs` | `GET /` — Askama `app.html` (recent threads, capabilities, workspace tree) |
+| `handlers/chat.rs` | `POST /ui/stream` — SSE agent stream via in-process invocation |
+| `handlers/upload.rs` | `POST /ui/upload` — multipart → RustFS |
+| `handlers/invoice.rs` | `POST /ui/extract-invoice` — token → bytes → `InvoicePipeline::extract_from_bytes` |
+| `handlers/files.rs` | UI file download helpers |
+| `handlers/mod.rs` | Re-exports |
 
-**CORS** — `build_cors()`: `WEB_ORIGIN` env (comma-separated, default `http://localhost:3000`). Allowed methods: GET, POST, PATCH, DELETE, OPTIONS. Exposed headers: `X-Request-ID`.
+**Templates** (`templates/`): only the `shared/` partials remain in this snapshot — `app.html` and the super-admin views render via Askama against the shared `head.html`. The full Foundry UI (chat composer + workspace explorer) is also reachable from `apps/web` which renders the same flows in Svelte 5.
 
----
+**Assets** (`assets/`): `css/style.css` (~1320 lines editorial design system), `js/app.js` (~660 lines streaming + composer), `js/workspace.js` (~750 lines tree + dialogs), `icons/icons.svg` sprite, `images/{favicon,logo-light,logo-dark}.png`.
 
-### 4.4 `evals` — Evaluation Framework
+### 4.5 `evals`
+
+Same shape as before. CLI: `cargo run -p evals -- run --suite <name> --dataset <path?> --model <id>` / `list`.
 
 | Path | Purpose |
 |---|---|
-| `src/main.rs` | `clap` CLI: `run --suite <name> --dataset <path?> --model <id>` and `list`. |
-| `src/runners/invoice.rs` | Loads JSONL `EvalSample { image_path, expected }`; runs `InvoicePipeline`; scores with `InvoiceScorer`. |
-| `src/runners/ocr_quality.rs` | Sends image through `ocr-service` capability via gateway; scores against expected text snippets. Requires `GATEWAY_URL`. |
-| `src/scorers/mod.rs` | `ScorerResult { score, passed, details }`. `InvoiceScorer { pass_threshold = 0.8 }` — case-insensitive string match + `abs(diff) < 0.01` for numbers; compares 7 invoice fields. |
-| `src/report.rs` | Summary table: totals, pass count, average, ALL PASS / SOME FAILED. |
-| `datasets/invoice.jsonl` | Invoice extraction test samples. |
-| `datasets/ocr_quality.jsonl` | OCR quality samples. |
+| `src/main.rs` | `clap`-based CLI |
+| `src/runners/invoice.rs` | Loads JSONL `{image_path, expected}`; runs `InvoicePipeline`; scores via `InvoiceScorer` (case-insensitive string + `abs(diff) < 0.01` numeric; 7-field comparison; `pass_threshold = 0.8`) |
+| `src/runners/ocr_quality.rs` | Sends image through `ocr-service` capability via gateway; requires `GATEWAY_URL` |
+| `src/scorers/mod.rs` | `ScorerResult`, `InvoiceScorer` |
+| `src/report.rs` | Summary table |
+| `datasets/{invoice,ocr_quality}.jsonl` | Test corpora |
 
 ---
 
-## 5. `capabilities/` — Zero-Code Extension
+## 5. Capabilities (`apps/backend/capabilities/`)
 
-Drop a folder with a `capability.toml` (and optionally a `.wasm`) into `capabilities/`; the registry auto-discovers and loads it at startup or on admin reload.
+Drop a folder with `capability.toml` (and optionally `capability.wasm`) — the registry auto-discovers and loads it at startup or on admin reload.
 
 ### Capability kinds
 
 | Kind | Runtime | Wire format |
 |---|---|---|
-| `mcp` | External HTTP/stdio process | JSON-RPC 2.0 |
-| `wasm` | Wasmtime (`wasm32-wasip1`) | Exported WASM functions |
+| `mcp` | External HTTP/stdio process | JSON-RPC 2.0 (`McpAdapter`) |
+| `remote_mcp` | Self-registered external MCP | `RemoteMcpCapability` + `POST /admin/capabilities/register` |
+| `wasm` | Wasmtime 44 (`wasm32-wasip1`, Component Model) | Exported WASM functions |
 | `chain` (hardcoded) | In-process Rig pipeline | `InvoicePipeline` / `ContractPipeline` / `OcrProvider` |
 | `chain` (data-driven) | `PromptChainCapability` via `LlmRegistry` | TOML `[chain]` block + `PromptTemplate` |
-| `dynamic_prompt` | DB-backed prompt capability | `dynamic_prompts` table + `DynamicPromptCapability` |
-| `remote_mcp` | Self-registered MCP service | JSON registration + `RemoteMcpCapability` |
+| `dynamic_prompt` | `DynamicPromptCapability` | redb `dynamic_prompts` table; versioned prompt rows |
+| `native` | In-process Rust | `BuiltinProvider` (fs, cargo) + `WorkspaceProvider` |
 | `docker` | Container (reserved) | TBD |
-| `native` | In-process Rust | `BuiltinProvider` (fs, cargo) |
 
-### Data-driven chain capabilities
-
-Any `capability.toml` with `kind = "chain"` and a `[chain]` section gets a `PromptChainCapability` provider automatically — **no Rust code required**:
+### Data-driven chain example
 
 ```toml
 kind = "chain"
@@ -670,136 +617,183 @@ system_prompt = "You are …"
 prompt_template = "{{input.text}}"
 vision = false
 max_tokens = 2048
-output_schema = { ... }          # optional JSON Schema for response validation
+output_schema = { /* optional JSON Schema */ }
 ```
 
-`{{input.*}}` and `{{tenant.id}}` / `{{tenant.plan}}` placeholders resolved via `PromptTemplate`.
+`{{input.*}}` and `{{tenant.id}}` / `{{tenant.plan}}` placeholders are resolved by `PromptTemplate`.
 
-### Discovered capabilities
+### Bundled capabilities
 
 | Folder | Kind | Tools | Notes |
 |---|---|---|---|
-| `file-storage/` | mcp | `upload_file`, `download_file`, `presigned_url` | Manifest only; actual storage in `routes/files.rs`. |
-| `google-workspace/` | mcp | `list_files`, `read_document`, `append_to_sheet`, `send_email` | OAuth2: drive.readonly, documents.readonly, spreadsheets, gmail.send. |
-| `invoice-processing/` | chain | `extract_invoice`, `validate_invoice` | `InvoicePipeline`; default model `claude-opus-4-7`; max 20 MB; png/jpeg/jpg/pdf. |
-| `contract-processing/` | chain | `extract_contract`, `summarise_contract` | `ContractPipeline`. |
-| `ocr-service/` | chain | `extract_text` | `OcrProvider`; default model `claude-sonnet-4-6`. |
-| `runtime-echo/` | chain | echo | Minimal chain capability for runtime testing. |
-| `trace.replay` | dynamic_prompt | `replay_session` | Dry-run replay plan derived from `SessionTrace` stored in workspace nodes. |
-| `template-wasm/` | wasm | `ping` | Loads `capability.wasm`; exports `ping() -> i32 = 42`. |
+| `file-storage/` | mcp | `upload_file`, `download_file`, `presigned_url` | Manifest only — actual storage lives in `routes/files.rs` |
+| `google-workspace/` | mcp | `list_files`, `read_document`, `append_to_sheet`, `send_email` | OAuth2 scopes: drive.readonly, documents.readonly, spreadsheets, gmail.send |
+| `invoice-processing/` | chain | `extract_invoice`, `validate_invoice` | `InvoicePipeline`; default `claude-opus-4-7`; max 20 MB; png/jpeg/jpg/pdf |
+| `contract-processing/` | chain | `extract_contract`, `summarise_contract` | `ContractPipeline` |
+| `ocr-service/` | chain | `extract_text` | `OcrProvider`; default `claude-sonnet-4-6` |
+| `runtime-echo/` | chain | `echo` | Data-driven minimal chain (`claude-opus-4-7`, 128 max_tokens); for runtime testing |
+| `template-wasm/` | wasm | `ping` | Loads `capability.wasm`; exports `ping() -> i32 = 42` |
 
-### Capability selection: `invoice-processing` vs `ocr-service`
+`trace.replay` (kind `dynamic_prompt`) is registered at runtime by `TraceReplayFactory`; the Browser Shell ships a `TraceReplayCapability.svelte` renderer.
 
-| Need | Correct capability |
-|---|---|
-| Invoice, bill, purchase order → structured fields | `invoice-processing__extract_invoice` |
-| Contract, letter, generic document → raw text | `ocr-service__extract_text` |
-
-Rich `description` fields in `capability.toml` are loaded verbatim into Anthropic tool definitions at startup — Claude selects the correct tool deterministically via semantic matching without any code classifier.
+`services/current-time/` is the canonical **self-registering MCP** demo: on container start it POSTs to `/admin/capabilities/register` with its manifest + endpoint URL, then serves JSON-RPC 2.0 tool calls (`get_current_time(timezone?)`) at `:8082`.
 
 ---
 
-## 6. Configuration & Environment
+## 6. Frontend Apps
+
+### 6.1 `apps/web` — SvelteKit (Node adapter)
+
+- **Entry:** `src/app.html`, `src/app.d.ts`, `src/hooks.server.ts`.
+- **`hooks.server.ts`** — disables SvelteKit's blanket CSRF origin check on backend-proxied prefixes (`/v1`, `/api`, `/ui`, `/mcp`, `/admin`), enforces a scoped origin check on form paths, and parses the `conusai_session` cookie via `$lib/server/session.ts` → `event.locals.user`.
+- **`src/lib/sdk.ts`** — instantiates `createConusSdk({ fetch, baseUrl: '', tokenProvider })`.
+- **`src/lib/server/{env,session}.ts`** — production env-var validation; HMAC-SHA256 cookie sign/verify with `UI_SESSION_KEY`.
+- **Routes:** `+layout.{svelte,server.ts}`, `+page.{svelte,server.ts}`, `+error.svelte`, `login/`, `logout/`. The root page wires `@conusai/ui` features: `AgentChatStream`, `AgentChatComposer`, `WorkspaceExplorer`, `createChatStream(sdk)`, `provideCapabilityRendererRegistry()`, `ThemeSwitcher`. Selecting a workspace conversation node auto-loads its `metadata.thread_id` into the chat stream.
+
+### 6.2 `apps/browser-shell` — SvelteKit + Tauri 2
+
+#### SvelteKit shell (`src/`)
+
+| Path | Purpose |
+|---|---|
+| `lib/sdk.ts` | SDK with explicit `baseUrl` (gateway URL) and `X-Session-Token` injection (WKWebView cannot use cookies) |
+| `lib/tauri-stream.ts` | Bridges Tauri events (emitted by `chat_stream.rs`) into Svelte stores |
+| `lib/TraceReplayCapability.svelte` | Renderer registered for the `trace.replay` capability so replay plans display natively |
+| `lib/mobile/` | Mobile-first variants — `MobileShell` is the root for iOS/Android |
+| `routes/+layout.svelte`, `routes/+page.svelte` | Sets `modeStore = 'shell'`, registers the trace-replay renderer, mounts `MobileShell` |
+
+#### Tauri Rust core (`src-tauri/`)
+
+| File | Purpose |
+|---|---|
+| `Cargo.toml`, `build.rs`, `tauri.conf.json` | Tauri 2 manifest. Plugins: `dialog`, `stronghold` |
+| `capabilities/main-capability.json`, `ios-capability.json` | Tauri ACL — which commands each window may invoke |
+| `icons/`, `macos/`, `gen/` | App icons, macOS Info.plist additions, generated bindings |
+| `e2e/` | Tauri-driver Playwright fixtures |
+| `src/main.rs` | Calls `browser_shell_lib::run()` |
+| `src/lib.rs` | Tauri builder: state (`TabManager`, `RecorderState`, `DeviceAuthService`), command registration (`recorder_record_step`, …), injects `RECORDER_BRIDGE_JS` into every child webview. The bridge captures `click`/`change`/`submit` DOM events and forwards them to the Rust recorder; PII fields (`password|ssn|cc-|card|cvv`) are redacted |
+| `src/tabs.rs` | `TabManager` — multi-webview tab strip; one webview per tab |
+| `src/recorder.rs` | Implements `common::trace::SessionRecorder`; produces `SessionTrace` JSON consumable by `TraceReplayCapability` |
+| `src/chat_stream.rs` | `StreamRegistry` — fans backend SSE chunks out as Tauri events the SvelteKit UI subscribes to |
+| `src/device_auth.rs` | `DeviceAuthService` — caches the pairing token in **Tauri Stronghold** (encrypted file). Provides `DeviceTokenProvider` consumed by SDK requests. E2E bypass via env in debug builds |
+| `src/registration.rs` | First-run pairing flow: POST `/admin/devices` with `PLATFORM_ADMIN_TOKEN`, persist returned plaintext token |
+| `src/telemetry.rs` | Local tracing init |
+
+### 6.3 Shared `packages/`
+
+| Package | Public API |
+|---|---|
+| `@conusai/types` | `ToolKind`, `CapabilityCard`, `UserStep`, `SessionTrace`, `WorkspaceNode`, `ControlMessage` (matches `routes/shells.rs`), `FileToken`. Generated by `scripts/openapi-to-types.sh` from the live OpenAPI spec |
+| `@conusai/sdk` | `createConusSdk({ fetch, baseUrl, tokenProvider }) -> ConusSdk` with sub-clients `auth`, `capabilities`, `chat`, `chatApi`, `files`, `realtime`, `shells`, `threads`, `ui`, `workspaces`. Also `streamChat()`, `glyphFor()`, `EP` endpoint constants |
+| `@conusai/ui` | Design system + Svelte 5 components. `tokens.css`, `foundry.css`, assets, theme stores (`themeStore`, `modeStore`, `featureFlags`, `toast`), utilities (`LiveAnnouncer`, markdown), components (`AppShell`, `TabStrip`, `WorkspaceTree`, `CommandPalette`, `RecorderControls`, `ToastHost`, `ThemeProvider`, `ThemeSwitcher`, `ArtifactPreview`, `CapabilityCard`), features (`AgentChatStream`, `AgentChatComposer`, `WorkspaceExplorer`, `ToolCallCard`, `createChatStream.svelte.ts` — Svelte 5 runes SSE consumer, `auth/LoginPanel`, `workspace/{Confirm,Move,NewNode,Share}Dialog`), and a **Capability Renderer Registry** (`capabilities/CapabilityRendererRegistry.svelte.ts`) so each app can register Svelte renderers per capability name |
+
+---
+
+## 7. Configuration & Environment
 
 | Var | Default | Purpose |
 |---|---|---|
 | `CONUSAI_SERVER__HOST` | `0.0.0.0` | Bind address |
 | `CONUSAI_SERVER__PORT` | `8080` | Listen port |
 | `CONUSAI_CAPABILITIES_DIR` | `./capabilities` | Capability discovery root |
-| `CONUSAI_WORKSPACE_ROOT` | `/tmp/conusai/workspaces` | Tenant workspace root (native tools) |
+| `WORKSPACES_ROOT` | (unset → indexer disabled) | Tenant workspace mount; triggers `WorkspaceIndexer` + `RealFsWatcher` |
 | `CONUSAI_UI_ASSETS` | (auto-detected) | Override UI assets directory |
 | `CONUSAI_UI_TENANT_ID` | `dev` | Tenant ID used by the UI session |
-| `CONUSAI_TEST_MODE` | — | `1` → all stores in-memory; no Postgres/MinIO |
+| `CONUSAI_TEST_MODE` | — | `1` → all stores in-memory; no Qdrant/RustFS/redb |
 | `CONUSAI_MAX_CAPABILITIES` | `64` | Admin limit: max registered capabilities |
 | `CONUSAI_MAX_MANIFEST_BYTES` | `65536` | Admin limit: max manifest size |
 | `CONUSAI_MAX_WASM_BYTES` | `8388608` | Admin limit: max WASM binary size (8 MiB) |
-| `CONUSAI_MAX_TOOLS_PER_TURN` | `25` | Semantic router hard cap: tools exposed per turn |
-| `CONUSAI_MAX_INVOKES_PER_TURN` | `10` | Semantic router hard cap: tool invocations per turn |
+| `CONUSAI_MAX_TOOLS_PER_TURN` | `25` | Per-turn tool budget (RouterQuotaLayer) |
+| `CONUSAI_MAX_INVOKES_PER_TURN` | `10` | Per-turn invoke budget |
 | `CONUSAI_MAX_REPLAYS_PER_TURN` | `3` | Browser-shell replay quota per heartbeat |
-| `DATABASE_URL` | — | Postgres connection string (e.g. `postgres://conusai:conusai@localhost:5432/conusai`) |
-| `EMBEDDING_BACKEND` | — | `openai` → `OpenAiEmbeddingService`; `local` → `LocalEmbeddingService` (fastembed); default → `NoopEmbeddingService` |
-| `MINIO_ENDPOINT` / `S3_ENDPOINT` | — | MinIO/S3 endpoint (enables file + workspace content stores) |
-| `MINIO_BUCKET` | `conusai` | Storage bucket |
-| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | `minioadmin` | Dev credentials |
+| `CONUSAI_FEATURE_BROWSER_SHELL` | `0` | `1` enables `/v1/shells/{device_id}/control` + device endpoints |
+| **`REDB_PATH`** | `/data/conusai.redb` | Path to the redb database file |
+| **`QDRANT_URL`** | `http://qdrant:6334` | Qdrant gRPC endpoint |
+| **`S3_ENDPOINT`** / `MINIO_ENDPOINT` | `http://rustfs:9000` | RustFS / MinIO endpoint |
+| **`S3_BUCKET`** / `MINIO_BUCKET` | `workspace` | Storage bucket |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | `minioadmin` / `minioadmin` | Dev credentials |
+| **`MARKER_URL`** | `http://marker-api:8080` | PDF → markdown service |
+| `EMBEDDING_BACKEND` | `openai` | `openai` (default) ∣ `local` (fastembed, requires feature) ∣ unknown → error |
+| `SEMANTIC_ROUTER_TOP_K` | `20` | Top-K capabilities per turn |
 | `ANTHROPIC_API_KEY` | — | Required for all LLM calls |
-| `JWT_SECRET` | — | HS256 key; if unset → dev mode (`X-Tenant-ID`) |
-| `PLATFORM_ADMIN_TOKEN` | — | Static bearer token for `/admin/capabilities/register` and `/admin/devices` |
-| `CONUSAI_FEATURE_BROWSER_SHELL` | `0` | `1` enables browser-shell device endpoints and WebSocket control |
-| `API_KEYS` | — | `<blake3_hex>:<tenant_id>:<plan>` CSV for API key auth |
-| `DEV_PASSWORD` | — | Password for `POST /v1/auth/login` in production mode |
-| `SUPER_ADMIN_EMAILS` | — | Comma-separated list of emails granted `SuperAdmin` role on login |
-| `UI_SESSION_KEY` | (dev secret) | HMAC key for UI session cookies |
-| `WEB_ORIGIN` | `http://localhost:3000` | Allowed CORS origins (comma-separated) |
-| `OTLP_ENDPOINT` | — | OTel collector gRPC endpoint (e.g. `http://localhost:4317`) |
-| `SEMANTIC_ROUTER_TOP_K` | `20` | Top-K capabilities returned by the semantic router |
+| `OPENAI_API_KEY` | — | Used by `OpenAiEmbeddingService` + `VideoTranscriptionJob` |
+| `JWT_SECRET` | — | HS256 key; unset → dev mode |
+| `DEV_PASSWORD` | — | Login password in production mode |
+| `SUPER_ADMIN_EMAILS` | — | CSV; logins with these emails get `UserRole::SuperAdmin` |
+| `PLATFORM_ADMIN_TOKEN` | — | Bearer token for `/admin/capabilities/register` + device pairing |
+| `API_KEYS` | — | `<blake3_hex>:<tenant_id>:<plan>` CSV |
+| `UI_SESSION_KEY` | (dev secret) | HMAC key for session cookies (32 B in prod) |
+| `WEB_ORIGIN` | `http://localhost:3000,http://localhost:5173,https://tauri.localhost,tauri://localhost` | Allowed CORS origins (CSV) |
+| `OTLP_ENDPOINT` | — | OTel collector gRPC endpoint |
 | `RUST_LOG` | — | `tracing` filter string |
-| `CONUSAI_LLM__DEFAULT` | `opus` | Global default LLM alias |
-| `CONUSAI_LLM__ALIASES__OPUS__MODEL` | `claude-opus-4-7` | Override opus model id |
-| `CONUSAI_LLM__ALIASES__HAIKU__MODEL` | `claude-haiku-4-5-20251001` | Override haiku model id |
+| `CONUSAI_LLM__DEFAULT` / `…__ALIASES__*__MODEL` | — | LLM defaults via figment (TOML or env) |
 | `CONUSAI_MCP_ALLOWED_HOSTS` | — | Host allowlist for MCP validation helpers |
+| `CONUSAI_DEVICE_TOKEN` | — | Bootstrap token for the browser-shell in dev/E2E |
 
 ---
 
-## 7. Startup & Request Lifecycle
+## 8. Startup & Request Lifecycle
 
 ### Gateway startup
 
-1. `tokio::main` → `common::telemetry::init("agent-gateway", "info")` — JSON logs + optional OTLP.
-2. `AppState::from_env()`:
-   - `CONUSAI_TEST_MODE=1` → `with_in_memory_stores()` (no Docker needed).
-    - Otherwise: `PgPool` → `build_llm_registry()` → `LlmRegistry`; `CapabilityRegistry::with_all_factories(llm, Some(pool.clone()))` pre-seeds factories; `CapabilityDiscovery::from_env().discover_into(&mut registry)` loads on-disk capabilities; `CapabilitySpecFactory::load_batch()` bulk-loads database-backed specs; `SemanticCapabilityRouter` is built; MinIO client via `AmazonS3Builder`; `PostgresThreadStore`, `PostgresAuditStore`, `EmbeddingService`, `PgVectorStore`, `PostgresWorkspaceStore`, `MinioWorkspaceContent`, `JobRegistry`, `JobExecutor`, `JobAdmin`, `RealtimeService`, `ArtifactBridge`.
-3. `verify_llm_providers` — validates all LLM aliases at startup (warn-only).
-4. Router assembled: public + metrics + protected + admin + ui + assets.
-5. Layers applied (outermost first): CORS → `TraceLayer` → `inject_request_id` → `propagate_trace` → (per-router) `extract_api_key` → `extract_tenant` → `enforce_plan`.
-6. `axum::serve` on `{HOST}:{PORT}`.
+1. `tokio::main` → telemetry init (JSON + OTLP + Prometheus single meter provider).
+2. `AppState::from_env()` (§ 4.4).
+3. Spawn capability-spec hot-reload listener.
+4. Register `TranscribeVideoCapability`.
+5. `verify_llm_providers` (warn-only).
+6. `JobSchedulerService::start` (cron loop).
+7. Optional `WorkspaceIndexer::index_once` + `RealFsWatcher::spawn` when `WORKSPACES_ROOT` is set.
+8. Build router; apply middleware stack.
+9. `axum::serve` on `${CONUSAI_SERVER__HOST}:${CONUSAI_SERVER__PORT}`.
 
 ### Request lifecycle
 
 ```
-HTTP request
+HTTP / WS request
   └─► axum router
-        ├─ public_router  ──► /health, /v1/files/{token}, /v1/auth/login, /docs
-        ├─ GET /metrics   ──► Prometheus text (no auth)
-        └─ protected_router (inject_request_id → propagate_trace →
-                             extract_api_key → extract_tenant → enforce_plan)
-              ├─ /v1/chat/completions        → chat.rs    (Rig agent.prompt; SSE or blocking)
-              ├─ /v1/agent/completions       → agent.rs   (tool loop, thread, workspace)
+        ├─ public_router      ──► /health, /v1/files/{token}, /v1/auth/login, /docs, /admin/capabilities/register
+        ├─ /metrics           ──► Prometheus text (no auth)
+        └─ protected_router (request_id → trace → api_key → tenant → plan)
+              ├─ /v1/chat/completions
+              ├─ /v1/agent/completions  (wrapped by RouterQuotaLayer)
               │     ├─ ConversationService::resolve_for_node  (lazy bind_thread)
-              │     ├─ ContextBuilder::build_for_node(6000)  (system preamble)
-              │     ├─ ThreadStore::messages (history injection)
+              │     ├─ ContextBuilder::build_for_node(6000)
+              │     ├─ ThreadStore::messages
+              │     ├─ SemanticCapabilityRouter::select  ──► Qdrant ANN
               │     └─ Anthropic tool_use rounds (≤ plan.max_turns)
               │           ├─ ToolExecutor::invoke(registry, cap, tool, input, tenant)
               │           │     ├─ chain  → InvoiceProvider / ContractProvider / OcrProvider / PromptChainCapability
               │           │     ├─ dynamic → DynamicPromptCapability
               │           │     ├─ remote  → RemoteMcpCapability
-              │           │     ├─ wasm   → WasmProvider (wasmtime)
-              │           │     ├─ mcp    → McpProvider (JSON-RPC 2.0)
-              │           │     └─ native → BuiltinProvider (fs, cargo)
+              │           │     ├─ wasm    → WasmProvider
+              │           │     ├─ mcp     → McpProvider
+              │           │     └─ native  → BuiltinProvider / WorkspaceProvider / TraceReplayCapability
               │           └─ on end_turn:
+              │                 ├─ ArtifactBridge::materialise(ToolOutput.artifacts)
               │                 ├─ ConversationService::append_message
               │                 └─ WorkspaceStore::index_content (last 30 msgs)
-              ├─ /v1/capabilities            → capability list
-              ├─ /v1/capabilities/search     → Postgres pgvector ANN + fallback
-              ├─ /mcp                        → JSON-RPC 2.0 dispatcher
-              ├─ /v1/files                   → MinIO multipart upload
-              ├─ /v1/audit                   → AuditStore::list
-              └─ /v1/workspaces              → WorkspaceStore + WorkspaceContentStore
+              ├─ /v1/capabilities, /v1/capabilities/search   (Qdrant + fallback)
+              ├─ /mcp                                        (JSON-RPC 2.0)
+              ├─ /v1/files                                   (RustFS multipart)
+              ├─ /v1/audit
+              ├─ /v1/workspaces                              (RedbMetadataStore + RustFsContentStore)
+              ├─ /v1/tasks, /v1/tasks/{id}, /v1/tasks/{id}/sse
+              ├─ /v1/threads/{id}/messages
+              ├─ /api/realtime/workspace                     (WebSocket)
+              └─ /v1/shells/{device_id}/control              (WebSocket, feature-gated)
         ├─ admin_router (require_super_admin_jwt)
-          │     ├─ /admin/capabilities/*       → CapabilityAdmin CRUD + dynamic prompt + namespace browsing
-          │     ├─ /admin/devices/*            → browser-shell device tokens
-          │     └─ /admin/jobs/*, /admin/tasks  → JobAdmin
+        │     ├─ /admin/capabilities/*  CRUD + prompt versioning + namespace browsing
+        │     ├─ /admin/devices/*       browser-shell pairing tokens
+        │     └─ /admin/jobs/*, /admin/tasks
         └─ ui_router
-              ├─ /                          → Foundry app shell (Askama)
-              ├─ /login, /logout
-              ├─ /ui/stream                 → SSE agent stream (in-process)
-              ├─ /ui/upload                 → MinIO upload
-              ├─ /ui/extract-invoice        → InvoicePipeline direct
-              └─ /super-admin/*             → capability management UI (require_super_admin_session)
+              ├─ /, /login, /logout
+              ├─ /ui/stream  /ui/upload  /ui/extract-invoice
+              └─ /super-admin/*  (require_super_admin_session)
 ```
 
 ---
 
-## 8. HTTP API Surface
+## 9. HTTP API Surface
 
 ### Public
 
@@ -807,80 +801,44 @@ HTTP request
 |---|---|---|
 | GET | `/health` | Status / version / capability count |
 | POST | `/v1/auth/login` | Exchange credentials for HS256 JWT |
+| GET | `/v1/files/{token}` | Token-gated streaming download (1 h TTL) |
+| POST | `/admin/capabilities/register` | Self-register remote MCP capability (Bearer `PLATFORM_ADMIN_TOKEN`) |
 | GET | `/docs` | Swagger UI |
 | GET | `/openapi.json` | OpenAPI 3.1 spec |
 | GET | `/metrics` | Prometheus text format |
 
-### Protected (Bearer JWT or `X-API-Key`)
+### Protected (Bearer JWT, `X-API-Key`, `conusai_session` cookie, or `X-Session-Token`)
 
-| Method | Path | Purpose |
-|---|---|---|
-| POST | `/v1/chat/completions` | OpenAI-compatible chat (SSE optional) |
-| POST | `/v1/agent/completions` | Tool-calling agent loop (blocking + SSE) |
-| GET | `/v1/capabilities` | List enabled capabilities |
-| GET | `/v1/capabilities/search?q=&limit=` | Semantic capability search (Postgres pgvector ANN + fallback) |
-| POST | `/mcp` | MCP JSON-RPC 2.0 |
-| POST | `/v1/files` | Multipart upload (MinIO) |
-| GET | `/v1/files/{token}` | Token-gated streaming download (1 h TTL) |
-| GET | `/v1/audit?limit=` | Audit log (newest-first; default 50, max 500) |
-| POST | `/v1/workspaces` | Create folder or conversation |
-| GET | `/v1/workspaces/tree?parent_id=` | Immediate children visible to caller |
-| GET | `/v1/workspaces/search?q=&limit=` | Text search + substring fallback |
-| GET | `/v1/workspaces/{id}` | Single node (NotFound if not accessible) |
-| GET | `/v1/workspaces/{id}/content` | Read markdown body |
-| PATCH | `/v1/workspaces/{id}/content` | Save body → index_content |
-| POST | `/v1/workspaces/{id}/move` | Reparent node |
-| POST | `/v1/workspaces/{id}/share` | Owner-only: add user to `shared_with` |
-| POST | `/v1/workspaces/{id}/unshare` | Owner-only: remove user from `shared_with` |
-| DELETE | `/v1/workspaces/{id}` | Recursive delete + MinIO cleanup |
-| GET | `/v1/tasks` | List background task statuses |
-| GET | `/v1/tasks/{id}` | Get single task status |
-| GET | `/v1/tasks/{id}/sse` | SSE stream for task lifecycle events |
-| GET | `/v1/threads/{id}/messages` | Paginated message list for a thread |
-| GET | `/api/realtime/workspace` | WebSocket — workspace change event stream |
+`/v1/chat/completions`, `/v1/agent/completions`, `/v1/capabilities`, `/v1/capabilities/search`, `/mcp`, `/v1/files` (upload), `/v1/audit`, `/v1/workspaces[...]`, `/v1/tasks[...]`, `/v1/threads/{id}/messages`, `/api/realtime/workspace` (WS), `/v1/shells/{device_id}/control` (WS, device-token + feature-flag gated).
 
-### Super-admin (JWT with `role = super_admin`)
+### Super-admin (JWT `role = super_admin`)
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/admin/capabilities` | List all capabilities (enabled + disabled) |
-| POST | `/admin/capabilities` | Create capability (validate + persist + register) |
-| POST | `/admin/capabilities/reload` | Hot-reload all capability directories |
-| POST | `/admin/capabilities/validate` | Validate manifest TOML without persisting |
-| POST | `/admin/capabilities/test` | Test-invoke a capability tool |
-| GET | `/admin/capabilities/{name}` | Get capability summary |
-| GET | `/admin/capabilities/{name}/manifest` | Get raw TOML |
-| PATCH | `/admin/capabilities/{name}` | Update manifest |
-| PATCH | `/admin/capabilities/{name}/enabled` | Toggle enabled (`{enabled: bool}`) |
-| DELETE | `/admin/capabilities/{name}` | Delete capability + filesystem cleanup |
-| POST | `/admin/capabilities/{name}/reload` | Hot-reload single capability |
-| GET | `/admin/jobs` | List all registered jobs |
-| GET | `/admin/jobs/{name}` | Get single job summary |
-| POST | `/admin/jobs/{name}/run` | Enqueue a background job immediately |
-| GET | `/admin/tasks` | List all task statuses (admin view) |
+`/admin/capabilities[...]`, `/admin/capabilities/{name}/prompt[...]`, `/admin/capabilities/namespaces`, `/admin/jobs[...]`, `/admin/tasks`, `/admin/devices[...]`.
 
 ---
 
-## 9. Security
+## 10. Security
 
-- **Authentication:** HS256 JWT (`JWT_SECRET`) in production; API key (BLAKE3-hashed, `API_KEYS` env) as first-class auth method; HMAC-SHA256 session cookies for UI; dev fallback `X-Tenant-ID`.
-- **Authorization:** `UserRole { User, Admin, SuperAdmin }` in JWT claims + session cookie. Super-admin middleware enforces role on `/admin/*` and `/super-admin/*`.
-- **Path safety:** `safe_join` rejects `..` in all tenant FS access.
-- **Storage isolation:** MinIO keys under `tenants/{tenant_id}/`; Postgres rows filtered by `tenant_id`; pgvector embeddings share tables but are namespaced by `tenant_id`.
+- **Auth vectors (priority order in `auth::extractor`):** `conusai_session` cookie → `X-Session-Token` header (Tauri WKWebView) → HS256 Bearer JWT (`mw/tenant.rs`) → `X-API-Key` (BLAKE3-hashed against `API_KEYS`).
+- **RBAC:** `UserRole { User, Admin, SuperAdmin }` in JWT/session; super-admin middleware enforces role on `/admin/*` and `/super-admin/*`.
+- **Path safety:** `safe_join` rejects `..` in all tenant FS access (workspace bodies, builtin fs tools).
+- **Storage isolation:** Qdrant payload filters on `tenant_id`; RustFS keys under `tenants/{tenant_id}/`; redb composite keys all start with `tenant_id`.
 - **Workspace ACL:** private-by-default; per-node `shared_with`; non-owners receive `NotFound` (no existence leakage).
-- **API key security:** only BLAKE3 hash stored in env var; raw key never persisted.
-- **WASM sandboxing:** Wasmtime engine; `MAX_WASM_SIZE_BYTES = 10 MB`; only allowlisted exports invoked.
-- **CORS:** configurable `WEB_ORIGIN`; `allow_credentials: true`.
-- **Request correlation:** `X-Request-ID` echoed in response + injected into JSON error bodies.
+- **API keys / device tokens:** only blake3 hash stored; plaintext returned exactly once at issue time.
+- **WASM sandboxing:** wasmtime 44 with Component Model; `MAX_WASM_SIZE_BYTES = 10 MB`; only allowlisted exports invoked.
+- **CORS:** explicit `WEB_ORIGIN` allowlist (web 3000/5173, Tauri WKWebView origins); `allow_credentials: true`; exposes `X-Request-ID`.
+- **Recorder PII redaction:** `RECORDER_BRIDGE_JS` strips values for fields matching `/password|ssn|cc-|card|cvv/i`; screenshots can be omitted for sensitive regions.
+- **Tauri Stronghold** encrypts the device pairing token at rest on disk.
+- **Request correlation:** `X-Request-ID` echoed in response and injected into JSON error bodies.
 
 ---
 
-## 10. Observability
+## 11. Observability
 
 - **Structured logs:** JSON via `tracing-subscriber` (env-filter from `RUST_LOG`).
 - **Distributed tracing:** W3C `traceparent`/`tracestate` propagation; OTLP export to otel-collector → Jaeger.
-- **Metrics — OTel (OTLP + Prometheus):** Single `SdkMeterProvider` with both readers.
-  - `conusai.agent` meter: `agent.tool.invocations`, `agent.tool.errors`, `agent.tool.duration_ms`, `agent.llm.requests`, `agent.llm.input_tokens`, `agent.llm.output_tokens`.
+- **Metrics — OTel (OTLP + Prometheus):** single `SdkMeterProvider` with both readers.
+  - `conusai.agent` meter: `agent.tool.invocations`, `agent.tool.errors`, `agent.tool.duration_ms`, `agent.llm.requests`, `agent.llm.input_tokens`, `agent.llm.output_tokens`, `gen_ai.semantic_router.cache_hit`, `gen_ai.semantic_router.top_k`, `gen_ai.semantic_router.distance`, `gen_ai.tool.calls`, `capability_router_select_seconds`, `capability_invoke_seconds`.
   - `conusai.storage` meter: `storage.request.duration_ms`, `storage.request.errors`.
 - **Span attributes:** `tenant_id`, `plan`, `tool.cap`, `tool.name`, `error.type`, `gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `thread_id`.
 - **Prometheus endpoint:** `GET /metrics` (text/plain 0.0.4).
@@ -888,19 +846,26 @@ HTTP request
 
 ---
 
-## 11. Build & Deploy
+## 12. Build, Test & Deploy
 
 ### Local development
 
 ```bash
-# Infrastructure only (Postgres + MinIO)
-./start.sh infra
+# Infrastructure only (Qdrant + RustFS + redb volume)
+./start.sh infra        # docker compose up qdrant rustfs rustfs-init
 
-# Full stack (infra + build + run gateway)
-./start.sh full
+# Backend dev
+just backend-dev        # cargo run -p agent-gateway
 
-# With observability (Jaeger + OTLP)
-./start.sh observability
+# Web dev
+just web-dev            # pnpm --filter web dev   (Vite at :3000)
+
+# Shell dev (desktop)
+just shell-dev          # pnpm --filter browser-shell tauri dev
+
+# Shell dev (iOS / Android)
+just shell-ios-dev
+just shell-android-dev
 ```
 
 ### Cargo builds
@@ -914,8 +879,9 @@ cargo build --release --target wasm32-wasip1 -p capability-example
 ### Docker
 
 ```bash
-docker build -t conusai-gateway:0.1.0 .
+docker build -t conusai-gateway:0.4.0 -f apps/backend/Dockerfile .
 docker compose --profile full up -d
+# Optional profiles: observability, marker, web
 ```
 
 ### Build profiles
@@ -925,129 +891,54 @@ docker compose --profile full up -d
 | `release` | 3 | `thin` | 1 | `symbols` |
 | `dev` | 0 | off | default | off |
 
----
+### Quality gates (`just verify`)
 
-## 12. Tests & Quality
+```bash
+cargo clippy --workspace -- -D warnings
+pnpm -w lint           # biome + svelte-check
+pnpm -w test           # vitest
+cargo test --workspace
+just types             # regenerate packages/types from OpenAPI
+git diff --exit-code packages/types/src   # codegen drift gate
+```
 
-- **common (22 tests):** path traversal rejection, safe joins, MCP serde, `ApiError` fields, limit invariants, thread/message/tool-call serde roundtrips, `WorkspaceNode` serde, every `validate_name` branch, `join_virtual_path`, `effective_user_id`.
-- **agent-core (8 tests):** registry register/get/tag-search; manifest embedding text; nonexistent-dir handling; WASM `ping` execution; `PostgresThreadStore` pool construction; `PgVectorStore::noop()` returns empty results.
-- **Total:** 30+ lib tests (`cargo test --workspace`). Integration tests in `crates/agent-core/tests/` and `crates/agent-gateway/tests/` require live Postgres + MinIO.
-- **Quality gates:** `cargo clippy --workspace -- -D warnings`, `cargo fmt --all`.
-- **Test mode:** `CONUSAI_TEST_MODE=1` replaces all Postgres + MinIO stores with in-memory equivalents — no Docker required.
+### E2E
+
+```bash
+pnpm e2e          # all Playwright projects
+pnpm e2e:web      # web + Node SSR
+pnpm e2e:ios      # iOS Safari (Playwright)
+pnpm e2e:shell    # macOS Tauri shell (Playwright tauri-driver)
+pnpm wdio:macos   # native macOS WebdriverIO + Appium
+pnpm wdio:ios     # iOS WebView via WebdriverIO
+pnpm wdio:ios-native   # iOS native via Appium XCUITest
+```
 
 ---
 
 ## 13. Design Patterns
 
-- **LLM abstraction layer:** `CompletionProvider` trait + `LlmRegistry` with 4-step resolution. Adding a new LLM provider requires one new file in `llm/providers/` — zero changes to routes, chains, or agent loop. `verify_llm_providers` validates registry at startup.
-- **Data-driven chain tools:** `LlmChainConfig` in TOML + `PromptTemplate` + `PromptChainCapability` — new LLM-backed tools require only a `capability.toml` with `[chain]` section, no Rust code.
-- **CapabilityProvider + CapabilityFactory:** `CapabilityProvider` (`manifest`, `invoke`, `invoke_typed`, `tool_definitions`) + `CapabilityFactory` (`supports`, `create`). Four factories pre-registered: `McpFactory`, `WasmFactory`, `ChainFactory(llm)`, `BuiltinFactory`; `CapabilityRegistry::with_all_factories()` also adds `DynamicPromptFactory` and `TraceReplayFactory` when Postgres is present.
-- **Super-admin capability CRUD:** `CapabilityAdmin` (in-process) + `/admin/capabilities/*` (API) + `/super-admin/*` (UI) — create, update, toggle, reload, test-invoke, validate without restart. `FilesystemStore` provides atomic manifest writes (`.tmp` → rename). Self-registered remote MCP services use `/admin/capabilities/register`.
-- **Artifact bridge:** `ArtifactBridge` materialises tool-produced files into workspace nodes and MinIO.
+- **Single-process embedded storage:** one `RedbMetadataStore` instance fulfils `ThreadStore` + `WorkspaceStore` + `AuditStore` with atomic write transactions and snapshot reads — no Postgres, no schema migrations.
+- **Vector workload externalised to Qdrant:** capability + content embeddings share a single Qdrant deployment; payload filters provide tenant/namespace/tag scoping.
+- **Content vs metadata split:** raw markdown/blobs live in RustFS under `tenants/{id}/workspaces/{path}`; structured metadata in redb. `ArtifactBridge` keeps them in lockstep.
+- **LLM abstraction layer:** `CompletionProvider` trait + `LlmRegistry` with 4-step alias resolution; adding a provider is a single file in `llm/providers/`.
+- **Data-driven chain capabilities:** `LlmChainConfig` + `PromptTemplate` + `PromptChainCapability` — new LLM tools require only TOML.
+- **Capability factories:** `McpFactory`, `WasmFactory`, `ChainFactory(llm)`, `BuiltinFactory`, plus `DynamicPromptFactory`, `RemoteMcpFactory`, `TraceReplayFactory`. Bulk path via `CapabilitySpecFactory` (DB-backed, batch-embedded, hot-reloaded).
+- **Semantic routing with quota:** `SemanticCapabilityRouter` pre-selects top-K capabilities per turn; `RouterQuotaLayer` enforces the hard cap; `include_always` guarantees built-ins (e.g. workspace) survive pruning.
+- **Artifact bridge:** every tool output may emit `ToolOutput.artifacts`; they materialise into workspace nodes + indexed content without per-tool wiring.
+- **Cross-platform shell:** Tauri 2 wraps the same SvelteKit codebase for desktop and mobile; PII-safe DOM recorder injected into every tab webview; device tokens stored in Stronghold; WS control channel allows the server to drive replays.
 - **Typed ID newtypes:** `ThreadId`, `NodeId`, `TenantId`, `UserId`, `ToolId` — compile-time safety; `serde(transparent)` wire format.
-- **ConversationService:** single source of truth for thread lifecycle. Coordinates `ThreadStore` + `WorkspaceStore::bind_thread`.
-- **Multitenant isolation:** JWT/API-key auth; tenant-prefixed paths/keys/collections; plan-based token limits + rate limits + turn caps; `UserRole` RBAC; `safe_join` path safety.
-- **Persistent memory:** `PostgresThreadStore` (sqlx, `threads`/`messages` tables); auto-summarisation via Haiku background task; workspace bodies live in MinIO via `WorkspaceContentStore`.
-- **Workspace hierarchy:** folders + conversations as `.md` in MinIO; Postgres `workspace_nodes` + `content_embeddings` tables; private-by-default ACL; per-node thread binding; `ContextBuilder` ancestor context injection.
-- **Observability by default:** structured JSON logs, OTel spans with W3C propagation, `#[instrument]` on every significant async method.
-- **Scheduled + background jobs (v0.3):** `ScheduledJob` trait (cron, `tokio-cron-scheduler`) + `BackgroundJob` trait (on-demand, `JobExecutor` in-memory tracker). `JobRegistry` wires both kinds with shared `JobContext`. `JobSchedulerService` spawns cron loop at startup. SSE polling at `GET /v1/tasks/{id}/sse`. In-memory only; Apalis/Postgres migration-ready (trait unchanged).
+- **Multitenancy:** JWT/API-key/session auth → `TenantContext`; tenant-prefixed paths/keys/collections; plan-based token/turn/RPM caps; `UserRole` RBAC; `safe_join` path safety.
+- **Observability by default:** JSON logs, OTel spans with W3C propagation, `#[instrument]` on every significant async method.
+- **Scheduled + background jobs:** `ScheduledJob` + `tokio-cron-scheduler`; `BackgroundJob` + in-memory `JobExecutor` with SSE polling. Apalis/persistent migration-ready (trait unchanged).
 
 ---
 
 ## 14. Status
 
-- **Version:** 0.3.1 (current workspace snapshot)
-- **State:** operational, 100% verified end-to-end (per [verify.md](verify/verify.md)).
+- **Version:** 0.4.0 (May 2026)
+- **State:** operational; end-to-end verified per [verify/verify.md](verify/verify.md).
 
-**Implemented:** multitenancy (JWT + API key + session), `UserRole` (User/Admin/SuperAdmin), `CompletionProvider` + `LlmRegistry` abstraction layer, `AnthropicProvider` via `rig-core` 0.36 + `rig-postgres` 0.2.5, data-driven `PromptChainCapability` + `PromptTemplate`, `ConversationService` trait + `DefaultConversationService`, super-admin capability CRUD API + Foundry UI, remote MCP self-registration, invoice + contract + OCR pipelines, TOML/JSON capability discovery, `CapabilityRegistry` + four factories, OpenAI-compatible chat, SSE streaming, tool-calling agent loop (blocking + streaming), MCP JSON-RPC, **Postgres pgvector semantic capability search**, MinIO file storage, WASM execution (wasmtime 44), Google Workspace manifest, evals framework (invoice + OCR), Jaeger/OTLP tracing, per-tenant rate limiting, **Postgres-backed thread/workspace/audit stores**, `gen_ai.*` OTel span attributes, W3C traceparent propagation, native filesystem + cargo tools, cargo-chef Docker image, hierarchical workspace + `content_embeddings`, append-only audit log, Prometheus metrics, OpenAPI + Swagger UI, request-ID correlation, typed ID newtypes, CORS, **scheduled jobs (`ScheduledJob` + `tokio-cron-scheduler`)**, **background tasks (`BackgroundJob` + `JobExecutor` + SSE polling)**, **`TranscribeVideoCapability`** (enqueues `VideoTranscriptionJob` → Whisper API), **`GET /v1/tasks`, `GET /v1/tasks/{id}/sse`, `GET /v1/threads/{id}/messages`, `GET /api/realtime/workspace`**, **browser-shell device tokens + WebSocket control**, **`/admin/jobs/*` REST API**, **workspace indexer (`WorkspaceIndexer`, `EmbeddingService`, `RealFsWatcher`)**, **realtime WebSocket service (`RealtimeService`)**, **`ArtifactBridge`**, **`runtime-echo` capability**, **`TraceReplayCapability`**, **database-backed capability specs**.
+**Implemented** — multitenancy (JWT + API key + session cookie + Tauri `X-Session-Token`), `UserRole` (User/Admin/SuperAdmin), `CompletionProvider` + `LlmRegistry`, `AnthropicProvider` via `rig-core` 0.36, data-driven `PromptChainCapability`, `ConversationService`, super-admin capability CRUD API + Foundry UI, remote MCP self-registration (`services/current-time`), invoice + contract + OCR pipelines, TOML/JSON capability discovery, `CapabilityRegistry` + seven factories + bulk `CapabilitySpecFactory`, OpenAI-compatible chat, SSE streaming, tool-calling agent loop (blocking + streaming) with `RouterQuotaLayer`, MCP JSON-RPC 2.0, **Qdrant semantic capability search + content embeddings**, **RustFS S3-compatible content + file uploads**, **redb embedded metadata store** (threads/workspaces/audit), WASM execution (wasmtime 44 Component Model), Google Workspace manifest, evals framework (invoice + OCR), Jaeger/OTLP tracing, per-tenant rate limiting, `gen_ai.*` OTel span attributes, W3C traceparent propagation, native filesystem + cargo tools, workspace built-in capability (always-on), cargo-chef Docker image, hierarchical workspace, append-only audit log, Prometheus metrics, OpenAPI + Swagger UI, request-ID correlation, typed ID newtypes, CORS, scheduled jobs, background tasks + SSE, `TranscribeVideoCapability` (Whisper), `/v1/tasks`, `/v1/threads/{id}/messages`, `/api/realtime/workspace`, **cross-platform browser-shell (macOS, Windows, Linux, iOS, Android) with Tauri 2 + Stronghold device tokens + session recorder + tab strip + WS control + trace replay**, `/admin/jobs/*` REST API, `WorkspaceIndexer` + `RealFsWatcher`, `RealtimeService`, `ArtifactBridge` + canonical `ToolOutput`/`Artifact`, `runtime-echo` capability, `TraceReplayCapability` (+ Svelte renderer in the shell), database-backed capability specs with realtime hot-reload, **shared `@conusai/{types,sdk,ui}` packages**, **Marker PDF→markdown integration**, **fastembed local embeddings** (feature-gated).
 
-**Reserved / future:** `Docker` capability kind, external MCP server federation, multi-instance deployment, audit retention/compaction, billing/quota enforcement, OIDC integration, multi-layer context budgeting, live document mode, agent-callable workspace toolkit, additional LLM providers (OpenAI, Ollama, Bedrock), Apalis/Postgres job persistence, whisper-rs local transcription.
-
----
-
-## 15. File-Tree Summary
-
-```
-conusai-platform/
-├── docker-compose.yml
-├── renovate.json
-├── Makefile
-├── start.sh / stop.sh
-├── docs/
-│   ├── arch.md                          # this document
-│   ├── ui-design.md
-│   ├── verify/verify.md
-│   └── adr/
-│       ├── 0004-semantic-capability-router-and-dynamic-prompts.md
-│       ├── 006-tauri-browser-shell.md
-│       ├── 007-capability-module-rename.md
-│       └── 008-multi-platform-shell.md
-│
-└── apps/backend/
-    ├── Cargo.toml                       # workspace (resolver = "3"; rust-version = "1.95")
-    ├── Dockerfile                       # 4-stage cargo-chef
-    ├── rust-toolchain.toml              # stable + wasm32-wasip1 (Rust 1.95)
-    │
-    ├── crates/
-    │   ├── common/
-    │   │   └── src/
-    │   │       ├── lib.rs, types.rs, error.rs, config/mod.rs, telemetry.rs
-    │   │       ├── http_client.rs, mcp.rs, wasm.rs, db.rs, limits.rs, path_safety.rs
-    │   │       ├── eval.rs, audit.rs, metrics.rs
-    │   │       └── memory/{mod,thread,workspace,store,inmem}.rs
-    │   │
-    │   ├── agent-core/
-    │   │   └── src/
-    │   │       ├── lib.rs
-    │   │       ├── llm/{mod,types,error,provider,registry,streaming,providers/anthropic}.rs
-    │   │       ├── agent/{mod,builder,hooks,runtime}.rs
-    │   │       ├── context/{mod,tenant,conversation}.rs
-    │   │       ├── prompt/{mod,template}.rs
-    │   │       ├── chains/{mod,extraction,invoice,contract,llm_chain}.rs
-    │   │       ├── memory/{mod,postgres_thread_store,postgres_workspace_store,
-    │   │       │            postgres_audit_store,minio_workspace_content,context_builder,
-    │   │       │            truncator}.rs
-    │   │       ├── indexing/{mod,coco_indexer,embedding_service,local_embedding_service,
-    │   │       │             real_fs_watcher}.rs
-    │   │       ├── realtime/{mod,...}.rs
-    │   │       ├── vector_store/{mod,postgres}.rs
-    │   │       └── tools/{mod,manifest,card,provider,registry,discovery,store,validator,
-    │   │                  admin,embedding,executor,mcp_adapter,wasm_loader,
-    │   │                  providers/{mod,chain,mcp,wasm,builtin},
-    │   │                  builtin/{mod,fs,cargo,card}}.rs
-    │   │
-    │   └── agent-gateway/
-    │       ├── src/
-    │       │   ├── main.rs, state.rs
-    │       │   ├── mw/{mod,api_key,tenant,plan,admin,rate_limit,request_id,trace}.rs
-    │       │   ├── routes/{mod,health,auth,chat,agent,capabilities,search,mcp,files,
-    │       │   │           audit,workspaces,threads,realtime,admin_capabilities,admin_jobs}.rs
-    │       │   └── ui/{mod,routes,session,view,
-    │       │           handlers/{mod,auth,app,chat,upload,invoice,super_admin}}.rs
-    │       ├── assets/
-    │       │   ├── css/style.css         (~1320 lines, design system)
-    │       │   ├── js/app.js             (~660 lines, streaming + composer)
-    │       │   ├── js/workspace.js       (~750 lines, tree + search + dialogs)
-    │       │   ├── icons/icons.svg
-    │       │   └── images/{favicon,logo-light,logo-dark}.png
-    │       └── templates/
-    │           ├── app.html, login.html
-    │           ├── partials/composer.html
-    │           ├── shared/head.html
-    │           └── super_admin/{layout,list,new,detail}.html
-    │
-    ├── evals/
-    │   ├── src/{main,config,report,
-    │   │        runners/{mod,invoice,ocr_quality},
-    │   │        scorers/mod}.rs
-    │   └── datasets/{invoice,ocr_quality}.jsonl
-    │
-    └── capabilities/
-        ├── file-storage/        capability.toml (mcp)
-        ├── google-workspace/    capability.toml (mcp)
-        ├── contract-processing/ capability.toml (chain)
-        ├── invoice-processing/  capability.toml (chain)
-        ├── ocr-service/         capability.toml (chain)
-        ├── runtime-echo/        capability.toml (chain)
-        └── template-wasm/       capability.toml + .wasm (wasm)
-```
+**Reserved / future:** `Docker` capability kind, external MCP server federation, multi-instance deployment with shared redb-on-network or migration to embedded Sled cluster, audit retention/compaction, billing/quota enforcement, OIDC integration, multi-layer context budgeting, live document mode, additional LLM providers (OpenAI, Ollama, Bedrock), Apalis/Postgres-style job persistence, whisper-rs local transcription, Tauri Android signing automation (see `docs/ops/signing.md`).

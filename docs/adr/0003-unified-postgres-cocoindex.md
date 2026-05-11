@@ -1,6 +1,6 @@
 # ADR 0003 - Unified Postgres + CocoIndex (replaces Qdrant)
 
-Status: Accepted  
+Status: Superseded by [ADR 0009](0009-redb-qdrant-rustfs.md)  
 Date: 2026-05-05  
 Deciders: Platform team
 

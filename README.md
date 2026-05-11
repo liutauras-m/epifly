@@ -9,7 +9,7 @@ The **ConusAI Browser Shell** is a native desktop and mobile application (built 
 ## Quick start
 
 ```bash
-# Infrastructure only (Postgres + MinIO)
+# Infrastructure only (Qdrant + RustFS)
 ./start.sh infra
 
 # Full stack

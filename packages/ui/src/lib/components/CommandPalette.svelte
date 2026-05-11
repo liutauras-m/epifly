@@ -122,7 +122,7 @@
     gap: var(--s-3);
     padding: var(--s-2) var(--s-4);
     cursor: pointer;
-    transition: background var(--duration-short) var(--ease-out);
+    transition: background var(--dur-1) var(--ease-out);
   }
 
   .item:hover { background: var(--ember-soft); }

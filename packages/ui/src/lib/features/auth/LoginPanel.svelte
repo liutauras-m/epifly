@@ -152,7 +152,7 @@
 
 	.hint {
 		font-size: var(--t-label);
-		color: var(--ink-muted);
+		color: var(--ink-3);
 		margin: 0;
 		line-height: 1.6;
 	}

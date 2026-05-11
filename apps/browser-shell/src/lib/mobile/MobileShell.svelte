@@ -45,6 +45,7 @@
 					sessionToken: getSessionToken() ?? '',
 					threadId: params.threadId,
 					workspaceNodeId: params.workspaceNodeId,
+					attachmentIds: params.attachmentIds,
 					signal: params.signal,
 				})
 		: undefined;

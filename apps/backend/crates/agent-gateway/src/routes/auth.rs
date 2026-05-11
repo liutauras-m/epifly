@@ -1,6 +1,11 @@
 use crate::state::AppState;
 use agent_core::{PlanTier, TenantClaims, UserRole};
-use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use axum::{
+    Json,
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Redirect},
+};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -24,6 +29,31 @@ pub struct LoginResponse {
     pub token_type: String,
     pub expires_in: u64,
     pub tenant_id: String,
+}
+
+fn web_login_url() -> String {
+    let raw = std::env::var("WEB_ORIGIN").unwrap_or_else(|_| {
+        "http://localhost:3000,http://localhost:5173,https://tauri.localhost,tauri://localhost"
+            .into()
+    });
+
+    let origin = raw
+        .split(',')
+        .find_map(|value| {
+            let trimmed = value.trim();
+            (!trimmed.is_empty()).then(|| trimmed.trim_end_matches('/'))
+        })
+        .unwrap_or("http://localhost:3000");
+
+    format!("{origin}/login")
+}
+
+/// `GET /login` — public entrypoint that sends the browser to the SvelteKit login page.
+///
+/// The actual login form is owned by the web app so that authentication, cookie
+/// handling, and UI rendering stay in one place.
+pub async fn login_page() -> impl IntoResponse {
+    Redirect::to(&web_login_url())
 }
 
 /// `POST /v1/auth/login` — exchange credentials for a JWT.

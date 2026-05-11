@@ -13,7 +13,7 @@ Commands:
   stop           Stop services for a profile
 
 Profiles:
-  infra          Postgres + MinIO (+ minio-init)
+  infra          Qdrant + RustFS (+ rustfs-init)
   full           Full stack (gateway + infra + observability)
   observability  Jaeger + OTel collector
 EOF
@@ -71,15 +71,15 @@ fi
 echo "▶ Starting infrastructure services..."
 docker compose --profile "$PROFILE" up -d
 
-# ── Wait for Postgres ─────────────────────────────────────────────────────────
-echo "⏳ Waiting for Postgres..."
-until docker exec conusai-postgres pg_isready -U conusai -d conusai > /dev/null 2>&1; do sleep 1; done
-echo "✅ Postgres ready"
+# ── Wait for Qdrant ──────────────────────────────────────────────────────────
+echo "⏳ Waiting for Qdrant..."
+until curl -sf http://localhost:6333/healthz > /dev/null 2>&1; do sleep 1; done
+echo "✅ Qdrant ready"
 
-# ── Wait for MinIO ────────────────────────────────────────────────────────────
-echo "⏳ Waiting for MinIO..."
+# ── Wait for RustFS ───────────────────────────────────────────────────────────
+echo "⏳ Waiting for RustFS..."
 until curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1; do sleep 1; done
-echo "✅ MinIO ready"
+echo "✅ RustFS ready"
 
 # ── Build agent-gateway (if running full profile) ─────────────────────────────
 if [ "$PROFILE" = "full" ]; then
@@ -96,5 +96,5 @@ echo ""
 echo "ConusAI Platform is ready."
 echo "  Gateway:   http://localhost:8080"
 echo "  Foundry UI http://localhost:8080/login"
-echo "  Postgres:  localhost:5432"
-echo "  MinIO:     http://localhost:9001"
+echo "  Qdrant:    http://localhost:6333"
+echo "  RustFS:    http://localhost:9001"

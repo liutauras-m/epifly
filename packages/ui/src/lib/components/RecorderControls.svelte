@@ -49,7 +49,7 @@
     font: inherit;
     font-size: 13px;
     cursor: pointer;
-    transition: background var(--duration-short) var(--ease-out);
+    transition: background var(--dur-1) var(--ease-out);
   }
 
   button:disabled { opacity: 0.6; cursor: default; }

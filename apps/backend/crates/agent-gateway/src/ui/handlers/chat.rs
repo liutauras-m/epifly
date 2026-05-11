@@ -10,6 +10,7 @@ use crate::routes::chat::{ChatMessage, ChatRequest};
 use crate::state::AppState;
 use crate::ui::session::SessionUser;
 use axum::{
+    http::HeaderMap,
     Json,
     extract::State,
     http::StatusCode,
@@ -38,6 +39,7 @@ pub struct UiChatBody {
 pub async fn ui_stream(
     State(state): State<Arc<AppState>>,
     user: SessionUser,
+    headers: HeaderMap,
     Json(body): Json<UiChatBody>,
 ) -> Response {
     let trimmed = body.message.trim();
@@ -64,11 +66,25 @@ pub async fn ui_stream(
         vec![]
     };
 
+    let attachment_hint = if !body.attachment_ids.is_empty() {
+        build_attachment_hint(&state, &headers, &body.attachment_ids, tenant.0.tenant_id.as_str())
+    } else {
+        String::new()
+    };
+
+    let effective_message = if attachment_hint.is_empty() {
+        trimmed.to_string()
+    } else if trimmed.is_empty() {
+        attachment_hint
+    } else {
+        format!("{trimmed}\n\n{attachment_hint}")
+    };
+
     let req = ChatRequest {
         model: body.model.or_else(|| Some("claude-opus-4-7".into())),
         messages: vec![ChatMessage {
             role: "user".into(),
-            content: trimmed.into(),
+            content: effective_message,
         }],
         max_tokens: Some(2048),
         stream: Some(true),
@@ -81,6 +97,55 @@ pub async fn ui_stream(
     agent::stream_agent(state, tenant, req)
         .await
         .into_response()
+}
+
+fn build_attachment_hint(
+    state: &Arc<AppState>,
+    headers: &HeaderMap,
+    attachment_ids: &[String],
+    tenant_id: &str,
+) -> String {
+    let origin = request_origin(headers);
+    let tokens = state.presigned_tokens.lock().unwrap();
+
+    let mut lines = Vec::new();
+    for token in attachment_ids {
+        let Some((key, created, ttl, stored_tid)) = tokens.get(token) else {
+            continue;
+        };
+        if created.elapsed() > *ttl || stored_tid != tenant_id {
+            continue;
+        }
+
+        let filename = key.split('/').next_back().unwrap_or("file");
+        lines.push(format!(
+            "- {filename} (image_path: {origin}/v1/files/{token})"
+        ));
+    }
+
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    format!(
+        "[Attached files — pass image_path directly to invoice-processing__extract_invoice or ocr-service__extract_text]\n{}",
+        lines.join("\n")
+    )
+}
+
+fn request_origin(headers: &HeaderMap) -> String {
+    let proto = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("http");
+
+    let host = headers
+        .get("x-forwarded-host")
+        .or_else(|| headers.get("host"))
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost:8080");
+
+    format!("{proto}://{host}")
 }
 
 // ── Attachment resolution ─────────────────────────────────────────────────────

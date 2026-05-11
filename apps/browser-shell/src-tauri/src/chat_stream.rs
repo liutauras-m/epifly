@@ -26,6 +26,7 @@ pub async fn chat_stream_start(
     session_token: String,
     thread_id: Option<String>,
     workspace_node_id: Option<String>,
+    attachment_ids: Option<Vec<String>>,
     api_base: String,
 ) -> Result<String, String> {
     let stream_id = ulid::Ulid::new().to_string();
@@ -39,6 +40,9 @@ pub async fn chat_stream_start(
         }
         if let Some(nid) = workspace_node_id {
             body["workspace_node_id"] = serde_json::json!(nid);
+        }
+        if let Some(ids) = attachment_ids.filter(|ids| !ids.is_empty()) {
+            body["attachment_ids"] = serde_json::json!(ids);
         }
 
         let result = client

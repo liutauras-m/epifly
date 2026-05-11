@@ -115,6 +115,7 @@ pub struct ApiDoc;
 pub fn public_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/health", get(health::health))
+        .route("/login", get(auth::login_page))
         // Auth: exchange credentials for JWT
         .route("/v1/auth/login", post(auth::login))
         // File download: UUID token acts as a presigned URL credential (1h TTL, no JWT needed).
@@ -216,7 +217,7 @@ pub fn protected_router() -> Router<Arc<AppState>> {
         ))
         // Tool registry (path kept as /v1/capabilities for API compatibility)
         .route("/v1/capabilities", get(capabilities::list_capabilities))
-        // Semantic capability search (Postgres pgvector ANN)
+        // Semantic capability search (Qdrant ANN)
         .route("/v1/capabilities/search", get(search::search))
         // MCP JSON-RPC 2.0
         .route("/mcp", post(mcp::dispatch))

@@ -5,7 +5,7 @@ use ulid::Ulid;
 
 /// Pluggable persistent thread store.
 //
-/// Implementations: `PostgresThreadStore` (agent-core crate) for production;
+/// Implementations: `RedbMetadataStore` (agent-core crate) for production;
 /// `InMemoryThreadStore` for test mode.
 #[async_trait]
 pub trait ThreadStore: Send + Sync + 'static {

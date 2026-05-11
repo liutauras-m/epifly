@@ -193,11 +193,8 @@ impl AppState {
 
         let tool_admin = Arc::new(build_admin(Arc::clone(&registry), Arc::clone(&audit_store)));
 
-        let s3_endpoint = std::env::var("S3_ENDPOINT")
-            .or_else(|_| std::env::var("MINIO_ENDPOINT"))
-            .ok();
+        let s3_endpoint = std::env::var("S3_ENDPOINT").ok();
         let bucket = std::env::var("S3_BUCKET")
-            .or_else(|_| std::env::var("MINIO_BUCKET"))
             .unwrap_or_else(|_| "workspace".into());
         let job_ctx = Arc::new(JobContext::new(
             Arc::clone(&audit_store),
@@ -344,19 +341,15 @@ impl WorkspaceContentStore for NoopWorkspaceContent {
 
 fn init_file_store() -> Option<Arc<dyn ObjectStore>> {
     let endpoint = std::env::var("S3_ENDPOINT")
-        .or_else(|_| std::env::var("MINIO_ENDPOINT"))
         .unwrap_or_else(|_| "http://rustfs:9000".into());
 
     let bucket = std::env::var("S3_BUCKET")
-        .or_else(|_| std::env::var("MINIO_BUCKET"))
         .unwrap_or_else(|_| "workspace".into());
 
     let access_key = std::env::var("AWS_ACCESS_KEY_ID")
-        .or_else(|_| std::env::var("MINIO_ACCESS_KEY"))
         .unwrap_or_else(|_| "minioadmin".into());
 
     let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY")
-        .or_else(|_| std::env::var("MINIO_SECRET_KEY"))
         .unwrap_or_else(|_| "minioadmin".into());
 
     match AmazonS3Builder::new()
