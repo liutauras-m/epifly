@@ -91,11 +91,9 @@ async fn main() -> Result<()> {
     let loaded = state.registry.lock().unwrap().len();
     info!(capabilities = loaded, "capability registry loaded");
 
-    // Wire capability-spec realtime hot-reload channel (Postgres mode only).
-    if let (Some(realtime), Some(spec_factory)) = (
-        state.realtime_service.clone(),
-        state.capability_spec_factory.clone(),
-    ) {
+    // Wire capability-spec realtime hot-reload channel.
+    if let Some(spec_factory) = state.capability_spec_factory.clone() {
+        let realtime = Arc::clone(&state.realtime_service);
         let registry = Arc::clone(&state.registry);
         tokio::spawn(async move {
             let mut rx = realtime.subscribe_capability_spec_changes().await;
@@ -144,28 +142,22 @@ async fn main() -> Result<()> {
     // Start the workspace file indexer if WORKSPACES_ROOT is configured.
     // Runs an initial index pass then watches for changes at configurable intervals.
     let _watcher = if let Ok(root) = std::env::var("WORKSPACES_ROOT") {
-        if let Some(pool) = state.pool.clone() {
-            let root_path = PathBuf::from(root);
-            let indexer = Arc::new(WorkspaceIndexer::new(
-                root_path.clone(),
-                pool,
-                Arc::clone(&state.embedding_service),
-                Arc::clone(&state.vector_store),
-            ));
-            // Run the first indexing pass in the background; don't block startup.
-            let idx_clone = Arc::clone(&indexer);
-            tokio::spawn(async move {
-                if let Err(e) = idx_clone.index_once().await {
-                    tracing::warn!(error = %e, "initial workspace index pass failed");
-                }
-            });
-            let watcher = RealFsWatcher::spawn(Arc::clone(&indexer));
-            info!(root = %root_path.display(), "workspace indexer started");
-            Some(watcher)
-        } else {
-            info!("WORKSPACES_ROOT set but no pool available — workspace indexer disabled");
-            None
-        }
+        let root_path = PathBuf::from(root);
+        let indexer = Arc::new(WorkspaceIndexer::new(
+            root_path.clone(),
+            Arc::clone(&state.embedding_service),
+            Arc::clone(&state.vector_store),
+        ));
+        // Run the first indexing pass in the background; don't block startup.
+        let idx_clone = Arc::clone(&indexer);
+        tokio::spawn(async move {
+            if let Err(e) = idx_clone.index_once().await {
+                tracing::warn!(error = %e, "initial workspace index pass failed");
+            }
+        });
+        let watcher = RealFsWatcher::spawn(Arc::clone(&indexer));
+        info!(root = %root_path.display(), "workspace indexer started");
+        Some(watcher)
     } else {
         info!("WORKSPACES_ROOT not set — workspace indexer disabled");
         None

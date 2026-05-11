@@ -14,7 +14,8 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use tracing::{instrument, warn};
 
@@ -96,9 +97,8 @@ async fn vector_search(
         .collect())
 }
 
-/// Upsert capability cards into `capability_embeddings` when their content has
-/// changed.  Uses a SHA-256 hash stored in `metadata.content_hash` to skip
-/// unchanged cards.
+/// Upsert capability cards into `capability_embeddings` when their content has changed.
+/// Uses a content hash to skip unchanged cards.
 async fn refresh_capability_embeddings(
     state: &AppState,
     cards: &[agent_core::capabilities::card::CapabilityCard],
@@ -113,32 +113,11 @@ async fn refresh_capability_embeddings(
         );
 
         let content_hash = {
-            let mut h = Sha256::new();
-            h.update(content.as_bytes());
-            format!("{:x}", h.finalize())
+            let mut h = DefaultHasher::new();
+            content.hash(&mut h);
+            format!("{:016x}", h.finish())
         };
 
-        // Fetch stored hash.
-        let stored_hash: Option<String> = if let Some(pool) = &state.pool {
-            sqlx::query_scalar!(
-                "SELECT (metadata->>'content_hash')::text
-             FROM capability_embeddings WHERE capability_id = $1",
-                card.manifest.name,
-            )
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten()
-            .flatten()
-        } else {
-            None
-        };
-
-        if stored_hash.as_deref() == Some(&content_hash) {
-            continue; // unchanged — skip re-embedding
-        }
-
-        // Generate embedding.
         let embedding = match state.embedding_service.embed_query(&content).await {
             Ok(v) => v,
             Err(e) => {
@@ -160,7 +139,7 @@ async fn refresh_capability_embeddings(
                 &card.manifest.name,
                 &content,
                 &embedding,
-                &metadata,
+                metadata,
                 card.namespace(),
                 card.tags(),
             )

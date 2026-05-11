@@ -1,33 +1,33 @@
 //! Post-invoke artifact materialisation bridge.
 //!
 //! Called after every `CapabilityProvider::invoke()` that returns a `ToolOutput`
-//! with non-empty `artifacts`. Uploads binaries to MinIO and inserts `workspace_nodes`
-//! rows directly via Postgres.
-//!
-//! # SRP contract
-//! - Tools return `ToolOutput` — they never call object_store directly.
-//! - `ArtifactBridge` owns the upload + workspace node creation + index trigger.
+//! with non-empty `artifacts`. Uploads binaries to the object store and inserts
+//! workspace_nodes rows via `RedbMetadataStore`.
 
 use base64::Engine as _;
 use common::artifact::{Artifact, ToolOutput};
+use common::memory::store::WorkspaceContentStore;
 use object_store::{ObjectStore, path::Path as OsPath};
-use serde_json::json;
-use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
 use ulid::Ulid;
 
-/// MIME types that should be indexed after upload.
 const INDEXABLE_MIME_PREFIXES: &[&str] = &["text/", "application/pdf", "application/json"];
 
 pub struct ArtifactBridge {
-    pool: PgPool,
     object_store: Arc<dyn ObjectStore>,
+    content_store: Arc<dyn WorkspaceContentStore>,
 }
 
 impl ArtifactBridge {
-    pub fn new(pool: PgPool, object_store: Arc<dyn ObjectStore>) -> Arc<Self> {
-        Arc::new(Self { pool, object_store })
+    pub fn new(
+        object_store: Arc<dyn ObjectStore>,
+        content_store: Arc<dyn WorkspaceContentStore>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            object_store,
+            content_store,
+        })
     }
 
     /// Materialise all artifacts in `output`. Failures are logged, not propagated.
@@ -57,7 +57,7 @@ impl ArtifactBridge {
     async fn materialise(
         &self,
         tenant_id: &str,
-        user_id: Option<&str>,
+        _user_id: Option<&str>,
         tool_name: &str,
         _parent_node_id: Option<&str>,
         artifact: &Artifact,
@@ -73,43 +73,18 @@ impl ArtifactBridge {
                 .await?;
         }
 
-        // Create workspace_nodes row (kind='file') directly via Postgres.
-        let owner = user_id.unwrap_or("system");
-        let virtual_path = format!("/outputs/{tool_name}/{}", artifact.name);
-        let metadata = json!({
-            "mime_type":          artifact.mime_type,
-            "tool":               tool_name,
-            "source":             "tool_output",
-            "object_key":         object_key.clone(),
-            "artifact_metadata":  artifact.metadata,
-        });
-        sqlx::query(
-            r#"
-            INSERT INTO workspace_nodes
-                (id, tenant_id, owner_id, parent_id, kind, name, virtual_path, metadata)
-            VALUES ($1, $2, $3, NULL, 'file', $4, $5, $6)
-            ON CONFLICT (id) DO NOTHING
-            "#,
-        )
-        .bind(&node_id)
-        .bind(tenant_id)
-        .bind(owner)
-        .bind(&artifact.name)
-        .bind(&virtual_path)
-        .bind(&metadata)
-        .execute(&self.pool)
-        .await?;
-
-        // Trigger async indexing for text-like MIME types (best-effort).
+        // Write text artifacts to workspace content store.
         if is_indexable(&artifact.mime_type) {
-            let pool = self.pool.clone();
-            let key = object_key.clone();
-            let id = node_id.clone();
-            tokio::spawn(async move {
-                if let Err(e) = trigger_index(pool, id, key).await {
-                    warn!(error = %e, "artifact index trigger failed");
+            if let Some(ref b64) = artifact.data {
+                let bytes = base64::engine::general_purpose::STANDARD.decode(b64)?;
+                if let Ok(text) = std::str::from_utf8(&bytes) {
+                    let virtual_path = format!("/outputs/{tool_name}/{}", artifact.name);
+                    let _ = self
+                        .content_store
+                        .write(tenant_id, &virtual_path, text)
+                        .await;
                 }
-            });
+            }
         }
 
         info!(artifact = %artifact.name, node_id = %node_id, "artifact materialised");
@@ -119,17 +94,4 @@ impl ArtifactBridge {
 
 fn is_indexable(mime: &str) -> bool {
     INDEXABLE_MIME_PREFIXES.iter().any(|p| mime.starts_with(p))
-}
-
-async fn trigger_index(pool: PgPool, node_id: String, object_key: String) -> anyhow::Result<()> {
-    sqlx::query(
-        "INSERT INTO indexing_queue (node_id, object_key, created_at)
-         VALUES ($1, $2, now())
-         ON CONFLICT (node_id) DO NOTHING",
-    )
-    .bind(&node_id)
-    .bind(&object_key)
-    .execute(&pool)
-    .await?;
-    Ok(())
 }

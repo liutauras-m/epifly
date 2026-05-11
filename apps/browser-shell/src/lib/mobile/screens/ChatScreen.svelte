@@ -33,6 +33,15 @@
 	let messagesEl = $state<HTMLElement | undefined>();
 	let chipsUsed = $state(false);
 
+	// Reset local composer state when chatStream.newSession() clears messages
+	$effect(() => {
+		if (chatStream.messages.length === 0) {
+			inputValue = '';
+			attachments = [];
+			chipsUsed = false;
+		}
+	});
+
 	// For FLIP transition: bind to centred composer in empty state
 	let centredComposerEl = $state<HTMLElement | undefined>();
 	// For FLIP transition: bind to docked composer in active state
@@ -94,12 +103,14 @@
 	async function handleUpload(files: File[]): Promise<Attachment[]> {
 		const results: Attachment[] = [];
 		for (const file of files) {
-			const res = await sdk.files.upload(file);
+			// workspaces.upload → /ui/upload (session-token auth, works in all contexts)
+			// files.upload → /v1/files (JWT Bearer only, unavailable without device registration)
+			const res = await sdk.workspaces.upload(file);
 			if (res.data) {
 				results.push({
-					id: (res.data as any).token,
-					filename: (res.data as any).name,
-					size: (res.data as any).size_bytes,
+					id: res.data.id,
+					filename: res.data.filename,
+					size: res.data.size,
 				});
 			}
 		}

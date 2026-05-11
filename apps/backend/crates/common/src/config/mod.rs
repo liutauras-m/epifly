@@ -8,7 +8,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub server: ServerConfig,
-    pub database: DatabaseConfig,
+    pub storage: StorageConfig,
     pub capabilities_dir: String,
     pub telemetry: TelemetryConfig,
     pub llm: LlmConfig,
@@ -77,9 +77,29 @@ pub struct ServerConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DatabaseConfig {
-    /// Full Postgres connection URL, read from DATABASE_URL env via figment.
-    pub url: String,
+pub struct StorageConfig {
+    /// redb database file path. Read from REDB_PATH env (via figment CONUSAI_ prefix).
+    pub redb_path: String,
+    /// Qdrant gRPC endpoint URL. Read from QDRANT_URL.
+    pub qdrant_url: String,
+    /// S3-compatible object store endpoint. Read from S3_ENDPOINT.
+    pub s3_endpoint: String,
+    /// S3 bucket name. Read from S3_BUCKET.
+    pub s3_bucket: String,
+    /// Marker PDF-to-markdown service URL. Read from MARKER_URL.
+    pub marker_url: Option<String>,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            redb_path: "/data/conusai.redb".into(),
+            qdrant_url: "http://localhost:6334".into(),
+            s3_endpoint: "http://localhost:9000".into(),
+            s3_bucket: "workspace".into(),
+            marker_url: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,9 +142,7 @@ impl Default for AppConfig {
                 host: "0.0.0.0".into(),
                 port: 8080,
             },
-            database: DatabaseConfig {
-                url: "postgres://conusai:conusai@localhost:5432/conusai".into(),
-            },
+            storage: StorageConfig::default(),
             capabilities_dir: "./capabilities".into(),
             telemetry: TelemetryConfig {
                 otlp_endpoint: None,

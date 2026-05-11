@@ -46,25 +46,19 @@ pub async fn shell_control(
     ws: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, HttpError> {
     require_shell_feature()?;
-    let pool = state
-        .pool
-        .as_ref()
-        .ok_or_else(|| HttpError::internal("no database pool", None))?
-        .clone();
 
     let token = query.device_token.as_deref().unwrap_or("").to_owned();
 
-    Ok(ws.on_upgrade(move |socket| handle_shell_ws(socket, device_id, token, pool)))
+    Ok(ws.on_upgrade(move |socket| handle_shell_ws(socket, device_id, token, state)))
 }
 
 async fn handle_shell_ws(
     socket: WebSocket,
     device_id: String,
     device_token: String,
-    pool: sqlx::PgPool,
+    state: Arc<AppState>,
 ) {
-    // Authenticate immediately; close if invalid.
-    match validate_device_token(&pool, &device_token).await {
+    match validate_device_token(&state, &device_token).await {
         Ok(Some(tenant_id)) => {
             info!(device_id, tenant_id, "shell connected");
         }
@@ -78,7 +72,6 @@ async fn handle_shell_ws(
         }
     }
 
-    // Read per-turn replay quota from env (default 3).
     let max_replays: u32 = std::env::var("CONUSAI_MAX_REPLAYS_PER_TURN")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -95,7 +88,6 @@ async fn handle_shell_ws(
                         kind: ControlKind::Heartbeat,
                         ..
                     }) => {
-                        // Reset per-turn replay counter on each heartbeat.
                         replays_this_turn = 0;
                         let ack = serde_json::to_string(&ControlMessage {
                             kind: ControlKind::Ack,

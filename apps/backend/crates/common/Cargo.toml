@@ -9,7 +9,8 @@ license.workspace    = true
 
 [dependencies]
 tokio.workspace       = true
-sqlx.workspace        = true
+redb.workspace        = true
+postcard.workspace    = true
 serde.workspace       = true
 serde_json.workspace  = true
 figment.workspace     = true

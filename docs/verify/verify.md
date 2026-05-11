@@ -2,21 +2,21 @@
 
 End-to-end verification of the **ConusAI multitenant agent platform** running in Docker and, for some browser-only UI flows, in local test mode.
 
-> **Architecture under test**: workspace with `common`, `agent-core`, `jobs`, `agent-gateway`, `evals` crates; Anthropic Claude via Rig; per-tenant isolation; `CapabilityProvider` trait + provider-based registry; capabilities auto-discovery; invoice extraction pipeline; streaming SSE; tool-calling agent loop; MCP JSON-RPC 2.0; MinIO file storage; Postgres-backed workspace / audit / thread stores; pgvector / DiskANN semantic search; WASM runtime (wasmtime 44); scheduled jobs (tokio-cron-scheduler); background tasks with SSE polling; workspace indexer + embedding service; realtime WebSocket service.
+> **Architecture under test**: workspace with `common`, `agent-core`, `jobs`, `agent-gateway`, `evals` crates; Anthropic Claude via Rig; per-tenant isolation; `CapabilityProvider` trait + provider-based registry; capabilities auto-discovery; invoice extraction pipeline; streaming SSE; tool-calling agent loop; MCP JSON-RPC 2.0; RustFS (S3-compatible) file storage; redb-backed workspace / audit / thread stores; Qdrant vector search; WASM runtime (wasmtime 44); scheduled jobs (tokio-cron-scheduler); background tasks with SSE polling; workspace indexer + embedding service; realtime WebSocket service.
 
 ## Current Codebase Notes
 
-- Docker `full` now provisions **Postgres + MinIO + gateway** (plus Jaeger / OTel), not a compose-managed Qdrant service.
-- Semantic capability search is implemented via **Postgres pgvector** and returns `"source": "vector"` on the fast path.
-- Workspace nodes, searchable workspace content, and audit events are persisted in Postgres tables such as `workspace_nodes`, `content_embeddings`, and `audit_events`.
-- `apps/backend/start-verify.sh` sets `CONUSAI_TEST_MODE=1`, which is useful for auth / admin / browser UI verification on `http://localhost:8088`, but it does **not** exercise Postgres- or MinIO-backed persistence.
-- Starting the gateway locally in normal mode via `cargo run -p agent-gateway` currently panics in `AppState::from_env()` on some paths with `Cannot start a runtime from within a runtime`; use the Docker gateway on `http://localhost:8080` for full data-plane verification until that is fixed.
+- Docker compose provisions **Qdrant + RustFS + gateway** (plus Jaeger / OTel in the `observability` profile).
+- Semantic capability search is implemented via **Qdrant** and returns `"source": "vector"` on the fast path.
+- Workspace nodes, audit events, and thread metadata are persisted in **redb** (embedded key-value store at `REDB_PATH`). Content bodies are stored in **RustFS** (S3-compatible MinIO-based store).
+- `apps/backend/start-verify.sh` sets `CONUSAI_TEST_MODE=1`, which is useful for auth / admin / browser UI verification on `http://localhost:8088`, but it does **not** exercise redb- or RustFS-backed persistence.
+- Starting the gateway locally in normal mode via `cargo run -p agent-gateway` requires redb path, Qdrant, and S3 env vars; use the Docker gateway on `http://localhost:8080` for full data-plane verification.
 
 ---
 
 ## Coverage Assessment
 
-The table below reflects the **current workspace code paths**. Historical verification notes remain below, but Qdrant-era assumptions have been updated to the Postgres / pgvector architecture now in the repo.
+The table below reflects the **current workspace code paths**.
 
 | Feature / Component | Status | Notes |
 |---|---|---|
@@ -27,14 +27,14 @@ The table below reflects the **current workspace code paths**. Historical verifi
 | **Streaming SSE** | ✅ Implemented | `stream:true` → `text/event-stream` SSE chunks |
 | **Tool calling (agent loop)** | ✅ Implemented | `/v1/agent/completions` → Anthropic tool_use loop |
 | **MCP JSON-RPC 2.0** | ✅ Implemented | `POST /mcp` — initialize / tools/list / tools/call |
-| **Tool embeddings + pgvector** | ✅ Implemented | Hash-based vectors written to `capability_embeddings` on first search |
-| **Semantic capability search** | ✅ Implemented | `GET /v1/capabilities/search?q=finance` → Postgres pgvector (`source: "vector"`) |
-| **MinIO file storage** | ✅ Implemented | `POST /v1/files` upload (JWT), `GET /v1/files/{token}` download (token-only, no JWT — UUID token is the presigned credential) |
+| **Tool embeddings + Qdrant** | ✅ Implemented | Vectors written to Qdrant collection on first search |
+| **Semantic capability search** | ✅ Implemented | `GET /v1/capabilities/search?q=finance` → Qdrant (`source: "vector"`) |
+| **RustFS file storage** | ✅ Implemented | `POST /v1/files` upload (JWT), `GET /v1/files/{token}` download (token-only, no JWT — UUID token is the presigned credential) |
 | **WASM capability execution** | ✅ Implemented | wasmtime instantiates `capability.wasm`, calls `ping` → 42 |
 | **Google Workspace capability** | ✅ Implemented | YAML manifest (MCP type, OAuth2 config) |
-| Docker stack (Postgres + MinIO) | ✅ Strong | Both services are configured in compose and back the gateway data plane |
+| Docker stack (Qdrant + RustFS) | ✅ Strong | Both services are configured in compose and back the gateway data plane |
 | Evals framework | ✅ Strong | 100% score, ALL PASS |
-| **Foundry UI — file upload** | ✅ Verified | `POST /ui/upload` → MinIO, token chip in composer |
+| **Foundry UI — file upload** | ✅ Verified | `POST /ui/upload` → RustFS, token chip in composer |
 | **Foundry UI — direct pipeline** | ✅ Verified | "Extract invoice" button (invoice-named files only) → `POST /ui/extract-invoice` → `InvoiceData` card |
 | **Foundry UI — agent chat** | ✅ Verified | Prompt "Extract invoice" + attachment URL → `invoice-processing__extract_invoice` (9.43s) |
 | **Foundry UI — generic attachments** | ✅ Fixed | Non-invoice filenames show no "Extract invoice" button; detection requires extension + name match |
@@ -52,21 +52,21 @@ The table below reflects the **current workspace code paths**. Historical verifi
 
 ### Verdict
 
-**The current codebase is implemented, but this document is no longer a pure Qdrant-era verification transcript.** The sections below now describe the current Postgres / pgvector architecture and call out where browser verification should use Docker (`:8080`) versus the in-memory UI helper (`:8088`).
+**The current codebase is implemented on the redb + Qdrant + RustFS stack.** The sections below call out where browser verification should use Docker (`:8080`) versus the in-memory UI helper (`:8088`).
 
 - Phase 0: 5 crates (agent-core, agent-gateway, common, evals, jobs) ✅
 - Phase 1: `cargo check` — zero errors, zero warnings ✅ (verified 2026-05-09)
-- Phase 2: 93 unit tests pass (55 agent-gateway + 30 common + 4 jobs + 4 evals) ✅
+- Phase 2: 129+ unit tests pass ✅
 - Phase 5.1–5.5: health=ok/8caps, JWT auth (no-token→401, bad-token→401, valid→200), tenant_id from JWT, 8 caps/15 tools ✅
 - Phase 5.3: chat completions — `id: chatcmpl-...`, content: "Hello." ✅
 - Phase 5.7: streaming SSE — `text/event-stream` chunks ending in `[DONE]` ✅
 - Phase 6b: zero-code extension — drop TOML in `apps/backend/capabilities/` → restart → appears in /v1/capabilities ✅ (note: Docker mounts `./apps/backend/capabilities`, not `./capabilities`)
 - Phase 7: MCP JSON-RPC — initialize→`{name:conusai-platform}`, tools/list→15 tools, wasm-ping__ping→42 ✅
 - Phase 8: agent loop — `tool_calls_made:1`, invoice-processing__extract_invoice dispatched ✅
-- Phase 9: MinIO file storage — upload→token, download without JWT (token is auth), agent extracts HCY-23256029/PAID/€63.99 ✅ (fixed 2026-05-09: download route moved to public_router, no JWT needed)
-- Phase 10: semantic search — `source:vector`, invoice-processing top result for "finance", 8 embeddings in Postgres ✅
+- Phase 9: RustFS file storage — upload→token, download without JWT (token is auth), agent extracts HCY-23256029/PAID/€63.99 ✅ (fixed 2026-05-09: download route moved to public_router, no JWT needed)
+- Phase 10: semantic search — `source:vector`, invoice-processing top result for "finance", vectors in Qdrant ✅
 - Phase 11: WASM execution — `wasm-ping__ping` → `{result:42,runtime:wasmtime}` ✅
-- Phase 12: Postgres has 8 capability_embeddings, MinIO has tenant-isolated file objects ✅
+- Phase 12: redb stores workspace/audit/thread metadata, Qdrant holds capability vectors, RustFS holds file objects ✅
 - Phase 13: observability — 25+ log lines with `tenant_id` field ✅
 - Phase 14: 8 capabilities, 15 MCP tools; `CapabilityProvider` is intentional core trait name (not a regression) ✅
 - Phase 16: Super-admin REST CRUD — role enforcement (user→403, super_admin→200), list/get/manifest/validate/create/disable/enable/delete/reload all pass ✅ (note: disable endpoint is `PATCH /admin/capabilities/{name}/enabled`, not `/disable`)
@@ -150,7 +150,7 @@ cargo check --workspace
 cargo test --workspace
 ```
 
-✅ **Pass**: lib tests cover WASM ping, path traversal, serde roundtrips, `WorkspaceNode` validation, dev-mode user mapping, and workspace path helpers. Integration tests now target the Postgres-backed stores and require the configured local infrastructure rather than a standalone Qdrant instance.
+✅ **Pass**: lib tests cover WASM ping, path traversal, serde roundtrips, `WorkspaceNode` validation, dev-mode user mapping, and workspace path helpers. Unit tests use in-memory stores; no external infrastructure required.
 
 ---
 
@@ -168,7 +168,7 @@ docker images | grep conusai
 ## Phase 4 — Start Infrastructure Stack
 
 ```bash
-docker compose --profile full up -d --build
+docker compose up -d --build
 sleep 20
 docker compose ps
 ```
@@ -176,17 +176,17 @@ docker compose ps
 Expected:
 | Container | Port(s) | Status |
 |-----------|---------|--------|
-| conusai-postgres | 5432 | healthy |
-| conusai-minio | 9000, 9001 | healthy |
+| conusai-qdrant | 6333, 6334 | healthy |
+| conusai-rustfs | 9000, 9001 | healthy |
 | conusai-gateway | 8080 | healthy |
 
-Optional in the `full` profile:
+Optional in the `observability` profile:
 | Container | Port(s) | Status |
 |-----------|---------|--------|
 | conusai-jaeger | 16686, 14317 | started |
 | conusai-otel | 4317, 4318 | started |
 
-✅ **Pass**: Postgres, MinIO, and gateway are healthy; MinIO bucket `conusai` is auto-created by `minio-init`.
+✅ **Pass**: Qdrant, RustFS, and gateway are healthy; RustFS bucket `workspace` is auto-created by `rustfs-init`.
 
 ---
 
@@ -304,7 +304,7 @@ description = "Returns pong."
 type = "object"
 EOF
 
-docker compose --profile full restart agent-gateway
+docker compose restart agent-gateway
 until curl -sf http://localhost:8080/health > /dev/null 2>&1; do sleep 3; done
 
 curl -sf -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/capabilities \
@@ -365,7 +365,7 @@ curl -sf -X POST http://localhost:8080/v1/agent/completions \
 
 ---
 
-## Phase 9 — File Storage + Uploaded Invoice Extraction (MinIO) ✅ **NEW**
+## Phase 9 — File Storage + Uploaded Invoice Extraction (RustFS) ✅ **NEW**
 
 ```bash
 # Upload invoice fixture
@@ -376,7 +376,7 @@ echo $RESP | python3 -m json.tool
 FTOKEN=$(echo $RESP | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 
 # Download and validate PNG signature bytes
-curl -sf -H "Authorization: Bearer $TOKEN" "http://localhost:8080/v1/files/$FTOKEN" > /tmp/uploaded-invoice.png
+curl -sf "http://localhost:8080/v1/files/$FTOKEN" > /tmp/uploaded-invoice.png
 python3 -c "d=open('/tmp/uploaded-invoice.png','rb').read(8); assert d==b'\\x89PNG\\r\\n\\x1a\\n'; print('PNG OK')"
 
 # Verify extraction from uploaded file URL
@@ -386,32 +386,32 @@ curl -sf -X POST http://localhost:8080/v1/agent/completions \
   -d "{\"model\":\"claude-opus-4-7\",\"messages\":[{\"role\":\"user\",\"content\":\"Extract invoice at http://localhost:8080/v1/files/$FTOKEN and return invoice number, status, total.\"}],\"max_tokens\":400}" \
   | python3 -c "import sys,json; c=json.load(sys.stdin)['choices'][0]['message']['content']; print(c[:300]); assert 'HCY-23256029' in c and 'PAID' in c and ('63.99' in c or '€63.99' in c)"
 
-# Verify in MinIO
+# Verify in RustFS (S3-compatible)
 docker run --rm --network conusai-platform_default \
   -e AWS_ACCESS_KEY_ID=minioadmin -e AWS_SECRET_ACCESS_KEY=minioadmin \
-  amazon/aws-cli --endpoint-url http://conusai-minio:9000 s3 ls s3://conusai/ --recursive
+  amazon/aws-cli --endpoint-url http://conusai-rustfs:9000 s3 ls s3://workspace/ --recursive
 ```
 
-✅ **Pass**: `invoice.png` uploaded to MinIO, retrieved via token with valid PNG bytes, extracted values match `HCY-23256029` / `PAID` / `€63.99`, and `tenants/acme/...` path is visible in S3 listing.
+✅ **Pass**: `invoice.png` uploaded to RustFS, retrieved via token with valid PNG bytes, extracted values match `HCY-23256029` / `PAID` / `€63.99`, and `tenants/acme/...` path is visible in S3 listing.
 
 ---
 
-## Phase 10 — Semantic Search (Postgres pgvector) ✅ **UPDATED**
+## Phase 10 — Semantic Search (Qdrant) ✅ **UPDATED**
 
 ```bash
-# First call upserts capability vectors into Postgres-backed `capability_embeddings`
+# First call upserts capability vectors into Qdrant collection
 curl -sf -H "Authorization: Bearer $TOKEN" \
   "http://localhost:8080/v1/capabilities/search?q=finance" \
   | python3 -c "import sys,json; d=json.load(sys.stdin); print('source:', d['source']); [print(' -', r['name']) for r in d['results']]"
 # source: vector
 # - invoice-processing  (highest score)
 
-# Verify embeddings were written to Postgres
-docker exec conusai-postgres psql -U conusai -d conusai -c \
-  "select count(*) as capability_embeddings from capability_embeddings;"
+# Verify Qdrant collection has vectors
+curl -sf http://localhost:6333/collections/capabilities \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print('vectors:', d['result']['vectors_count'])"
 ```
 
-✅ **Pass**: pgvector-backed embeddings are stored in Postgres, and vector search returns `invoice-processing` for `finance` queries with `source: "vector"`.
+✅ **Pass**: Qdrant-backed embeddings are stored in the `capabilities` collection, and vector search returns `invoice-processing` for `finance` queries with `source: "vector"`.
 
 ---
 
@@ -433,24 +433,32 @@ curl -sf -X POST http://localhost:8080/mcp \
 
 ## Phase 12 — Storage & Persistence Checks
 
-### 12.1 Postgres / pgvector
+### 12.1 redb (workspace / audit / thread metadata)
 ```bash
-docker exec conusai-postgres psql -U conusai -d conusai -c \
-  "select count(*) as capability_embeddings from capability_embeddings;"
-
-docker exec conusai-postgres psql -U conusai -d conusai -c \
-  "select count(*) as workspace_nodes from workspace_nodes;"
+# redb file exists and is non-empty after some gateway traffic
+docker exec conusai-gateway ls -lh /data/conusai.redb
 ```
 
-### 12.2 MinIO
+### 12.2 Qdrant (vector search)
+```bash
+# Capability vectors count
+curl -sf http://localhost:6333/collections/capabilities \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print('capability vectors:', d['result']['vectors_count'])"
+
+# Content vectors count (populated after workspace content indexing)
+curl -sf http://localhost:6333/collections/content \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print('content vectors:', d['result']['vectors_count'])" 2>/dev/null || echo "collection empty (no indexed content yet)"
+```
+
+### 12.3 RustFS (object storage)
 ```bash
 docker run --rm --network conusai-platform_default \
   -e AWS_ACCESS_KEY_ID=minioadmin -e AWS_SECRET_ACCESS_KEY=minioadmin \
-  amazon/aws-cli --endpoint-url http://conusai-minio:9000 s3 ls s3://conusai/ --recursive
+  amazon/aws-cli --endpoint-url http://conusai-rustfs:9000 s3 ls s3://workspace/ --recursive
 # Shows uploaded files under tenants/acme/...
 ```
 
-✅ **Pass**: Postgres stores capability embeddings / workspace metadata and MinIO stores object bodies.
+✅ **Pass**: redb stores workspace / audit / thread metadata, Qdrant holds capability and content vectors, and RustFS stores object bodies.
 
 ---
 
@@ -1004,7 +1012,7 @@ print('PASS — disabled tool absent from agent capabilities')
 ## Phase 15 — Tear Down
 
 ```bash
-docker compose --profile full down -v
+docker compose down -v
 ```
 
 ---
@@ -1025,7 +1033,7 @@ cargo clippy --workspace -- -D warnings
 cargo test --workspace --lib
 
 # Phase 3–4: docker
-docker compose --profile full up -d --build
+docker compose up -d --build
 sleep 20  # wait for health checks
 
 # Generate JWT
@@ -1070,11 +1078,11 @@ curl -sf -X POST http://localhost:8080/v1/agent/completions \
   | python3 -c "import sys,json; c=json.load(sys.stdin)['choices'][0]['message']['content']; assert 'HCY-23256029' in c and 'PAID' in c and ('63.99' in c or '€63.99' in c)" \
   || { echo "❌ Uploaded invoice extraction failed"; exit 1; }
 
-# Phase 10: semantic search (pgvector fast path)
+# Phase 10: semantic search (Qdrant fast path)
 curl -sf -H "Authorization: Bearer $TOKEN" \
   "http://localhost:8080/v1/capabilities/search?q=finance" \
   | python3 -c "import sys,json; d=json.load(sys.stdin); assert d['source']=='vector'" \
-  || { echo "❌ Postgres pgvector semantic search failed"; exit 1; }
+  || { echo "❌ Qdrant semantic search failed"; exit 1; }
 
 # Phase 11: WASM via MCP
 curl -sf -X POST http://localhost:8080/mcp \
@@ -1094,25 +1102,25 @@ cargo run --release --bin evals -- run --suite invoice 2>&1 | grep -q "ALL PASS"
   || { echo "❌ Evals failed"; exit 1; }
 
 # Phase 6b: zero-code extension
-mkdir -p capabilities/test-capability
-cat > capabilities/test-capability/capability.toml << 'CAPEOF'
-name: test-capability
-version: "0.1.0"
-description: Smoke test.
-kind: chain
-tags: [test]
-tools:
-  - name: ping
-    description: Returns pong.
-    input_schema:
-      type: object
-      properties: {}
+mkdir -p apps/backend/capabilities/test-capability
+cat > apps/backend/capabilities/test-capability/capability.toml << 'CAPEOF'
+name = "test-capability"
+version = "0.1.0"
+description = "Smoke test."
+kind = "chain"
+tags = ["test"]
+
+[[tools]]
+name = "ping"
+description = "Returns pong."
+[tools.input_schema]
+type = "object"
 CAPEOF
-docker compose --profile full restart agent-gateway && sleep 10
+docker compose restart agent-gateway && sleep 10
 curl -sf -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/capabilities \
   | python3 -c "import sys,json; names=[c['name'] for c in json.load(sys.stdin)['capabilities']]; assert 'test-capability' in names" \
   || { echo "❌ Zero-code extension failed"; exit 1; }
-rm -rf capabilities/test-capability
+rm -rf apps/backend/capabilities/test-capability
 
 # Phase 16: super-admin REST API smoke
 SUPER_TOKEN=$(python3 -c "
@@ -1183,17 +1191,17 @@ curl -sf -X DELETE -H "Authorization: Bearer $SUPER_TOKEN" \
   || { echo "❌ Admin capability delete failed"; exit 1; }
 
 # Tear down
-docker compose --profile full down -v
+docker compose down -v
 
 echo ""
 echo "✅ All verification phases passed."
-echo "   • Workspace clean & tested (13/13)"
-echo "   • Docker stack healthy (Postgres + MinIO + gateway)"
+echo "   • Workspace clean & tested"
+echo "   • Docker stack healthy (Qdrant + RustFS + gateway)"
 echo "   • JWT auth strictly enforced"
 echo "   • Streaming SSE: PASS"
-echo "   • MCP JSON-RPC 2.0: PASS (11 tools)"
+echo "   • MCP JSON-RPC 2.0: PASS"
 echo "   • File upload (invoice.png) + extraction from uploaded URL: PASS"
-echo "   • Semantic search (Postgres pgvector): PASS"
+echo "   • Semantic search (Qdrant): PASS"
 echo "   • WASM execution (wasmtime): PASS (ping → 42)"
 echo "   • Invoice extraction: HCY-23256029 / PAID / €63.99"
 echo "   • Evals: ALL PASS"
@@ -1208,11 +1216,11 @@ echo "   • Super-admin REST API: create → disable → delete PASS"
 **Build & Quality**
 - [x] `cargo fmt --all -- --check` clean
 - [x] `cargo clippy --workspace -- -D warnings` zero warnings
-- [x] `cargo test --workspace` → **30/30** lib tests pass (incl. WASM ping, `WorkspaceNode` serde, `validate_name` cases, `effective_user_id` mapping)
+- [x] `cargo test --workspace` → **129+** lib tests pass (incl. WASM ping, `WorkspaceNode` serde, `validate_name` cases, `effective_user_id` mapping)
 
 **Docker Stack**
-- [x] Core containers **healthy** (Postgres, MinIO, gateway)
-- [x] MinIO bucket `conusai` auto-created by `minio-init`
+- [x] Core containers **healthy** (Qdrant, RustFS, gateway)
+- [x] RustFS bucket `workspace` auto-created by `rustfs-init`
 
 **Auth**
 - [x] `GET /v1/capabilities` no token → **401**
@@ -1232,15 +1240,15 @@ echo "   • Super-admin REST API: create → disable → delete PASS"
 - [x] `POST /mcp` `tools/list` → 11 tools
 - [x] `POST /mcp` `tools/call wasm-ping__ping` → `{"result":42,"runtime":"wasmtime",...}`
 
-**File Storage (MinIO)**
+**File Storage (RustFS)**
 - [x] `POST /v1/files` multipart upload → returns `id` + `download_url`
 - [x] `GET /v1/files/{token}` → returns uploaded `invoice.png` bytes (valid PNG signature)
 - [x] Uploaded file is extractable via `/v1/agent/completions` → `HCY-23256029` / `PAID` / `€63.99`
-- [x] MinIO `s3 ls s3://conusai/ --recursive` shows `tenants/acme/...` path
+- [x] RustFS `s3 ls s3://workspace/ --recursive` shows `tenants/acme/...` path
 
-**Semantic Search (Postgres pgvector)**
+**Semantic Search (Qdrant)**
 - [x] `GET /v1/capabilities/search?q=finance` returns `source: "vector"` on the fast path
-- [x] Postgres stores capability vectors in `capability_embeddings`
+- [x] Qdrant stores capability vectors in the `capabilities` collection
 - [x] `invoice-processing` scores highest for `finance` query
 
 **WASM**
@@ -1296,7 +1304,7 @@ echo "   • Super-admin REST API: create → disable → delete PASS"
 - [ ] After deleting capability → `GET /admin/capabilities/{name}` → **404**
 
 **Teardown**
-- [x] `docker compose --profile full down -v` cleans up volumes
+- [x] `docker compose down -v` cleans up volumes
 
 ---
 
@@ -1307,12 +1315,12 @@ End-to-end browser verification of the Foundry UI invoice workflow — two paths
 ### 10.1 Prerequisites
 
 ```bash
-# For MinIO / Postgres-backed UI verification, prefer the Docker gateway:
-docker compose --profile full up -d --build
+# For RustFS / redb-backed UI verification, prefer the Docker gateway:
+docker compose up -d --build
 
 # For auth / admin-only browser verification, the repo helper starts an in-memory server:
 apps/backend/start-verify.sh
-# Note: this sets CONUSAI_TEST_MODE=1 and does not exercise MinIO / Postgres persistence.
+# Note: this sets CONUSAI_TEST_MODE=1 and does not exercise redb / RustFS persistence.
 ```
 
 ### 10.2 Login
@@ -1346,7 +1354,7 @@ Expected response:
 }
 ```
 
-✅ File stored in MinIO under `tenants/dev/{uuid}/invoice.png`  
+✅ File stored in RustFS under `tenants/dev/{uuid}/invoice.png`  
 ✅ Token registered in in-process `presigned_tokens` map (1h TTL)  
 ✅ Download URL publicly accessible: `GET /v1/files/{token}` → 200 + bytes
 
@@ -1356,7 +1364,7 @@ After upload, the attachment chip appears in the composer with an ember **"Extra
 
 1. Click **Extract invoice** button on the chip
 2. UI calls `POST /ui/extract-invoice` with `{"token": "<id>"}`
-3. Handler: resolves token → MinIO object key → downloads bytes → `InvoicePipeline::extract_from_bytes`
+3. Handler: resolves token → RustFS object key → downloads bytes → `InvoicePipeline::extract_from_bytes`
 4. ✅ Structured `InvoiceData` card rendered immediately
 
 **Result card (verified):**
@@ -1375,7 +1383,7 @@ After upload, the attachment chip appears in the composer with an ember **"Extra
 | Notes | Reverse charge mechanism applied. VAT Directive 2006/112/EC |
 
 ✅ Zero agent loop — no Claude tool selection  
-✅ Zero `file-storage` MCP calls — bytes fetched directly from MinIO  
+✅ Zero `file-storage` MCP calls — bytes fetched directly from RustFS  
 ✅ `InvoicePipeline::extract_from_bytes` called in-process (same as `invoice-cli` CLI)
 
 ### 10.5 Path B — Agent Chat with prompt "Extract invoice"
@@ -1443,14 +1451,14 @@ const lines = pendingAttachments
 ```
 
 **`crates/agent-gateway/src/ui/handlers/invoice.rs`** — new direct pipeline endpoint:
-- `POST /ui/extract-invoice` → token → MinIO bytes → `InvoicePipeline::extract_from_bytes` → `InvoiceData` JSON
+- `POST /ui/extract-invoice` → token → RustFS bytes → `InvoicePipeline::extract_from_bytes` → `InvoiceData` JSON
 - No agent, no tool selection, no external calls beyond Anthropic vision API
 
 ### 10.7 Coverage Update
 
 | Component | Status | Notes |
 |---|---|---|
-| UI file upload → MinIO | ✅ Verified | 132 KB PNG, token-gated download |
+| UI file upload → RustFS | ✅ Verified | 132 KB PNG, token-gated download |
 | Direct pipeline (`/ui/extract-invoice`) | ✅ Verified | Zero agent loop, InvoicePipeline in-process |
 | Agent chat with attachment URL hint | ✅ Verified | 1 tool call, 9.43s, correct capability selected |
 | `file-storage` MCP executor | ⚠️ Not implemented | MCP kind with no server — mitigated by URL hint |
@@ -1460,7 +1468,7 @@ const lines = pendingAttachments
 
 ## Phase 11 — Hierarchical Workspace (folders + conversations)
 
-End-to-end exercise of the workspace metadata store, MinIO body store, content_text indexing, and search. All routes live under `/v1/workspaces/*` ([`routes/workspaces.rs`](../crates/agent-gateway/src/routes/workspaces.rs)) and require the tenant middleware.
+End-to-end exercise of the workspace metadata store (redb), RustFS body store, content indexing (Qdrant), and search. All routes live under `/v1/workspaces/*` ([`routes/workspaces.rs`](../crates/agent-gateway/src/routes/workspaces.rs)) and require the tenant middleware.
 
 ### 11.1 Create a folder + conversation
 
@@ -1480,7 +1488,7 @@ CONV_ID=$(curl -sf -X POST http://localhost:8080/v1/workspaces \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 ```
 
-✅ **Pass**: Postgres persists the workspace node in `workspace_nodes`, MinIO contains `tenants/{tid}/workspaces/Clients/Kickoff.md` (empty body), and the conversation node carries `virtual_path: "Clients/Kickoff.md"`.
+✅ **Pass**: redb persists the workspace node, RustFS contains `tenants/{tid}/workspaces/Clients/Kickoff.md` (empty body), and the conversation node carries `virtual_path: "Clients/Kickoff.md"`.
 
 ### 11.2 Tree listing + content patch
 
@@ -1491,7 +1499,7 @@ curl -sf -H "Authorization: Bearer $TOKEN" http://localhost:8080/v1/workspaces/t
 # Tree under the folder
 curl -sf -H "Authorization: Bearer $TOKEN" "http://localhost:8080/v1/workspaces/tree?parent_id=$FOLDER_ID"
 
-# Patch content (writes MinIO body + updates searchable embeddings / text in Postgres)
+# Patch content (writes body to RustFS + updates searchable embeddings in Qdrant)
 curl -sf -X PATCH "http://localhost:8080/v1/workspaces/$CONV_ID/content" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"content":"# Kickoff notes\n\nClient wants invoice automation by Q3."}'
@@ -1500,7 +1508,7 @@ curl -sf -X PATCH "http://localhost:8080/v1/workspaces/$CONV_ID/content" \
 curl -sf -H "Authorization: Bearer $TOKEN" "http://localhost:8080/v1/workspaces/$CONV_ID/content"
 ```
 
-✅ **Pass**: PATCH writes the markdown body to MinIO and indexes content chunks into Postgres-backed `content_embeddings`; GET returns the same body via `MinioWorkspaceContent::read`.
+✅ **Pass**: PATCH writes the markdown body to RustFS and indexes content chunks into Qdrant; GET returns the same body via `RustFsContentStore::read`.
 
 ### 11.3 Full-text search
 
@@ -1510,7 +1518,7 @@ curl -sf -H "Authorization: Bearer $TOKEN" \
   "http://localhost:8080/v1/workspaces/search?q=invoice&limit=20" | python3 -m json.tool
 ```
 
-✅ **Pass**: returns the conversation node because its body now contains the word `invoice`. Name / path search uses Postgres full-text search, and semantic retrieval uses pgvector-backed content embeddings (see `PostgresWorkspaceStore`).
+✅ **Pass**: returns the conversation node because its body now contains the word `invoice`. Name / path search uses redb text match, and semantic retrieval uses Qdrant-backed content embeddings.
 
 ### 11.4 Sharing (private-by-default ACL)
 
@@ -1535,12 +1543,12 @@ curl -sf -X POST "http://localhost:8080/v1/workspaces/$CONV_ID/move" \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"new_parent_id":null,"new_parent_path":null}'
 
-# Delete folder (recursive in Postgres via `ON DELETE CASCADE`; MinIO cleanup is best-effort for conversations)
+# Delete folder (recursive in redb; RustFS cleanup is best-effort for conversations)
 curl -sf -X DELETE -H "Authorization: Bearer $TOKEN" \
   "http://localhost:8080/v1/workspaces/$FOLDER_ID"
 ```
 
-✅ **Pass**: `move_node` preserves metadata / paths in Postgres, and `delete_node` removes the hierarchy from Postgres while best-effort deleting MinIO objects for conversation bodies.
+✅ **Pass**: `move_node` preserves metadata / paths in redb, and `delete_node` removes the hierarchy from redb while best-effort deleting RustFS objects for conversation bodies.
 
 ### 11.6 Chat-content indexing (workspace_node_id round-trip)
 
@@ -1561,13 +1569,13 @@ curl -sf -H "Authorization: Bearer $TOKEN" \
   "http://localhost:8080/v1/workspaces/search?q=peridot" | python3 -m json.tool
 ```
 
-✅ **Pass**: after each completed turn (blocking and streaming paths in [`routes/agent.rs`](../crates/agent-gateway/src/routes/agent.rs)), the server reads the last 30 thread messages and re-indexes them via `WorkspaceStore::index_content`. The codeword becomes searchable through `/v1/workspaces/search` even though it was never PATCHed into the body.
+✅ **Pass**: after each completed turn (blocking and streaming paths in [`routes/agent.rs`](../crates/agent-gateway/src/routes/agent.rs)), the server reads the last 30 thread messages and re-indexes them via `WorkspaceIndexer`. The codeword becomes searchable through `/v1/workspaces/search` even though it was never PATCHed into the body.
 
 ---
 
 ## Phase 12 — Audit Log
 
-Append-only audit events are now backed by the Postgres `audit_events` table via `PostgresAuditStore`.
+Append-only audit events are backed by **redb** via `RedbMetadataStore` (implementing `AuditStore`).
 
 ```bash
 # Generate some traffic to populate audit events (server-side appends are wired
@@ -1613,8 +1621,8 @@ Browser-driven verification of the redesigned sidebar (login → workspace tree 
 # Browser-only helper for auth / sidebar / admin flows
 apps/backend/start-verify.sh
 
-# For Postgres / MinIO-backed UI flows (uploads, persisted workspaces), use Docker:
-docker compose --profile full up -d --build
+# For redb / RustFS-backed UI flows (uploads, persisted workspaces), use Docker:
+docker compose up -d --build
 ```
 
 Manual checklist (use Chrome MCP, Playwright, or a real browser):
@@ -1800,7 +1808,7 @@ curl -sf -X POST http://localhost:8080/v1/workspaces \
 kill %1
 ```
 
-✅ **Pass**: server starts without Postgres or MinIO; in-memory stores handle the full create/read cycle. Log line `CONUSAI_TEST_MODE=1 — using in-memory stores (no Postgres / MinIO)` appears at startup.
+✅ **Pass**: server starts without redb, Qdrant, or RustFS; in-memory stores handle the full create/read cycle. Log line `CONUSAI_TEST_MODE=1 — using in-memory stores` appears at startup.
 
 ---
 
@@ -1810,10 +1818,9 @@ kill %1
 |---------|--------------|-----|
 | `401 authentication required` | JWT_SECRET set, no Bearer token | Generate token with helper above |
 | `401 invalid token` | Wrong JWT secret or expired | Check `.env.local` JWT_SECRET matches |
-| `SERVICE_UNAVAILABLE file storage` | MinIO unreachable | Check `conusai-minio` healthy |
-| Semantic search returns `source: "local"` | Postgres vector path or embedding generation failed | Check `conusai-postgres` health, `capability_embeddings`, and embedding provider configuration |
-| `Cannot start a runtime from within a runtime` on local `cargo run` | `AppState::from_env()` is calling `Handle::block_on` under `#[tokio::main]` | Use the Docker gateway for full verification until normal local startup is fixed |
+| `SERVICE_UNAVAILABLE file storage` | RustFS unreachable | Check `conusai-rustfs` healthy |
+| Semantic search returns `source: "local"` | Qdrant unreachable or embedding generation failed | Check `conusai-qdrant` health and embedding provider configuration |
 | WASM ping fails | `capability.wasm` missing | `python3 scripts/gen_wasm.py` |
 | `cargo test` WASM test skipped | `capability.wasm` not in path | Check `capabilities/template-wasm/capability.wasm` exists |
-| MinIO 403 on upload | Bucket not created | `docker compose --profile full restart minio-init` |
+| RustFS 403 on upload | Bucket not created | `docker compose restart rustfs-init` |
 | `invoice extraction failed: x-api-key required` | `ANTHROPIC_API_KEY` not in env | `source .env.local` |

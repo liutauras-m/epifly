@@ -15,7 +15,7 @@ use agent_core::{
     },
     context::tenant::{PlanTier, TenantContext},
     indexing::EmbeddingService,
-    vector_store::PgVectorStore,
+    QdrantVectorStore,
 };
 use async_trait::async_trait;
 use serde_json::json;
@@ -111,7 +111,7 @@ async fn remote_mcp_register_and_invoke_reaches_mock_server() {
 
     let router = SemanticCapabilityRouter::new(
         Arc::clone(&registry),
-        Arc::new(PgVectorStore::noop()),
+        Arc::new(QdrantVectorStore::noop()),
         Arc::new(ConstEmbedder) as Arc<dyn EmbeddingService>,
         SemanticRouterConfig::default(),
     );
@@ -155,7 +155,7 @@ async fn remote_mcp_scoped_capability_blocked_for_wrong_tenant() {
 
     let router = SemanticCapabilityRouter::new(
         Arc::clone(&registry),
-        Arc::new(PgVectorStore::noop()),
+        Arc::new(QdrantVectorStore::noop()),
         Arc::new(ConstEmbedder) as Arc<dyn EmbeddingService>,
         SemanticRouterConfig::default(),
     );
@@ -201,7 +201,7 @@ async fn remote_mcp_scoped_capability_allowed_for_member_tenant() {
 
     let router = SemanticCapabilityRouter::new(
         Arc::clone(&registry),
-        Arc::new(PgVectorStore::noop()),
+        Arc::new(QdrantVectorStore::noop()),
         Arc::new(ConstEmbedder) as Arc<dyn EmbeddingService>,
         SemanticRouterConfig::default(),
     );
@@ -222,7 +222,7 @@ async fn invalidate_all_flushes_cache_after_reload() {
     let registry = Arc::new(Mutex::new(CapabilityRegistry::new()));
     let router = SemanticCapabilityRouter::new(
         Arc::clone(&registry),
-        Arc::new(PgVectorStore::noop()),
+        Arc::new(QdrantVectorStore::noop()),
         Arc::new(ConstEmbedder) as Arc<dyn EmbeddingService>,
         SemanticRouterConfig::default(),
     );

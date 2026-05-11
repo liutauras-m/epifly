@@ -24,7 +24,7 @@ use crate::capabilities::provider::CapabilityProvider;
 use crate::capabilities::registry::CapabilityRegistry;
 use crate::context::tenant::TenantContext;
 use crate::indexing::EmbeddingService;
-use crate::vector_store::PgVectorStore;
+use crate::store::qdrant_vector::QdrantVectorStore;
 use common::metrics;
 use rig::completion::ToolDefinition;
 use rig::tool::{ToolDyn, ToolError};
@@ -88,7 +88,7 @@ struct CachedResult {
 
 pub struct SemanticCapabilityRouter {
     registry: Arc<Mutex<CapabilityRegistry>>,
-    vector_store: Arc<PgVectorStore>,
+    vector_store: Arc<QdrantVectorStore>,
     embedder: Arc<dyn EmbeddingService>,
     cfg: SemanticRouterConfig,
     /// blake3-keyed moka cache: cache_key → CachedResult
@@ -99,7 +99,7 @@ pub struct SemanticCapabilityRouter {
 impl SemanticCapabilityRouter {
     pub fn new(
         registry: Arc<Mutex<CapabilityRegistry>>,
-        vector_store: Arc<PgVectorStore>,
+        vector_store: Arc<QdrantVectorStore>,
         embedder: Arc<dyn EmbeddingService>,
         cfg: SemanticRouterConfig,
     ) -> Arc<Self> {
@@ -475,7 +475,7 @@ mod tests {
 
     fn make_router(include_always: Vec<String>) -> Arc<SemanticCapabilityRouter> {
         let registry = Arc::new(Mutex::new(CapabilityRegistry::new()));
-        let vector_store = Arc::new(PgVectorStore::noop());
+        let vector_store = Arc::new(QdrantVectorStore::noop());
         let embedder: Arc<dyn EmbeddingService> = Arc::new(ConstEmbedder(vec![0.1; 768]));
         let cfg = SemanticRouterConfig {
             include_always,
@@ -678,7 +678,7 @@ mod tests {
             registry.lock().unwrap().register(card);
         }
 
-        let vector_store = Arc::new(PgVectorStore::noop());
+        let vector_store = Arc::new(QdrantVectorStore::noop());
         let embedder: Arc<dyn EmbeddingService> = Arc::new(ConstEmbedder(vec![0.1; 768]));
         let cfg = SemanticRouterConfig {
             include_always: vec!["always_cap".into()],

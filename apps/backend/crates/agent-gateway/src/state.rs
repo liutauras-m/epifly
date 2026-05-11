@@ -1,12 +1,12 @@
 use crate::mw::{RateLimiter, RouterQuotaConfig};
+use crate::routes::admin_devices::DeviceToken;
 use agent_core::llm::providers::anthropic::AnthropicProvider;
 use agent_core::{
     ArtifactBridge, BulkCapabilityFactory, CapabilityAdmin, CapabilityDiscovery,
     CapabilityRegistry, CapabilitySpecFactory, ConversationService, DefaultConversationService,
-    EmbeddingService, LlmRegistry, MinioWorkspaceContent, NamespaceFilter, NoopEmbeddingService,
-    OpenAiEmbeddingService, PgVectorStore, PostgresAuditStore, PostgresThreadStore,
-    PostgresWorkspaceStore, RealtimeService, SemanticCapabilityRouter, SemanticRouterConfig,
-    build_admin,
+    EmbeddingService, LlmRegistry, NamespaceFilter, NoopEmbeddingService, OpenAiEmbeddingService,
+    QdrantVectorStore, RealtimeService, RedbMetadataStore, RustFsContentStore,
+    SemanticCapabilityRouter, SemanticRouterConfig, build_admin,
 };
 use common::audit::AuditStore;
 use common::memory::{
@@ -16,7 +16,6 @@ use common::memory::{
 use jobs::jobs::{AuditLogCleanupJob, CapabilityHealthCheckJob, VideoTranscriptionJob};
 use jobs::{JobAdmin, JobContext, JobExecutor, JobRegistry};
 use object_store::{ObjectStore, aws::AmazonS3Builder};
-use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
@@ -24,47 +23,29 @@ use tracing::{info, warn};
 pub struct AppState {
     pub registry: Arc<Mutex<CapabilityRegistry>>,
     pub rate_limiter: RateLimiter,
-    /// LLM provider registry — single source of truth for all model access.
     pub llm: Arc<LlmRegistry>,
-    /// MinIO / S3-compatible file store (None if not configured)
+    /// RustFS / S3-compatible file store (None if not configured)
     pub file_store: Option<Arc<dyn ObjectStore>>,
     /// In-memory map of download tokens → (object_key, issued_at, ttl, tenant_id)
     pub presigned_tokens:
         Mutex<HashMap<String, (String, std::time::Instant, std::time::Duration, String)>>,
-    /// Persistent conversation memory backed by Postgres (or in-memory in test mode)
+    /// In-memory device tokens for browser-shell (keyed by blake3 hash of plaintext token).
+    pub device_tokens: Mutex<HashMap<String, DeviceToken>>,
     pub thread_store: Arc<dyn ThreadStore>,
-    /// Append-only audit log backed by Postgres (or in-memory in test mode)
     pub audit_store: Arc<dyn AuditStore>,
-    /// Workspace node index — Postgres (or in-memory in test mode)
     pub workspace_store: Arc<dyn WorkspaceStore>,
-    /// Workspace markdown body store — MinIO (or in-memory in test mode)
     pub workspace_content: Arc<dyn WorkspaceContentStore>,
-    /// Unified conversation service (single source of truth for thread lifecycle).
     pub conversation_service: Arc<dyn ConversationService>,
-    /// Super-admin capability management service.
     pub tool_admin: Arc<CapabilityAdmin>,
-    /// Scheduled + background job registry.
     pub job_registry: Arc<JobRegistry>,
-    /// Background task executor (in-memory).
     pub job_executor: Arc<JobExecutor>,
-    /// Super-admin job management facade.
     pub job_admin: Arc<JobAdmin>,
-    /// Postgres connection pool (exposed for health checks and direct queries).
-    /// `None` when running in test mode (`CONUSAI_TEST_MODE=1`).
-    pub pool: Option<PgPool>,
-    /// Embedding service for query and document vectorisation.
     pub embedding_service: Arc<dyn EmbeddingService>,
-    /// ANN vector store backed by Postgres + pgvector.
-    pub vector_store: Arc<PgVectorStore>,
-    /// Realtime event service — `None` in test mode.
-    pub realtime_service: Option<Arc<RealtimeService>>,
-    /// Semantic capability router — pre-filters tools to top-K per turn.
+    pub vector_store: Arc<QdrantVectorStore>,
+    pub realtime_service: Arc<RealtimeService>,
     pub semantic_router: Arc<SemanticCapabilityRouter>,
-    /// Effective per-turn router limits (tools exposed + tool invokes).
     pub router_quota: RouterQuotaConfig,
-    /// Optional capability-spec bulk/reload factory (present only with Postgres mode).
     pub capability_spec_factory: Option<Arc<CapabilitySpecFactory>>,
-    /// Post-invoke artifact bridge — uploads tool file outputs to MinIO + workspace nodes.
     pub artifact_bridge: Option<Arc<ArtifactBridge>>,
 }
 
@@ -73,9 +54,6 @@ impl AppState {
         if std::env::var("CONUSAI_TEST_MODE").as_deref() == Ok("1") {
             return Self::with_in_memory_stores();
         }
-
-        let database_url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://conusai:conusai@localhost:5432/conusai".into());
 
         if std::env::var_os("PLATFORM_ADMIN_TOKEN").is_none_or(|v| v.is_empty())
             && !cfg!(debug_assertions)
@@ -87,15 +65,49 @@ impl AppState {
             );
         }
 
-        let pool = common::db::create_pool(&database_url)
-            .await
-            .map_err(|e| common::error::ConusAiError::Database(e.to_string()))?;
-
         let llm = Arc::new(build_llm_registry());
 
+        // ── Persistent stores (redb + Qdrant + RustFS) ───────────────────────
+
+        let redb_path = std::env::var("REDB_PATH")
+            .unwrap_or_else(|_| "/data/conusai.redb".into());
+        let metadata_store: Arc<RedbMetadataStore> = RedbMetadataStore::open(&redb_path)
+            .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?;
+
+        let qdrant_url = std::env::var("QDRANT_URL")
+            .unwrap_or_else(|_| "http://qdrant:6334".into());
+        let vector_store = Arc::new(
+            QdrantVectorStore::connect(&qdrant_url)
+                .await
+                .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?,
+        );
+
+        let workspace_content: Arc<dyn WorkspaceContentStore> =
+            match RustFsContentStore::from_env() {
+                Ok(store) => {
+                    info!("workspace content: RustFS/S3 object store");
+                    store
+                }
+                Err(e) => {
+                    warn!(error = %e, "RustFS not configured — workspace content will use noop");
+                    Arc::new(NoopWorkspaceContent)
+                }
+            };
+
+        let thread_store: Arc<dyn ThreadStore> = {
+            let s: Arc<RedbMetadataStore> = Arc::clone(&metadata_store);
+            s
+        };
+        let audit_store: Arc<dyn AuditStore> = {
+            let s: Arc<RedbMetadataStore> = Arc::clone(&metadata_store);
+            s
+        };
+        let workspace_store: Arc<dyn WorkspaceStore> = {
+            let s: Arc<RedbMetadataStore> = Arc::clone(&metadata_store);
+            s
+        };
+
         let file_store = init_file_store();
-        let thread_store: Arc<dyn ThreadStore> = Arc::new(PostgresThreadStore::new(pool.clone()));
-        let audit_store: Arc<dyn AuditStore> = Arc::new(PostgresAuditStore::new(pool.clone()));
 
         let embedding_service: Arc<dyn EmbeddingService> = match std::env::var("EMBEDDING_BACKEND")
             .as_deref()
@@ -130,15 +142,11 @@ impl AppState {
                 )));
             }
         };
-        let vector_store = Arc::new(PgVectorStore::new(pool.clone()));
 
-        let mut registry_raw =
-            CapabilityRegistry::with_all_factories(Arc::clone(&llm), Some(pool.clone()));
+        let mut registry_raw = CapabilityRegistry::with_all_factories(Arc::clone(&llm));
         CapabilityDiscovery::from_env().discover_into(&mut registry_raw)?;
 
-        // Bulk-load capability specs (best-effort; startup continues on failure).
         let capability_spec_factory = Arc::new(CapabilitySpecFactory::new(
-            pool.clone(),
             Arc::clone(&llm),
             Arc::clone(&embedding_service),
             Arc::clone(&vector_store),
@@ -148,15 +156,26 @@ impl AppState {
             Err(e) => warn!(error = %e, "capability-spec bulk load failed; continuing startup"),
         }
 
+        // Register the workspace built-in capability before building the registry Arc.
+        {
+            use crate::capabilities::workspace::WorkspaceProvider;
+            let ws_card = WorkspaceProvider::new(
+                Arc::clone(&workspace_store),
+                Arc::clone(&workspace_content),
+            )
+            .into_card();
+            registry_raw.register(ws_card);
+        }
+
         let registry = Arc::new(Mutex::new(registry_raw));
 
-        // Build semantic router (top-K = 20, 60s cache TTL by default).
         let router_cfg = SemanticRouterConfig {
             top_k: std::env::var("SEMANTIC_ROUTER_TOP_K")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(20),
             namespace: NamespaceFilter::Any,
+            include_always: vec!["workspace".into()],
             ..Default::default()
         };
         let semantic_router = SemanticCapabilityRouter::new(
@@ -166,20 +185,6 @@ impl AppState {
             router_cfg,
         );
 
-        let workspace_store: Arc<dyn WorkspaceStore> = Arc::new(PostgresWorkspaceStore::new(
-            pool.clone(),
-            Arc::clone(&embedding_service),
-            Arc::clone(&vector_store),
-        ));
-
-        let workspace_content: Arc<dyn WorkspaceContentStore> = match &file_store {
-            Some(fs) => Arc::new(MinioWorkspaceContent::new(Arc::clone(fs))),
-            None => {
-                warn!("file store not configured — workspace content (MinIO) will be unavailable");
-                Arc::new(NoopWorkspaceContent)
-            }
-        };
-
         let conversation_service: Arc<dyn ConversationService> =
             Arc::new(DefaultConversationService {
                 thread_store: Arc::clone(&thread_store),
@@ -188,15 +193,15 @@ impl AppState {
 
         let tool_admin = Arc::new(build_admin(Arc::clone(&registry), Arc::clone(&audit_store)));
 
-        // Build job infrastructure
-        let minio_endpoint = std::env::var("MINIO_ENDPOINT")
-            .or_else(|_| std::env::var("S3_ENDPOINT"))
+        let s3_endpoint = std::env::var("S3_ENDPOINT")
+            .or_else(|_| std::env::var("MINIO_ENDPOINT"))
             .ok();
-        let bucket = std::env::var("MINIO_BUCKET").unwrap_or_else(|_| "conusai".into());
+        let bucket = std::env::var("S3_BUCKET")
+            .or_else(|_| std::env::var("MINIO_BUCKET"))
+            .unwrap_or_else(|_| "workspace".into());
         let job_ctx = Arc::new(JobContext::new(
             Arc::clone(&audit_store),
-            Some(pool.clone()),
-            minio_endpoint,
+            s3_endpoint,
             Some(bucket),
         ));
         let job_registry = build_job_registry(job_ctx);
@@ -206,41 +211,11 @@ impl AppState {
             Arc::clone(&job_executor),
         ));
 
-        // ── ArtifactBridge (Phase 4) ──────────────────────────────────────────
-        let artifact_bridge = file_store
-            .as_ref()
-            .map(|fs| ArtifactBridge::new(pool.clone(), Arc::clone(fs)));
+        let artifact_bridge = file_store.as_ref().map(|fs| {
+            ArtifactBridge::new(Arc::clone(fs), Arc::clone(&workspace_content))
+        });
 
-        // ── Hot-reload wiring (Phase 5) ───────────────────────────────────────
-        // Consume LISTEN/NOTIFY events and call reload_one on the in-process registry.
-        let realtime_service = RealtimeService::new(pool.clone());
-        {
-            let rt = Arc::clone(&realtime_service);
-            let factory = Arc::clone(&capability_spec_factory);
-            let reg = Arc::clone(&registry);
-            let router = Arc::clone(&semantic_router);
-            tokio::spawn(async move {
-                let mut rx = rt.subscribe_capability_spec_changes().await;
-                while let Some((namespace, tool_name)) = rx.recv().await {
-                    match factory.reload_one(&reg, &namespace, &tool_name).await {
-                        Ok(()) => {
-                            tracing::info!(
-                                namespace,
-                                tool_name,
-                                "capability hot-reloaded via LISTEN/NOTIFY"
-                            );
-                            router.invalidate_all().await;
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                error = %e, namespace, tool_name,
-                                "hot-reload failed"
-                            );
-                        }
-                    }
-                }
-            });
-        }
+        let realtime_service = RealtimeService::new();
 
         Ok(Self {
             registry,
@@ -248,6 +223,7 @@ impl AppState {
             llm,
             file_store,
             presigned_tokens: Mutex::new(HashMap::new()),
+            device_tokens: Mutex::new(HashMap::new()),
             thread_store,
             audit_store,
             workspace_store,
@@ -257,10 +233,9 @@ impl AppState {
             job_registry,
             job_executor,
             job_admin,
-            pool: Some(pool.clone()),
             embedding_service,
             vector_store,
-            realtime_service: Some(realtime_service),
+            realtime_service,
             semantic_router,
             router_quota: RouterQuotaConfig::from_env(),
             capability_spec_factory: Some(capability_spec_factory),
@@ -268,12 +243,11 @@ impl AppState {
         })
     }
 
-    /// Build an `AppState` backed entirely by in-memory stores — no Postgres or MinIO required.
+    /// Build an `AppState` backed entirely by in-memory stores — no external dependencies.
     ///
-    /// Activated when `CONUSAI_TEST_MODE=1` is set in the environment.  All data is lost on
-    /// process exit.  Intended for integration tests and CI pipelines without Docker.
+    /// Activated when `CONUSAI_TEST_MODE=1` is set.
     pub fn with_in_memory_stores() -> common::error::Result<Self> {
-        info!("CONUSAI_TEST_MODE=1 — using in-memory stores (no Postgres / MinIO)");
+        info!("CONUSAI_TEST_MODE=1 — using in-memory stores (no Qdrant / RustFS)");
 
         let llm = Arc::new(build_llm_registry());
         let mut registry = CapabilityRegistry::with_default_factories(Arc::clone(&llm));
@@ -281,6 +255,8 @@ impl AppState {
 
         let thread_store: Arc<dyn ThreadStore> = Arc::new(InMemoryThreadStore::new());
         let workspace_store: Arc<dyn WorkspaceStore> = Arc::new(InMemoryWorkspaceStore::new());
+        let workspace_content: Arc<dyn WorkspaceContentStore> =
+            Arc::new(InMemoryWorkspaceContent::new());
         let conversation_service: Arc<dyn ConversationService> =
             Arc::new(DefaultConversationService {
                 thread_store: Arc::clone(&thread_store),
@@ -288,19 +264,34 @@ impl AppState {
             });
 
         let audit_store: Arc<dyn AuditStore> = Arc::new(InMemoryAuditStore::new());
+
+        // Register workspace capability before building the registry Arc.
+        {
+            use crate::capabilities::workspace::WorkspaceProvider;
+            let ws_card = WorkspaceProvider::new(
+                Arc::clone(&workspace_store),
+                Arc::clone(&workspace_content),
+            )
+            .into_card();
+            registry.register(ws_card);
+        }
+
         let registry = Arc::new(Mutex::new(registry));
         let tool_admin = Arc::new(build_admin(Arc::clone(&registry), Arc::clone(&audit_store)));
 
         let embedding_service: Arc<dyn EmbeddingService> = Arc::new(NoopEmbeddingService);
-        let vector_store = Arc::new(PgVectorStore::noop());
+        let vector_store = Arc::new(QdrantVectorStore::noop());
         let semantic_router = SemanticCapabilityRouter::new(
             Arc::clone(&registry),
             Arc::clone(&vector_store),
             Arc::clone(&embedding_service),
-            SemanticRouterConfig::default(),
+            SemanticRouterConfig {
+                include_always: vec!["workspace".into()],
+                ..Default::default()
+            },
         );
 
-        let job_ctx = Arc::new(JobContext::new(Arc::clone(&audit_store), None, None, None));
+        let job_ctx = Arc::new(JobContext::new(Arc::clone(&audit_store), None, None));
         let job_registry = build_job_registry(job_ctx);
         let job_executor = JobExecutor::new(Arc::clone(&job_registry));
         let job_admin = Arc::new(JobAdmin::new(
@@ -314,19 +305,19 @@ impl AppState {
             llm,
             file_store: None,
             presigned_tokens: Mutex::new(HashMap::new()),
+            device_tokens: Mutex::new(HashMap::new()),
             thread_store,
             audit_store,
             workspace_store,
-            workspace_content: Arc::new(InMemoryWorkspaceContent::new()),
+            workspace_content,
             conversation_service,
             tool_admin,
             job_registry,
             job_executor,
             job_admin,
-            pool: None,
             embedding_service,
             vector_store,
-            realtime_service: None,
+            realtime_service: RealtimeService::new(),
             semantic_router,
             router_quota: RouterQuotaConfig::default(),
             capability_spec_factory: None,
@@ -335,37 +326,37 @@ impl AppState {
     }
 }
 
-/// Fallback content store used when MinIO is not configured.
+/// Fallback content store used when RustFS is not configured.
 struct NoopWorkspaceContent;
 
 #[async_trait::async_trait]
 impl WorkspaceContentStore for NoopWorkspaceContent {
     async fn read(&self, _: &str, _: &str) -> anyhow::Result<String> {
-        anyhow::bail!("workspace content store not configured (MINIO_ENDPOINT missing)")
+        anyhow::bail!("workspace content store not configured (S3_ENDPOINT missing)")
     }
     async fn write(&self, _: &str, _: &str, _: &str) -> anyhow::Result<()> {
-        anyhow::bail!("workspace content store not configured (MINIO_ENDPOINT missing)")
+        anyhow::bail!("workspace content store not configured (S3_ENDPOINT missing)")
     }
     async fn delete(&self, _: &str, _: &str) -> anyhow::Result<()> {
-        anyhow::bail!("workspace content store not configured (MINIO_ENDPOINT missing)")
+        anyhow::bail!("workspace content store not configured (S3_ENDPOINT missing)")
     }
 }
 
 fn init_file_store() -> Option<Arc<dyn ObjectStore>> {
-    let endpoint = std::env::var("MINIO_ENDPOINT")
-        .or_else(|_| std::env::var("S3_ENDPOINT"))
-        .unwrap_or_else(|_| "http://localhost:9000".into());
+    let endpoint = std::env::var("S3_ENDPOINT")
+        .or_else(|_| std::env::var("MINIO_ENDPOINT"))
+        .unwrap_or_else(|_| "http://rustfs:9000".into());
 
-    let bucket = std::env::var("MINIO_BUCKET")
-        .or_else(|_| std::env::var("S3_BUCKET"))
-        .unwrap_or_else(|_| "conusai".into());
+    let bucket = std::env::var("S3_BUCKET")
+        .or_else(|_| std::env::var("MINIO_BUCKET"))
+        .unwrap_or_else(|_| "workspace".into());
 
-    let access_key = std::env::var("MINIO_ACCESS_KEY")
-        .or_else(|_| std::env::var("AWS_ACCESS_KEY_ID"))
+    let access_key = std::env::var("AWS_ACCESS_KEY_ID")
+        .or_else(|_| std::env::var("MINIO_ACCESS_KEY"))
         .unwrap_or_else(|_| "minioadmin".into());
 
-    let secret_key = std::env::var("MINIO_SECRET_KEY")
-        .or_else(|_| std::env::var("AWS_SECRET_ACCESS_KEY"))
+    let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY")
+        .or_else(|_| std::env::var("MINIO_SECRET_KEY"))
         .unwrap_or_else(|_| "minioadmin".into());
 
     match AmazonS3Builder::new()
@@ -378,7 +369,7 @@ fn init_file_store() -> Option<Arc<dyn ObjectStore>> {
         .build()
     {
         Ok(store) => {
-            info!(endpoint, bucket, "MinIO/S3 object store initialised");
+            info!(endpoint, bucket, "RustFS/S3 object store initialised");
             Some(Arc::new(store))
         }
         Err(e) => {
@@ -391,11 +382,6 @@ fn init_file_store() -> Option<Arc<dyn ObjectStore>> {
     }
 }
 
-/// Build an `LlmRegistry` from the environment.
-///
-/// If `ANTHROPIC_API_KEY` is absent the registry still starts with no providers;
-/// routes that call `.complete()` will return an appropriate error at request
-/// time rather than crashing at startup.
 fn build_llm_registry() -> LlmRegistry {
     use agent_core::llm::types::LlmBinding;
     use std::collections::HashMap;
@@ -411,7 +397,6 @@ fn build_llm_registry() -> LlmRegistry {
         }
     }
 
-    // Default binding: use anthropic/haiku as the fallback.
     let default_binding = LlmBinding {
         provider: "anthropic".into(),
         model: "claude-haiku-4-5".into(),
@@ -420,7 +405,6 @@ fn build_llm_registry() -> LlmRegistry {
     LlmRegistry::new(providers, aliases, default_binding)
 }
 
-/// Build a `JobRegistry` pre-populated with the platform's built-in jobs.
 fn build_job_registry(ctx: Arc<JobContext>) -> Arc<JobRegistry> {
     let mut registry = JobRegistry::new(ctx);
     registry.register_scheduled(CapabilityHealthCheckJob);

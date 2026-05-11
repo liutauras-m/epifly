@@ -27,7 +27,7 @@
 
 	async function loadTree() {
 		loading = true;
-		const res = await sdk.workspaces.list();
+		const res = await sdk.workspaces.tree();
 		if (!res.error && res.data) {
 			nodes = (res.data as any).nodes ?? (Array.isArray(res.data) ? res.data : []);
 		}

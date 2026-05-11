@@ -8,6 +8,7 @@ pub mod llm;
 pub mod memory;
 pub mod prompt;
 pub mod realtime;
+pub mod store;
 pub mod vector_store;
 
 pub use agent::builder::{Agent, AgentBuilder};
@@ -46,12 +47,12 @@ pub use indexing::LocalEmbeddingService;
 pub use indexing::{
     EmbeddingService, NoopEmbeddingService, OpenAiEmbeddingService, WorkspaceIndexer,
 };
-pub use memory::{
-    ContextBuilder, ContextTruncator, MinioWorkspaceContent, OldestFirstTruncator,
-    PostgresAuditStore, PostgresThreadStore, PostgresWorkspaceStore,
-};
+pub use memory::{ContextBuilder, ContextTruncator, OldestFirstTruncator};
 pub use realtime::{RealtimeService, WorkspaceChangeEvent};
-pub use vector_store::PgVectorStore;
+pub use store::{
+    HttpMarkerClient, MarkerClient, NoopMarkerClient, QdrantVectorStore, RedbMetadataStore,
+    RustFsContentStore,
+};
 
 pub use llm::{
     CompletionProvider, LlmBinding, LlmChunk, LlmError, LlmRegistry, LlmRequest, LlmResponse,

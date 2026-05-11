@@ -55,6 +55,13 @@ export const config: Options.Testrunner = {
     ...(REAL_DEVICE ? {} : { 'appium:app': APP_PATH }),
     'appium:newCommandTimeout': 240,
     'appium:autoAcceptAlerts': true,
+    // Required for Appium to enumerate WKWebView contexts inside Tauri shell.
+    // Tauri registers the main process under "process-<product-name>" not the
+    // bundle ID, so we include it explicitly in additionalWebviewBundleIds.
+    'appium:enableWebviewDetailsCollection': true,
+    'appium:webviewConnectTimeout': 20000,
+    'appium:includeSafariInWebviews': true,
+    'appium:additionalWebviewBundleIds': ['process-ConusAI Browser', 'ConusAI Browser'],
     ...(IOS_DEVICE_UDID ? { 'appium:udid': IOS_DEVICE_UDID } : {}),
     ...(REAL_DEVICE
       ? {

@@ -2,7 +2,6 @@
 //! deterministic replay plan via `DynamicPromptCapability`.
 //!
 //! Ships **dry-run only** in v0.4.0: returns the plan as a JSON artifact.
-//! Live replay is deferred to v0.4.1.
 
 use crate::capabilities::card::CapabilityCard;
 use crate::capabilities::manifest::{ToolKind, ToolManifest};
@@ -13,37 +12,28 @@ use crate::llm::LlmRegistry;
 use async_trait::async_trait;
 use common::trace::{SessionTrace, TraceSource};
 use serde_json::Value;
-use sqlx::PgPool;
 use std::sync::Arc;
 
-/// Loads a `SessionTrace` from the workspace node store.
-pub struct WorkspaceNodeTraceSource {
-    pool: PgPool,
-}
+/// Stub trace source — returns an error since workspace content is managed
+/// by the store layer rather than fetched via Postgres.
+pub struct WorkspaceNodeTraceSource;
 
 impl WorkspaceNodeTraceSource {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for WorkspaceNodeTraceSource {
+    fn default() -> Self {
+        Self
     }
 }
 
 #[async_trait]
 impl TraceSource for WorkspaceNodeTraceSource {
-    async fn load(&self, trace_node_id: &str) -> anyhow::Result<SessionTrace> {
-        let uuid = trace_node_id
-            .parse::<uuid::Uuid>()
-            .map_err(|_| anyhow::anyhow!("invalid trace_node_id"))?;
-
-        let row: Option<(Option<Vec<u8>>,)> =
-            sqlx::query_as("SELECT content FROM workspace_nodes WHERE id = $1")
-                .bind(uuid)
-                .fetch_optional(&self.pool)
-                .await?;
-
-        let (content,) =
-            row.ok_or_else(|| anyhow::anyhow!("trace node {trace_node_id} not found"))?;
-        let content = content.unwrap_or_default();
-        Ok(serde_json::from_slice(&content)?)
+    async fn load(&self, _trace_node_id: &str) -> anyhow::Result<SessionTrace> {
+        anyhow::bail!("trace replay requires a configured workspace content store")
     }
 }
 
@@ -118,12 +108,11 @@ impl CapabilityProvider for TraceReplayCapability {
 
 pub struct TraceReplayFactory {
     llm: Arc<LlmRegistry>,
-    pool: PgPool,
 }
 
 impl TraceReplayFactory {
-    pub fn new(llm: Arc<LlmRegistry>, pool: PgPool) -> Self {
-        Self { llm, pool }
+    pub fn new(llm: Arc<LlmRegistry>) -> Self {
+        Self { llm }
     }
 }
 
@@ -133,13 +122,8 @@ impl CapabilityFactory for TraceReplayFactory {
     }
 
     fn create(&self, card: CapabilityCard) -> anyhow::Result<Arc<dyn CapabilityProvider>> {
-        let inner = DynamicPromptCapability::new(
-            card.manifest.clone(),
-            Arc::clone(&self.llm),
-            self.pool.clone(),
-        );
-        let source: Arc<dyn TraceSource> =
-            Arc::new(WorkspaceNodeTraceSource::new(self.pool.clone()));
+        let inner = DynamicPromptCapability::new(card.manifest.clone(), Arc::clone(&self.llm));
+        let source: Arc<dyn TraceSource> = Arc::new(WorkspaceNodeTraceSource::new());
         Ok(Arc::new(TraceReplayCapability::new(
             card.manifest,
             Arc::new(inner),

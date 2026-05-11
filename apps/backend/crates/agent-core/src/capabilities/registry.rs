@@ -36,15 +36,13 @@ impl CapabilityRegistry {
     }
 
     /// Like `with_default_factories` but also includes `DynamicPromptFactory` and
-    /// `TraceReplayFactory` when a Postgres pool is available.
-    pub fn with_all_factories(llm: Arc<LlmRegistry>, pool: Option<sqlx::PgPool>) -> Self {
+    /// `TraceReplayFactory`.
+    pub fn with_all_factories(llm: Arc<LlmRegistry>) -> Self {
         let mut r = Self::with_default_factories(Arc::clone(&llm));
-        if let Some(pool) = pool {
-            use super::providers::dynamic_prompt::DynamicPromptFactory;
-            use super::trace_replay::TraceReplayFactory;
-            r.register_factory(DynamicPromptFactory::new(pool.clone(), Arc::clone(&llm)));
-            r.register_factory(TraceReplayFactory::new(Arc::clone(&llm), pool));
-        }
+        use super::providers::dynamic_prompt::DynamicPromptFactory;
+        use super::trace_replay::TraceReplayFactory;
+        r.register_factory(DynamicPromptFactory::new(Arc::clone(&llm)));
+        r.register_factory(TraceReplayFactory::new(Arc::clone(&llm)));
         r
     }
 

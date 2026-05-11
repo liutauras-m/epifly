@@ -64,7 +64,7 @@ async fn transcribe_via_openai_whisper(
     ctx: &JobContext,
 ) -> anyhow::Result<String> {
     // Download the file bytes from MinIO/S3 if endpoint is configured.
-    let file_bytes = if let (Some(endpoint), Some(bucket)) = (&ctx.minio_endpoint, &ctx.bucket) {
+    let file_bytes = if let (Some(endpoint), Some(bucket)) = (&ctx.s3_endpoint, &ctx.bucket) {
         let url = format!("{}/{}/{}", endpoint, bucket, file_id);
         let client = reqwest::Client::new();
         let resp = client

@@ -5,6 +5,7 @@
 use crate::context::JobContext;
 use crate::job::ScheduledJob;
 use async_trait::async_trait;
+use chrono::Utc;
 use std::sync::Arc;
 use tracing::info;
 
@@ -17,7 +18,6 @@ impl ScheduledJob for AuditLogCleanupJob {
     }
 
     fn cron(&self) -> &str {
-        // Every day at 02:00 UTC
         "0 0 2 * * *"
     }
 
@@ -27,23 +27,10 @@ impl ScheduledJob for AuditLogCleanupJob {
             .and_then(|v| v.parse().ok())
             .unwrap_or(90);
 
-        let Some(pool) = &ctx.pool else {
-            info!("audit-log-cleanup: skipped (no postgres pool in test mode)");
-            return Ok(());
-        };
+        let before = Utc::now() - chrono::Duration::days(retention_days);
+        let deleted = ctx.audit_store.prune_before(before).await.unwrap_or(0);
 
-        let result = sqlx::query!(
-            "DELETE FROM audit_events WHERE timestamp < now() - ($1 || ' days')::interval",
-            retention_days.to_string(),
-        )
-        .execute(pool)
-        .await?;
-
-        info!(
-            retention_days,
-            deleted = result.rows_affected(),
-            "audit-log-cleanup: deleted old audit events"
-        );
+        info!(retention_days, deleted, "audit-log-cleanup: deleted old audit events");
         Ok(())
     }
 }

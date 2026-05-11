@@ -1,0 +1,1161 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Epifly Brand System</title>
+		<meta
+			name="description"
+			content="Epifly brand system, visual identity, prompt kit, logo variants, palette, and usage guidance."
+		/>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@400;500;700&display=swap"
+			rel="stylesheet"
+		/>
+		<style>
+			:root {
+				--orange: #ff6200;
+				--orange-soft: #ff8b47;
+				--cyan: #00d4ff;
+				--charcoal: #111111;
+				--off-white: #f8f8f8;
+				--indigo: #1e3a8a;
+				--paper: #fff6ef;
+				--line: rgba(17, 17, 17, 0.12);
+				--line-strong: rgba(17, 17, 17, 0.2);
+				--text-soft: rgba(17, 17, 17, 0.72);
+				--text-muted: rgba(17, 17, 17, 0.56);
+				--surface: rgba(255, 255, 255, 0.72);
+				--surface-strong: rgba(255, 255, 255, 0.88);
+				--shadow: 0 24px 60px rgba(17, 17, 17, 0.08);
+				--radius-lg: 28px;
+				--radius-md: 20px;
+				--radius-sm: 14px;
+				--container: min(1240px, calc(100vw - 32px));
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			html {
+				scroll-behavior: smooth;
+			}
+
+			body {
+				margin: 0;
+				font-family: "Geist", sans-serif;
+				color: var(--charcoal);
+				background:
+					radial-gradient(circle at top left, rgba(0, 212, 255, 0.1), transparent 34%),
+					radial-gradient(circle at 85% 12%, rgba(255, 98, 0, 0.16), transparent 28%),
+					linear-gradient(180deg, #fffdfa 0%, #fff4eb 40%, #fff 100%);
+			}
+
+			body[data-theme="dark"] {
+				--line: rgba(248, 248, 248, 0.12);
+				--line-strong: rgba(248, 248, 248, 0.2);
+				--text-soft: rgba(248, 248, 248, 0.76);
+				--text-muted: rgba(248, 248, 248, 0.58);
+				--surface: rgba(22, 22, 22, 0.72);
+				--surface-strong: rgba(19, 19, 19, 0.86);
+				--shadow: 0 26px 68px rgba(0, 0, 0, 0.42);
+				color: var(--off-white);
+				background:
+					radial-gradient(circle at 15% 10%, rgba(0, 212, 255, 0.18), transparent 25%),
+					radial-gradient(circle at 78% 14%, rgba(255, 98, 0, 0.2), transparent 32%),
+					linear-gradient(180deg, #090909 0%, #111111 44%, #171717 100%);
+			}
+
+			a {
+				color: inherit;
+				text-decoration: none;
+			}
+
+			button,
+			input,
+			textarea {
+				font: inherit;
+			}
+
+			.page-shell {
+				width: var(--container);
+				margin: 0 auto;
+				padding: 24px 0 80px;
+			}
+
+			.topbar {
+				position: sticky;
+				top: 16px;
+				z-index: 20;
+				display: grid;
+				grid-template-columns: auto 1fr auto;
+				gap: 16px;
+				align-items: center;
+				padding: 16px 18px;
+				margin-bottom: 24px;
+				background: var(--surface);
+				border: 1px solid var(--line);
+				border-radius: 999px;
+				backdrop-filter: blur(18px);
+				box-shadow: var(--shadow);
+			}
+
+			.brand-lockup {
+				display: inline-flex;
+				align-items: center;
+				gap: 12px;
+				font-weight: 700;
+				letter-spacing: -0.04em;
+			}
+
+			.brand-lockup img {
+				width: 34px;
+				height: 34px;
+			}
+
+			.topnav {
+				display: flex;
+				justify-content: center;
+				flex-wrap: wrap;
+				gap: 14px;
+			}
+
+			.topnav a,
+			.theme-toggle {
+				border: 1px solid transparent;
+				border-radius: 999px;
+				padding: 10px 14px;
+				font-size: 0.9rem;
+				color: var(--text-soft);
+				transition: 200ms ease;
+			}
+
+			.topnav a:hover,
+			.topnav a:focus-visible,
+			.theme-toggle:hover,
+			.theme-toggle:focus-visible {
+				color: inherit;
+				border-color: var(--line);
+				background: rgba(255, 255, 255, 0.08);
+				outline: none;
+			}
+
+			.theme-toggle {
+				background: none;
+				cursor: pointer;
+			}
+
+			.hero {
+				display: grid;
+				grid-template-columns: minmax(0, 1.15fr) minmax(340px, 0.85fr);
+				gap: 28px;
+				align-items: stretch;
+				margin-bottom: 28px;
+			}
+
+			.hero-copy,
+			.hero-stage,
+			.section-card,
+			.prompt-card,
+			.variant-card,
+			.mini-card {
+				position: relative;
+				overflow: hidden;
+				background: var(--surface);
+				border: 1px solid var(--line);
+				border-radius: var(--radius-lg);
+				backdrop-filter: blur(18px);
+				box-shadow: var(--shadow);
+			}
+
+			.hero-copy {
+				padding: 40px;
+				display: flex;
+				flex-direction: column;
+				justify-content: space-between;
+				min-height: 620px;
+			}
+
+			.section-tag {
+				display: inline-flex;
+				align-items: center;
+				gap: 10px;
+				margin-bottom: 22px;
+				color: var(--text-muted);
+				font-size: 0.78rem;
+				text-transform: uppercase;
+				letter-spacing: 0.22em;
+				font-family: "Geist Mono", monospace;
+			}
+
+			.section-tag::before {
+				content: "";
+				width: 44px;
+				height: 1px;
+				background: linear-gradient(90deg, var(--orange), transparent);
+			}
+
+			.hero-copy h1,
+			.section-title,
+			.type-sample {
+				margin: 0;
+				font-weight: 800;
+				letter-spacing: -0.06em;
+				line-height: 0.94;
+			}
+
+			.hero-copy h1 {
+				max-width: 10ch;
+				font-size: clamp(4rem, 8vw, 7.8rem);
+			}
+
+			.hero-lead {
+				max-width: 34rem;
+				margin: 28px 0 34px;
+				font-size: clamp(1.05rem, 1.3vw, 1.2rem);
+				line-height: 1.7;
+				color: var(--text-soft);
+			}
+
+			.hero-actions {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 14px;
+				margin-bottom: 28px;
+			}
+
+			.cta,
+			.ghost {
+				display: inline-flex;
+				align-items: center;
+				gap: 10px;
+				border-radius: 18px;
+				padding: 14px 18px;
+				font-weight: 600;
+				transition: transform 200ms ease, border-color 200ms ease, background 200ms ease;
+			}
+
+			.cta {
+				background: var(--orange);
+				color: white;
+				box-shadow: 0 18px 38px rgba(255, 98, 0, 0.24);
+			}
+
+			.ghost {
+				border: 1px solid var(--line-strong);
+				color: inherit;
+			}
+
+			.cta:hover,
+			.ghost:hover,
+			.cta:focus-visible,
+			.ghost:focus-visible {
+				transform: translateY(-2px);
+				outline: none;
+			}
+
+			.hero-metrics {
+				display: grid;
+				grid-template-columns: repeat(3, minmax(0, 1fr));
+				gap: 12px;
+			}
+
+			.metric {
+				padding: 14px 16px;
+				border-radius: var(--radius-md);
+				background: rgba(255, 255, 255, 0.42);
+				border: 1px solid var(--line);
+			}
+
+			body[data-theme="dark"] .metric {
+				background: rgba(255, 255, 255, 0.03);
+			}
+
+			.metric strong {
+				display: block;
+				margin-bottom: 6px;
+				font-size: 1.2rem;
+				letter-spacing: -0.04em;
+			}
+
+			.metric span {
+				color: var(--text-muted);
+				font-size: 0.82rem;
+				text-transform: uppercase;
+				letter-spacing: 0.12em;
+				font-family: "Geist Mono", monospace;
+			}
+
+			.hero-stage {
+				padding: 22px;
+				min-height: 620px;
+				display: grid;
+				grid-template-rows: 1.1fr auto;
+				gap: 16px;
+			}
+
+			.stage-grid {
+				display: grid;
+				grid-template-columns: 1.15fr 0.85fr;
+				gap: 14px;
+			}
+
+			.stage-panel,
+			.dark-panel,
+			.mini-card,
+			.palette-card,
+			.type-card,
+			.principle-card,
+			.swatch-card {
+				border-radius: 22px;
+				border: 1px solid var(--line);
+				overflow: hidden;
+			}
+
+			.stage-panel {
+				background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 244, 235, 0.9));
+				padding: 22px;
+				display: flex;
+				flex-direction: column;
+				justify-content: space-between;
+			}
+
+			.dark-panel {
+				background: linear-gradient(180deg, rgba(17, 17, 17, 0.96), rgba(33, 33, 33, 0.9));
+				color: white;
+				padding: 22px;
+				display: flex;
+				flex-direction: column;
+				justify-content: space-between;
+			}
+
+			.logo-plaque {
+				display: grid;
+				place-items: center;
+				min-height: 248px;
+				border-radius: 20px;
+				border: 1px solid rgba(17, 17, 17, 0.08);
+			}
+
+			.logo-plaque img {
+				width: min(100%, 270px);
+				height: auto;
+			}
+
+			.dark-panel .logo-plaque {
+				background: radial-gradient(circle at top, rgba(0, 212, 255, 0.16), transparent 44%), #0f0f0f;
+				border-color: rgba(255, 255, 255, 0.08);
+			}
+
+			.stage-meta {
+				display: flex;
+				justify-content: space-between;
+				gap: 12px;
+				flex-wrap: wrap;
+				margin-top: 14px;
+				font-size: 0.85rem;
+				color: var(--text-muted);
+			}
+
+			.dark-panel .stage-meta {
+				color: rgba(248, 248, 248, 0.6);
+			}
+
+			.mini-grid {
+				display: grid;
+				grid-template-columns: repeat(3, minmax(0, 1fr));
+				gap: 14px;
+			}
+
+			.mini-card {
+				padding: 16px;
+				background: rgba(255, 255, 255, 0.56);
+			}
+
+			body[data-theme="dark"] .mini-card {
+				background: rgba(255, 255, 255, 0.04);
+			}
+
+			.mini-card strong,
+			.eyebrow,
+			.overline {
+				display: block;
+				font-family: "Geist Mono", monospace;
+				text-transform: uppercase;
+				letter-spacing: 0.14em;
+				font-size: 0.74rem;
+			}
+
+			.mini-card p,
+			.type-card p,
+			.principle-card p,
+			.section-copy,
+			.swatch-card p {
+				margin: 8px 0 0;
+				line-height: 1.65;
+				color: var(--text-soft);
+			}
+
+			section {
+				margin-top: 22px;
+			}
+
+			.section-card {
+				padding: 28px;
+			}
+
+			.section-head {
+				display: flex;
+				justify-content: space-between;
+				gap: 18px;
+				align-items: end;
+				margin-bottom: 24px;
+			}
+
+			.section-title {
+				font-size: clamp(2.2rem, 4vw, 4rem);
+			}
+
+			.section-copy {
+				max-width: 44rem;
+				margin-top: 10px;
+			}
+
+			.eyebrow {
+				color: var(--orange);
+				margin-bottom: 10px;
+			}
+
+			.split-grid,
+			.palette-grid,
+			.principles-grid,
+			.type-grid,
+			.prompts-grid,
+			.variants-grid {
+				display: grid;
+				gap: 16px;
+			}
+
+			.split-grid {
+				grid-template-columns: 1.1fr 0.9fr;
+			}
+
+			.palette-grid,
+			.principles-grid,
+			.type-grid,
+			.variants-grid {
+				grid-template-columns: repeat(12, minmax(0, 1fr));
+			}
+
+			.swatch-card,
+			.type-card,
+			.principle-card,
+			.variant-card,
+			.prompt-card {
+				background: rgba(255, 255, 255, 0.52);
+				border: 1px solid var(--line);
+			}
+
+			body[data-theme="dark"] .swatch-card,
+			body[data-theme="dark"] .type-card,
+			body[data-theme="dark"] .principle-card,
+			body[data-theme="dark"] .variant-card,
+			body[data-theme="dark"] .prompt-card {
+				background: rgba(255, 255, 255, 0.035);
+			}
+
+			.swatch-card {
+				grid-column: span 4;
+				padding: 16px;
+			}
+
+			.swatch {
+				height: 140px;
+				border-radius: 18px;
+				margin-bottom: 16px;
+				border: 1px solid rgba(255, 255, 255, 0.36);
+			}
+
+			.swatch-meta {
+				display: flex;
+				justify-content: space-between;
+				gap: 12px;
+				align-items: center;
+			}
+
+			.swatch-meta strong {
+				font-size: 1.05rem;
+			}
+
+			.swatch-code {
+				font-family: "Geist Mono", monospace;
+				color: var(--text-muted);
+				font-size: 0.78rem;
+			}
+
+			.principle-card,
+			.type-card {
+				grid-column: span 4;
+				padding: 20px;
+			}
+
+			.principle-card h3,
+			.type-card h3,
+			.variant-card h3,
+			.prompt-card h3 {
+				margin: 12px 0 0;
+				font-size: 1.15rem;
+				letter-spacing: -0.03em;
+			}
+
+			.type-sample {
+				font-size: clamp(2rem, 4vw, 3.6rem);
+			}
+
+			.type-card.mono .type-sample {
+				font-family: "Geist Mono", monospace;
+				font-size: clamp(1.2rem, 2.4vw, 2rem);
+				letter-spacing: -0.03em;
+			}
+
+			.type-card.body .type-sample {
+				font-size: clamp(1.1rem, 1.5vw, 1.4rem);
+				line-height: 1.55;
+				font-weight: 500;
+			}
+
+			.variants-grid {
+				grid-template-columns: repeat(3, minmax(0, 1fr));
+			}
+
+			.variant-card {
+				padding: 16px;
+			}
+
+			.variant-preview {
+				min-height: 200px;
+				border-radius: 18px;
+				display: grid;
+				place-items: center;
+				margin-bottom: 14px;
+				border: 1px solid var(--line);
+			}
+
+			.variant-preview img {
+				width: min(100%, 200px);
+				height: auto;
+			}
+
+			.prompts-grid {
+				grid-template-columns: repeat(2, minmax(0, 1fr));
+			}
+
+			.prompt-card {
+				padding: 18px;
+			}
+
+			.prompt-top {
+				display: flex;
+				justify-content: space-between;
+				gap: 16px;
+				align-items: start;
+				margin-bottom: 12px;
+			}
+
+			.copy-button {
+				border: 1px solid var(--line-strong);
+				background: transparent;
+				color: inherit;
+				padding: 10px 12px;
+				border-radius: 14px;
+				cursor: pointer;
+				transition: 180ms ease;
+			}
+
+			.copy-button:hover,
+			.copy-button:focus-visible {
+				border-color: var(--orange);
+				outline: none;
+			}
+
+			pre {
+				margin: 0;
+				padding: 16px;
+				border-radius: 18px;
+				overflow: auto;
+				white-space: pre-wrap;
+				background: rgba(17, 17, 17, 0.04);
+				color: inherit;
+				border: 1px solid var(--line);
+				font-family: "Geist Mono", monospace;
+				font-size: 0.84rem;
+				line-height: 1.7;
+			}
+
+			body[data-theme="dark"] pre {
+				background: rgba(255, 255, 255, 0.03);
+			}
+
+			.footer {
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				gap: 16px;
+				padding: 24px 4px 0;
+				color: var(--text-muted);
+			}
+
+			.glow-dot {
+				width: 9px;
+				height: 9px;
+				border-radius: 999px;
+				background: var(--cyan);
+				box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.5);
+				animation: pulse 2.2s infinite;
+			}
+
+			.motion-row {
+				display: flex;
+				align-items: center;
+				gap: 10px;
+			}
+
+			.accent-line {
+				width: 100%;
+				height: 1px;
+				margin: 28px 0 22px;
+				background: linear-gradient(90deg, var(--orange), rgba(0, 212, 255, 0.8), transparent);
+			}
+
+			@keyframes pulse {
+				0% {
+					transform: scale(0.9);
+					box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.45);
+				}
+				70% {
+					transform: scale(1);
+					box-shadow: 0 0 0 12px rgba(0, 212, 255, 0);
+				}
+				100% {
+					transform: scale(0.9);
+					box-shadow: 0 0 0 0 rgba(0, 212, 255, 0);
+				}
+			}
+
+			@media (max-width: 1080px) {
+				.hero,
+				.split-grid,
+				.prompts-grid,
+				.variants-grid,
+				.stage-grid {
+					grid-template-columns: 1fr;
+				}
+
+				.palette-grid,
+				.principles-grid,
+				.type-grid {
+					grid-template-columns: 1fr 1fr;
+				}
+
+				.swatch-card,
+				.principle-card,
+				.type-card {
+					grid-column: span 1;
+				}
+
+				.hero-copy,
+				.hero-stage {
+					min-height: auto;
+				}
+			}
+
+			@media (max-width: 720px) {
+				.page-shell {
+					width: min(100vw - 20px, 1240px);
+					padding-top: 12px;
+				}
+
+				.topbar {
+					grid-template-columns: 1fr;
+					border-radius: 28px;
+				}
+
+				.topnav {
+					justify-content: start;
+				}
+
+				.hero-copy,
+				.section-card,
+				.hero-stage {
+					padding: 22px;
+				}
+
+				.hero-metrics,
+				.mini-grid,
+				.palette-grid,
+				.principles-grid,
+				.type-grid,
+				.prompts-grid,
+				.variants-grid {
+					grid-template-columns: 1fr;
+				}
+
+				.footer,
+				.section-head,
+				.prompt-top {
+					flex-direction: column;
+					align-items: start;
+				}
+			}
+
+			@media (prefers-reduced-motion: reduce) {
+				html {
+					scroll-behavior: auto;
+				}
+
+				*,
+				*::before,
+				*::after {
+					animation: none !important;
+					transition: none !important;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<div class="page-shell">
+			<header class="topbar">
+				<a class="brand-lockup" href="#top">
+					<img src="logo-vibrant-orange.svg" alt="Epifly logo" />
+					<span>Epifly</span>
+				</a>
+				<nav class="topnav" aria-label="Brand page sections">
+					<a href="#identity">Identity</a>
+					<a href="#palette">Palette</a>
+					<a href="#typography">Typography</a>
+					<a href="#variants">Variants</a>
+					<a href="#prompts">Prompts</a>
+				</nav>
+				<button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle page theme">
+					Toggle theme
+				</button>
+			</header>
+
+			<main id="top">
+				<section class="hero" aria-labelledby="hero-title">
+					<article class="hero-copy">
+						<div>
+							<div class="section-tag">Epifly Brand System / 2026</div>
+							<h1 id="hero-title">Instant insight. Effortless flow.</h1>
+							<p class="hero-lead">
+								Epifly is designed around a single emotional promise: clarity arriving at speed.
+								The identity pairs a sharp ascending mark with a premium interface language that feels
+								intelligent, kinetic, and frictionless across product, marketing, and generated assets.
+							</p>
+							<div class="hero-actions">
+								<a class="cta" href="#prompts">Open prompt kit <span aria-hidden="true">→</span></a>
+								<a class="ghost" href="#variants">Browse logo variants</a>
+							</div>
+						</div>
+
+						<div class="hero-metrics">
+							<div class="metric">
+								<strong>#FF6200</strong>
+								<span>Primary signal</span>
+							</div>
+							<div class="metric">
+								<strong>#00D4FF</strong>
+								<span>Magic accent</span>
+							</div>
+							<div class="metric">
+								<strong>Geist</strong>
+								<span>Type system</span>
+							</div>
+						</div>
+					</article>
+
+					<aside class="hero-stage" aria-label="Brand preview panels">
+						<div class="stage-grid">
+							<div class="stage-panel">
+								<div>
+									<div class="overline">Primary mark / light</div>
+									<h2 style="margin: 10px 0 0; font-size: 1.7rem; letter-spacing: -0.05em;">Upward clarity</h2>
+								</div>
+								<div class="logo-plaque" style="background: linear-gradient(180deg, #fffdfb, #fff1e6);">
+									<img src="logo-vibrant-orange.svg" alt="Epifly primary orange logo" />
+								</div>
+								<div class="stage-meta">
+									<span>Swallow / starburst motion</span>
+									<span>Premium warmth</span>
+								</div>
+							</div>
+
+							<div class="dark-panel">
+								<div>
+									<div class="overline">Signature contrast / dark</div>
+									<h2 style="margin: 10px 0 0; font-size: 1.4rem; letter-spacing: -0.04em;">Depth without noise</h2>
+								</div>
+								<div class="logo-plaque">
+									<img src="logo-electric-cyan.svg" alt="Epifly cyan logo variant" />
+								</div>
+								<div class="stage-meta">
+									<span>Cyan glow</span>
+									<span>High-contrast mode</span>
+								</div>
+							</div>
+						</div>
+
+						<div class="mini-grid">
+							<div class="mini-card">
+								<strong>Concept</strong>
+								<p>Epiphany on the fly. Sudden clarity, fast motion, zero drag.</p>
+							</div>
+							<div class="mini-card">
+								<strong>Motion</strong>
+								<div class="motion-row" style="margin-top: 10px;">
+									<span class="glow-dot"></span>
+									<span class="glow-dot" style="animation-delay: 180ms;"></span>
+									<span class="glow-dot" style="animation-delay: 360ms;"></span>
+								</div>
+								<p>Responsive spring cues and low-friction reveal behavior.</p>
+							</div>
+							<div class="mini-card">
+								<strong>Voice</strong>
+								<p>Premium, precise, uplifting, and unmistakably fast.</p>
+							</div>
+						</div>
+					</aside>
+				</section>
+
+				<section id="identity" class="section-card">
+					<div class="section-head">
+						<div>
+							<div class="eyebrow">01 / Identity</div>
+							<h2 class="section-title">A brand that feels like a breakthrough in motion.</h2>
+						</div>
+						<p class="section-copy">
+							The Epifly system combines a vivid directional mark, disciplined geometric typography, and
+							a minimal interface palette that keeps every asset legible and energetic. The brand never
+							feels chaotic; speed is conveyed through contrast, rhythm, and confident restraint.
+						</p>
+					</div>
+
+					<div class="accent-line"></div>
+
+					<div class="principles-grid">
+						<article class="principle-card">
+							<div class="overline">Core idea</div>
+							<h3>Epiphany, not overload</h3>
+							<p>Every expression should suggest insight arriving faster than expected, without clutter or decorative excess.</p>
+						</article>
+						<article class="principle-card">
+							<div class="overline">Mark behavior</div>
+							<h3>Sharp, ascending, untwisted</h3>
+							<p>The swallow-starburst form should remain crisp and directional. It can glow, invert, or recolor, but it should never distort.</p>
+						</article>
+						<article class="principle-card">
+							<div class="overline">Product feel</div>
+							<h3>Premium speed</h3>
+							<p>Rounded interfaces, clean spacing, and controlled motion create a calm surface with energetic response underneath.</p>
+						</article>
+					</div>
+				</section>
+
+				<section id="palette" class="section-card">
+					<div class="section-head">
+						<div>
+							<div class="eyebrow">02 / Palette</div>
+							<h2 class="section-title">Signal colors built for clarity and contrast.</h2>
+						</div>
+						<p class="section-copy">
+							The palette centers on a warm orange for action and recognition, with electric cyan reserved
+							for highlights, hover energy, and product intelligence. Deep charcoal and warm off-white
+							maintain premium legibility across light and dark surfaces.
+						</p>
+					</div>
+
+					<div class="palette-grid">
+						<article class="swatch-card">
+							<div class="swatch" style="background:#FF6200;"></div>
+							<div class="swatch-meta">
+								<strong>Vibrant Orange</strong>
+								<span class="swatch-code">#FF6200</span>
+							</div>
+							<p>Logo, CTAs, primary accents, decisive moments.</p>
+						</article>
+						<article class="swatch-card">
+							<div class="swatch" style="background:#00D4FF;"></div>
+							<div class="swatch-meta">
+								<strong>Electric Cyan</strong>
+								<span class="swatch-code">#00D4FF</span>
+							</div>
+							<p>Hover states, highlights, magical system feedback, motion cues.</p>
+						</article>
+						<article class="swatch-card">
+							<div class="swatch" style="background:#111111;"></div>
+							<div class="swatch-meta">
+								<strong>Deep Charcoal</strong>
+								<span class="swatch-code">#111111</span>
+							</div>
+							<p>Dark mode backgrounds, text, anchors, and high-contrast framing.</p>
+						</article>
+						<article class="swatch-card">
+							<div class="swatch" style="background:#F8F8F8;"></div>
+							<div class="swatch-meta">
+								<strong>Warm Off-White</strong>
+								<span class="swatch-code">#F8F8F8</span>
+							</div>
+							<p>Light backgrounds, spacious canvases, and clean editorial presentation.</p>
+						</article>
+						<article class="swatch-card">
+							<div class="swatch" style="background:#1E3A8A;"></div>
+							<div class="swatch-meta">
+								<strong>Deep Indigo</strong>
+								<span class="swatch-code">#1E3A8A</span>
+							</div>
+							<p>Optional depth accent for AI, focus, and layered dimensional states.</p>
+						</article>
+						<article class="swatch-card">
+							<div class="swatch" style="background:linear-gradient(135deg, #FF6200, #00D4FF, #1E3A8A);"></div>
+							<div class="swatch-meta">
+								<strong>Interaction energy</strong>
+								<span class="swatch-code">Warm → cool</span>
+							</div>
+							<p>Use as implied system behavior, not as a default fill. Keep gradients cinematic and sparse.</p>
+						</article>
+					</div>
+				</section>
+
+				<section id="typography" class="section-card">
+					<div class="section-head">
+						<div>
+							<div class="eyebrow">03 / Typography</div>
+							<h2 class="section-title">Geist keeps the system modern, precise, and crisp.</h2>
+						</div>
+						<p class="section-copy">
+							Use Geist Sans for wordmark, UI, and body content. Geist Mono supports code, labels, and meta cues.
+							Headings should feel compact and intentional with tight tracking, while body copy remains open and readable.
+						</p>
+					</div>
+
+					<div class="type-grid">
+						<article class="type-card">
+							<div class="overline">Display / bold 700</div>
+							<h3>Wordmark tone</h3>
+							<p class="type-sample">Epifly</p>
+							<p>Use for headlines and the primary wordmark. Keep letter spacing tight and geometry clean.</p>
+						</article>
+						<article class="type-card body">
+							<div class="overline">Body / medium 500</div>
+							<h3>Interface clarity</h3>
+							<p class="type-sample">Instant insight arrives through fast, quiet interactions.</p>
+							<p>Readable, calm copy that lets the mark and motion do the expressive work.</p>
+						</article>
+						<article class="type-card mono">
+							<div class="overline">Mono / utility</div>
+							<h3>System language</h3>
+							<p class="type-sample">SPRING / 300MS / GLOW</p>
+							<p>Use for tokens, prompt labels, build notes, and technical accent information.</p>
+						</article>
+					</div>
+				</section>
+
+				<section id="variants" class="section-card">
+					<div class="section-head">
+						<div>
+							<div class="eyebrow">04 / Logo variants</div>
+							<h2 class="section-title">Colorways for product, docs, and campaign surfaces.</h2>
+						</div>
+						<p class="section-copy">
+							These SVG exports preserve the traced logo’s tonal depth while shifting the active color family.
+							Use orange by default, cyan for magical system contexts, charcoal for restrained applications,
+							and the supporting variants for campaigns or environment-specific contrast.
+						</p>
+					</div>
+
+					<div class="variants-grid">
+						<article class="variant-card">
+							<div class="variant-preview" style="background:linear-gradient(180deg,#fffefc,#fff2e7);">
+								<img src="logo-vibrant-orange.svg" alt="Vibrant orange logo" />
+							</div>
+							<div class="overline">Default</div>
+							<h3>Vibrant Orange</h3>
+						</article>
+						<article class="variant-card">
+							<div class="variant-preview" style="background:linear-gradient(180deg,#0b1016,#131b24);">
+								<img src="logo-electric-cyan.svg" alt="Electric cyan logo" />
+							</div>
+							<div class="overline">Accent / glow</div>
+							<h3>Electric Cyan</h3>
+						</article>
+						<article class="variant-card">
+							<div class="variant-preview" style="background:linear-gradient(180deg,#ffffff,#f2f2f2);">
+								<img src="logo-deep-charcoal.svg" alt="Deep charcoal logo" />
+							</div>
+							<div class="overline">Editorial neutral</div>
+							<h3>Deep Charcoal</h3>
+						</article>
+						<article class="variant-card">
+							<div class="variant-preview" style="background:linear-gradient(180deg,#111111,#1b1b1b);">
+								<img src="logo-warm-off-white.svg" alt="Warm off-white logo" />
+							</div>
+							<div class="overline">Dark surface inverse</div>
+							<h3>Warm Off-White</h3>
+						</article>
+						<article class="variant-card">
+							<div class="variant-preview" style="background:linear-gradient(180deg,#111827,#0f172a);">
+								<img src="logo-deep-indigo.svg" alt="Deep indigo logo" />
+							</div>
+							<div class="overline">AI depth</div>
+							<h3>Deep Indigo</h3>
+						</article>
+						<article class="variant-card">
+							<div class="variant-preview" style="background:linear-gradient(180deg,#fff4ec,#ffeadb);">
+								<img src="logo-ember.svg" alt="Ember logo" />
+							</div>
+							<div class="overline">Campaign warm</div>
+							<h3>Ember</h3>
+						</article>
+						<article class="variant-card">
+							<div class="variant-preview" style="background:linear-gradient(180deg,#fff9e8,#fff3cb);">
+								<img src="logo-solar-gold.svg" alt="Solar gold logo" />
+							</div>
+							<div class="overline">Energy extension</div>
+							<h3>Solar Gold</h3>
+						</article>
+						<article class="variant-card">
+							<div class="variant-preview" style="background:linear-gradient(180deg,#f0fffd,#dff8f5);">
+								<img src="logo-lagoon-teal.svg" alt="Lagoon teal logo" />
+							</div>
+							<div class="overline">Supporting cool</div>
+							<h3>Lagoon Teal</h3>
+						</article>
+						<article class="variant-card">
+							<div class="variant-preview" style="background:linear-gradient(180deg,#090d16,#141c2f);">
+								<img src="logo-midnight-navy.svg" alt="Midnight navy logo" />
+							</div>
+							<div class="overline">Premium dark</div>
+							<h3>Midnight Navy</h3>
+						</article>
+					</div>
+				</section>
+
+				<section id="prompts" class="section-card">
+					<div class="section-head">
+						<div>
+							<div class="eyebrow">05 / Prompt kit</div>
+							<h2 class="section-title">Production-ready prompts for design and asset generation.</h2>
+						</div>
+						<p class="section-copy">
+							These prompt blocks are adapted directly from the Epifly brand instruction kit for use in image,
+							interface, and concept generation workflows. Each block keeps the same core rules: orange primary,
+							cyan accent, Geist typography, premium AI product polish.
+						</p>
+					</div>
+
+					<div class="prompts-grid">
+						<article class="prompt-card">
+							<div class="prompt-top">
+								<div>
+									<div class="overline">Master system prompt</div>
+									<h3>Global brand behavior</h3>
+								</div>
+								<button class="copy-button" type="button" data-copy-target="prompt-master">Copy</button>
+							</div>
+							<pre id="prompt-master">You are a world-class 2026 product design AI for premium AI platforms.
+
+Brand: Epifly
+Tagline: "Instant insight. Effortless flow."
+Core concept: Epiphany on the fly — the feeling of sudden clarity and effortless speed.
+
+Strictly follow Epifly brand: #FF6200 primary orange, #00D4FF cyan accent, Geist Sans typography, 14-20px corner radius, premium spring animations implied, ultra-clean 2026 AI product aesthetic.</pre>
+						</article>
+
+						<article class="prompt-card">
+							<div class="prompt-top">
+								<div>
+									<div class="overline">Logo / wordmark</div>
+									<h3>Icon generation</h3>
+								</div>
+								<button class="copy-button" type="button" data-copy-target="prompt-logo">Copy</button>
+							</div>
+							<pre id="prompt-logo">Ultra-premium logo variation for Epifly using the exact dynamic orange swallow/starburst icon in #FF6200. Pair it with the word "Epifly" in Geist Sans Bold, modern geometric sans-serif typography. Clean negative space, perfect balance, isolated on pure white or deep charcoal background. 2026 premium tech branding style like Linear or Vercel. High-resolution vector style, crisp edges.</pre>
+						</article>
+
+						<article class="prompt-card">
+							<div class="prompt-top">
+								<div>
+									<div class="overline">Desktop UI</div>
+									<h3>Product mockup</h3>
+								</div>
+								<button class="copy-button" type="button" data-copy-target="prompt-ui">Copy</button>
+							</div>
+							<pre id="prompt-ui">Ultra-premium high-resolution desktop screenshot of the Epifly AI chat interface in light mode or dark mode. Use exact brand colors (#FF6200 orange, #00D4FF cyan), Geist Sans typography throughout. 14-20px corner radius on all cards/buttons/inputs. Show sidebar with chat history, main chat area with message bubbles, bottom input bar. Modern 2026 Claude-style UI, flawless spacing, subtle shadows and glows, perfect professional polish.</pre>
+						</article>
+
+						<article class="prompt-card">
+							<div class="prompt-top">
+								<div>
+									<div class="overline">Marketing / hero</div>
+									<h3>Campaign visual</h3>
+								</div>
+								<button class="copy-button" type="button" data-copy-target="prompt-hero">Copy</button>
+							</div>
+							<pre id="prompt-hero">Cinematic hero image for Epifly AI platform. Dynamic composition featuring the orange swallow/starburst logo flying upward with subtle motion blur and electric cyan particle glow. Background is soft gradient from #F8F8F8 to white (light) or #111111 to deep charcoal (dark). Large "Epifly" wordmark in Geist Sans Bold. Tagline "Instant insight. Effortless flow." Clean, premium, aspirational tech aesthetic.</pre>
+						</article>
+					</div>
+				</section>
+			</main>
+
+			<footer class="footer">
+				<div>Epifly Brand System / Generated from the documented identity kit.</div>
+				<div>Use orange as default. Use cyan intentionally. Keep the mark sharp.</div>
+			</footer>
+		</div>
+
+		<script>
+			const body = document.body;
+			const themeToggle = document.getElementById("theme-toggle");
+			const savedTheme = localStorage.getItem("epifly-brand-theme");
+
+			if (savedTheme === "dark") {
+				body.dataset.theme = "dark";
+			}
+
+			themeToggle?.addEventListener("click", () => {
+				const nextTheme = body.dataset.theme === "dark" ? "light" : "dark";
+				if (nextTheme === "light") {
+					delete body.dataset.theme;
+					localStorage.setItem("epifly-brand-theme", "light");
+				} else {
+					body.dataset.theme = "dark";
+					localStorage.setItem("epifly-brand-theme", "dark");
+				}
+			});
+
+			document.querySelectorAll(".copy-button").forEach((button) => {
+				button.addEventListener("click", async () => {
+					const targetId = button.getAttribute("data-copy-target");
+					const target = targetId ? document.getElementById(targetId) : null;
+					if (!target) {
+						return;
+					}
+
+					try {
+						await navigator.clipboard.writeText(target.textContent || "");
+						const previous = button.textContent;
+						button.textContent = "Copied";
+						window.setTimeout(() => {
+							button.textContent = previous;
+						}, 1500);
+					} catch {
+						button.textContent = "Unavailable";
+					}
+				});
+			});
+		</script>
+	</body>
+</html>

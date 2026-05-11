@@ -230,11 +230,29 @@ async fn build_ctx(
         )
         .await;
 
-    let new_messages: Vec<Value> = req
-        .messages
+    let non_system: Vec<_> = req.messages.iter().filter(|m| m.role != "system").collect();
+
+    // Index of the last user message among non-system messages (for attachment injection).
+    let last_user_pos = non_system.iter().rposition(|m| m.role == "user");
+
+    let new_messages: Vec<Value> = non_system
         .iter()
-        .filter(|m| m.role != "system")
-        .map(|m| json!({"role": m.role, "content": m.content}))
+        .enumerate()
+        .map(|(i, m)| {
+            // Inject attachment content blocks into the last user turn only.
+            if m.role == "user"
+                && Some(i) == last_user_pos
+                && !req.attachment_content.is_empty()
+            {
+                let mut content: Vec<Value> = req.attachment_content.clone();
+                if !m.content.is_empty() {
+                    content.push(json!({"type": "text", "text": m.content}));
+                }
+                json!({"role": "user", "content": content})
+            } else {
+                json!({"role": m.role, "content": m.content})
+            }
+        })
         .collect();
 
     // Default tool-use guard: merged into any caller-provided system prompt.

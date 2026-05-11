@@ -12,7 +12,6 @@ mod tests {
         Arc::new(JobContext::new(
             Arc::new(InMemoryAuditStore::new()),
             None,
-            Some("http://localhost:6333".to_string()),
             None,
         ))
     }

@@ -1,62 +1,69 @@
 version: "3.9"
 
 services:
-  # ── Postgres (TimescaleDB + pgvector + pgvectorscale) ─────────────────────
-  postgres:
-    image: timescale/timescaledb-ha:pg17
-    container_name: conusai-postgres
+  # ── Vector store ──────────────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.17.0
+    container_name: conusai-qdrant
     restart: unless-stopped
-    environment:
-      POSTGRES_DB: conusai
-      POSTGRES_USER: conusai
-      POSTGRES_PASSWORD: conusai
     ports:
-      - "5432:5432"
+      - "6333:6333"   # HTTP REST
+      - "6334:6334"   # gRPC
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./workspaces:/app/workspaces:rw
-      - ./docker/init:/docker-entrypoint-initdb.d:ro
+      - qdrant_data:/qdrant/storage
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U conusai -d conusai"]
-      interval: 5s
+      test: ["CMD", "curl", "-sf", "http://localhost:6333/healthz"]
+      interval: 10s
       timeout: 5s
       retries: 10
-    profiles: ["infra", "full"]
 
-  # ── Object Storage ────────────────────────────────────────────────────────
-  minio:
+  # ── Object Storage (S3-compatible — RustFS drop-in) ───────────────────────
+  rustfs:
     image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
-    container_name: conusai-minio
+    container_name: conusai-rustfs
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: "${AWS_ACCESS_KEY_ID:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${AWS_SECRET_ACCESS_KEY:-minioadmin}"
     ports:
       - "9000:9000"   # S3 API
       - "9001:9001"   # Console
     volumes:
-      - minio_data:/data
+      - rustfs_data:/data
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9000/minio/health/live"]
       interval: 10s
       timeout: 5s
-      retries: 5
-    profiles: ["infra", "full"]
+      retries: 10
 
-  # ── MinIO bucket initialisation ───────────────────────────────────────────
-  minio-init:
+  # ── Bucket initialisation ─────────────────────────────────────────────────
+  rustfs-init:
     image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
-    container_name: conusai-minio-init
+    container_name: conusai-rustfs-init
     depends_on:
-      minio:
+      rustfs:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-        mc alias set local http://conusai-minio:9000 minioadmin minioadmin &&
-        mc mb --ignore-existing local/conusai &&
-        echo 'bucket conusai ready'
+        mc alias set local http://conusai-rustfs:9000 ${AWS_ACCESS_KEY_ID:-minioadmin} ${AWS_SECRET_ACCESS_KEY:-minioadmin} &&
+        mc mb --ignore-existing local/workspace &&
+        echo 'bucket workspace ready'
       "
-    profiles: ["infra", "full"]
+    restart: on-failure
+
+  # ── Marker PDF-to-markdown service (optional — profile: marker) ──────────
+  marker-api:
+    image: ghcr.io/vikparuchuri/marker:latest
+    container_name: conusai-marker
+    profiles: ["marker"]
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # ── Agent Gateway ─────────────────────────────────────────────────────────
   agent-gateway:
@@ -66,35 +73,36 @@ services:
       target: gateway
     container_name: conusai-gateway
     depends_on:
-      postgres:
+      qdrant:
         condition: service_healthy
-      minio-init:
+      rustfs-init:
         condition: service_completed_successfully
-      otel-collector:
-        condition: service_started
     env_file:
       - path: .env.local
         required: false
       - path: .env
         required: false
     environment:
-      DATABASE_URL: "postgres://conusai:conusai@conusai-postgres:5432/conusai"
-      MINIO_ENDPOINT: "http://conusai-minio:9000"
-      MINIO_BUCKET: "conusai"
-      MINIO_ACCESS_KEY: "minioadmin"
-      MINIO_SECRET_KEY: "minioadmin"
+      QDRANT_URL: "http://conusai-qdrant:6334"
+      S3_ENDPOINT: "http://conusai-rustfs:9000"
+      S3_BUCKET: "${S3_BUCKET:-workspace}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-minioadmin}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-minioadmin}"
+      REDB_PATH: "/data/conusai.redb"
+      MARKER_URL: "http://conusai-marker:8080"
       WORKSPACES_ROOT: "/app/workspaces"
       OTLP_ENDPOINT: "http://conusai-otel:4317"
       UI_SESSION_KEY: "${UI_SESSION_KEY:-conusai-foundry-dev-secret-change-me-32b}"
       WEB_ORIGIN: "${WEB_ORIGIN:-http://localhost:3000,http://localhost:5173,https://tauri.localhost,tauri://localhost}"
-      EMBEDDING_BACKEND: "local"
+      EMBEDDING_BACKEND: "${EMBEDDING_BACKEND:-openai}"
     ports:
       - "8080:8080"
     volumes:
+      - redb_data:/data
       - ./apps/backend/capabilities:/app/capabilities
       - ./apps/backend/crates/agent-gateway/assets:/app/ui-assets:ro
+      - ./workspaces:/app/workspaces:rw
     restart: unless-stopped
-    profiles: ["full"]
 
   # ── current-time: self-registering MCP capability service ────────────────
   current-time:
@@ -106,29 +114,23 @@ services:
       GATEWAY_URL: "http://conusai-gateway:8080"
       PLATFORM_ADMIN_TOKEN: "${PLATFORM_ADMIN_TOKEN:-}"
       SERVICE_URL: "http://conusai-current-time:8082"
-      # Deprecated aliases — kept for one release, remove after migration:
-      # CONUSAI_PLATFORM_URL: "http://conusai-gateway:8080"
-      # CONUSAI_PLATFORM_TOKEN: "${PLATFORM_ADMIN_TOKEN:-}"
-      # CONUSAI_SERVICE_URL: "http://conusai-current-time:8082"
-      # CONUSAI_TENANT_SCOPE: "tenant-abc,tenant-xyz"  # uncomment to scope to specific tenants
     ports:
       - "8082:8082"
-    profiles: ["full"]
     depends_on:
       agent-gateway:
         condition: service_started
 
-  # ── SvelteKit Web App ────────────────────────────────────────────────────
+  # ── SvelteKit Web App (optional — profile: web) ──────────────────────────
   web:
     image: node:22-slim
     container_name: conusai-web
+    profiles: ["web"]
     working_dir: /app
     command: node apps/web/build
     volumes:
       - .:/app:ro
     ports:
       - "3000:3000"
-    profiles: ["full"]
 
   # ── Observability ─────────────────────────────────────────────────────────
   jaeger:
@@ -139,11 +141,12 @@ services:
     ports:
       - "16686:16686"   # Jaeger UI
       - "14317:4317"    # OTLP gRPC (host-side mapped to avoid conflict with otel-collector)
-    profiles: ["observability", "full"]
+    profiles: ["observability"]
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.123.0
     container_name: conusai-otel
+    profiles: ["observability"]
     depends_on:
       - jaeger
     volumes:
@@ -151,8 +154,8 @@ services:
     ports:
       - "4317:4317"   # gRPC OTLP
       - "4318:4318"   # HTTP OTLP
-    profiles: ["observability", "full"]
 
 volumes:
-  postgres_data:
-  minio_data:
+  qdrant_data:
+  rustfs_data:
+  redb_data:

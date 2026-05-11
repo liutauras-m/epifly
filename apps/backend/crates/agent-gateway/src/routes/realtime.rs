@@ -40,12 +40,7 @@ pub async fn realtime_workspace(
 }
 
 async fn handle_socket(mut socket: WebSocket, tenant_id: String, state: Arc<AppState>) {
-    let Some(realtime) = &state.realtime_service else {
-        warn!("realtime service not available (test mode) — closing WebSocket");
-        let _ = socket.send(Message::Close(None)).await;
-        return;
-    };
-
+    let realtime = &state.realtime_service;
     let mut rx = realtime.subscribe_workspace(&tenant_id).await;
     debug!(tenant_id, "WebSocket client connected to workspace_changes");
 

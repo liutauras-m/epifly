@@ -68,4 +68,10 @@ pub trait AuditStore: Send + Sync + 'static {
         limit: usize,
         after: Option<&str>,
     ) -> crate::error::Result<Vec<AuditEvent>>;
+
+    /// Delete all events older than `before`. Returns the number of deleted events.
+    /// Default implementation is a no-op (suitable for in-memory stores).
+    async fn prune_before(&self, _before: DateTime<Utc>) -> crate::error::Result<u64> {
+        Ok(0)
+    }
 }

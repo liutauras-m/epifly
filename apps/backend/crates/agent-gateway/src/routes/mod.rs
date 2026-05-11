@@ -11,7 +11,7 @@ use utoipa::openapi::security::{ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder
 use utoipa_swagger_ui::SwaggerUi;
 
 mod admin_capabilities;
-mod admin_devices;
+pub(crate) mod admin_devices;
 mod admin_jobs;
 pub mod agent;
 mod audit;

@@ -38,6 +38,10 @@ pub struct ChatRequest {
     /// Maximum tool-call rounds for this request. Capped at the tenant plan limit.
     /// Reserved: use /v1/agent/completions for full agentic context.
     pub max_turns: Option<u32>,
+    /// Pre-resolved Anthropic content blocks for attached files (images, documents, text).
+    /// Set by the UI stream handler after fetching bytes from object storage.
+    #[serde(default)]
+    pub attachment_content: Vec<Value>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
