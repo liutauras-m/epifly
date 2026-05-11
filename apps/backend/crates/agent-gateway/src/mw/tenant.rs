@@ -24,7 +24,7 @@ pub struct ResolvedTenant(pub TenantContext);
 ///   2. `conusai_session` cookie — web app, same-origin.
 ///   3. `X-Session-Token` header — Tauri WKWebView (cannot attach Secure cookies
 ///      to cross-origin HTTP; browser-shell injects the HMAC token as a header).
-///   Anything else → 401.
+///   4. Anything else → 401.
 ///
 /// **Dev mode (`JWT_SECRET` unset)**
 ///   1. `X-Tenant-ID` header — bare tenant override, no auth check.

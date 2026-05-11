@@ -30,11 +30,9 @@ pub fn extract_from_headers(headers: &HeaderMap) -> Option<SessionUser> {
 
 fn from_cookie(headers: &HeaderMap) -> Option<SessionUser> {
     let cookie_str = headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
-    cookie_str.split(';').find_map(|c| {
-        c.trim()
-            .strip_prefix("conusai_session=")
-            .and_then(verify)
-    })
+    cookie_str
+        .split(';')
+        .find_map(|c| c.trim().strip_prefix("conusai_session=").and_then(verify))
 }
 
 fn from_header(headers: &HeaderMap) -> Option<SessionUser> {

@@ -53,7 +53,9 @@ pub async fn chat_stream_start(
             Err(e) => {
                 let _ = app.emit(
                     &format!("chat:chunk:{}", sid),
-                    ChunkPayload::Error { message: e.to_string() },
+                    ChunkPayload::Error {
+                        message: e.to_string(),
+                    },
                 );
                 return;
             }
@@ -79,7 +81,9 @@ pub async fn chat_stream_start(
                 Err(e) => {
                     let _ = app.emit(
                         &format!("chat:chunk:{}", sid),
-                        ChunkPayload::Error { message: e.to_string() },
+                        ChunkPayload::Error {
+                            message: e.to_string(),
+                        },
                     );
                     return;
                 }
@@ -108,7 +112,9 @@ pub async fn chat_stream_start(
                         if let Some(content) = d.get("content").and_then(|v| v.as_str()) {
                             let _ = app.emit(
                                 &format!("chat:chunk:{}", sid),
-                                ChunkPayload::Text { content: content.to_string() },
+                                ChunkPayload::Text {
+                                    content: content.to_string(),
+                                },
                             );
                         } else if let Some(ts) = d.get("tool_call_start") {
                             let id = ts["id"].as_str().unwrap_or("").to_string();
@@ -122,7 +128,10 @@ pub async fn chat_stream_start(
                             let result = tr["result"].as_str().unwrap_or("").to_string();
                             let _ = app.emit(
                                 &format!("chat:chunk:{}", sid),
-                                ChunkPayload::ToolResult { tool_use_id, result },
+                                ChunkPayload::ToolResult {
+                                    tool_use_id,
+                                    result,
+                                },
                             );
                         }
                     }
@@ -130,7 +139,9 @@ pub async fn chat_stream_start(
                     if let Some(tid) = ev["thread_id"].as_str() {
                         let _ = app.emit(
                             &format!("chat:chunk:{}", sid),
-                            ChunkPayload::ThreadId { id: tid.to_string() },
+                            ChunkPayload::ThreadId {
+                                id: tid.to_string(),
+                            },
                         );
                     }
                 }

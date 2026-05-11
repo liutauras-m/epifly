@@ -19,5 +19,5 @@
 mod extractor;
 mod verifier;
 
-pub use verifier::{COOKIE_NAME, SessionUser, verify};
 pub use extractor::extract_from_headers;
+pub use verifier::{COOKIE_NAME, SessionUser, verify};

@@ -81,7 +81,9 @@ pub fn run() {
         .manage(tabs_state)
         .manage(recorder_state)
         .manage(token_state)
-        .manage(Arc::new(Mutex::new(HashMap::<String, tokio::task::JoinHandle<()>>::new())) as StreamRegistry)
+        .manage(Arc::new(Mutex::new(
+            HashMap::<String, tokio::task::JoinHandle<()>>::new(),
+        )) as StreamRegistry)
         .invoke_handler(tauri::generate_handler![
             tabs::create_tab,
             tabs::close_tab,

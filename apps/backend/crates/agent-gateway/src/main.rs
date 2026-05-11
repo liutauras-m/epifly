@@ -48,7 +48,8 @@ fn build_cors() -> CorsLayer {
     // Comma-separated allowed origins. Set WEB_ORIGIN in the environment (see .env.example).
     // Falls back to localhost dev origins so the server stays usable without any config.
     let raw = std::env::var("WEB_ORIGIN").unwrap_or_else(|_| {
-        "http://localhost:3000,http://localhost:5173,https://tauri.localhost,tauri://localhost".into()
+        "http://localhost:3000,http://localhost:5173,https://tauri.localhost,tauri://localhost"
+            .into()
     });
 
     let origins: Vec<axum::http::HeaderValue> = raw

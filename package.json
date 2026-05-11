@@ -33,5 +33,11 @@
     "appium-xcuitest-driver": "^11.3.0",
     "ts-node": "^10.9.2",
     "webdriverio": "^9.27.1"
+  },
+  "dependencies": {
+    "@fontsource-variable/fraunces": "^5.2.9",
+    "@fontsource-variable/inter": "^5.2.8",
+    "@fontsource/fraunces": "^5.2.9",
+    "@fontsource/jetbrains-mono": "^5.2.8"
   }
 }
