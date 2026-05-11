@@ -6,3 +6,5 @@ export { toasts } from './toast.svelte.js';
 export type { Toast, ToastKind } from './toast.svelte.js';
 export { modeStore } from './modeStore.svelte.js';
 export type { AppMode } from './modeStore.svelte.js';
+export { recentsStore } from './recents.svelte.js';
+export { breadcrumbsStore } from './breadcrumbs.svelte.js';

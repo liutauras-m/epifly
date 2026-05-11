@@ -28,6 +28,10 @@
       "types": "./src/lib/features/index.ts",
       "svelte": "./src/lib/features/index.ts",
       "import": "./src/lib/features/index.ts"
+    },
+    "./motion": {
+      "types": "./src/lib/motion/index.ts",
+      "import": "./src/lib/motion/index.ts"
     }
   },
   "scripts": {

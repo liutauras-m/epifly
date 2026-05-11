@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { tap } from '../motion/tap.js';
+	import { tap } from '@conusai/ui/motion';
 
 	let {
 		suggestions,

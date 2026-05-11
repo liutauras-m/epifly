@@ -26,6 +26,18 @@ export type { Attachment } from "./features/AgentChatComposer.svelte";
 // ── Utils ────────────────────────────────────────────────────────────────────
 export { default as LiveAnnouncer } from "./utils/LiveAnnouncer.svelte";
 export { autoGrow } from "./utils/actions.js";
+export { prefersReducedMotion } from "./utils/motion-prefs.js";
+
+// ── Motion primitives ────────────────────────────────────────────────────────
+export {
+  springAnimate,
+  recordRect,
+  playFlip,
+  stagger,
+  tap,
+  startViewTransition,
+} from "./motion/index.js";
+export type { SpringOpts } from "./motion/index.js";
 
 // ── Stores ───────────────────────────────────────────────────────────────────
 export { createThemeStore, localStorageAdapter } from "./stores/themeStore.svelte.js";
@@ -36,6 +48,8 @@ export { toasts } from "./stores/toast.svelte.js";
 export type { ToastKind } from "./stores/toast.svelte.js";
 export { modeStore } from "./stores/modeStore.svelte.js";
 export type { AppMode } from "./stores/modeStore.svelte.js";
+export { recentsStore } from "./stores/recents.svelte.js";
+export { breadcrumbsStore } from "./stores/breadcrumbs.svelte.js";
 
 // ── Capabilities ─────────────────────────────────────────────────────────────
 export { createCapabilityRendererRegistry } from "./capabilities/CapabilityRendererRegistry.js";

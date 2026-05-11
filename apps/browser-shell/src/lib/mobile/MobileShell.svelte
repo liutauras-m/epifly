@@ -6,12 +6,11 @@
 	import type { WorkspaceNode } from '@conusai/types';
 
 	import { setPlatformTag } from './platform/detect.js';
-	import { tap } from './motion/tap.js';
+	import { tap } from '@conusai/ui/motion';
 	import { screenStore } from './stores/screen.svelte.js';
 	import { drawerStore } from './stores/drawer.svelte.js';
 	import { sheetStore } from './stores/sheet.svelte.js';
-	import { recentsStore } from './stores/recents.svelte.js';
-	import { breadcrumbsStore } from './stores/breadcrumbs.svelte.js';
+	import { recentsStore, breadcrumbsStore } from '@conusai/ui/stores';
 
 	import MobileTopBar from './chrome/MobileTopBar.svelte';
 	import MobileDrawer from './chrome/MobileDrawer.svelte';

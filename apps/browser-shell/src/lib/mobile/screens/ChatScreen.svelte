@@ -6,7 +6,7 @@
 	import favicon from '@conusai/ui/assets/images/favicon.png';
 	import SuggestionChips from '../parts/SuggestionChips.svelte';
 	import ContextChip from '../parts/ContextChip.svelte';
-	import { recordRect, playFlip } from '../motion/flip.js';
+	import { recordRect, playFlip } from '@conusai/ui/motion';
 
 	let {
 		sdk,

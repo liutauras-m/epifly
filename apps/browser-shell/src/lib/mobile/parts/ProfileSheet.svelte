@@ -1,7 +1,6 @@
 <script lang="ts">
 	import MobileBottomSheet from '../chrome/MobileBottomSheet.svelte';
-	import { tap } from '../motion/tap.js';
-	import { startViewTransition } from '../motion/viewTransition.js';
+	import { tap, startViewTransition } from '@conusai/ui/motion';
 
 	let {
 		open,
