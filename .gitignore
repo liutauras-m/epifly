@@ -1,70 +1,92 @@
-# Rust
+# ── Rust ──────────────────────────────────────────────────────────────────────
 **/target/
 **/*.rs.bk
+# Cargo.lock is intentionally ignored here because all crates in this repo are
+# libraries or long-running services consumed via Docker; pin versions in CI
+# using --locked, not by committing the lockfile.
 Cargo.lock
 
-# Environment
+# ── Environment / secrets ─────────────────────────────────────────────────────
 .env
 .env.local
+.env.*.local
+# Keep .env.example tracked (safe template)
 
-# IDE
+# ── IDE ───────────────────────────────────────────────────────────────────────
 .idea/
 .vscode/
 *.iml
+*.swp
+*.swo
+*~
 
-# Claude local files
+# ── Claude local files ────────────────────────────────────────────────────────
 .claude/settings.local.json
 .claude/worktrees/
 
-# macOS
-.DS_Store
+# ── macOS ─────────────────────────────────────────────────────────────────────
+**/.DS_Store
+.AppleDouble
+.LSOverride
 
-# Logs
+# ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
+npm-debug.log*
+pnpm-debug.log*
+*_output.txt
 
-# Python
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *.pyo
 
-# FastEmbed model cache (downloaded at runtime)
+# ── FastEmbed model cache (downloaded at runtime) ─────────────────────────────
 .fastembed_cache/
-*/.fastembed_cache/
+**/.fastembed_cache/
 
-# WASM build artifacts
+# ── WASM build artifacts ──────────────────────────────────────────────────────
 /wasm/*.wasm
 
-# Capability runtime state
+# ── Capability runtime state ──────────────────────────────────────────────────
 capabilities/*/state.json
 apps/backend/capabilities/*/state.json
 
-# Docker volumes
+# ── Docker volumes ────────────────────────────────────────────────────────────
 /data/
 
-# Coverage
+# ── Coverage / test reports ───────────────────────────────────────────────────
 /lcov.info
 /tarpaulin-report.html
-
-# Node / pnpm
-node_modules/
-pnpm-lock.yaml
-
-# SvelteKit build artifacts
-.svelte-kit/
-build/
-
-# Turborepo
-.turbo/
-
-# pnpm per-package dist
-apps/*/dist
-packages/*/dist
-
-# Tauri shell
-apps/browser-shell/src-tauri/target/
-apps/browser-shell/src-tauri/gen/
-
-# Test artifacts
+coverage/
 test-results/
 playwright-report/
 
+# ── Node / pnpm ───────────────────────────────────────────────────────────────
+node_modules/
+# pnpm-lock.yaml is tracked (committed) — do NOT add it here.
+# Removing it from this list fixes the tracked-but-ignored conflict.
+
+# ── TypeScript build cache ────────────────────────────────────────────────────
+*.tsbuildinfo
+
+# ── Downloaded packages / archives ────────────────────────────────────────────
+*.tgz
+*.tar.gz
+*.zip
+
+# ── SvelteKit build artifacts ─────────────────────────────────────────────────
+.svelte-kit/
+build/
+
+# ── Turborepo ─────────────────────────────────────────────────────────────────
+.turbo/
+
+# ── Per-package dist ──────────────────────────────────────────────────────────
+apps/*/dist
+packages/*/dist
+
+# ── Tauri shell ───────────────────────────────────────────────────────────────
+apps/browser-shell/src-tauri/target/
+apps/browser-shell/src-tauri/gen/
+# WKWebView data persisted by Tauri between dev runs
+apps/browser-shell/src-tauri/tmp/
