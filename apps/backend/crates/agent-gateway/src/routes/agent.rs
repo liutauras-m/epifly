@@ -477,10 +477,36 @@ async fn blocking_agent(
                     .map(|m| format!("{}: {}", m.role, m.content))
                     .collect::<Vec<_>>()
                     .join("\n\n");
-                let _ = state
-                    .workspace_store
-                    .index_content(&tenant_id, node_id, &snippet)
-                    .await;
+                let tid_owned = tenant_id.clone();
+                let node_id_str = node_id.to_string();
+                let emb_svc = Arc::clone(&state.embedding_service);
+                let vs = Arc::clone(&state.vector_store);
+                tokio::spawn(async move {
+                    const CHUNK: usize = 1500;
+                    let chunks: Vec<String> = snippet
+                        .chars()
+                        .collect::<Vec<_>>()
+                        .chunks(CHUNK)
+                        .map(|c| c.iter().collect::<String>())
+                        .collect();
+                    if let Ok(embeddings) = emb_svc.embed_documents(chunks.clone()).await {
+                        for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
+                            let chunk_id = format!("{node_id_str}_t{i}");
+                            let _ = vs
+                                .upsert_content_embedding_full(
+                                    &chunk_id,
+                                    &node_id_str,
+                                    i as i32,
+                                    chunk,
+                                    emb,
+                                    &tid_owned,
+                                    "",
+                                    &[],
+                                )
+                                .await;
+                        }
+                    }
+                });
             }
 
             return Ok(json!({
@@ -831,8 +857,6 @@ pub async fn stream_agent(
                         .messages(&tenant_id, tid)
                         .await
                         .unwrap_or_default();
-                    // Take the last 30 messages (~15 turns) so the snippet stays within
-                    // the 32 KB limit enforced by index_content.
                     let snippet: String = recent
                         .iter()
                         .rev()
@@ -841,10 +865,36 @@ pub async fn stream_agent(
                         .map(|m| format!("{}: {}", m.role, m.content))
                         .collect::<Vec<_>>()
                         .join("\n\n");
-                    let _ = state
-                        .workspace_store
-                        .index_content(&tenant_id, node_id, &snippet)
-                        .await;
+                    let tid_owned = tenant_id.clone();
+                    let node_id_str = node_id.to_string();
+                    let emb_svc = Arc::clone(&state.embedding_service);
+                    let vs = Arc::clone(&state.vector_store);
+                    tokio::spawn(async move {
+                        const CHUNK: usize = 1500;
+                        let chunks: Vec<String> = snippet
+                            .chars()
+                            .collect::<Vec<_>>()
+                            .chunks(CHUNK)
+                            .map(|c| c.iter().collect::<String>())
+                            .collect();
+                        if let Ok(embeddings) = emb_svc.embed_documents(chunks.clone()).await {
+                            for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
+                                let chunk_id = format!("{node_id_str}_t{i}");
+                                let _ = vs
+                                    .upsert_content_embedding_full(
+                                        &chunk_id,
+                                        &node_id_str,
+                                        i as i32,
+                                        chunk,
+                                        emb,
+                                        &tid_owned,
+                                        "",
+                                        &[],
+                                    )
+                                    .await;
+                            }
+                        }
+                    });
                 }
 
                 // Emit metrics for streaming completion.

@@ -1,9 +1,5 @@
 //! QdrantVectorStore — ANN similarity search via Qdrant.
 //!
-//! Replaces the old PgVectorStore (pgvector/sqlx).
-//! Same public interface so callers (SemanticCapabilityRouter, CocoIndexer, etc.)
-//! need only a type-swap.
-//!
 //! Collections
 //! - `capability_embeddings`: capability search (tag/namespace payload filters).
 //! - `content_embeddings`: workspace content search (tenant_id payload filter).
@@ -15,8 +11,10 @@ use chrono::{DateTime, Utc};
 use qdrant_client::{
     Qdrant,
     qdrant::{
-        Condition, CreateCollectionBuilder, Distance, Filter, PointStruct, SearchParamsBuilder,
+        Condition, CreateCollectionBuilder, Distance, FieldType, Filter,
+        CreateFieldIndexCollectionBuilder, KeywordIndexParams, PointStruct, SearchParamsBuilder,
         SearchPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder, VectorsConfigBuilder,
+        payload_index_params,
     },
 };
 use serde_json::Value;
@@ -76,6 +74,8 @@ impl QdrantVectorStore {
         let Some(client) = &self.inner else { return Ok(()) };
         for name in [CAP_COLLECTION, CONTENT_COLLECTION] {
             if client.collection_exists(name).await? {
+                // Ensure indexes exist even on pre-existing collections.
+                self.ensure_payload_indexes(client, name).await?;
                 continue;
             }
             let mut vcb = VectorsConfigBuilder::default();
@@ -88,7 +88,55 @@ impl QdrantVectorStore {
                     CreateCollectionBuilder::new(name).vectors_config(vcb),
                 )
                 .await?;
+            self.ensure_payload_indexes(client, name).await?;
         }
+        Ok(())
+    }
+
+    async fn ensure_payload_indexes(&self, client: &Qdrant, collection: &str) -> anyhow::Result<()> {
+        let tenant_index = CreateFieldIndexCollectionBuilder::new(
+            collection,
+            "tenant_id",
+            FieldType::Keyword,
+        )
+        .field_index_params(payload_index_params::IndexParams::KeywordIndexParams(
+            KeywordIndexParams {
+                is_tenant: Some(true),
+                on_disk: Some(false),
+                enable_hnsw: None,
+            },
+        ));
+        client.create_field_index(tenant_index).await?;
+
+        let owner_index = CreateFieldIndexCollectionBuilder::new(
+            collection,
+            "owner_id",
+            FieldType::Keyword,
+        )
+        .field_index_params(payload_index_params::IndexParams::KeywordIndexParams(
+            KeywordIndexParams {
+                is_tenant: Some(false),
+                on_disk: Some(false),
+                enable_hnsw: None,
+            },
+        ));
+        client.create_field_index(owner_index).await?;
+
+        // shared_with is a repeated string — array keyword index for fast "is_member_of" filters.
+        let shared_index = CreateFieldIndexCollectionBuilder::new(
+            collection,
+            "shared_with",
+            FieldType::Keyword,
+        )
+        .field_index_params(payload_index_params::IndexParams::KeywordIndexParams(
+            KeywordIndexParams {
+                is_tenant: Some(false),
+                on_disk: Some(false),
+                enable_hnsw: None,
+            },
+        ));
+        client.create_field_index(shared_index).await?;
+
         Ok(())
     }
 
@@ -313,12 +361,33 @@ impl QdrantVectorStore {
         content: &str,
         embedding: &[f32],
     ) -> anyhow::Result<()> {
+        self.upsert_content_embedding_full(chunk_id, node_id, chunk_idx, content, embedding, "", "", &[]).await
+    }
+
+    #[instrument(skip(self, embedding))]
+    pub async fn upsert_content_embedding_full(
+        &self,
+        chunk_id: &str,
+        node_id: &str,
+        chunk_idx: i32,
+        content: &str,
+        embedding: &[f32],
+        tenant_id: &str,
+        owner_id: &str,
+        shared_with: &[String],
+    ) -> anyhow::Result<()> {
         let Ok(client) = self.client() else { return Ok(()) };
 
         let mut payload: HashMap<String, qdrant_client::qdrant::Value> = HashMap::new();
         payload.insert("node_id".into(), node_id.into());
         payload.insert("chunk_idx".into(), (chunk_idx as i64).into());
         payload.insert("content".into(), content.into());
+        payload.insert("tenant_id".into(), tenant_id.into());
+        payload.insert("owner_id".into(), owner_id.into());
+        payload.insert(
+            "shared_with".into(),
+            shared_with.iter().map(|s| s.as_str()).collect::<Vec<_>>().into(),
+        );
 
         let mut vectors: HashMap<String, Vec<f32>> = HashMap::new();
         vectors.insert("default".to_string(), embedding.to_vec());

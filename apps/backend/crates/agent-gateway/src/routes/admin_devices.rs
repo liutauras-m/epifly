@@ -213,9 +213,13 @@ pub async fn validate_device_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn feature_flag_off_returns_not_found() {
+        let _guard = ENV_LOCK.lock().unwrap();
         unsafe { std::env::remove_var("CONUSAI_FEATURE_BROWSER_SHELL") };
         let err = require_shell_feature().unwrap_err();
         assert_eq!(err.status.as_u16(), 404);
@@ -223,6 +227,7 @@ mod tests {
 
     #[test]
     fn feature_flag_on_passes() {
+        let _guard = ENV_LOCK.lock().unwrap();
         unsafe { std::env::set_var("CONUSAI_FEATURE_BROWSER_SHELL", "1") };
         let result = require_shell_feature();
         unsafe { std::env::remove_var("CONUSAI_FEATURE_BROWSER_SHELL") };

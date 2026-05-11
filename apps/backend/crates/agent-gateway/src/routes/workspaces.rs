@@ -321,18 +321,48 @@ pub async fn patch_content(
         .await
         .map_err(map_err)?;
 
-    // Write content to MinIO, then index for semantic search.
+    // Write content to RustFS, then embed + index for semantic search (async).
     state
         .workspace_content
         .write(&tenant.tenant_id, &node.virtual_path, &body.content)
         .await
         .map_err(map_err)?;
 
-    // index_content persists embeddings for semantic search and bumps last_modified.
-    let _ = state
-        .workspace_store
-        .index_content(&tenant.tenant_id, id, &body.content)
-        .await;
+    // Embed content chunks and upsert into Qdrant with tenant/owner context.
+    {
+        let content = body.content.clone();
+        let tenant_id = tenant.tenant_id.clone();
+        let owner_id = node.owner_id.clone();
+        let node_id_str = id.to_string();
+        let embedding_svc = Arc::clone(&state.embedding_service);
+        let vector_store = Arc::clone(&state.vector_store);
+        tokio::spawn(async move {
+            const CHUNK: usize = 1500;
+            let chunks: Vec<String> = content
+                .chars()
+                .collect::<Vec<_>>()
+                .chunks(CHUNK)
+                .map(|c| c.iter().collect::<String>())
+                .collect();
+            if let Ok(embeddings) = embedding_svc.embed_documents(chunks.clone()).await {
+                for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
+                    let chunk_id = format!("{node_id_str}_{i}");
+                    let _ = vector_store
+                        .upsert_content_embedding_full(
+                            &chunk_id,
+                            &node_id_str,
+                            i as i32,
+                            chunk,
+                            emb,
+                            &tenant_id,
+                            &owner_id,
+                            &[],
+                        )
+                        .await;
+                }
+            }
+        });
+    }
 
     // Return fresh node
     let updated = state
