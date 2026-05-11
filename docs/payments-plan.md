@@ -18,6 +18,9 @@
 ### Billing
 - **None.** No subscription state, no usage events, no Stripe/Lago, no `billing-core` crate.
 
+### API keys
+- **Static env-based** ([`apps/backend/crates/agent-gateway/src/mw/api_key.rs`](apps/backend/crates/agent-gateway/src/mw/api_key.rs)) — `API_KEYS=<blake3_hex>:<tenant_id>:<plan>,...` parsed at boot. No self-serve issuance, rotation, or per-key usage tracking.
+
 ### Frontend
 - **Login page** ([`apps/web/src/routes/login/+page.svelte`](apps/web/src/routes/login/+page.svelte)) — form posts to local action which signs an HMAC cookie.
 - **No** `/account`, `/billing`, `/upgrade`, `/usage` routes.
@@ -33,6 +36,7 @@
 4. Plan tiers are compile-time constants; cannot be changed without redeploy.
 5. Quota middleware doesn't actually enforce per-action quotas.
 6. No webhook endpoint for billing events; no plan-tier sync to identity claims.
+7. No self-serve API-key management, no per-key usage attribution, no referral/discount system, no invoice download UI.
 
 ---
 
@@ -63,16 +67,37 @@
 ```
 
 Single sources of truth:
-- **Identity / tenants / roles** → Zitadel (Organizations = tenants).
-- **Plans / subscriptions / usage / invoices** → Lago.
+- **Identity / tenants / roles / API-key metadata** → Zitadel (Organizations = tenants; API keys = Zitadel `MachineUser` PATs scoped to the org).
+- **Plans / subscriptions / usage / invoices / coupons / referrals** → Lago.
 - **Payments / cards** → Stripe (Lago wraps it, we never touch).
 - **Real-time quota cache** → moka (in-process) backed by TimescaleDB rollups.
 
 ---
 
+## 1a. Pricing Strategy (catalog seeded into Lago by `PlanCatalog`)
+
+| Plan | Monthly | Annual (−20%) | Agent turns / day | API calls / day | API limits (RPM / TPM) | Included credits | Storage | Overage / extra unit | Best for |
+|---|---|---|---|---|---|---|---|---|---|
+| **Free** | $0 | — | 50 | 100 | 10 / 1 k | 0 | 1 GB | hard cap (HTTP 429) | trial / hobby / POC |
+| **Pro** | $20 | $17/mo | 500 | 5 000 | 60 / 20 k | 2 000/mo | 25 GB | $0.01 turn / $0.000003 token | power users + small apps |
+| **Team** | $80 base + $15/seat | $64 + $12/seat | 2 000 shared | 20 000 shared | 300 / 100 k | 10 000/mo | 100 GB | $0.008 turn / $0.0000025 token | small teams |
+| **Enterprise** | custom (≥ $500) | custom | unlimited | unlimited | 1 000+ / custom | custom | unlimited | negotiated | production scale |
+
+Rolling 24 h windows for free-tier limits (feels generous, blocks abuse).
+
+**Discounts & growth (all native Lago coupon primitives — zero custom code):**
+- **Annual:** 20 % off (`coupon: ANNUAL20`, applies on plan switch).
+- **Promo codes:** one-time 25 %.
+- **Referral programme** — each user gets a shareable link `https://app.conusai.com/signup?ref=<ulid>`:
+  - Referred user → 30 % off first 3 months.
+  - Referrer → $20 Lago credit (or 1 free month) when referred user upgrades to a paid plan.
+  - Referral code is stored as a Zitadel custom user claim `urn:conusai:ref_by`; redemption recorded in Lago via wallet credit.
+
+---
+
 ## 2. Phase Breakdown
 
-The work is split into 8 phases. Each phase is independently shippable, behind a feature flag where it touches request paths.
+The work is split into 8 phases (plus a small in-place evolution — 5b). Each phase is independently shippable, behind a feature flag where it touches request paths.
 
 ### Phase 0 — ADR + scaffolding *(foundational, no behavior change)*
 - Create [`docs/adr/012-zitadel-lago-auth-billing.md`](docs/adr/012-zitadel-lago-auth-billing.md) with the architecture above and "Status: Proposed".
@@ -185,6 +210,8 @@ crates/billing-core/
     ├── events.rs     ← UsageEvent, ActionType { AgentTurn, CapabilityInvoke, Token, StorageGB, FileUpload }
     ├── quota.rs      ← QuotaChecker { moka cache + TimescaleDB rollup queries }
     ├── catalog.rs    ← PlanCatalog::seed() — declarative plan defs (TOML-loadable) synced to Lago at boot
+    ├── referrals.rs  ← ReferralService (link issue/redeem, wallet-credit grant via Lago)
+    ├── api_keys.rs   ← ApiKeyService (issue/rotate/revoke; persists hash + metadata, attributes usage to key_id)
     └── types.rs      ← PlanTier (re-exported), SubscriptionStatus, QuotaDecision
 ```
 
@@ -210,6 +237,9 @@ impl QuotaChecker {
     pub async fn check(&self, ctx: &IdentityContext, action: ActionType, qty: u64) -> QuotaDecision;
     pub async fn record(&self, ctx: &IdentityContext, action: ActionType, qty: u64);
 }
+
+// ActionType is the canonical metering vocabulary — each variant maps 1:1 to a Lago billable_metric.
+pub enum ActionType { AgentTurn, ApiCall, CapabilityInvoke, Token, StorageGB, FileUpload }
 ```
 
 LagoProvider responsibilities:
@@ -248,18 +278,30 @@ Plan catalog (`catalog.rs`) seeded at boot via `LagoProvider::ensure_plans()` so
 
 **Acceptance:** integration test: 51st free-tier `POST /v1/agent/run` in 24h → `429`; usage event visible in Lago.
 
+#### Phase 5b — Evolve `mw/api_key.rs` (no new file)
+
+Replace the env-var `API_KEYS` lookup in [`mw/api_key.rs`](apps/backend/crates/agent-gateway/src/mw/api_key.rs) with `ApiKeyService::resolve(blake3_hash) -> Option<ApiKeyEntry { key_id, tenant_id, plan, scopes }>`. Keep the existing function name `extract_api_key` and middleware position so call-sites in `main.rs` are unchanged. The resolver:
+- Reads from a moka cache (60 s TTL) backed by `RedbMetadataStore::api_keys` (or Postgres when present).
+- Inserts `key_id` into request extensions so `mw::meter` can stamp `UsageEvent.metadata.api_key_id` for per-key invoicing & dashboards.
+- Increments `conusai_api_key_calls_total{key_id, plan}` Prometheus counter.
+
+Legacy `API_KEYS` env var still honoured (parsed once, written into the same store on first boot) for zero-downtime cutover.
+
 ---
 
-### Phase 6 — Subscription routes + Stripe webhook
+### Phase 6 — Subscription routes + Stripe webhook + API keys + referrals
 
 1. New router file [`routes/billing.rs`](apps/backend/crates/agent-gateway/src/routes/billing.rs) — mounted under protected `/v1/billing/*`:
-   - `GET  /v1/billing/plans` → `PlanCatalog::list()`.
+   - `GET  /v1/billing/plans` → `PlanCatalog::list()` (incl. annual prices + applicable coupons).
    - `GET  /v1/billing/subscription` → current `Subscription`.
-   - `POST /v1/billing/subscriptions` `{ plan_key, return_url }` → `CheckoutSession { url, expires_at }`.
+   - `POST /v1/billing/subscriptions` `{ plan_key, billing_cycle, coupon_code?, return_url }` → `CheckoutSession { url, expires_at }`.
    - `POST /v1/billing/portal` `{ return_url }` → Lago/Stripe customer portal URL.
    - `DELETE /v1/billing/subscription` → cancel at period end.
-   - `GET  /v1/billing/invoices` → list (paginated, signed download URL).
-   - `GET  /v1/billing/usage?from&to` → aggregated usage (Timescale rollup).
+   - `GET  /v1/billing/invoices` → list (paginated, signed PDF download URL via Lago).
+   - `GET  /v1/billing/invoices/:id/pdf` → 302 to Lago signed URL.
+   - `GET  /v1/billing/usage?from&to&group_by=action|api_key` → aggregated usage (Timescale rollup).
+   - **API keys:** `GET /v1/api-keys`, `POST /v1/api-keys` `{ name, scopes }` (returns plaintext **once**), `DELETE /v1/api-keys/:id`, `POST /v1/api-keys/:id/rotate`.
+   - **Referrals:** `GET /v1/referrals/me` (link + stats), `POST /v1/referrals/redeem` `{ code }` (idempotent; only valid pre-first-payment).
 2. New **public** route `POST /v1/billing/webhooks` ([`routes/billing_webhook.rs`](apps/backend/crates/agent-gateway/src/routes/billing_webhook.rs)) — mounted in `public_router` behind a thin `LagoWebhookVerifier` middleware (signature check only, ~15 LOC):
    - HMAC verify against `LAGO_WEBHOOK_SECRET`.
    - Match `event_type`:
@@ -272,8 +314,10 @@ Plan catalog (`catalog.rs`) seeded at boot via `LagoProvider::ensure_plans()` so
    - `POST /admin/billing/cancel/:tenant_id` — manual cancel.
    - `GET /admin/billing/dashboard` — proxied Lago analytics summary.
 4. Bootstrap on first start ([`bootstrap.rs`](apps/backend/crates/agent-gateway/src/bootstrap.rs)):
-   - `LagoProvider::ensure_plans()` (seed catalog).
+   - `LagoProvider::ensure_plans()` (seed catalog incl. monthly + annual).
+   - `LagoProvider::ensure_coupons()` (`ANNUAL20`, `REFERRAL30`, promo template).
    - For every Zitadel Organization without a Lago customer → create customer + Free subscription.
+   - Migrate any `API_KEYS` env entries into `ApiKeyService` store (idempotent).
 
 **Acceptance:** Webhook signature replay test rejected; manual upgrade flow E2E (Phase 7) lights up plan badge within 2s of Stripe redirect.
 
@@ -283,16 +327,22 @@ Plan catalog (`catalog.rs`) seeded at boot via `LagoProvider::ensure_plans()` so
 
 1. SvelteKit (`apps/web`):
    - [`src/routes/account/+page.svelte`](apps/web/src/routes/account/+page.svelte) — profile, plan badge, Manage Billing button (calls `POST /v1/billing/portal`).
-   - [`src/routes/account/billing/+page.server.ts`](apps/web/src/routes/account/billing/+page.server.ts) — loads plans + current subscription.
-   - [`src/routes/account/billing/+page.svelte`](apps/web/src/routes/account/billing/+page.svelte) — plan cards, "Upgrade" button POSTs to `/v1/billing/subscriptions`, then `window.location = checkout_url`.
-   - [`src/routes/account/usage/+page.svelte`](apps/web/src/routes/account/usage/+page.svelte) — uses `GET /v1/billing/usage` + `@conusai/ui` chart components.
+   - [`src/routes/account/billing/+page.server.ts`](apps/web/src/routes/account/billing/+page.server.ts) — loads plans + current subscription + applicable coupons.
+   - [`src/routes/account/billing/+page.svelte`](apps/web/src/routes/account/billing/+page.svelte) — plan cards, monthly/annual toggle (annual highlights `Save 20 %`), coupon-code field, "Upgrade" POSTs to `/v1/billing/subscriptions` then `window.location = checkout_url`.
+   - [`src/routes/account/usage/+page.svelte`](apps/web/src/routes/account/usage/+page.svelte) — `GET /v1/billing/usage` + `@conusai/ui` charts; toggle between per-action and per-API-key views.
+   - [`src/routes/account/invoices/+page.svelte`](apps/web/src/routes/account/invoices/+page.svelte) — paginated table, Download-PDF button hits `/v1/billing/invoices/:id/pdf`.
+   - [`src/routes/account/api-keys/+page.svelte`](apps/web/src/routes/account/api-keys/+page.svelte) — list / create / rotate / revoke; plaintext key shown **once** in a copy-to-clipboard modal with security warning.
+   - [`src/routes/account/referrals/+page.svelte`](apps/web/src/routes/account/referrals/+page.svelte) — personal link, stats (clicks, signups, paid conversions, credits earned), social share buttons.
+   - [`src/routes/signup/+page.server.ts`](apps/web/src/routes/signup/+page.server.ts) — reads `?ref=<ulid>` query param, persists to a short-lived cookie, replays into Zitadel signup as `urn:conusai:ref_by` claim.
 2. Shared UI in [`packages/ui`](packages/ui):
    - `<PlanBadge tier=... status=... />`
-   - `<PlanCard ... onUpgrade={...} />`
+   - `<PlanCard ... billingCycle=... onUpgrade={...} />`
    - `<UsageMeter action=... used=... limit=... />`
-   - `<QuotaBanner />` — listens on `RealtimeService` SSE for `quota.exceeded` and `subscription.updated`, replaces toast nag.
+   - `<QuotaBanner />` — listens on `RealtimeService` SSE for `quota.exceeded` and `subscription.updated`.
+   - `<ApiKeyTable />` + `<ApiKeyRevealModal />` (one-time plaintext display).
+   - `<ReferralCard />` (link, copy button, stats).
 3. Tauri shell (`apps/browser-shell`) — same routes (already shares SvelteKit code), ensures Stripe Checkout opens in **system browser** via `tauri-plugin-shell::open` (Apple Pay / 3DS will not work inside WKWebView).
-4. Askama super-admin templates: add `templates/admin/billing.html` rendering tenant list + plan/usage + manual override actions.
+4. Askama super-admin templates: add `templates/admin/billing.html` rendering tenant list + plan/usage + manual override actions; `templates/admin/referrals.html` for fraud monitoring (chargeback rate, self-referral detection).
 
 **Acceptance:** Playwright E2E `e2e/web/billing.spec.ts` — log in (Zitadel test user) → upgrade to Pro → Stripe test card → returns to `/account/billing` with `Pro` badge within 5s.
 
@@ -332,6 +382,9 @@ STRIPE_SECRET_KEY=sk_live_...                   # passed to Lago, not used direc
 STRIPE_PUBLIC_KEY=pk_live_...                   # SvelteKit
 BILLING_RETURN_URL=https://app.conusai.com/account/billing
 CONUSAI_PLAN_CATALOG_PATH=/etc/conusai/plans.toml   # optional — overrides compiled catalog
+CONUSAI_REFERRAL_CREDIT_USD=20                       # referrer reward
+CONUSAI_REFERRAL_DISCOUNT_PCT=30                     # referred discount, first 3 months
+API_KEYS=                                            # legacy bootstrap only — migrated to ApiKeyService on first boot
 
 # Infra
 POSTGRES_URL=postgres://conusai:...@postgres:5432/conusai
@@ -369,7 +422,7 @@ TIMESCALE_URL=postgres://...@timescale:5432/usage
 
 ## 6. Effort & Sequencing
 
-*(Refined: reusing `RouterQuotaLayer` + canonical naming saves ~4 AI-hours vs original.)*
+*(Refined: reusing `RouterQuotaLayer` + canonical naming saves ~4 AI-hours vs original; +3 hours for API keys, referrals, invoices UI.)*
 
 | Phase | Depends on | AI-hours |
 |---|---|---|
@@ -377,12 +430,13 @@ TIMESCALE_URL=postgres://...@timescale:5432/usage
 | 1 — identity abstractions | 0 | 2 |
 | 2 — ZitadelProvider + docker | 1 | 3 |
 | 3 — gateway wiring + SvelteKit OIDC | 2 | 3 |
-| 4 — billing-core + Lago | 1 | 4 |
+| 4 — billing-core + Lago + referrals + api_keys svc | 1 | 5 |
 | 5 — quota (extend layer) + meter | 4 | 2 |
-| 6 — billing routes + webhook | 4, 5 | 3 |
-| 7 — frontend upgrade/usage UI | 6 | 4 |
+| 5b — evolve `mw/api_key.rs` to use `ApiKeyService` | 4 | 1 |
+| 6 — billing/api-key/referral routes + webhook | 4, 5 | 4 |
+| 7 — frontend (billing/usage/invoices/api-keys/referrals) | 6 | 5 |
 | 8 — migration + cleanup | 7 | 2 |
-| **Total** | | **~24** |
+| **Total** | | **~28** |
 
 Phases 0–3 can ship as one PR (auth foundation), 4–6 as the second (billing core), 7–8 as the third (UI + cutover). Each PR is independently revertable via the `CONUSAI_AUTH_PROVIDER` flag.
 
@@ -390,13 +444,18 @@ Phases 0–3 can ship as one PR (auth foundation), 4–6 as the second (billing 
 
 ## 7. Definition of Done
 
-- [ ] User signs up via Zitadel-hosted UI (email/password + Google + GitHub).
+- [ ] User signs up via Zitadel-hosted UI (email/password + Google + GitHub); `?ref=` query param flows through to Zitadel claim.
 - [ ] New tenant auto-created in Zitadel + Lago (Free plan).
-- [ ] Free user hits quota → `429` + upgrade prompt.
-- [ ] User clicks Upgrade → Stripe Checkout → returns → `Pro` badge live within 5s.
-- [ ] Usage dashboard shows turns/tokens/storage in near real-time.
-- [ ] Failed payment → automatic dunning by Lago → final failure downgrades plan claim and notifies user via SSE.
-- [ ] Super-admin can issue credits, cancel subscriptions, view per-tenant revenue.
-- [ ] All payment data stays in Stripe; our DB stores only `tenant_id ↔ lago_customer_id` mapping and aggregated usage rollups.
-- [ ] OWASP Top-10 review passed; webhook replays rejected; PKCE enforced; CSP locked down.
+- [ ] Free user hits quota → `429` + upgrade prompt with deep link to `/account/billing`.
+- [ ] User clicks Upgrade → chooses monthly/annual → Stripe Checkout → returns → `Pro` badge + new limits live within 5 s.
+- [ ] Annual upgrade applies `ANNUAL20`; coupon field accepts promo codes.
+- [ ] Referral flow: signup with `?ref=` → referred user gets 30 % off first 3 months; on referred user's first paid invoice, referrer wallet credited $20.
+- [ ] Usage dashboard shows turns / tokens / API calls / storage in near real-time, groupable by action **or** API key.
+- [ ] Invoices page lists past invoices with PDF download.
+- [ ] User can self-serve issue / rotate / revoke API keys; per-key usage visible.
+- [ ] 3rd-party app using `X-API-Key` is rate-limited per the issuing tenant's plan; usage attributed to that key in Lago.
+- [ ] Failed payment → Lago dunning → final failure downgrades plan claim and notifies user via SSE.
+- [ ] Super-admin can issue credits, cancel subscriptions, view per-tenant revenue + referral fraud dashboard.
+- [ ] All payment data stays in Stripe; our DB stores only `tenant_id ↔ lago_customer_id` mapping, API-key hashes, and aggregated usage rollups.
+- [ ] OWASP Top-10 review passed; webhook replays rejected; PKCE enforced; CSP locked down; API-key plaintext shown exactly once.
 - [ ] Legacy HMAC/JWT path remains behind `CONUSAI_AUTH_PROVIDER=legacy` for 30 days, then deleted.
