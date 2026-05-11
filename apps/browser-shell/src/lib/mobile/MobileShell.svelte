@@ -23,6 +23,7 @@
 	import ChatScreen from './screens/ChatScreen.svelte';
 	import CapabilitiesScreen from './screens/CapabilitiesScreen.svelte';
 	import ArtifactsScreen from './screens/ArtifactsScreen.svelte';
+	import logoDark from '@conusai/ui/assets/images/conusai-logo-darkmode.png';
 
 	// ── Auth state ──────────────────────────────────────────────────
 	let user = $state<{ name: string; plan: string } | null>(null);
@@ -160,7 +161,7 @@
 	<div class="login-screen">
 		<div class="login-card" role="main">
 			<div class="login-brand">
-				<div class="brand-mark">C</div>
+				<img class="brand-logo" src={logoDark} alt="ConusAI" />
 				<span class="brand-name">ConusAI</span>
 			</div>
 
@@ -330,18 +331,10 @@
 		gap: var(--s-2);
 	}
 
-	.brand-mark {
-		width: 36px;
-		height: 36px;
-		background: var(--ember);
-		border-radius: var(--r-sm);
-		color: var(--ink);
-		font-family: var(--font-display);
-		font-size: 18px;
-		font-weight: 700;
-		display: flex;
-		align-items: center;
-		justify-content: center;
+	.brand-logo {
+		height: 28px;
+		width: auto;
+		display: block;
 	}
 
 	.brand-name {
