@@ -67,7 +67,8 @@
 ```
 
 Single sources of truth:
-- **Identity / tenants / roles / API-key metadata** → Zitadel (Organizations = tenants; API keys = Zitadel `MachineUser` PATs scoped to the org).
+- **Identity / tenants / roles** → Zitadel (Organizations = tenants).
+- **API-key metadata** → hybrid: optional Zitadel `MachineUser` PAT for org-scoped automation, **default** path is our own `ApiKeyService` in `billing-core` (blake3 hashes in `redb`/Postgres) so we get per-key Lago usage attribution, self-serve rotate/revoke UX, and zero hot-path latency. Rationale captured in ADR 012.
 - **Plans / subscriptions / usage / invoices / coupons / referrals** → Lago.
 - **Payments / cards** → Stripe (Lago wraps it, we never touch).
 - **Real-time quota cache** → moka (in-process) backed by TimescaleDB rollups.
@@ -100,15 +101,17 @@ Rolling 24 h windows for free-tier limits (feels generous, blocks abuse).
 The work is split into 8 phases (plus a small in-place evolution — 5b). Each phase is independently shippable, behind a feature flag where it touches request paths.
 
 ### Phase 0 — ADR + scaffolding *(foundational, no behavior change)*
-- Create [`docs/adr/012-zitadel-lago-auth-billing.md`](docs/adr/012-zitadel-lago-auth-billing.md) with the architecture above and "Status: Proposed".
+- Create [`docs/adr/012-zitadel-lago-auth-billing.md`](docs/adr/012-zitadel-lago-auth-billing.md) with the architecture above and "Status: Proposed". Document the **hybrid API-key decision** (when to use Zitadel PAT vs custom `ApiKeyService`).
 - Add workspace deps in `apps/backend/Cargo.toml`:
   - `zitadel = { version = "5.7", features = ["axum", "credentials", "interceptors"] }`
-  - `lago-client = "0.1"`
+  - `lago-client = "0.1.23"`
   - `oauth2 = "5"` (used only for the OIDC PKCE flow on the SvelteKit side via fetch; Rust side uses zitadel crate).
   - `moka = { version = "0.12", features = ["future"] }`
+  - `figment` (already in workspace) used for `PlanCatalog` TOML overrides.
 - Create new crate `crates/billing-core` (lib) and add to workspace members.
+- Add `sqlx` migrations under `apps/backend/migrations/` for `api_keys` and `usage_rollups` tables (tenant-isolated via Postgres RLS).
 - Extend `crates/agent-core` deps to optionally include `zitadel`.
-- Feature flag: `CONUSAI_AUTH_PROVIDER=legacy|zitadel` (default `legacy` until Phase 3 ships).
+- Feature flag: `CONUSAI_IDENTITY_PROVIDER=legacy|zitadel` (default `legacy` until Phase 3 ships). *(Renamed from `CONUSAI_AUTH_PROVIDER` for clarity.)*
 
 **Acceptance:** `cargo check -p billing-core` passes; new crates compile empty; legacy auth unaffected.
 
@@ -120,8 +123,10 @@ Goal: stop hard-coding the auth path so Zitadel can slot in without rewrites.
 
 1. New module [`agent-core/src/identity/mod.rs`](apps/backend/crates/agent-core/src/identity/mod.rs):
    ```rust
+   /// Canonical authenticated principal — carried through every request.
+   /// (Renamed from `IdentityContext` to avoid "Context" overload; pairs with `TenantContext`.)
    #[derive(Clone, Debug)]
-   pub struct IdentityContext {
+   pub struct AuthIdentity {
        pub user_id: String,
        pub tenant_id: TenantId,
        pub email: Option<String>,
@@ -133,22 +138,22 @@ Goal: stop hard-coding the auth path so Zitadel can slot in without rewrites.
 
    #[async_trait]
    pub trait IdentityProvider: Send + Sync + 'static {
-       async fn verify_access_token(&self, token: &str) -> Result<IdentityContext, AuthError>;
-       async fn user_info(&self, sub: &str) -> Result<IdentityContext, AuthError>;
+       async fn verify_access_token(&self, token: &str) -> Result<AuthIdentity, AuthError>;
+       async fn user_info(&self, sub: &str) -> Result<AuthIdentity, AuthError>;
        async fn health(&self) -> Result<(), AuthError>;
    }
 
-   /// Supertrait — every TenantManager is an IdentityProvider.
+   /// Supertrait — every TenantService is an IdentityProvider.
+   /// (Renamed from `TenantManager`: "Service" matches `CapabilityService` pattern.)
    #[async_trait]
-   pub trait TenantManager: IdentityProvider {
+   pub trait TenantService: IdentityProvider {
        async fn create_tenant(&self, name: &str, owner_email: &str) -> Result<TenantCreated, AuthError>;
        async fn list_tenants(&self) -> Result<Vec<TenantSummary>, AuthError>;
        async fn invite_user(&self, tenant_id: &TenantId, email: &str, role: UserRole) -> Result<(), AuthError>;
        async fn update_plan_claim(&self, tenant_id: &TenantId, tier: PlanTier, status: SubscriptionStatus) -> Result<(), AuthError>;
-       async fn health(&self) -> Result<(), AuthError>;
    }
    ```
-2. `TenantContext::from_identity(IdentityContext, workspace_root) -> Self` for back-compat.
+2. `TenantContext::from_identity(AuthIdentity, workspace_root) -> Self` for back-compat.
 3. Re-export from `agent_core::identity::*`.
 4. Add `SubscriptionStatus` to `context/tenant.rs` and serialize on `TenantClaims`.
 
@@ -180,7 +185,7 @@ Goal: stop hard-coding the auth path so Zitadel can slot in without rewrites.
 
 ### Phase 3 — Wire Zitadel into `agent-gateway` (behind flag)
 
-1. [`apps/backend/crates/agent-gateway/src/state.rs`](apps/backend/crates/agent-gateway/src/state.rs): add `pub identity: Arc<dyn TenantManager>` to `AppState`. In `from_env`, branch on `CONUSAI_AUTH_PROVIDER`:
+1. [`apps/backend/crates/agent-gateway/src/state.rs`](apps/backend/crates/agent-gateway/src/state.rs): add `pub identity: Arc<dyn TenantService>` to `AppState`. In `from_env`, branch on `CONUSAI_IDENTITY_PROVIDER`:
    - `legacy` → `LegacyIdentityProvider` (wraps existing `auth::extract_from_headers` + `mw::tenant` JWT path) so the trait works for both code paths.
    - `zitadel` → `ZitadelProvider::from_env()`.
 2. New middleware [`mw/identity.rs`](apps/backend/crates/agent-gateway/src/mw/identity.rs) (canonical name, matches `IdentityProvider`):
@@ -193,29 +198,29 @@ Goal: stop hard-coding the auth path so Zitadel can slot in without rewrites.
    - New routes `/auth/login` (redirect to Zitadel), `/auth/callback`, `/auth/logout` (RP-initiated logout).
 5. Tauri `apps/browser-shell` ([`src/lib/sdk.ts`](apps/browser-shell/src/lib/sdk.ts)): add OS-browser PKCE flow via `tauri-plugin-oauth`; store `access_token` in keychain through existing `set_device_token` Rust command.
 
-**Acceptance:** With `CONUSAI_AUTH_PROVIDER=zitadel`, full login → call `/v1/agent/...` works on web + Tauri. With `legacy`, nothing changes. e2e test in [e2e/web/auth.spec.ts](e2e/web/auth.spec.ts) updated.
+**Acceptance:** With `CONUSAI_IDENTITY_PROVIDER=zitadel`, full login → call `/v1/agent/...` works on web + Tauri. With `legacy`, nothing changes. e2e test in [e2e/web/auth.spec.ts](e2e/web/auth.spec.ts) updated.
 
 ---
 
 ### Phase 4 — `billing-core` crate (provider trait + Lago impl + quota cache)
 
-Structure:
+Layout (canonical, mirrors `agent-core`):
 ```
 crates/billing-core/
 ├── Cargo.toml
 └── src/
-    ├── lib.rs
-    ├── provider.rs   ← BillingProvider trait + Subscription, CheckoutSession, BillingError
-    ├── lago.rs       ← LagoProvider (lago-client wrapper)
-    ├── events.rs     ← UsageEvent, ActionType { AgentTurn, CapabilityInvoke, Token, StorageGB, FileUpload }
-    ├── quota.rs      ← QuotaChecker { moka cache + TimescaleDB rollup queries }
-    ├── catalog.rs    ← PlanCatalog::seed() — declarative plan defs (TOML-loadable) synced to Lago at boot
-    ├── referrals.rs  ← ReferralService (link issue/redeem, wallet-credit grant via Lago)
-    ├── api_keys.rs   ← ApiKeyService (issue/rotate/revoke; persists hash + metadata, attributes usage to key_id)
-    └── types.rs      ← PlanTier (re-exported), SubscriptionStatus, QuotaDecision
+    ├── lib.rs        ← prelude + re-exports (BillingProvider, QuotaEnforcer, BillableAction, ...)
+    ├── provider.rs   ← BillingProvider trait + BillingError
+    ├── service.rs    ← LagoProvider impl + ApiKeyService + ReferralService
+    ├── catalog.rs    ← PlanCatalog + PlanDefinition (figment-loadable; CONUSAI_PLAN_CATALOG_PATH override)
+    ├── metering.rs   ← BillableAction, UsageEvent, batched fire-and-forget queue
+    ├── quota.rs      ← QuotaEnforcer (moka cache + Timescale rollups)
+    ├── types.rs      ← Subscription, Invoice, CheckoutSession, SubscriptionStatus, QuotaDecision
+    └── store/
+        └── mod.rs    ← redb / Postgres metadata (api_keys, usage_event backups, idempotency keys)
 ```
 
-`QuotaChecker` lives **inside** `billing-core` (SRP); `AppState` holds only `Arc<QuotaChecker>` + `Arc<dyn BillingProvider>`.
+`QuotaEnforcer` lives **inside** `billing-core` (SRP); `AppState` holds only `Arc<QuotaEnforcer>` + `Arc<dyn BillingProvider>`.
 
 Key contracts:
 ```rust
@@ -226,29 +231,37 @@ pub trait BillingProvider: Send + Sync + 'static {
     ) -> Result<CheckoutSession, BillingError>;
     async fn cancel_subscription(&self, tenant_id: &TenantId) -> Result<(), BillingError>;
     async fn get_subscription(&self, tenant_id: &TenantId) -> Result<Subscription, BillingError>;
-    async fn report_usage(&self, event: UsageEvent) -> Result<(), BillingError>;
+    async fn report_usage(&self, event: UsageEvent) -> Result<(), BillingError>; // fire-and-forget; spawns to batched queue
     async fn list_invoices(&self, tenant_id: &TenantId) -> Result<Vec<Invoice>, BillingError>;
     async fn portal_url(&self, tenant_id: &TenantId, return_url: &str) -> Result<Url, BillingError>;
 }
 
 pub struct QuotaDecision { pub allowed: bool, pub remaining: Option<u64>, pub reset_at: Option<DateTime<Utc>>, pub reason: Option<String> }
-pub struct QuotaChecker { /* moka<(TenantId, ActionType), Counter> + Postgres pool */ }
-impl QuotaChecker {
-    pub async fn check(&self, ctx: &IdentityContext, action: ActionType, qty: u64) -> QuotaDecision;
-    pub async fn record(&self, ctx: &IdentityContext, action: ActionType, qty: u64);
+pub struct QuotaEnforcer { /* moka<(TenantId, BillableAction), Counter> + Postgres pool */ }
+impl QuotaEnforcer {
+    #[tracing::instrument(skip(self))]
+    pub async fn check(&self, ctx: &AuthIdentity, action: BillableAction, qty: u64) -> QuotaDecision;
+    pub async fn record(&self, ctx: &AuthIdentity, action: BillableAction, qty: u64);
 }
 
-// ActionType is the canonical metering vocabulary — each variant maps 1:1 to a Lago billable_metric.
-pub enum ActionType { AgentTurn, ApiCall, CapabilityInvoke, Token, StorageGB, FileUpload }
+// BillableAction is the canonical metering vocabulary — each variant maps 1:1 to a Lago billable_metric.
+pub enum BillableAction { AgentTurn, ApiCall, CapabilityInvoke, Token, StorageGB, FileUpload }
 ```
+
+All public methods get `#[tracing::instrument]` (OTel spans already wired in our stack).
 
 LagoProvider responsibilities:
 - Idempotent `ensure_customer(tenant_id, email)` on first call.
-- Maps our `PlanTier` ↔ Lago plan codes (`free`, `pro`, `team`, `enterprise`) defined in `plans.rs`.
-- `report_usage` posts to `POST /api/v1/events` with `transaction_id = uuid_v7()` for idempotency, batched via a 1s tokio interval flush queue (drops to disk on backpressure to avoid losing events).
+- Maps our `PlanTier` ↔ Lago plan codes (`free`, `pro`, `team`, `enterprise`) defined in `catalog.rs`.
+- `report_usage` is **fire-and-forget**: enqueues to a tokio MPSC (1 s flush interval) so the request handler returns in <1 ms. Backpressure spills to disk via `store/`. Idempotency via `transaction_id = uuid_v7()`.
 - Webhook-signature verification helper (HMAC-SHA256, header `X-Lago-Signature`).
 
-Plan catalog (`catalog.rs`) seeded at boot via `LagoProvider::ensure_plans()` so plans live as code (idempotent upsert). Optional override via `CONUSAI_PLAN_CATALOG_PATH=/etc/conusai/plans.toml` for non-recompile edits:
+`ApiKeyService` (in `service.rs`) — **default path** for API keys (hybrid model):
+- Issues `ck_live_<22b62>` plaintext, persists `blake3(plaintext)` + metadata (`name`, `scopes`, `tenant_id`, `created_at`, `last_used_at`) in `store/`.
+- Optional Zitadel PAT linkage stored as `zitadel_pat_id` reference (used only for org-scoped Machine Users).
+- `resolve(blake3_hex) -> Option<ApiKeyEntry>` is hot-path; backed by moka.
+
+`PlanCatalog` (in `catalog.rs`) seeded at boot via `LagoProvider::ensure_plans()` so plans live as code (idempotent upsert). Loaded via `figment` from compiled defaults + optional `CONUSAI_PLAN_CATALOG_PATH=/etc/conusai/plans.toml`:
 | Code | Monthly | `agent_turn` (overage) | `token` (overage) | `storage_gb` | Quotas |
 |---|---|---|---|---|---|
 | free | $0 | n/a (hard cap 50/day) | n/a | 1 | 50 turns/day, 10 invokes/day, no opus |
@@ -262,17 +275,17 @@ Plan catalog (`catalog.rs`) seeded at boot via `LagoProvider::ensure_plans()` so
 
 ### Phase 5 — Quota + metering middleware in `agent-gateway`
 
-1. `AppState` gets `pub billing: Arc<dyn BillingProvider>` and `pub quota: Arc<QuotaChecker>`.
-2. **Extend the existing `RouterQuotaLayer`** ([`apps/backend/crates/agent-gateway/src/mw/`](apps/backend/crates/agent-gateway/src/mw/)) — do NOT create a new `mw/quota.rs`. Add `Arc<dyn BillingProvider>` + `Arc<QuotaChecker>` to its config; it already owns the request-path → action mapping pattern (`RouterQuotaConfig`). On `allowed=false` → `429` + `Retry-After` header + JSON `{ code, plan_tier, upgrade_url }`.
-3. Replace [`mw/plan.rs`](apps/backend/crates/agent-gateway/src/mw/plan.rs) — keep the presence check, delete hard-coded clamp comments (clamping moves into `RouterQuotaLayer` using `IdentityContext.plan_tier.max_*`).
-4. New [`mw/meter.rs`](apps/backend/crates/agent-gateway/src/mw/meter.rs) — wraps `next.run()`, reads response status + agent metadata extension (`AgentTurnStats { tokens, model, duration_ms }`), then `billing.report_usage(...)` + `quota.record(...)`.
+1. `AppState` gets `pub billing: Arc<dyn BillingProvider>` and `pub quota: Arc<QuotaEnforcer>`.
+2. **Extend the existing `RouterQuotaLayer`** ([`apps/backend/crates/agent-gateway/src/mw/`](apps/backend/crates/agent-gateway/src/mw/)) — do NOT create a new `mw/quota.rs`. Add `Arc<dyn BillingProvider>` + `Arc<QuotaEnforcer>` to its config; it already owns the request-path → action mapping pattern (`RouterQuotaConfig`). `QuotaEnforcer::check` injects the `QuotaDecision` into request extensions so handlers can render rich 429 JSON. On `allowed=false` → `429` + `Retry-After` header + JSON `{ code, plan_tier, upgrade_url }`.
+3. Replace [`mw/plan.rs`](apps/backend/crates/agent-gateway/src/mw/plan.rs) — keep the presence check, delete hard-coded clamp comments (clamping moves into `RouterQuotaLayer` using `AuthIdentity.plan_tier.max_*`).
+4. New [`mw/meter.rs`](apps/backend/crates/agent-gateway/src/mw/meter.rs) — implemented as a proper `tower::Layer` wrapping the response future (canonical Axum 0.8 pattern, cleaner than `next.run()`). Reads response status + `AgentTurnStats { tokens, model, duration_ms }` from response extensions, then `billing.report_usage(...)` (fire-and-forget) + `quota.record(...)`.
 5. In [`agent-core/src/agent/builder.rs`](apps/backend/crates/agent-core/src/agent/builder.rs) (and chat stream handler), insert `AgentTurnStats` into response extensions so `mw::meter` can read it.
 6. Layer order in [`main.rs`](apps/backend/crates/agent-gateway/src/main.rs) `protected_router`:
    ```
-   .layer(mw::meter::record_usage)        // outermost (post)
-   .layer(RouterQuotaLayer::new(...))     // extended: BillingProvider + QuotaChecker
+   .layer(mw::meter::MeterLayer::new(...)) // outermost (post; tower::Layer)
+   .layer(RouterQuotaLayer::new(...))      // extended: BillingProvider + QuotaEnforcer
    .layer(mw::plan::enforce_plan)
-   .layer(mw::identity::extract_identity) // canonical name; replaces extract_tenant when zitadel enabled
+   .layer(mw::identity::extract_identity)  // canonical name; replaces extract_tenant when zitadel enabled
    .layer(mw::api_key::extract_api_key)
    ```
 
@@ -353,11 +366,12 @@ Legacy `API_KEYS` env var still honoured (parsed once, written into the same sto
 1. Migration script [`scripts/migrate-to-zitadel-lago.ts`](scripts/migrate-to-zitadel-lago.ts):
    - Read existing tenants from `redb` (`MetadataStore::list_tenants`).
    - For each: create Zitadel Organization (idempotent), create Lago customer + Free subscription, write `tenant_id` mapping back to redb.
-2. Flip default `CONUSAI_AUTH_PROVIDER=zitadel`; delete legacy `routes/auth.rs::login` (move to deprecated `/v1/auth/legacy/login` for 30 days).
+2. Flip default `CONUSAI_IDENTITY_PROVIDER=zitadel`; delete legacy `routes/auth.rs::login` (move to deprecated `/v1/auth/legacy/login` for 30 days).
 3. Remove hard-coded plan limits from `agent-core/src/context/tenant.rs` — `max_tokens()` etc. now read from `PlanCatalog` (cached). Keep `Display` and serde.
 4. Update [docs/arch.md](docs/arch.md), [docs/auth-plan.md](docs/auth-plan.md); promote ADR 012 to "Accepted".
 5. Telemetry: OTel spans `billing.report_usage`, `quota.check`, `oidc.verify`; Prometheus counters `conusai_quota_denied_total{action,plan}`, `conusai_billing_webhook_total{event,result}`, histogram `conusai_oidc_verify_duration_seconds`.
 6. Runbook [`docs/ops/billing.md`](docs/ops/billing.md): rotating Stripe keys, replaying Lago webhooks, refunding, tenant lookup.
+7. Nightly reconciliation job: diff Zitadel `plan_tier` claims vs Lago active subscriptions; alert on drift.
 
 **Acceptance:** legacy auth path removed from default code path; all new tenants flow through Zitadel; nightly job reconciles Lago vs Zitadel claims (alerts on drift).
 
@@ -367,7 +381,7 @@ Legacy `API_KEYS` env var still honoured (parsed once, written into the same sto
 
 ```
 # Auth
-CONUSAI_AUTH_PROVIDER=zitadel|legacy           # Phase 0 flag
+CONUSAI_IDENTITY_PROVIDER=zitadel|legacy       # Phase 0 flag (renamed from CONUSAI_AUTH_PROVIDER)
 ZITADEL_DOMAIN=https://auth.conusai.com
 ZITADEL_AUDIENCE=conusai-agent-gateway
 ZITADEL_INTROSPECTION_KEY=/etc/secrets/zitadel-introspection.json
@@ -417,28 +431,29 @@ TIMESCALE_URL=postgres://...@timescale:5432/usage
 | Quota cache drift across replicas | moka per-process + 30s Timescale re-sync; counters are advisory, Lago is the billing source-of-truth. |
 | Plan-tier claim staleness in JWT | `update_plan_claim` invalidates Zitadel session; access tokens are short-lived (5 min); access-token refresh picks up new claim. |
 | PCI scope creep | Stripe Checkout only; never proxy card fields; CSP `frame-src https://checkout.stripe.com`. |
+| Hybrid API-key confusion (custom vs Zitadel PAT) | ADR 012 documents the decision tree; default = `ApiKeyService`; PAT only for org-scoped Machine Users. |
 
 ---
 
 ## 6. Effort & Sequencing
 
-*(Refined: reusing `RouterQuotaLayer` + canonical naming saves ~4 AI-hours vs original; +3 hours for API keys, referrals, invoices UI.)*
+*(Refined twice: reusing `RouterQuotaLayer` + canonical naming + hybrid API-key model + restructured `billing-core` saves ~6 AI-hours vs original.)*
 
 | Phase | Depends on | AI-hours |
 |---|---|---|
-| 0 — ADR + scaffolding | — | 1 |
-| 1 — identity abstractions | 0 | 2 |
+| 0 — ADR + scaffolding (incl. sqlx migrations) | — | 1 |
+| 1 — identity abstractions (`AuthIdentity` / `TenantService`) | 0 | 2 |
 | 2 — ZitadelProvider + docker | 1 | 3 |
 | 3 — gateway wiring + SvelteKit OIDC | 2 | 3 |
-| 4 — billing-core + Lago + referrals + api_keys svc | 1 | 5 |
-| 5 — quota (extend layer) + meter | 4 | 2 |
+| 4 — billing-core (`BillingProvider` + `QuotaEnforcer` + `ApiKeyService` + `ReferralService`) | 1 | 4 |
+| 5 — quota (extend layer) + meter (`tower::Layer`) | 4 | 2 |
 | 5b — evolve `mw/api_key.rs` to use `ApiKeyService` | 4 | 1 |
-| 6 — billing/api-key/referral routes + webhook | 4, 5 | 4 |
+| 6 — billing/api-key/referral routes + webhook | 4, 5 | 3 |
 | 7 — frontend (billing/usage/invoices/api-keys/referrals) | 6 | 5 |
-| 8 — migration + cleanup | 7 | 2 |
-| **Total** | | **~28** |
+| 8 — migration + cleanup + reconciliation job | 7 | 2 |
+| **Total** | | **~26** |
 
-Phases 0–3 can ship as one PR (auth foundation), 4–6 as the second (billing core), 7–8 as the third (UI + cutover). Each PR is independently revertable via the `CONUSAI_AUTH_PROVIDER` flag.
+Phases 0–3 can ship as one PR (auth foundation), 4–6 as the second (billing core), 7–8 as the third (UI + cutover). Each PR is independently revertable via the `CONUSAI_IDENTITY_PROVIDER` flag.
 
 ---
 
@@ -458,4 +473,4 @@ Phases 0–3 can ship as one PR (auth foundation), 4–6 as the second (billing 
 - [ ] Super-admin can issue credits, cancel subscriptions, view per-tenant revenue + referral fraud dashboard.
 - [ ] All payment data stays in Stripe; our DB stores only `tenant_id ↔ lago_customer_id` mapping, API-key hashes, and aggregated usage rollups.
 - [ ] OWASP Top-10 review passed; webhook replays rejected; PKCE enforced; CSP locked down; API-key plaintext shown exactly once.
-- [ ] Legacy HMAC/JWT path remains behind `CONUSAI_AUTH_PROVIDER=legacy` for 30 days, then deleted.
+- [ ] Legacy HMAC/JWT path remains behind `CONUSAI_IDENTITY_PROVIDER=legacy` for 30 days, then deleted.
