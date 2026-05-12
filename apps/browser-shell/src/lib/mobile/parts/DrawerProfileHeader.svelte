@@ -39,7 +39,7 @@
 		cursor: pointer;
 		border-bottom: 1px solid var(--rule);
 		text-align: left;
-		transition: background 120ms;
+		transition: background var(--dur-1);
 	}
 
 	.profile-header:hover { background: var(--paper-3); }
@@ -86,4 +86,8 @@
 	}
 
 	.chevron { color: var(--ink-3); flex-shrink: 0; }
+
+	@media (prefers-reduced-motion: reduce) {
+		.profile-header { transition: none; }
+	}
 </style>

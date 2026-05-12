@@ -44,7 +44,7 @@
 		background: var(--paper);
 		border: 1px solid var(--rule);
 		border-radius: var(--r-md);
-		box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+		box-shadow: 0 8px 24px var(--shadow-md);
 		z-index: 210;
 		min-width: 180px;
 		overflow: hidden;

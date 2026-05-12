@@ -136,4 +136,11 @@
 		flex: 1;
 		overflow-y: auto;
 	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.backdrop { transition: opacity 0.01ms; }
+		.sheet { transition: none; }
+		.sheet:not(.open) { opacity: 0; pointer-events: none; transform: none; }
+		.sheet.open { opacity: 1; transform: none; }
+	}
 </style>

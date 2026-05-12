@@ -200,27 +200,20 @@
 		gap: var(--s-3);
 	}
 
-	/* Sigil: favicon image with enter + breathe animations */
+	/* Sigil: favicon image with entrance animation */
 	.sigil {
 		width: 68px;
 		height: 68px;
 		border-radius: var(--r-lg);
 		background: var(--paper-2);
 		object-fit: contain;
-		animation:
-			sigil-enter 480ms cubic-bezier(0.05, 0.7, 0.1, 1) both,
-			sigil-breathe 4s ease-in-out 1s infinite;
+		animation: sigil-enter var(--dur-3) var(--ease-spring) both;
 	}
 
 	@keyframes sigil-enter {
 		0%   { opacity: 0; transform: scale(0.72) rotate(-8deg); filter: blur(4px); }
 		60%  { opacity: 1; transform: scale(1.05) rotate(1deg);  filter: blur(0); }
 		100% { opacity: 1; transform: scale(1)    rotate(0deg);  filter: blur(0); }
-	}
-
-	@keyframes sigil-breathe {
-		0%, 100% { transform: scale(1);    opacity: 0.92; }
-		50%       { transform: scale(1.06); opacity: 1; }
 	}
 
 	/* Greeting: word-by-word stagger fade-up */
@@ -242,7 +235,7 @@
 	.word {
 		display: inline-block;
 		opacity: 0;
-		animation: word-in 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+		animation: word-in var(--dur-2b) var(--ease-out) both;
 	}
 
 	.word-space {
@@ -260,7 +253,7 @@
 		color: var(--ink-2);
 		text-align: center;
 		margin: 0;
-		animation: fade-up 240ms cubic-bezier(0.22, 1, 0.36, 1) 380ms both;
+		animation: fade-up var(--dur-2b) var(--ease-out) 380ms both;
 	}
 
 	@keyframes fade-up {
@@ -280,7 +273,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--s-2);
-		animation: fade-up 240ms cubic-bezier(0.22, 1, 0.36, 1) 420ms both;
+		animation: fade-up var(--dur-2b) var(--ease-out) 420ms both;
 	}
 
 	@media (prefers-reduced-motion: reduce) {

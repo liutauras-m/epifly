@@ -79,10 +79,12 @@
   --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
   --ease-in:     cubic-bezier(0.6, 0, 0.7, 0.2);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --dur-1: 120ms;
-  --dur-2: 200ms;
-  --dur-3: 320ms;
-  --dur-4: 520ms;
+  --ease-ui:     cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-1: 120ms;  /* hover paint, micro-feedback */
+  --dur-2: 200ms;  /* fast state changes */
+  --dur-2b: 240ms; /* staggered reveals, greeting animations */
+  --dur-3: 320ms;  /* sheet open, modal in */
+  --dur-4: 520ms;  /* page reveals */
 
   /* Radius */
   --r-xs:   6px;

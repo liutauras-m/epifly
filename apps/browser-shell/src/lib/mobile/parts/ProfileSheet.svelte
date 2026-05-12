@@ -149,7 +149,7 @@
 		cursor: pointer;
 		width: 100%;
 		text-align: left;
-		transition: background 120ms;
+		transition: background var(--dur-1);
 	}
 
 	.action-row:hover { background: var(--paper-2); }

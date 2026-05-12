@@ -48,7 +48,7 @@
 		opacity: 0;
 		animation: chip-in 220ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)) forwards;
 		white-space: nowrap;
-		transition: border-color 120ms, color 120ms;
+		transition: border-color var(--dur-1), color var(--dur-1);
 	}
 
 	.chip:hover {

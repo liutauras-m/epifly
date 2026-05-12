@@ -75,7 +75,7 @@
 		cursor: pointer;
 		width: 100%;
 		text-align: left;
-		transition: background 120ms;
+		transition: background var(--dur-1);
 	}
 
 	.recent-row:hover { background: var(--paper-3); }

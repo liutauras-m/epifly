@@ -123,7 +123,7 @@
 		font-size: 16px;
 		font-weight: 600;
 		cursor: pointer;
-		transition: background 120ms;
+		transition: background var(--dur-1);
 	}
 
 	.invoke-btn:hover { background: var(--ember-2); }

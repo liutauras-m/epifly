@@ -418,7 +418,7 @@
 		border: 1px solid var(--rule);
 		border-radius: var(--r-md);
 		cursor: pointer;
-		transition: border-color 120ms, background 120ms;
+		transition: border-color var(--dur-1), background var(--dur-1);
 	}
 
 	.plan-option.selected {
@@ -450,7 +450,7 @@
 		font-size: 17px;
 		font-weight: 600;
 		cursor: pointer;
-		transition: background 120ms;
+		transition: background var(--dur-1);
 	}
 
 	.begin-btn:hover { background: var(--ember-2); }
@@ -522,7 +522,7 @@
 		width: 100%;
 		text-align: left;
 		border-bottom: 1px solid var(--rule);
-		transition: background 120ms;
+		transition: background var(--dur-1);
 	}
 
 	.drawer-link:hover { background: var(--paper-3); color: var(--ink); }
