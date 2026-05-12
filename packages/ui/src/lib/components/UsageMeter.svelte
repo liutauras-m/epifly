@@ -25,7 +25,13 @@
   </div>
 
   {#if hasLimit}
-    <div class="bar-track" role="progressbar" aria-valuenow={used} aria-valuemax={limit ?? 0} aria-label="{label} usage">
+    <div
+      class="bar-track"
+      role="progressbar"
+      aria-valuenow={used}
+      aria-valuemax={limit ?? 0}
+      aria-label="{label} usage"
+    >
       <div
         class="bar-fill"
         class:warn={isWarn}
@@ -35,31 +41,77 @@
     </div>
     <div class="meter-footer">
       {#if isExceeded}
-        <span class="exceeded">Limit reached</span>
+        <span class="status exceeded">Limit reached</span>
+      {:else if isWarn}
+        <span class="status warn">{fmt((limit ?? 0) - used)}{unit} remaining</span>
       {:else}
-        <span class="remaining">{fmt((limit ?? 0) - used)}{unit} remaining</span>
+        <span class="status">{fmt((limit ?? 0) - used)}{unit} remaining</span>
       {/if}
     </div>
   {/if}
 </div>
 
 <style>
-  .usage-meter { display: flex; flex-direction: column; gap: 0.35rem; }
-  .meter-header { display: flex; justify-content: space-between; align-items: baseline; }
-  .meter-label { font-weight: 600; font-size: 0.875rem; }
-  .meter-value { font-size: 0.875rem; color: #374151; }
-  .meter-value.warn { color: #d97706; }
-  .meter-value.exceeded { color: #dc2626; font-weight: 600; }
+  .usage-meter {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .meter-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+
+  .meter-label {
+    font-family: var(--font-body);
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--ink);
+  }
+
+  .meter-value {
+    font-family: var(--font-display);
+    font-size: 0.875rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--ink-2);
+    transition: color 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .meter-value.warn    { color: #d97706; }   /* amber-600 — warning, not brand orange */
+  .meter-value.exceeded { color: var(--danger); font-weight: 700; }
+
   .bar-track {
-    height: 6px; background: #e5e7eb; border-radius: 999px; overflow: hidden;
+    height: 6px;
+    background: var(--paper-3);
+    border-radius: var(--r-full);
+    overflow: hidden;
   }
+
   .bar-fill {
-    height: 100%; background: #6366f1; border-radius: 999px;
-    transition: width 0.3s ease;
+    height: 100%;
+    background: var(--ember);
+    border-radius: var(--r-full);
+    transition: width 300ms cubic-bezier(0.4, 0, 0.2, 1),
+                background 180ms cubic-bezier(0.4, 0, 0.2, 1);
   }
-  .bar-fill.warn { background: #f59e0b; }
-  .bar-fill.exceeded { background: #ef4444; }
-  .meter-footer { font-size: 0.75rem; color: #6b7280; }
-  .remaining { color: #6b7280; }
-  .exceeded { color: #dc2626; font-weight: 600; }
+
+  .bar-fill.warn     { background: #d97706; }
+  .bar-fill.exceeded { background: var(--danger); }
+
+  .meter-footer {
+    display: flex;
+  }
+
+  .status {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    color: var(--ink-3);
+  }
+
+  .status.warn     { color: #d97706; }
+  .status.exceeded { color: var(--danger); font-weight: 600; }
 </style>

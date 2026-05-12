@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { ArrowUpRight } from 'lucide-svelte';
 	import type { PageData } from './$types';
 
 	export let data: PageData;
@@ -7,9 +8,9 @@
 	const planKey = subscription?.plan_key ?? 'free';
 
 	const limits: Record<string, { turns: number | null; tokens: number | null }> = {
-		free: { turns: 50, tokens: null },
-		pro: { turns: 500, tokens: null },
-		team: { turns: 2000, tokens: null },
+		free:       { turns: 50, tokens: null },
+		pro:        { turns: 500, tokens: null },
+		team:       { turns: 2000, tokens: null },
 		enterprise: { turns: null, tokens: null },
 	};
 
@@ -19,6 +20,10 @@
 		if (!max) return 0;
 		return Math.min(100, Math.round((used / max) * 100));
 	}
+
+	function fmt(n: number): string {
+		return n.toLocaleString();
+	}
 </script>
 
 <svelte:head>
@@ -26,9 +31,9 @@
 </svelte:head>
 
 <div class="usage-page">
-	<nav class="breadcrumb">
+	<nav class="breadcrumb" aria-label="Breadcrumb">
 		<a href="/account">Account</a>
-		<span>›</span>
+		<span aria-hidden="true">›</span>
 		<span>Usage</span>
 	</nav>
 
@@ -41,20 +46,27 @@
 			<div class="meter-header">
 				<span class="meter-label">Agent Turns</span>
 				<span class="meter-value">
-					{usage.agent_turns.toLocaleString()}
-					{#if limit.turns}/ {limit.turns.toLocaleString()}{/if}
+					{fmt(usage.agent_turns)}
+					{#if limit.turns}/ {fmt(limit.turns)}{/if}
 				</span>
 			</div>
 			{#if limit.turns}
-				<div class="progress-bar">
+				{@const p = pct(usage.agent_turns, limit.turns)}
+				<div
+					class="progress-bar"
+					role="progressbar"
+					aria-valuenow={usage.agent_turns}
+					aria-valuemax={limit.turns}
+					aria-label="Agent turns used"
+				>
 					<div
-						class="progress-fill {pct(usage.agent_turns, limit.turns) >= 90 ? 'danger' : ''}"
-						style="width: {pct(usage.agent_turns, limit.turns)}%"
-					/>
+						class="progress-fill"
+						class:warn={p >= 80 && p < 100}
+						class:danger={p >= 100}
+						style="width: {p}%"
+					></div>
 				</div>
-				<p class="meter-hint">
-					{limit.turns - usage.agent_turns} remaining today
-				</p>
+				<p class="meter-hint">{fmt(limit.turns - usage.agent_turns)} remaining today</p>
 			{:else}
 				<p class="meter-hint unlimited">Unlimited on your plan</p>
 			{/if}
@@ -64,7 +76,7 @@
 		<div class="meter-card">
 			<div class="meter-header">
 				<span class="meter-label">Tokens Used</span>
-				<span class="meter-value">{usage.tokens.toLocaleString()}</span>
+				<span class="meter-value">{fmt(usage.tokens)}</span>
 			</div>
 			<p class="meter-hint">Billed as usage (see invoices)</p>
 		</div>
@@ -82,7 +94,10 @@
 	{#if planKey === 'free'}
 		<div class="upgrade-banner">
 			<p>You're on the Free plan. Upgrade for more turns, tokens, and storage.</p>
-			<a href="/account/billing" class="btn-primary">Upgrade Now</a>
+			<a href="/account/billing" class="btn-upgrade">
+				Upgrade Now
+				<ArrowUpRight size={15} strokeWidth={1.75} aria-hidden="true" />
+			</a>
 		</div>
 	{/if}
 </div>
@@ -93,69 +108,162 @@
 		margin: 0 auto;
 		padding: 2rem 1rem;
 	}
+
 	.breadcrumb {
 		display: flex;
 		gap: 0.5rem;
 		align-items: center;
 		margin-bottom: 1rem;
-		font-size: 0.875rem;
-		color: #6b7280;
+		font-family: var(--font-mono);
+		font-size: 0.78rem;
+		letter-spacing: 0.04em;
+		color: var(--ink-3);
 	}
-	.breadcrumb a { color: #6366f1; text-decoration: none; }
-	h1 { font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem; }
-	.period { color: #6b7280; font-size: 0.875rem; margin-bottom: 1.5rem; }
-	.meters { display: flex; flex-direction: column; gap: 1rem; }
+
+	.breadcrumb a {
+		color: var(--ember);
+		text-decoration: none;
+		font-weight: 500;
+	}
+
+	.breadcrumb a:hover { text-decoration: underline; }
+
+	h1 {
+		font-family: var(--font-display);
+		font-size: 1.75rem;
+		font-weight: 800;
+		letter-spacing: -0.04em;
+		color: var(--ink);
+		margin-bottom: 0.25rem;
+	}
+
+	.period {
+		font-family: var(--font-mono);
+		font-size: 0.78rem;
+		letter-spacing: 0.04em;
+		color: var(--ink-3);
+		text-transform: uppercase;
+		margin-bottom: 1.5rem;
+	}
+
+	.meters {
+		display: flex;
+		flex-direction: column;
+		gap: 0.875rem;
+	}
+
 	.meter-card {
 		padding: 1.25rem;
-		border: 1px solid #e5e7eb;
-		border-radius: 12px;
+		border: 1px solid var(--rule);
+		border-radius: var(--r-lg);
+		background: var(--paper);
 	}
+
 	.meter-header {
 		display: flex;
 		justify-content: space-between;
 		align-items: baseline;
-		margin-bottom: 0.5rem;
+		margin-bottom: 0.6rem;
 	}
-	.meter-label { font-weight: 600; }
-	.meter-value { font-size: 1.1rem; font-weight: 700; color: #111; }
+
+	.meter-label {
+		font-family: var(--font-body);
+		font-weight: 600;
+		font-size: 0.875rem;
+		color: var(--ink);
+	}
+
+	.meter-value {
+		font-family: var(--font-display);
+		font-size: 1.05rem;
+		font-weight: 700;
+		letter-spacing: -0.03em;
+		color: var(--ink);
+	}
+
 	.progress-bar {
-		height: 8px;
-		background: #f3f4f6;
-		border-radius: 999px;
+		height: 7px;
+		background: var(--paper-3);
+		border-radius: var(--r-full);
 		overflow: hidden;
-		margin-bottom: 0.375rem;
+		margin-bottom: 0.4rem;
 	}
+
 	.progress-fill {
 		height: 100%;
-		background: #6366f1;
-		border-radius: 999px;
-		transition: width 0.3s ease;
+		background: var(--ember);
+		border-radius: var(--r-full);
+		transition: width 300ms cubic-bezier(0.4, 0, 0.2, 1),
+		            background 180ms cubic-bezier(0.4, 0, 0.2, 1);
 	}
-	.progress-fill.danger { background: #dc2626; }
-	.meter-hint { font-size: 0.8rem; color: #6b7280; margin: 0; }
-	.meter-hint.unlimited { color: #16a34a; }
+
+	.progress-fill.warn   { background: #d97706; }
+	.progress-fill.danger { background: var(--danger); }
+
+	.meter-hint {
+		font-family: var(--font-mono);
+		font-size: 0.72rem;
+		letter-spacing: 0.03em;
+		color: var(--ink-3);
+		margin: 0;
+	}
+
+	.meter-hint.unlimited { color: var(--success); }
+
+	/* Upgrade banner */
 	.upgrade-banner {
-		margin-top: 2rem;
-		padding: 1.25rem;
-		background: #f5f3ff;
-		border: 1px solid #c4b5fd;
-		border-radius: 12px;
+		margin-top: 1.75rem;
+		padding: 1.25rem 1.5rem;
+		background: var(--ember-soft);
+		border: 1px solid var(--ember-glow);
+		border-radius: var(--r-lg);
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: 1rem;
 		flex-wrap: wrap;
 	}
-	.upgrade-banner p { margin: 0; font-size: 0.9rem; color: #4c1d95; }
-	.btn-primary {
-		padding: 0.5rem 1.25rem;
-		background: #6366f1;
+
+	.upgrade-banner p {
+		margin: 0;
+		font-size: 0.875rem;
+		color: var(--ink-2);
+		font-weight: 500;
+	}
+
+	.btn-upgrade {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		padding: 0.5rem 1.1rem;
+		background: var(--ember);
 		color: #fff;
 		border: none;
-		border-radius: 8px;
+		border-radius: var(--r-md);
+		font-family: var(--font-body);
 		font-weight: 600;
 		text-decoration: none;
 		white-space: nowrap;
 		font-size: 0.875rem;
+		transition: transform 120ms cubic-bezier(0.4, 0, 0.2, 1),
+		            box-shadow 120ms cubic-bezier(0.4, 0, 0.2, 1);
+		box-shadow: 0 4px 14px var(--ember-glow);
+	}
+
+	.btn-upgrade:hover {
+		transform: translateY(-2px);
+		box-shadow: 0 8px 20px var(--ember-glow);
+	}
+
+	.btn-upgrade:active { transform: scale(0.97); }
+
+	.btn-upgrade:focus-visible {
+		outline: none;
+		box-shadow: 0 0 0 3px var(--ember-glow);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.progress-fill,
+		.btn-upgrade { transition: none; }
 	}
 </style>
