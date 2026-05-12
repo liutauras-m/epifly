@@ -87,6 +87,9 @@ async fn main() -> Result<()> {
     let (_telemetry, prom_registry) = common::telemetry::init("agent-gateway", "info");
     let prom_registry = Arc::new(prom_registry);
 
+    // Register billing/quota metrics into the shared Prometheus registry.
+    billing_core::metrics::register(&prom_registry);
+
     let state = Arc::new(AppState::from_env().await?);
     let loaded = state.registry.lock().unwrap().len();
     info!(capabilities = loaded, "capability registry loaded");
@@ -134,6 +137,16 @@ async fn main() -> Result<()> {
         info!("LLM registry verified");
     }
 
+    // Seed Lago plan catalog (idempotent — safe to run on every startup).
+    if let Some(ref billing) = state.billing {
+        use billing_core::provider::BillingProvider as _;
+        if let Err(e) = billing.ensure_plans(&state.plan_catalog).await {
+            tracing::warn!(error = %e, "ensure_plans failed — Lago may not be reachable yet");
+        } else {
+            info!("Lago plan catalog seeded");
+        }
+    }
+
     // Start the cron scheduler in the background.
     // The `_scheduler` guard is kept alive for the process lifetime.
     let _scheduler = JobSchedulerService::start(&state.job_registry).await?;
@@ -171,8 +184,18 @@ async fn main() -> Result<()> {
             get(metrics_handler).with_state(Arc::clone(&prom_registry)),
         )
         .merge(
-            routes::protected_router()
+            routes::protected_router(state.quota.clone())
+                // Outermost: usage metering (post-handler)
+                .layer(axum::middleware::from_fn_with_state(
+                    Arc::clone(&state),
+                    mw::meter::record_usage,
+                ))
                 .layer(axum::middleware::from_fn(mw::plan::enforce_plan))
+                // Zitadel identity extraction (runs before legacy extract_tenant)
+                .layer(axum::middleware::from_fn_with_state(
+                    Arc::clone(&state),
+                    mw::identity::extract_identity,
+                ))
                 .layer(axum::middleware::from_fn_with_state(
                     Arc::clone(&state),
                     mw::tenant::extract_tenant,

@@ -16,6 +16,8 @@ mod admin_jobs;
 pub mod agent;
 mod audit;
 pub mod auth;
+pub mod billing;
+pub mod billing_webhook;
 mod capabilities;
 pub mod chat;
 mod files;
@@ -116,8 +118,12 @@ pub fn public_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/health", get(health::health))
         .route("/login", get(auth::login_page))
-        // Auth: exchange credentials for JWT
+        // Auth: legacy HMAC/JWT login (deprecated — use OIDC via /auth/login).
+        // Kept at /v1/auth/login for 30-day backwards compat; will be removed.
         .route("/v1/auth/login", post(auth::login))
+        .route("/v1/auth/legacy/login", post(auth::login))
+        // Lago billing webhooks — signature verified inside handler.
+        .route("/v1/billing/webhooks", post(billing_webhook::handle_webhook))
         // File download: UUID token acts as a presigned URL credential (1h TTL, no JWT needed).
         // This allows the agent loop's resolve_image_path to fetch uploaded files without auth.
         .route("/v1/files/{token}", get(files::download))
@@ -201,20 +207,31 @@ pub fn admin_router() -> Router<Arc<AppState>> {
         .route("/admin/devices", post(admin_devices::issue_device))
         .route("/admin/devices", get(admin_devices::list_devices))
         .route("/admin/devices/{id}", delete(admin_devices::revoke_device))
+        // ── Admin billing ────────────────────────────────────────────────────
+        .route("/admin/billing/credits", post(billing::admin_add_credits))
+        .route("/admin/billing/cancel/{tenant_id}", post(billing::admin_cancel_subscription))
+        .route("/admin/billing/dashboard", get(billing::admin_billing_dashboard))
         .layer(middleware::from_fn(require_super_admin_jwt))
 }
 
 /// Routes protected by the tenant middleware.
-pub fn protected_router() -> Router<Arc<AppState>> {
+pub fn protected_router(
+    quota: Option<std::sync::Arc<billing_core::quota::QuotaChecker>>,
+) -> Router<Arc<AppState>> {
+    let quota_cfg = {
+        let mut cfg = crate::mw::router_quota::RouterQuotaConfig::from_env();
+        if let Some(q) = quota {
+            cfg = cfg.with_quota(q);
+        }
+        cfg
+    };
     Router::new()
         // OpenAI-compatible chat
         .route("/v1/chat/completions", post(chat::completions))
         // Agent with tool calling + optional thread memory
         // Wrapped with RouterQuotaLayer to enforce per-turn tool/invoke caps.
         .route("/v1/agent/completions", post(agent::agent_completions))
-        .route_layer(RouterQuotaLayer::new(
-            crate::mw::router_quota::RouterQuotaConfig::from_env(),
-        ))
+        .route_layer(RouterQuotaLayer::new(quota_cfg))
         // Tool registry (path kept as /v1/capabilities for API compatibility)
         .route("/v1/capabilities", get(capabilities::list_capabilities))
         // Semantic capability search (Qdrant ANN)
@@ -252,4 +269,12 @@ pub fn protected_router() -> Router<Arc<AppState>> {
         .route("/api/realtime/workspace", get(realtime::realtime_workspace))
         // ── Shell control (browser-shell WS; gated by feature flag) ─────────
         .route("/v1/shells/{device_id}/control", get(shells::shell_control))
+        // ── Billing ─────────────────────────────────────────────────────────
+        .route("/v1/billing/plans", get(billing::list_plans))
+        .route("/v1/billing/subscription", get(billing::get_subscription))
+        .route("/v1/billing/subscriptions", post(billing::create_subscription))
+        .route("/v1/billing/subscription", delete(billing::cancel_subscription))
+        .route("/v1/billing/portal", post(billing::billing_portal))
+        .route("/v1/billing/invoices", get(billing::list_invoices))
+        .route("/v1/billing/usage", get(billing::get_usage))
 }

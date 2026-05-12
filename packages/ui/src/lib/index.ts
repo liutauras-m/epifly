@@ -1,3 +1,9 @@
+// ── Billing components ────────────────────────────────────────────────────────
+export { default as PlanBadge } from "./components/PlanBadge.svelte";
+export { default as PlanCard } from "./components/PlanCard.svelte";
+export { default as UsageMeter } from "./components/UsageMeter.svelte";
+export { default as QuotaBanner } from "./components/QuotaBanner.svelte";
+
 // ── Primitive components ─────────────────────────────────────────────────────
 export { default as AppShell } from "./components/AppShell.svelte";
 export { default as ArtifactPreview } from "./components/ArtifactPreview.svelte";

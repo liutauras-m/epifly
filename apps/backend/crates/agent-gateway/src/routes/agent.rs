@@ -6,8 +6,10 @@
 ///
 /// Pass `"thread_id": "<ulid>"` to load history from Postgres and persist the turn.
 /// Pass `"max_turns": N` to override the default tool-call rounds (capped by plan tier).
+use crate::mw::meter::AgentTurnStats;
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
+use billing_core::events::{ActionType, UsageEvent};
 use agent_core::ContextBuilder;
 use agent_core::map_rig_error;
 use axum::{
@@ -20,6 +22,7 @@ use axum::{
 };
 use chrono::Utc;
 use common::audit::AuditEvent;
+use std::time::Instant;
 use common::error::HttpError;
 use common::memory::thread::Message;
 use common::metrics;
@@ -71,7 +74,11 @@ pub async fn agent_completions(
         stream_agent(state, tenant, req).await.into_response()
     } else {
         match blocking_agent(state, tenant, req).await {
-            Ok(v) => Json(v).into_response(),
+            Ok((v, stats)) => {
+                let mut resp = Json(v).into_response();
+                resp.extensions_mut().insert(stats);
+                resp
+            }
             Err(e) => e.into_response(),
         }
     }
@@ -111,18 +118,25 @@ async fn build_ctx(
         .as_deref()
         .unwrap_or("claude-opus-4-7")
         .to_string();
+    // Prefer PlanCatalog limits (runtime-configurable) over compiled-in tier defaults.
+    let (catalog_max_tokens, catalog_max_turns) = state
+        .plan_catalog
+        .by_tier(&tenant.0.plan)
+        .map(|p| (p.max_tokens, p.max_turns_per_day.unwrap_or(20) as u64))
+        .unwrap_or_else(|| (tenant.0.plan.max_tokens(), tenant.0.plan.max_turns() as u64));
+
     let max_tokens = req
         .max_tokens
         .unwrap_or(4096)
-        .min(tenant.0.plan.max_tokens());
+        .min(catalog_max_tokens);
 
     Span::current().record("gen_ai.request.model", model_id.as_str());
 
     let tenant_id = tenant.0.tenant_id.to_string();
     let thread_store = Arc::clone(&state.thread_store);
 
-    // Effective max_rounds: honour request value but cap at plan tier limit.
-    let plan_max = tenant.0.plan.max_turns() as usize;
+    // Effective max_rounds: honour request value but cap at plan limit.
+    let plan_max = catalog_max_turns as usize;
     let max_rounds = req
         .max_turns
         .map(|s| (s as usize).min(plan_max))
@@ -360,7 +374,8 @@ async fn blocking_agent(
     state: Arc<AppState>,
     tenant: ResolvedTenant,
     req: crate::routes::chat::ChatRequest,
-) -> Result<Value, HttpError> {
+) -> Result<(Value, AgentTurnStats), HttpError> {
+    let start = Instant::now();
     let ctx = build_ctx(&state, &tenant, &req).await?;
 
     let AgentCtx {
@@ -509,7 +524,13 @@ async fn blocking_agent(
                 });
             }
 
-            return Ok(json!({
+            let stats = AgentTurnStats {
+                tokens: total_input + total_output,
+                turns: 1,
+                model: model_id.clone(),
+                duration_ms: start.elapsed().as_millis() as u64,
+            };
+            return Ok((json!({
                 "id": format!("chatcmpl-{}", Uuid::new_v4()),
                 "object": "chat.completion",
                 "model": model_id,
@@ -521,7 +542,7 @@ async fn blocking_agent(
                 },
                 "tool_calls_made": tool_calls_made,
                 "thread_id": thread_id,
-            }));
+            }), stats));
         }
 
         // Tool use round
@@ -1008,6 +1029,23 @@ pub async fn stream_agent(
             }
 
             messages.push(json!({"role": "user", "content": tool_results}));
+        }
+
+        // Stream complete — report usage directly (can't inject into SSE response extensions).
+        if let (Some(billing), Some(quota)) = (&state.billing, &state.quota) {
+            let tid = tenant.0.tenant_id.to_string();
+            let turn_event = UsageEvent::new(tid.clone(), tid.clone(), ActionType::AgentTurn, 1);
+            if let Err(e) = billing.report_usage(turn_event).await {
+                warn!(error = %e, "stream metering: report_usage(agent_turn) failed");
+            }
+            quota.record(&tid, &ActionType::AgentTurn, 1).await;
+            if total_input + total_output > 0 {
+                let tok_event = UsageEvent::new(tid.clone(), tid.clone(), ActionType::Token, total_input + total_output);
+                if let Err(e) = billing.report_usage(tok_event).await {
+                    warn!(error = %e, "stream metering: report_usage(token) failed");
+                }
+                quota.record(&tid, &ActionType::Token, total_input + total_output).await;
+            }
         }
     });
 

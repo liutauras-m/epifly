@@ -1,5 +1,6 @@
 //! `JobContext` — shared dependencies injected into every job run.
 
+use billing_core::provider::BillingProvider;
 use common::audit::AuditStore;
 use std::sync::Arc;
 
@@ -14,6 +15,8 @@ pub struct JobContext {
     pub s3_endpoint: Option<String>,
     /// The name of the S3/RustFS bucket.
     pub bucket: Option<String>,
+    /// Billing provider for reconciliation jobs. `None` when Lago is not configured.
+    pub billing: Option<Arc<dyn BillingProvider>>,
 }
 
 impl JobContext {
@@ -26,6 +29,12 @@ impl JobContext {
             audit_store,
             s3_endpoint,
             bucket,
+            billing: None,
         }
+    }
+
+    pub fn with_billing(mut self, billing: Arc<dyn BillingProvider>) -> Self {
+        self.billing = Some(billing);
+        self
     }
 }

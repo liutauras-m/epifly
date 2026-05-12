@@ -9,6 +9,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
 
+/// Billing-related SSE event pushed to frontend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum BillingEvent {
+    QuotaWarning { tenant_id: String },
+    SubscriptionUpdated { tenant_id: String },
+}
+
+type BillingSender = broadcast::Sender<BillingEvent>;
+
 /// A single workspace change event published on the broadcast channel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceChangeEvent {
@@ -23,14 +33,36 @@ type TenantSender = broadcast::Sender<WorkspaceChangeEvent>;
 pub struct RealtimeService {
     channels: Arc<RwLock<HashMap<String, TenantSender>>>,
     spec_reload_tx: Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<(String, String)>>>>,
+    billing_tx: broadcast::Sender<BillingEvent>,
 }
 
 impl RealtimeService {
     pub fn new() -> Arc<Self> {
+        let (billing_tx, _) = broadcast::channel(256);
         Arc::new(Self {
             channels: Arc::new(RwLock::new(HashMap::new())),
             spec_reload_tx: Arc::new(RwLock::new(None)),
+            billing_tx,
         })
+    }
+
+    /// Subscribe to billing events (quota warnings, subscription changes).
+    pub fn subscribe_billing(&self) -> broadcast::Receiver<BillingEvent> {
+        self.billing_tx.subscribe()
+    }
+
+    /// Push a quota-exceeded warning to a tenant's SSE stream.
+    pub async fn broadcast_quota_warning(&self, tenant_id: &str) {
+        let _ = self.billing_tx.send(BillingEvent::QuotaWarning {
+            tenant_id: tenant_id.to_string(),
+        });
+    }
+
+    /// Push a subscription-updated event to a tenant's SSE stream.
+    pub async fn broadcast_subscription_updated(&self, tenant_id: &str) {
+        let _ = self.billing_tx.send(BillingEvent::SubscriptionUpdated {
+            tenant_id: tenant_id.to_string(),
+        });
     }
 
     /// Register a receiver for `(namespace, tool_name)` spec-change events.
@@ -73,9 +105,11 @@ impl RealtimeService {
 
 impl Default for RealtimeService {
     fn default() -> Self {
+        let (billing_tx, _) = broadcast::channel(256);
         Self {
             channels: Arc::new(RwLock::new(HashMap::new())),
             spec_reload_tx: Arc::new(RwLock::new(None)),
+            billing_tx,
         }
     }
 }

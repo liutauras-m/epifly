@@ -12,9 +12,10 @@ name = "agent-gateway"
 path = "src/main.rs"
 
 [dependencies]
-common     = { path = "../common" }
-agent-core = { path = "../agent-core" }
-jobs       = { path = "../jobs" }
+common        = { path = "../common" }
+agent-core    = { path = "../agent-core" }
+billing-core  = { path = "../billing-core" }
+jobs          = { path = "../jobs" }
 tokio.workspace       = true
 axum.workspace        = true
 tower.workspace       = true
@@ -51,6 +52,7 @@ utoipa.workspace      = true
 utoipa-swagger-ui.workspace = true
 rand                  = { version = "0.8" }
 hex                   = { version = "0.4" }
+moka.workspace        = true
 
 [dev-dependencies]
 wiremock.workspace = true

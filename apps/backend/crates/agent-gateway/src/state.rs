@@ -8,12 +8,16 @@ use agent_core::{
     QdrantVectorStore, RealtimeService, RedbMetadataStore, RustFsContentStore,
     SemanticCapabilityRouter, SemanticRouterConfig, build_admin,
 };
+use agent_core::identity::IdentityManager;
+use agent_core::{LegacyIdentityProvider, ZitadelProvider};
+use billing_core::{BillingProvider, LagoProvider, PlanCatalog, QuotaChecker};
+use std::sync::Arc as StdArc;
 use common::audit::AuditStore;
 use common::memory::{
     InMemoryAuditStore, InMemoryThreadStore, InMemoryWorkspaceContent, InMemoryWorkspaceStore,
     ThreadStore, WorkspaceContentStore, WorkspaceStore,
 };
-use jobs::jobs::{AuditLogCleanupJob, CapabilityHealthCheckJob, VideoTranscriptionJob};
+use jobs::jobs::{AuditLogCleanupJob, CapabilityHealthCheckJob, LagoReconcileJob, VideoTranscriptionJob};
 use jobs::{JobAdmin, JobContext, JobExecutor, JobRegistry};
 use object_store::{ObjectStore, aws::AmazonS3Builder};
 use std::collections::HashMap;
@@ -47,6 +51,14 @@ pub struct AppState {
     pub router_quota: RouterQuotaConfig,
     pub capability_spec_factory: Option<Arc<CapabilitySpecFactory>>,
     pub artifact_bridge: Option<Arc<ArtifactBridge>>,
+    /// Identity provider (legacy HMAC/JWT or Zitadel OIDC).
+    pub identity: StdArc<dyn IdentityManager>,
+    /// Billing provider (Lago). None when LAGO_API_KEY not configured.
+    pub billing: Option<StdArc<dyn BillingProvider>>,
+    /// In-process quota checker.
+    pub quota: Option<StdArc<QuotaChecker>>,
+    /// Plan catalog loaded at boot.
+    pub plan_catalog: StdArc<PlanCatalog>,
 }
 
 impl AppState {
@@ -193,6 +205,43 @@ impl AppState {
 
         let tool_admin = Arc::new(build_admin(Arc::clone(&registry), Arc::clone(&audit_store)));
 
+        // ── Identity provider ─────────────────────────────────────────────
+        let auth_provider = std::env::var("CONUSAI_AUTH_PROVIDER")
+            .unwrap_or_else(|_| "legacy".into());
+        let identity: StdArc<dyn IdentityManager> = if auth_provider == "zitadel" {
+            match ZitadelProvider::from_env() {
+                Ok(p) => {
+                    info!("identity provider: Zitadel OIDC");
+                    StdArc::new(p) as StdArc<dyn IdentityManager>
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Zitadel provider init failed — falling back to legacy");
+                    StdArc::new(LegacyIdentityProvider::from_env()) as StdArc<dyn IdentityManager>
+                }
+            }
+        } else {
+            info!("identity provider: legacy HMAC/JWT");
+            StdArc::new(LegacyIdentityProvider::from_env()) as StdArc<dyn IdentityManager>
+        };
+
+        // ── Plan catalog ──────────────────────────────────────────────────
+        let plan_catalog = StdArc::new(PlanCatalog::load());
+        info!(plans = plan_catalog.list().len(), "plan catalog loaded");
+
+        // ── Billing (Lago) — initialized before job registry so reconcile job has it ──
+        let (billing, quota): (Option<StdArc<dyn BillingProvider>>, Option<StdArc<QuotaChecker>>) =
+            match LagoProvider::from_env() {
+                Ok(provider) => {
+                    info!("billing provider: Lago");
+                    let quota_checker = StdArc::new(QuotaChecker::new(StdArc::clone(&plan_catalog)));
+                    (Some(StdArc::new(provider) as StdArc<dyn BillingProvider>), Some(quota_checker))
+                }
+                Err(e) => {
+                    warn!(error = %e, "Lago not configured — billing/metering disabled");
+                    (None, None)
+                }
+            };
+
         let s3_endpoint = std::env::var("S3_ENDPOINT").ok();
         let bucket = std::env::var("S3_BUCKET")
             .unwrap_or_else(|_| "workspace".into());
@@ -201,7 +250,7 @@ impl AppState {
             s3_endpoint,
             Some(bucket),
         ));
-        let job_registry = build_job_registry(job_ctx);
+        let job_registry = build_job_registry(job_ctx, billing.clone());
         let job_executor = JobExecutor::new(Arc::clone(&job_registry));
         let job_admin = Arc::new(JobAdmin::new(
             Arc::clone(&job_registry),
@@ -237,6 +286,10 @@ impl AppState {
             router_quota: RouterQuotaConfig::from_env(),
             capability_spec_factory: Some(capability_spec_factory),
             artifact_bridge,
+            identity,
+            billing,
+            quota,
+            plan_catalog,
         })
     }
 
@@ -289,12 +342,16 @@ impl AppState {
         );
 
         let job_ctx = Arc::new(JobContext::new(Arc::clone(&audit_store), None, None));
-        let job_registry = build_job_registry(job_ctx);
+        let job_registry = build_job_registry(job_ctx, None);
         let job_executor = JobExecutor::new(Arc::clone(&job_registry));
         let job_admin = Arc::new(JobAdmin::new(
             Arc::clone(&job_registry),
             Arc::clone(&job_executor),
         ));
+
+        let plan_catalog = StdArc::new(PlanCatalog::default());
+        let identity: StdArc<dyn IdentityManager> =
+            StdArc::new(LegacyIdentityProvider::from_env()) as StdArc<dyn IdentityManager>;
 
         Ok(Self {
             registry,
@@ -319,6 +376,10 @@ impl AppState {
             router_quota: RouterQuotaConfig::default(),
             capability_spec_factory: None,
             artifact_bridge: None,
+            identity,
+            billing: None,
+            quota: None,
+            plan_catalog,
         })
     }
 }
@@ -398,10 +459,19 @@ fn build_llm_registry() -> LlmRegistry {
     LlmRegistry::new(providers, aliases, default_binding)
 }
 
-fn build_job_registry(ctx: Arc<JobContext>) -> Arc<JobRegistry> {
+fn build_job_registry(
+    ctx: Arc<JobContext>,
+    billing: Option<StdArc<dyn BillingProvider>>,
+) -> Arc<JobRegistry> {
+    let ctx = if let Some(b) = billing {
+        Arc::new(Arc::unwrap_or_clone(ctx).with_billing(b))
+    } else {
+        ctx
+    };
     let mut registry = JobRegistry::new(ctx);
     registry.register_scheduled(CapabilityHealthCheckJob);
     registry.register_scheduled(AuditLogCleanupJob);
+    registry.register_scheduled(LagoReconcileJob);
     registry.register_background(VideoTranscriptionJob);
     Arc::new(registry)
 }

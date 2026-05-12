@@ -1,6 +1,32 @@
 import { createConusSdk } from '@conusai/sdk';
 import { invoke } from '@tauri-apps/api/core';
 
+// ── PKCE / system-browser helpers ────────────────────────────────────────────
+
+/** Open a URL in the OS default browser (Stripe Checkout, IdP login, etc.). */
+export async function openInSystemBrowser(url: string): Promise<void> {
+  await invoke('open_in_system_browser', { url });
+}
+
+export interface PkceResult {
+  code: string;
+  state: string | null;
+  redirect_uri: string;
+  code_verifier: string;
+}
+
+/**
+ * Full PKCE login flow.
+ * Opens `authUrl` in the system browser, waits for the local callback,
+ * and returns the auth code + verifier for server-side token exchange.
+ */
+export async function pkceLogin(authUrl: string, extraParams?: string): Promise<PkceResult> {
+  return await invoke<PkceResult>('pkce_login', {
+    authUrl,
+    extraParams: extraParams ?? null,
+  });
+}
+
 // Reads the device token from Rust state on every call (set via set_device_token command).
 const tauriTokenProvider = {
   async get(): Promise<string | null> {

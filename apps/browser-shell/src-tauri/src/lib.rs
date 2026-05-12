@@ -1,5 +1,6 @@
 mod chat_stream;
 mod device_auth;
+mod oidc_auth;
 mod recorder;
 mod registration;
 mod tabs;
@@ -102,6 +103,8 @@ pub fn run() {
             registration::upload_trace_cmd,
             chat_stream::chat_stream_start,
             chat_stream::chat_stream_abort,
+            oidc_auth::open_in_system_browser,
+            oidc_auth::pkce_login,
         ])
         .setup(|app| {
             let api_base = std::env::var("CONUSAI_API_BASE")
