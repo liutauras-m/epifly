@@ -96,7 +96,7 @@
 		width: 40px;
 		height: 4px;
 		background: var(--rule);
-		border-radius: 2px;
+		border-radius: 999px;
 		margin: var(--s-2) auto var(--s-1);
 		flex-shrink: 0;
 	}
@@ -135,5 +135,12 @@
 	.sheet-body {
 		flex: 1;
 		overflow-y: auto;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.backdrop { transition: opacity 0.01ms; }
+		.sheet { transition: none; }
+		.sheet:not(.open) { opacity: 0; pointer-events: none; transform: none; }
+		.sheet.open { opacity: 1; transform: none; }
 	}
 </style>

@@ -37,10 +37,14 @@
 		width: 100%;
 		text-align: left;
 		border-bottom: 1px solid var(--rule);
-		transition: background 120ms;
+		transition: background var(--dur-1);
 	}
 
 	.cap-row:hover { background: var(--paper-2); }
+
+	@media (prefers-reduced-motion: reduce) {
+		.cap-row { transition: none; }
+	}
 
 	.cap-main { flex: 1; overflow: hidden; }
 

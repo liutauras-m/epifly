@@ -75,12 +75,16 @@
 		cursor: pointer;
 		width: 100%;
 		text-align: left;
-		transition: background 120ms;
+		transition: background var(--dur-1);
 	}
 
 	.recent-row:hover { background: var(--paper-3); }
 
 	.recent-icon { color: var(--ink-3); flex-shrink: 0; }
+
+	@media (prefers-reduced-motion: reduce) {
+		.recent-row { transition: none; }
+	}
 
 	.recent-title {
 		flex: 1;

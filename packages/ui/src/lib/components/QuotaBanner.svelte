@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
+  import { AlertTriangle, Ban, Check, X, ArrowUpRight } from 'lucide-svelte';
 
   export let apiBase: string = '';
   export let upgradeUrl: string = '/account/billing';
@@ -19,11 +20,11 @@
     if (typeof EventSource === 'undefined') return;
     es = new EventSource(`${apiBase}/v1/realtime`);
 
-    es.addEventListener('quota.warning', (e: MessageEvent) => {
-      banner = { kind: 'quota_warning', message: 'You are approaching your daily quota.' };
+    es.addEventListener('quota.warning', () => {
+      banner = { kind: 'quota_warning', message: 'Approaching your daily quota.' };
     });
 
-    es.addEventListener('quota.exceeded', (e: MessageEvent) => {
+    es.addEventListener('quota.exceeded', () => {
       banner = { kind: 'quota_exceeded', message: 'Daily quota reached. Upgrade to continue.' };
     });
 
@@ -37,23 +38,36 @@
   }
 
   connect();
-
   onDestroy(() => es?.close());
 
   function dismiss() { banner = null; }
 </script>
 
 {#if banner}
-  <div class="quota-banner banner-{banner.kind}" role="alert">
-    <span class="banner-msg">
-      {#if banner.kind === 'quota_exceeded'}⛔{:else if banner.kind === 'quota_warning'}⚠️{:else}✅{/if}
-      {banner.message ?? ''}
+  <div class="quota-banner banner-{banner.kind}" role="alert" aria-live="assertive">
+    <span class="banner-body">
+      <span class="banner-icon" aria-hidden="true">
+        {#if banner.kind === 'quota_exceeded'}
+          <Ban size={15} strokeWidth={1.75} />
+        {:else if banner.kind === 'quota_warning'}
+          <AlertTriangle size={15} strokeWidth={1.75} />
+        {:else}
+          <Check size={15} strokeWidth={1.75} />
+        {/if}
+      </span>
+      <span class="banner-msg">{banner.message ?? ''}</span>
     </span>
+
     <div class="banner-actions">
       {#if banner.kind !== 'subscription_updated'}
-        <a href={upgradeUrl} class="btn-upgrade">Upgrade Plan</a>
+        <a href={upgradeUrl} class="btn-upgrade">
+          Upgrade
+          <ArrowUpRight size={13} strokeWidth={1.75} aria-hidden="true" />
+        </a>
       {/if}
-      <button class="btn-dismiss" on:click={dismiss} aria-label="Dismiss">✕</button>
+      <button class="btn-dismiss" on:click={dismiss} aria-label="Dismiss notification">
+        <X size={14} strokeWidth={1.75} />
+      </button>
     </div>
   </div>
 {/if}
@@ -64,25 +78,89 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    padding: 0.65rem 1rem;
-    border-radius: 8px;
+    padding: 0.6rem 1rem;
+    border-radius: var(--r-md);
     font-size: 0.875rem;
     font-weight: 500;
   }
-  .banner-quota_warning  { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
-  .banner-quota_exceeded { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
-  .banner-subscription_updated { background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
-  .banner-actions { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
+
+  .banner-body {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .banner-icon {
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+
+  .banner-quota_warning {
+    background: rgba(217, 119, 6, 0.08);
+    color: #92400e;
+    border: 1px solid rgba(217, 119, 6, 0.24);
+  }
+
+  .banner-quota_exceeded {
+    background: var(--danger-soft);
+    color: var(--danger);
+    border: 1px solid rgba(179, 36, 0, 0.28);
+  }
+
+  .banner-subscription_updated {
+    background: var(--success-soft);
+    color: var(--success);
+    border: 1px solid rgba(26, 127, 75, 0.28);
+  }
+
+  .banner-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+
   .btn-upgrade {
-    padding: 0.3rem 0.75rem;
-    background: #6366f1; color: #fff;
-    border-radius: 6px; text-decoration: none;
-    font-size: 0.8rem; font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.3rem 0.7rem;
+    background: var(--ember);
+    color: #fff;
+    border-radius: var(--r-md);
+    text-decoration: none;
+    font-size: 0.78rem;
+    font-weight: 600;
+    transition: transform 120ms cubic-bezier(0.4, 0, 0.2, 1),
+                box-shadow 120ms cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 2px 8px var(--ember-glow);
   }
-  .btn-upgrade:hover { background: #4f46e5; }
+
+  .btn-upgrade:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px var(--ember-glow);
+  }
+
   .btn-dismiss {
-    background: none; border: none; cursor: pointer;
-    font-size: 0.875rem; color: inherit; opacity: 0.6; padding: 0.1rem 0.3rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: inherit;
+    opacity: 0.5;
+    padding: 0.2rem;
+    border-radius: var(--r-xs);
+    transition: opacity 120ms cubic-bezier(0.4, 0, 0.2, 1);
+    min-width: 24px;
+    min-height: 24px;
   }
+
   .btn-dismiss:hover { opacity: 1; }
+
+  .btn-dismiss:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--ember-glow);
+  }
 </style>

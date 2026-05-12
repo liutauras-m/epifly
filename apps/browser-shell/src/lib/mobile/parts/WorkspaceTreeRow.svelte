@@ -97,7 +97,7 @@
 		font-size: 15px;
 		text-align: left;
 		position: relative;
-		transition: background 120ms;
+		transition: background var(--dur-1);
 	}
 
 	.row:hover { background: var(--paper-3); }
@@ -113,8 +113,8 @@
 		bottom: 8px;
 		width: 2px;
 		background: var(--ember);
-		border-radius: 1px;
-		animation: rail-in 180ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)) forwards;
+		border-radius: 999px;
+		animation: rail-in var(--dur-2) var(--ease-out) forwards;
 		transform: scaleY(0);
 		transform-origin: top;
 	}
@@ -126,7 +126,7 @@
 	.chevron {
 		flex-shrink: 0;
 		color: var(--ink-3);
-		transition: transform 180ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+		transition: transform var(--dur-2) var(--ease-out);
 	}
 
 	.chevron.rotated { transform: rotate(90deg); }
@@ -143,5 +143,11 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.row { transition: none; }
+		.active-rail { animation: none; transform: scaleY(1); }
+		.chevron { transition: none; }
 	}
 </style>

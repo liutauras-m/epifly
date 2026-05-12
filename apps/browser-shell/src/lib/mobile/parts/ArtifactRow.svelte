@@ -51,10 +51,14 @@
 		width: 100%;
 		text-align: left;
 		border-bottom: 1px solid var(--rule);
-		transition: background 120ms;
+		transition: background var(--dur-1);
 	}
 
 	.artifact-row:hover { background: var(--paper-2); }
+
+	@media (prefers-reduced-motion: reduce) {
+		.artifact-row { transition: none; }
+	}
 
 	.file-icon { color: var(--ink-3); flex-shrink: 0; }
 
