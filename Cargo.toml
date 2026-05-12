@@ -4,6 +4,7 @@ members = [
     "apps/backend/crates/common",
     "apps/backend/crates/agent-core",
     "apps/backend/crates/jobs",
+    "apps/backend/crates/billing-core",
     "apps/backend/crates/agent-gateway",
     "apps/backend/evals",
     "apps/browser-shell/src-tauri",
@@ -34,7 +35,7 @@ qdrant-client = { version = "1", default-features = false, features = ["serde"] 
 
 # HTTP
 axum         = { version = "0.8", features = ["ws", "multipart"] }
-reqwest      = { version = "0.13", features = ["json", "stream", "multipart"] }
+reqwest      = { version = "0.13", features = ["json", "stream", "multipart", "form"] }
 tower        = { version = "0.5" }
 tower-http   = { version = "0.6", features = ["cors", "trace", "compression-br", "fs"] }
 
@@ -57,7 +58,7 @@ opentelemetry              = { version = "0.27", features = ["metrics"] }
 opentelemetry_sdk          = { version = "0.27", features = ["rt-tokio", "metrics"] }
 opentelemetry-otlp         = { version = "0.27", features = ["tonic", "metrics"] }
 opentelemetry-prometheus   = { version = "0.27" }
-prometheus                 = { version = "0.13" }
+prometheus                 = { version = "0.13", features = ["process"] }
 tracing-opentelemetry      = { version = "0.28" }
 
 # WASM — upgraded to wasmtime 44 + Component Model (wasip2)
@@ -83,6 +84,15 @@ fastembed = { version = "5" }
 
 # HMAC (for SigV4 / search helpers)
 hmac         = { version = "0.12" }
+
+# OAuth2 / OIDC (Zitadel integration)
+openidconnect = { version = "3", features = ["reqwest"] }
+
+# Stripe / Lago webhook signature verification
+hex          = { version = "0.4" }
+
+# TimescaleDB / Postgres client
+sqlx         = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono", "uuid", "migrate"] }
 
 # Utilities
 uuid         = { version = "1", features = ["v4", "v5", "serde"] }

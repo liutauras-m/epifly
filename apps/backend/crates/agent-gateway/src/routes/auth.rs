@@ -131,6 +131,7 @@ pub async fn login(
         tenant_id: tenant_id.clone(),
         plan: PlanTier::Pro,
         role,
+        subscription_status: Default::default(),
         exp,
     };
 

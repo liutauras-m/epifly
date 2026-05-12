@@ -3,6 +3,7 @@ pub mod bridge;
 pub mod capabilities;
 pub mod chains;
 pub mod context;
+pub mod identity;
 pub mod indexing;
 pub mod llm;
 pub mod memory;
@@ -41,7 +42,10 @@ pub use chains::extraction::ExtractionPipeline;
 pub use chains::invoice::{InvoiceData, InvoiceLineItem, InvoicePipeline};
 pub use chains::llm_chain::PromptChainCapability;
 pub use context::conversation::{ConversationService, DefaultConversationService};
-pub use context::tenant::{PlanTier, TenantClaims, TenantContext, UserRole};
+pub use context::tenant::{PlanTier, SubscriptionStatus, TenantClaims, TenantContext, UserRole};
+pub use identity::{AuthError, IdentityContext, IdentityManager, IdentityProvider, TenantCreated, TenantManager, TenantSummary};
+pub use identity::legacy::LegacyIdentityProvider;
+pub use identity::zitadel::ZitadelProvider;
 #[cfg(feature = "local-embeddings")]
 pub use indexing::LocalEmbeddingService;
 pub use indexing::{

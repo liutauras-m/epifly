@@ -1,0 +1,56 @@
+# Zitadel bootstrap defaults for local dev / CI.
+# Applied by the zitadel-init one-shot container on first run.
+# Reference: https://zitadel.com/docs/self-hosting/manage/configure/configure
+
+FirstInstance:
+  Org:
+    Name: ConusAI
+    Domain:
+      Name: conusai.localhost
+    Human:
+      UserName: admin
+      FirstName: ConusAI
+      LastName: Admin
+      Email:
+        Address: admin@conusai.localhost
+        Verified: true
+      Password: "ConusAI_Dev_123!"
+      PasswordChangeRequired: false
+
+  # OIDC project for the agent-gateway resource server.
+  Projects:
+    - Name: conusai-agent-gateway
+      Roles:
+        - RoleKey: user
+          DisplayName: User
+          Group: users
+        - RoleKey: admin
+          DisplayName: Admin
+          Group: admins
+        - RoleKey: super_admin
+          DisplayName: Super Admin
+          Group: super_admins
+
+  # Zitadel Actions v2 — inject custom claims into access tokens.
+  # Reads plan_tier + subscription_status from org metadata set by agent-gateway
+  # after every Lago webhook.
+  Actions:
+    - Name: inject_conusai_claims
+      Script: |
+        function preAccessTokenCreation(ctx, api) {
+          var meta = ctx.org.getMetadata("plan_tier");
+          if (meta) {
+            api.v1.claims.setClaim("urn:conusai:plan_tier", meta);
+          }
+          var status = ctx.org.getMetadata("subscription_status");
+          if (status) {
+            api.v1.claims.setClaim("urn:conusai:subscription_status", status);
+          }
+        }
+      Timeout: 10s
+      AllowedToFail: true
+      Triggers:
+        - TriggerType: PRE_ACCESS_TOKEN_CREATION
+
+Machine:
+  MachineKeyPath: /zitadel-data/machine.key

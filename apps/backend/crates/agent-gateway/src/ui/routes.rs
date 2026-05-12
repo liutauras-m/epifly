@@ -2,7 +2,7 @@
 //! HTML rendering is handled by the SvelteKit frontend (apps/web).
 
 use crate::state::AppState;
-use crate::ui::handlers::{chat, files, invoice, upload};
+use crate::ui::handlers::{billing_admin, chat, files, invoice, upload};
 use axum::{
     Router,
     routing::{get, post},
@@ -15,4 +15,5 @@ pub fn ui_router() -> Router<Arc<AppState>> {
         .route("/ui/upload", post(upload::ui_upload))
         .route("/ui/files/{token}", get(files::ui_download))
         .route("/ui/extract-invoice", post(invoice::ui_extract_invoice))
+        .route("/ui/admin/billing", get(billing_admin::billing_admin_dashboard))
 }

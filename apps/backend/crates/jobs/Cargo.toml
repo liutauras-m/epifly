@@ -8,7 +8,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-common      = { path = "../common" }
+common        = { path = "../common" }
+billing-core  = { path = "../billing-core" }
 
 tokio                = { workspace = true }
 tokio-cron-scheduler = { workspace = true }

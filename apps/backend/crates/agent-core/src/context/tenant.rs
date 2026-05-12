@@ -43,6 +43,8 @@ pub enum PlanTier {
 }
 
 impl PlanTier {
+    /// Hard-coded token limit fallback — prefer `PlanCatalog::by_tier` from billing-core.
+    #[deprecated(since = "0.4.0", note = "use PlanCatalog::by_tier for configurable limits")]
     pub fn max_tokens(&self) -> u64 {
         match self {
             PlanTier::Free => 4_096,
@@ -51,7 +53,8 @@ impl PlanTier {
         }
     }
 
-    /// Maximum agent tool-call rounds per request.
+    /// Hard-coded max turns fallback — prefer `PlanCatalog::by_tier` from billing-core.
+    #[deprecated(since = "0.4.0", note = "use PlanCatalog::by_tier for configurable limits")]
     pub fn max_turns(&self) -> u32 {
         match self {
             PlanTier::Free => 3,
@@ -60,7 +63,8 @@ impl PlanTier {
         }
     }
 
-    /// Requests per minute
+    /// Hard-coded RPM fallback — prefer `PlanCatalog::by_tier` from billing-core.
+    #[deprecated(since = "0.4.0", note = "use PlanCatalog::by_tier for configurable limits")]
     pub fn rate_limit_rpm(&self) -> u32 {
         match self {
             PlanTier::Free => 10,
@@ -163,6 +167,30 @@ impl TenantContext {
     }
 }
 
+/// Subscription lifecycle state — carried in JWT claims and identity contexts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SubscriptionStatus {
+    #[default]
+    Active,
+    Trialing,
+    PastDue,
+    Canceled,
+    Incomplete,
+}
+
+impl std::fmt::Display for SubscriptionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SubscriptionStatus::Active => write!(f, "active"),
+            SubscriptionStatus::Trialing => write!(f, "trialing"),
+            SubscriptionStatus::PastDue => write!(f, "past_due"),
+            SubscriptionStatus::Canceled => write!(f, "canceled"),
+            SubscriptionStatus::Incomplete => write!(f, "incomplete"),
+        }
+    }
+}
+
 /// JWT claims issued by the gateway.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TenantClaims {
@@ -171,5 +199,7 @@ pub struct TenantClaims {
     pub plan: PlanTier,
     #[serde(default)]
     pub role: UserRole,
+    #[serde(default)]
+    pub subscription_status: SubscriptionStatus,
     pub exp: u64,
 }
