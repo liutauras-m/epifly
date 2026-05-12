@@ -96,7 +96,7 @@
 		width: 40px;
 		height: 4px;
 		background: var(--rule);
-		border-radius: 2px;
+		border-radius: 999px;
 		margin: var(--s-2) auto var(--s-1);
 		flex-shrink: 0;
 	}

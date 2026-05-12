@@ -82,6 +82,10 @@
 
 	.recent-icon { color: var(--ink-3); flex-shrink: 0; }
 
+	@media (prefers-reduced-motion: reduce) {
+		.recent-row { transition: none; }
+	}
+
 	.recent-title {
 		flex: 1;
 		font-family: var(--font-body);

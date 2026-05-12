@@ -65,4 +65,8 @@
 	}
 
 	.att-row:hover { background: var(--paper-2); }
+
+	@media (prefers-reduced-motion: reduce) {
+		.att-row { transition: none; }
+	}
 </style>

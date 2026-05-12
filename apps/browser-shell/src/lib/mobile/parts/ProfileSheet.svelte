@@ -154,6 +154,10 @@
 
 	.action-row:hover { background: var(--paper-2); }
 
+	@media (prefers-reduced-motion: reduce) {
+		.action-row { transition: none; }
+	}
+
 	.action-row.danger { color: var(--danger); }
 
 	.version {

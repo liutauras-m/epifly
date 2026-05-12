@@ -127,4 +127,8 @@
 	}
 
 	.invoke-btn:hover { background: var(--ember-2); }
+
+	@media (prefers-reduced-motion: reduce) {
+		.invoke-btn { transition: none; }
+	}
 </style>

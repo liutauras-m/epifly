@@ -526,4 +526,10 @@
 	}
 
 	.drawer-link:hover { background: var(--paper-3); color: var(--ink); }
+
+	@media (prefers-reduced-motion: reduce) {
+		.plan-option,
+		.begin-btn,
+		.drawer-link { transition: none; }
+	}
 </style>

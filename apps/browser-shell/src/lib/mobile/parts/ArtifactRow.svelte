@@ -56,6 +56,10 @@
 
 	.artifact-row:hover { background: var(--paper-2); }
 
+	@media (prefers-reduced-motion: reduce) {
+		.artifact-row { transition: none; }
+	}
+
 	.file-icon { color: var(--ink-3); flex-shrink: 0; }
 
 	.artifact-info {

@@ -121,6 +121,6 @@
 		font-family: var(--font-mono);
 	}
 
-	.result.success { color: #22c55e; }
+	.result.success { color: var(--success); }
 	.result.error { color: var(--ember); }
 </style>

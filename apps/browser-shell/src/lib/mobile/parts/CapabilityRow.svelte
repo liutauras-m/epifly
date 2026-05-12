@@ -42,6 +42,10 @@
 
 	.cap-row:hover { background: var(--paper-2); }
 
+	@media (prefers-reduced-motion: reduce) {
+		.cap-row { transition: none; }
+	}
+
 	.cap-main { flex: 1; overflow: hidden; }
 
 	.cap-name {

@@ -113,7 +113,7 @@
 		bottom: 8px;
 		width: 2px;
 		background: var(--ember);
-		border-radius: 1px;
+		border-radius: 999px;
 		animation: rail-in 180ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)) forwards;
 		transform: scaleY(0);
 		transform-origin: top;
@@ -143,5 +143,11 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.row { transition: none; }
+		.active-rail { animation: none; transform: scaleY(1); }
+		.chevron { transition: none; }
 	}
 </style>
