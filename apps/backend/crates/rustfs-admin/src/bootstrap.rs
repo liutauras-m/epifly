@@ -84,6 +84,13 @@ pub async fn bootstrap_storage(client: &RustFsAdminClient, cfg: &BootstrapConfig
     client.ensure_bucket().await?;
     info!("bucket ready");
 
+    if std::env::var("RUSTFS_SSE").as_deref() != Ok("off") {
+        match client.put_bucket_encryption().await {
+            Ok(()) => info!("bucket default SSE-S3 encryption configured"),
+            Err(e) => warn!(error = %e, "bucket encryption config skipped (RustFS may not support it yet)"),
+        }
+    }
+
     if cfg.versioning {
         match client.set_versioning(true).await {
             Ok(()) => info!("versioning enabled"),

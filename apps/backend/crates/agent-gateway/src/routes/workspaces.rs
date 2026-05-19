@@ -401,6 +401,16 @@ pub async fn move_node(
         return Err(HttpError::rate_limit(None));
     }
     let user = effective_user_id(tenant.user_id.as_deref());
+
+    // Capture old virtual_path before the move so we can copy the object key.
+    let old_virtual_path = state
+        .workspace_store
+        .get_accessible_node(&tenant.tenant_id, user, id)
+        .await
+        .map_err(map_err)
+        .map(|n| n.virtual_path)
+        .ok();
+
     let node = state
         .workspace_store
         .move_node(
@@ -412,6 +422,34 @@ pub async fn move_node(
         )
         .await
         .map_err(map_err)?;
+
+    // Copy object to new key and delete old key when virtual_path changed.
+    if let Some(old_path) = old_virtual_path {
+        if node.virtual_path != old_path {
+            match state
+                .workspace_content
+                .read(&tenant.tenant_id, &old_path)
+                .await
+            {
+                Ok(content) if !content.is_empty() => {
+                    if let Err(e) = state
+                        .workspace_content
+                        .write(&tenant.tenant_id, &node.virtual_path, &content)
+                        .await
+                    {
+                        tracing::warn!(error = %e, "move_node: failed to copy object to new key");
+                    } else {
+                        let _ = state
+                            .workspace_content
+                            .delete(&tenant.tenant_id, &old_path)
+                            .await;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     Ok(Json(node))
 }
 
@@ -535,6 +573,10 @@ pub async fn delete_node(
 
 // ── Helpers for presign routes ───────────────────────────────────────────────
 
+fn per_tenant_iam() -> bool {
+    std::env::var("RUSTFS_PER_TENANT_IAM").as_deref() != Ok("off")
+}
+
 async fn resolve_creds(state: &AppState, tenant_id: &str) -> Result<StorageCreds, HttpError> {
     let cs = state
         .cred_store
@@ -542,6 +584,9 @@ async fn resolve_creds(state: &AppState, tenant_id: &str) -> Result<StorageCreds
         .ok_or_else(|| HttpError::agent("credential store not configured"))?;
     match cs.load(tenant_id).await.map_err(|e| HttpError::agent(format!("load creds: {e}")))? {
         Some(c) => Ok(c),
+        None if per_tenant_iam() => Err(HttpError::agent(
+            "IAM credentials not provisioned for tenant",
+        )),
         None => Ok(StorageCreds {
             access_key: std::env::var("RUSTFS_ROOT_ACCESS_KEY")
                 .or_else(|_| std::env::var("AWS_ACCESS_KEY_ID"))
@@ -707,29 +752,27 @@ pub async fn list_versions(
         .await
         .map_err(map_err)?;
 
-    // Use root store to call ListObjectVersions
-    let store = state
-        .file_store
+    let admin = state
+        .rustfs_admin
         .as_ref()
-        .ok_or_else(|| HttpError::agent("file store not configured"))?;
+        .ok_or_else(|| HttpError::agent("RustFS admin client not configured"))?;
 
-    let prefix = object_store::path::Path::from(format!(
-        "tenants/{}/workspaces/{}",
-        tenant.tenant_id, node.virtual_path
-    ));
+    let prefix = format!("tenants/{}/workspaces/{}", tenant.tenant_id, node.virtual_path);
 
-    let mut versions = Vec::new();
-    let mut stream = store.list_with_delimiter(Some(&prefix)).await
+    let raw = admin
+        .list_object_versions(&prefix)
+        .await
         .map_err(|e| HttpError::agent(format!("list versions: {e}")))?;
 
-    for obj in stream.objects {
-        versions.push(VersionEntry {
-            version_id: obj.location.to_string(),
-            last_modified: obj.last_modified.to_rfc3339(),
-            size: obj.size,
-            is_current: true,
-        });
-    }
+    let versions: Vec<VersionEntry> = raw
+        .into_iter()
+        .map(|(version_id, last_modified, size, is_latest)| VersionEntry {
+            version_id,
+            last_modified,
+            size: size as usize,
+            is_current: is_latest,
+        })
+        .collect();
 
     Ok(Json(versions))
 }
@@ -754,27 +797,20 @@ pub async fn restore_version(
         .await
         .map_err(map_err)?;
 
-    let store = state
-        .file_store
+    let admin = state
+        .rustfs_admin
         .as_ref()
-        .ok_or_else(|| HttpError::agent("file store not configured"))?;
+        .ok_or_else(|| HttpError::agent("RustFS admin client not configured"))?;
 
-    let version_path = object_store::path::Path::from(body.version_id.as_str());
-    let current_path = object_store::path::Path::from(format!(
-        "tenants/{}/workspaces/{}",
-        tenant.tenant_id, node.virtual_path
-    ));
-
-    // Copy the versioned object over the current one
-    let old_content = store
-        .get(&version_path)
+    // The version_id is a real S3 VersionId returned by list_object_versions.
+    // Fetch the versioned bytes directly via ?versionId= query.
+    let object_key = format!("tenants/{}/workspaces/{}", tenant.tenant_id, node.virtual_path);
+    let version_bytes = admin
+        .get_object_version(&object_key, &body.version_id)
         .await
-        .map_err(|e| HttpError::not_found(format!("version not found: {e}")))?
-        .bytes()
-        .await
-        .map_err(|e| HttpError::agent(format!("read version: {e}")))?;
+        .map_err(|e| HttpError::not_found(format!("version not found: {e}")))?;
 
-    let content_str = String::from_utf8_lossy(&old_content).into_owned();
+    let content_str = String::from_utf8_lossy(&version_bytes).into_owned();
 
     state
         .workspace_content

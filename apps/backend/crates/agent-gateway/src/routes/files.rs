@@ -10,6 +10,10 @@
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
 use agent_core::{presign_put, presign_tmp_put};
+
+fn per_tenant_iam() -> bool {
+    std::env::var("RUSTFS_PER_TENANT_IAM").as_deref() != Ok("off")
+}
 use axum::{Extension, Json, extract::State, http::StatusCode};
 use chrono::Utc;
 use common::error::HttpError;
@@ -68,18 +72,18 @@ pub async fn presign_upload(
 
     let creds = match creds {
         Some(c) => c,
-        None => {
-            // Fallback to root creds in dev
-            agent_core::StorageCreds {
-                access_key: std::env::var("RUSTFS_ROOT_ACCESS_KEY")
-                    .or_else(|_| std::env::var("AWS_ACCESS_KEY_ID"))
-                    .unwrap_or_else(|_| "rustfsadmin".into()),
-                secret_key: std::env::var("RUSTFS_ROOT_SECRET_KEY")
-                    .or_else(|_| std::env::var("AWS_SECRET_ACCESS_KEY"))
-                    .unwrap_or_else(|_| "rustfsadmin".into()),
-            created_at: 0,
-            }
+        None if per_tenant_iam() => {
+            return Err(HttpError::agent("IAM credentials not provisioned for tenant"));
         }
+        None => agent_core::StorageCreds {
+            access_key: std::env::var("RUSTFS_ROOT_ACCESS_KEY")
+                .or_else(|_| std::env::var("AWS_ACCESS_KEY_ID"))
+                .unwrap_or_else(|_| "rustfsadmin".into()),
+            secret_key: std::env::var("RUSTFS_ROOT_SECRET_KEY")
+                .or_else(|_| std::env::var("AWS_SECRET_ACCESS_KEY"))
+                .unwrap_or_else(|_| "rustfsadmin".into()),
+            created_at: 0,
+        },
     };
 
     let endpoint = std::env::var("S3_ENDPOINT")
@@ -140,6 +144,9 @@ pub async fn presign_download(
 
     let creds = match creds {
         Some(c) => c,
+        None if per_tenant_iam() => {
+            return Err(HttpError::agent("IAM credentials not provisioned for tenant"));
+        }
         None => agent_core::StorageCreds {
             access_key: std::env::var("RUSTFS_ROOT_ACCESS_KEY")
                 .or_else(|_| std::env::var("AWS_ACCESS_KEY_ID"))
