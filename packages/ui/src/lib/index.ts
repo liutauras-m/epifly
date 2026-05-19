@@ -6,14 +6,9 @@ export { default as QuotaBanner } from "./components/QuotaBanner.svelte";
 
 // ── Primitive components ─────────────────────────────────────────────────────
 export { default as AppShell } from "./components/AppShell.svelte";
-export { default as ArtifactPreview } from "./components/ArtifactPreview.svelte";
 export { default as CapabilityCard } from "./components/CapabilityCard.svelte";
-export { default as CommandPalette } from "./components/CommandPalette.svelte";
-export { default as RecorderControls } from "./components/RecorderControls.svelte";
-export { default as TabStrip } from "./components/TabStrip.svelte";
 export { default as ToastHost } from "./components/ToastHost.svelte";
 export { default as WorkspaceTree } from "./components/WorkspaceTree.svelte";
-export type { Tab } from "./components/TabStrip.svelte";
 export type { Toast } from "./components/ToastHost.svelte";
 
 // ── Theme system ─────────────────────────────────────────────────────────────

@@ -11,9 +11,6 @@ pub enum BillingError {
     #[error("serialization error: {0}")]
     Serde(#[from] serde_json::Error),
 
-    #[error("database error: {0}")]
-    Database(#[from] sqlx::Error),
-
     #[error("webhook signature invalid")]
     InvalidSignature,
 

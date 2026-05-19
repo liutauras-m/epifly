@@ -96,7 +96,6 @@ pub fn run() {
             recorder::recorder_record_step,
             recorder::recorder_stop,
             recorder::recorder_status,
-            recorder::capture_tab_screenshot,
             device_auth::set_device_token,
             device_auth::get_device_token,
             device_auth::clear_device_token,

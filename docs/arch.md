@@ -2,7 +2,7 @@
 
 > Companion to [arch.md](arch.md). This document is a **deep, code-level reference**: full file trees, every library + version, design principles, and exact integration patterns for `apps/web`, `apps/browser-shell`, `packages/ui`, and the Rust agent runtime (with explicit Rig 0.36 usage).
 >
-> Audit date: 2026-05-11 · Workspace versions: backend 0.3.1 (Rust) · UI 0.6.0 · browser-shell 0.4.0 · web 0.1.0
+> Audit date: 2026-05-19 · Workspace versions: backend 0.3.1 (Rust) · UI 0.6.0 · browser-shell 0.4.0 · web 0.1.0
 
 ---
 
@@ -44,9 +44,13 @@ conusai-platform/
 ### 1.2 Cargo workspace members
 
 ```
-apps/backend/crates/common         # error envelopes, config, SessionTrace, metrics
-apps/backend/crates/agent-core     # Rig pipeline, capabilities, stores, embeddings
-apps/backend/crates/jobs           # job queue + cron scheduler
+apps/backend/crates/common         # error envelopes, config, telemetry, SessionTrace,
+                                   #   metrics, prompt cache, path safety, http client, wasm/mcp helpers
+apps/backend/crates/agent-core     # Rig pipeline, capabilities, identity (Zitadel + legacy),
+                                   #   stores, embeddings, realtime hot-reload bus
+apps/backend/crates/billing-core   # Lago provider, plan catalog, usage events,
+                                   #   QuotaChecker, billing metrics (NEW since 2026-05-11)
+apps/backend/crates/jobs           # job queue + cron scheduler + admin + JobExecutor
 apps/backend/crates/agent-gateway  # Axum HTTP gateway (binary)
 apps/backend/evals                 # eval harness (separate workspace member)
 apps/browser-shell/src-tauri       # Tauri 2 desktop/mobile shell (binary + lib)
@@ -91,6 +95,10 @@ From root `Cargo.toml [workspace.dependencies]`:
 | `base64` | 0.22 | Image / token encoding |
 | `object_store` | 0.11 (`aws`) | RustFS / S3 / MinIO content store |
 | `fastembed` | 5 (optional) | Local embeddings (`local-embeddings` feature) |
+| `openidconnect` | 3 (`reqwest`) | Zitadel OIDC discovery + token verification |
+| `sqlx` | 0.8 (`runtime-tokio`, `postgres`, `chrono`, `uuid`, `migrate`) | TimescaleDB / Postgres client (billing usage events) |
+| `hex` | 0.4 | Stripe / Lago webhook signature verification |
+| `colored` | 2 | Coloured CLI output |
 | `uuid` / `ulid` / `chrono` | 1 / 1.1 / 0.4 | IDs + time |
 | `bytes` / `futures` / `async-trait` / `bon` | 1 / 0.3 / 0.1 / 3 | Async + builder ergonomics |
 | `moka` | 0.12 (`future`) | In-process cache (semantic router) |
@@ -112,7 +120,12 @@ Release profile: `opt-level=3`, `lto="thin"`, `codegen-units=1`, `strip="symbols
 | `tauri-plugin-updater` | 2 (desktop only, optional `updater` feature) | Auto-update |
 | `tauri-plugin-webdriver-automation` | 0.1.3 (debug + macOS, optional `e2e` feature) | W3C WebDriver server for WKWebView |
 | `futures-util` | 0.3 | SSE byte-stream consumption |
+| `open` | 5 | Spawn system browser for OIDC PKCE login |
+| `rand` | 0.8 | PKCE verifier randomness |
+| `urlencoding` | 2 | Auth-URL query encoding |
+| `sha2` | workspace | PKCE S256 challenge |
 | `reqwest`, `tokio`, `serde`, `serde_json`, `tracing`, `ulid`, `chrono`, `blake3`, `anyhow`, `base64` | workspace | Shared |
+| `common` (path dep) | workspace | Shared error envelopes + SessionTrace types |
 
 Crate types: `["staticlib", "cdylib", "rlib"]` — supports iOS / Android linking and a desktop `[[bin]]`.
 
@@ -126,6 +139,7 @@ Crate types: `["staticlib", "cdylib", "rlib"]` — supports iOS / Android linkin
 | `vitest` + `@testing-library/svelte` | ^2 / ^5 | Unit tests |
 | `svelte-check` | ^4 | Type check |
 | `typescript` | ^5.7 | TS |
+| `lucide-svelte` | ^0.477 | Icon set (used by billing/quota components) |
 | `@conusai/types` | workspace:* | Shared types |
 
 Exports map: `.`, `./tokens.css`, `./foundry.css`, `./assets/*`, `./capabilities`, `./stores`, `./utils`, `./features`, `./motion`. `sideEffects: ["**/*.css"]` so CSS is preserved by tree-shakers.
@@ -184,10 +198,12 @@ apps/backend/
 ├── Dockerfile
 ├── start.sh / start-verify.sh / stop.sh
 ├── crates/
-│   ├── common/                    # error envelopes, config, SessionTrace, metrics
-│   ├── agent-core/                # Rig pipeline + capabilities + stores
+│   ├── common/                    # error envelopes, config, telemetry, SessionTrace,
+│   │                              #   prompt cache, path safety, http client, audit, eval, limits
+│   ├── agent-core/                # Rig pipeline + capabilities + identity + stores
+│   ├── billing-core/              # Lago provider, plan catalog, quota, usage events, metrics
 │   ├── agent-gateway/             # Axum binary
-│   └── jobs/                      # job queue + cron scheduler
+│   └── jobs/                      # job queue + cron scheduler + JobExecutor
 ├── evals/                         # eval harness
 ├── capabilities/                  # TOML manifests for chain/MCP/builtin capabilities
 └── scripts/
@@ -239,11 +255,16 @@ agent-core/src/
 │   ├── mcp_adapter.rs      # MCP protocol adapter
 │   ├── admin.rs
 │   ├── providers/
-│   │   ├── builtin.rs / chain.rs / mcp.rs / wasm.rs / dynamic_prompt.rs
+│   │   ├── builtin.rs / chain.rs / mcp.rs / remote_mcp.rs / wasm.rs
+│   │   ├── dynamic_prompt.rs / capability_spec.rs
 │   └── builtin/
 │       ├── card.rs / fs.rs / cargo.rs
+├── identity/                  # NEW — Zitadel OIDC + legacy provider
+│   ├── mod.rs              # IdentityProvider, TenantManager, IdentityContext, AuthError
+│   ├── zitadel.rs          # ZitadelProvider (openidconnect 3 + JWKS cache)
+│   └── legacy.rs           # LegacyJwtProvider (HMAC tokens for dev/back-compat)
 ├── context/
-│   ├── tenant.rs           # TenantContext + plan limits + safe_path
+│   ├── tenant.rs           # TenantContext + PlanTier + SubscriptionStatus + UserRole + safe_path
 │   └── conversation.rs
 ├── memory/
 │   ├── context_builder.rs
@@ -268,16 +289,20 @@ agent-core/src/
 
 ```
 agent-gateway/src/
-├── main.rs                # binary entry
-├── state.rs               # AppState (registry, llm, jobs, stores)
-├── auth/                  # JWT + cookie + device-token verification
-├── capabilities/          # capability bootstrapping wiring
-├── mw/                    # tower middleware (RouterQuotaLayer, etc.)
+├── main.rs                # binary entry (also registers billing metrics + capability-spec
+│                          #   realtime hot-reload listener)
+├── state.rs               # AppState (registry, llm, jobs, stores, realtime, job_executor,
+│                          #   capability_spec_factory, billing)
+├── auth/                  # mod.rs / extractor.rs / verifier.rs — OIDC + legacy JWT verification
+├── capabilities/          # mod.rs / workspace.rs / transcribe_video.rs — runtime-instantiated caps
+├── mw/                    # tower middleware
+│   ├── mod.rs / admin.rs / api_key.rs / identity.rs / meter.rs / plan.rs
+│   ├── rate_limit.rs / request_id.rs / router_quota.rs / tenant.rs / trace.rs
 ├── ui/                    # /ui/* HTML + handlers (askama templates)
 │   ├── routes.rs / session.rs / handlers/
 └── routes/
     ├── mod.rs             # OpenAPI assembly + SecurityAddon
-    ├── auth.rs            # /v1/auth/login → JWT
+    ├── auth.rs            # /v1/auth/login (legacy) + /v1/auth/zitadel/* (OIDC)
     ├── chat.rs            # /v1/chat/completions (OpenAI-compatible, streaming)
     ├── agent.rs           # /v1/agent/completions (semantic-router agent)
     ├── threads.rs         # /v1/threads, /v1/threads/{id}/messages
@@ -290,6 +315,8 @@ agent-gateway/src/
     ├── mcp.rs             # /mcp/*
     ├── realtime.rs        # WebSocket /v1/realtime
     ├── audit.rs / health.rs
+    ├── billing.rs              # /v1/billing/* — plans, subscription, usage
+    ├── billing_webhook.rs      # /v1/billing/webhook (Lago HMAC verification)
     ├── admin_capabilities.rs   # /admin/capabilities/register
     ├── admin_devices.rs        # /admin/devices issue/list
     └── admin_jobs.rs
@@ -428,10 +455,12 @@ model = "claude-sonnet-4-6"
 
 `CapabilityRegistry::with_default_factories(llm)` registers (in order):
 
-1. `McpFactory` — remote MCP servers.
-2. `WasmFactory` — wasmtime 44 component model (`.wasm` modules in `capabilities/`).
-3. `ChainFactory::new(llm)` — instantiates `PromptChainCapability` for any manifest with `kind = "chain"` and a `[chain]` block.
-4. `BuiltinFactory` — `fs`, `cargo`, etc.
+1. `McpFactory` — remote MCP servers (legacy in-process adapter).
+2. `RemoteMcpFactory` — HTTP-bridged remote MCP capabilities registered via `/admin/capabilities/register`.
+3. `WasmFactory` — wasmtime 44 component model (`.wasm` modules in `capabilities/`).
+4. `ChainFactory::new(llm)` — instantiates `PromptChainCapability` for any manifest with `kind = "chain"` and a `[chain]` block.
+5. `CapabilitySpecFactory` — declarative `kind = "capability_spec"` manifests, hot-reloadable via the realtime bus.
+6. `BuiltinFactory` — `fs`, `cargo`, etc.
 
 `with_all_factories` additionally registers `DynamicPromptFactory` and `TraceReplayFactory`.
 
@@ -464,11 +493,7 @@ packages/ui/
     ├── foundry.css               # full design system + reset + utility classes
     ├── components/
     │   ├── AppShell.svelte
-    │   ├── ArtifactPreview.svelte
     │   ├── CapabilityCard.svelte
-    │   ├── CommandPalette.svelte
-    │   ├── RecorderControls.svelte
-    │   ├── TabStrip.svelte               # exports type Tab
     │   ├── ThemeProvider.svelte
     │   ├── ThemeScript.ts                # THEME_SCRIPT (FOUC-free hydration)
     │   ├── ThemeSwitcher.svelte
@@ -480,7 +505,6 @@ packages/ui/
     │   ├── ToolCallCard.svelte
     │   ├── WorkspaceExplorer.svelte
     │   ├── createChatStream.svelte.ts    # streaming state machine
-    │   ├── auth/LoginPanel.svelte
     │   ├── workspace/{Confirm,Move,NewNode,Share}Dialog.svelte
     │   └── index.ts
     ├── motion/
@@ -639,8 +663,9 @@ apps/web/
     ├── lib/
     │   ├── sdk.ts            # createConusSdk({ baseUrl, fetch, headers })
     │   └── server/
-    │       ├── env.ts        # validated env (UI_SESSION_KEY, BACKEND_AUTH_LOGIN_URL, …)
-    │       └── session.ts    # COOKIE_NAME, sign/verify, SessionAdapter, LocalHmacAdapter, BackendJwtAdapter
+    │       ├── env.ts        # BACKEND_URL + createServerFetch (forwards conusai_session cookie)
+    │       ├── session.ts    # COOKIE_NAME, sign/verify, SessionAdapter, LocalHmacAdapter, BackendJwtAdapter
+    │       └── oidc.ts       # NEW — Zitadel PKCE adapter (exchangeCode, revokeToken, ID-token claims)
     ├── routes/
     │   ├── +layout.server.ts # redirect → /login if !locals.user
     │   ├── +layout.svelte    # imports @conusai/ui/foundry.css, mounts ThemeProvider + ToastHost
@@ -648,16 +673,25 @@ apps/web/
     │   ├── +page.svelte      # Workshop layout
     │   ├── +error.svelte
     │   ├── login/+page.svelte + +page.server.ts (form action calls sessionAdapter.issue)
-    │   └── logout/+page.server.ts (cookie delete)
-    └── tests/                # Vitest — currently targets ../lib/api/stream which is not present
+    │   ├── logout/+page.server.ts (cookie delete)
+    │   ├── auth/                            # NEW — Zitadel OIDC PKCE flow
+    │   │   ├── +server.ts                   # GET /auth → build auth URL, set PKCE cookies, redirect
+    │   │   ├── callback/+server.ts          # /auth/callback → exchangeCode → set session cookie
+    │   │   └── logout/+server.ts            # /auth/logout → revokeToken + clear cookies
+    │   └── account/                         # NEW — billing & usage screens
+    │       ├── +page.server.ts / +page.svelte
+    │       ├── billing/+page.server.ts / +page.svelte
+    │       └── usage/+page.server.ts / +page.svelte
 ```
 
-### 6.2 Session machinery (`lib/server/session.ts`)
+### 6.2 Session machinery (`lib/server/session.ts` + `lib/server/oidc.ts`)
 
 - Cookie: `conusai_session`, TTL `24 * 3600s`.
 - `LocalHmacAdapter` (default): `sign(name, plan)` → `<base64url(payload)>.<base64url(hmacSHA256)>`.
 - `BackendJwtAdapter`: activated when `BACKEND_AUTH_LOGIN_URL` is set; calls backend `/auth/login`, decodes JWT payload locally without re-verifying (gateway already verified on each call).
+- **Zitadel OIDC adapter** (`oidc.ts`): activated when `AUTH_PROVIDER=zitadel`. Implements PKCE authorisation-code flow against `ZITADEL_DOMAIN`. Exposes `exchangeCode(code, verifier)`, `revokeToken(token)`, and parses `IdTokenClaims` including `urn:conusai:plan_tier` and `urn:conusai:subscription_status`. Uses two cookies: `conusai_oidc_session` (PKCE state) and `conusai_access_token`.
 - `getKey()` throws in production if `UI_SESSION_KEY` is missing; dev fallback is hard-coded.
+- `env.ts` exposes `BACKEND_URL` (`CONUSAI_BACKEND_URL` env, default `http://localhost:8080`) and `createServerFetch(sessionCookie)` which prefixes the backend URL and forwards the session cookie on every call.
 
 ### 6.3 Request pipeline (`hooks.server.ts`)
 
@@ -758,9 +792,10 @@ apps/browser-shell/
         ├── main.rs           # invokes browser_shell_lib::run
         ├── lib.rs            # plugin wiring + invoke_handler + setup hook
         ├── tabs.rs           # TabManager + create/close/navigate/list/save/restore
-        ├── recorder.rs       # PII redaction + recorder_{start,stop,record_step,status}, capture_tab_screenshot (stub)
+        ├── recorder.rs       # PII redaction + recorder_{start,stop,record_step,status}
         ├── chat_stream.rs    # chat_stream_start/abort, ChunkPayload tagged enum, /ui/stream bridge
         ├── device_auth.rs    # DeviceAuthService, set/get/clear_device_token, from_env_or_e2e bootstrap
+        ├── oidc_auth.rs      # NEW — open_in_system_browser + pkce_login (PKCE flow via system browser)
         ├── registration.rs   # register_capability + upload_trace_cmd
         └── telemetry.rs
 ```
@@ -785,10 +820,11 @@ Invoke handlers (`invoke_handler![…]`):
 
 ```
 tabs::{create_tab, close_tab, navigate_tab, list_tabs, save_tabs, restore_tabs}
-recorder::{recorder_start, recorder_record_step, recorder_stop, recorder_status, capture_tab_screenshot}
+recorder::{recorder_start, recorder_record_step, recorder_stop, recorder_status}
 device_auth::{set_device_token, get_device_token, clear_device_token}
 registration::upload_trace_cmd
 chat_stream::{chat_stream_start, chat_stream_abort}
+oidc_auth::{open_in_system_browser, pkce_login}
 ```
 
 Setup hook:
@@ -843,7 +879,6 @@ The frontend (`src/lib/tauri-stream.ts`) wraps this as `streamChatTauri` returni
 - `recorder_record_step(step)` → push step (after PII filter on JS side).
 - `recorder_stop() -> SessionTrace`
 - `recorder_status() -> { recording: bool, step_count: usize }`
-- `capture_tab_screenshot(tab_id)` — currently returns `Err("not yet implemented for this tauri version")`; future code is commented in source pending Tauri 2.2+ webview screenshot API.
 
 ### 7.7 Registration & trace upload (`registration.rs`)
 
@@ -936,6 +971,14 @@ Shell: `telemetry.rs` initialises `tracing_subscriber` for in-process logs only 
 | OpenAPI + Swagger UI | Implemented | `routes/mod.rs` |
 | OTLP tracing + Prometheus metrics | Implemented | `agent-gateway/main.rs` |
 | Job scheduler (cron) | Implemented | `jobs/scheduler.rs` |
+| Zitadel OIDC identity provider | Implemented | `agent-core/identity/zitadel.rs` + `routes/auth.rs` |
+| Legacy JWT identity provider (HMAC dev tokens) | Implemented | `agent-core/identity/legacy.rs` |
+| Lago billing provider + plan catalog | Implemented | `billing-core/{lago,catalog,provider}.rs` |
+| Usage events + `QuotaChecker` middleware | Implemented | `billing-core/{quota,events}.rs` + `mw/meter.rs` |
+| Billing webhook (Lago HMAC) | Implemented | `routes/billing_webhook.rs` |
+| Capability-spec hot-reload via realtime bus | Implemented | `routes/realtime.rs` + `capabilities/providers/capability_spec.rs` |
+| Remote-MCP capability factory (HTTP-bridged) | Implemented | `capabilities/providers/remote_mcp.rs` |
+| Transcribe-video runtime capability (JobExecutor-backed) | Implemented | `agent-gateway/capabilities/transcribe_video.rs` |
 
 ### 9.2 Web
 
@@ -943,6 +986,9 @@ Shell: `telemetry.rs` initialises `tracing_subscriber` for in-process logs only 
 | --- | --- |
 | HMAC session cookie + login/logout | Implemented |
 | Backend JWT adapter (env-activated) | Implemented |
+| Zitadel OIDC PKCE flow (`/auth`, `/auth/callback`, `/auth/logout`) | Implemented |
+| Account billing page (`/account/billing`) | Implemented |
+| Account usage page (`/account/usage`) | Implemented |
 | Manual scoped CSRF | Implemented |
 | Workshop layout (sidebar + chat) | Implemented |
 | Workspace explorer (lazy + search) | Implemented |
@@ -952,7 +998,6 @@ Shell: `telemetry.rs` initialises `tracing_subscriber` for in-process logs only 
 | Capability renderer registry context | Implemented |
 | `Cmd/Ctrl+N` new session | Implemented |
 | Adapter swappability in login action | Partial (login still calls `sign(...)` directly) |
-| Stream parser tests path alignment | Partial (`src/tests` vs runtime path drift) |
 
 ### 9.3 Browser shell
 
@@ -963,6 +1008,7 @@ Shell: `telemetry.rs` initialises `tracing_subscriber` for in-process logs only 
 | Drawer + screen stack (chat/capabilities/artifacts) | Implemented |
 | Native SSE bridge (chat_stream.rs ↔ tauri-stream.ts) | Implemented |
 | Stronghold token vault | Implemented |
+| OIDC PKCE login via system browser (`pkce_login`, `open_in_system_browser`) | Implemented |
 | Capability registration on startup | Implemented |
 | Native tab manager | Implemented |
 | Recorder + injected DOM bridge with PII redaction | Implemented |
@@ -972,7 +1018,6 @@ Shell: `telemetry.rs` initialises `tracing_subscriber` for in-process logs only 
 | Artifact row open/preview action | Partial (`onClick={() => {}}`) |
 | Capability invoke into chat composer | Partial (switches screen but does not prefill / dispatch) |
 | Drawer recents hydration (`workspaceNodes`) | Partial |
-| Tab screenshot capture | Partial (returns error pending Tauri 2.2+ API) |
 | WebDriver E2E server (macOS debug) | Implemented (feature `e2e`) |
 | Auto-updater | Implemented (desktop, optional `updater` feature) |
 
@@ -992,7 +1037,7 @@ Shell: `telemetry.rs` initialises `tracing_subscriber` for in-process logs only 
 | Capability renderer registry (Map + Svelte context) | Implemented |
 | Toast + LiveAnnouncer accessibility | Implemented |
 | Theme/recents/breadcrumbs/mode/featureFlags stores | Implemented |
-| `CommandPalette`, `TabStrip`, `RecorderControls`, `ArtifactPreview`, `LoginPanel` | Implemented but **not mounted** in current app routes |
+| Billing UI components (`PlanBadge`, `PlanCard`, `QuotaBanner`, `UsageMeter`) | Implemented |
 | `featureFlags` runtime gating | Defined but not centrally applied |
 
 ---
@@ -1004,9 +1049,8 @@ Shell: `telemetry.rs` initialises `tracing_subscriber` for in-process logs only 
 3. Hydrate `MobileShell.workspaceNodes` so `DrawerRecentChats` resolves recent threads.
 4. Wire capability invoke from `CapabilitiesScreen` into chat composer (prefill + auto-send option).
 5. Re-sync `e2e/shell-macos/*` selectors with current mobile shell DOM.
-6. Resolve `apps/web/src/tests` path drift relative to runtime stream module location.
-7. Promote `featureFlags` to a real runtime gate around `RecorderControls`, `TabStrip`, and trace replay UI.
-8. Lift `apps/web` login action to use `sessionAdapter.issue(...)` so the JWT adapter actually flows.
+6. Promote `featureFlags` to a real runtime gate around trace replay UI.
+7. Lift `apps/web` login action to use `sessionAdapter.issue(...)` so the JWT adapter actually flows.
 
 ---
 
@@ -1016,11 +1060,17 @@ Shell: `telemetry.rs` initialises `tracing_subscriber` for in-process logs only 
 - Rig agent: `apps/backend/crates/agent-core/src/agent/{builder,runtime,hooks}.rs`
 - Chains: `apps/backend/crates/agent-core/src/chains/{executor,llm_chain,dynamic_prompt,contract}.rs`
 - Capability registry: `apps/backend/crates/agent-core/src/capabilities/{registry,semantic_router,trace_replay,providers/*}.rs`
-- HTTP gateway: `apps/backend/crates/agent-gateway/src/{main,state,routes/*}.rs`
+- Identity / Zitadel: `apps/backend/crates/agent-core/src/identity/{mod,zitadel,legacy}.rs`
+- Billing: `apps/backend/crates/billing-core/src/{lib,catalog,lago,quota,events,metrics,provider,types,error}.rs`
+- HTTP gateway: `apps/backend/crates/agent-gateway/src/{main,state,routes/*,mw/*,auth/*,capabilities/*}.rs`
+- Billing routes: `apps/backend/crates/agent-gateway/src/routes/{billing,billing_webhook}.rs`
 - Design system: `packages/ui/src/lib/{tokens.css,foundry.css,index.ts}`
 - Chat state: `packages/ui/src/lib/features/createChatStream.svelte.ts`
 - Capability registry (UI): `packages/ui/src/lib/capabilities/CapabilityRendererRegistry{,.svelte}.ts`
-- Web session: `apps/web/src/{hooks.server,lib/server/session,lib/server/env}.ts`
+- Billing UI: `packages/ui/src/lib/components/{PlanBadge,PlanCard,QuotaBanner,UsageMeter}.svelte`
+- Web session: `apps/web/src/{hooks.server,lib/server/session,lib/server/oidc,lib/server/env}.ts`
+- Web auth routes: `apps/web/src/routes/auth/{+server.ts,callback/+server.ts,logout/+server.ts}`
+- Web account routes: `apps/web/src/routes/account/{+page.{server.ts,svelte},billing/*,usage/*}`
 - Web workshop route: `apps/web/src/routes/{+layout.server,+page.server,+page.svelte}.ts`
 - Shell mobile: `apps/browser-shell/src/lib/mobile/{MobileShell.svelte,screens/*,parts/*,chrome/*,stores/*}`
-- Shell native: `apps/browser-shell/src-tauri/src/{lib,chat_stream,device_auth,recorder,tabs,registration}.rs`
+- Shell native: `apps/browser-shell/src-tauri/src/{lib,chat_stream,device_auth,oidc_auth,recorder,tabs,registration}.rs`
