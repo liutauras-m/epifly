@@ -1,4 +1,5 @@
-//! UI file upload — multipart → RustFS, returns token + filename for the composer chip.
+//! UI file upload — multipart → RustFS, returns object key for the composer chip.
+//! No in-memory token map — the object key is the durable reference.
 
 use crate::state::AppState;
 use crate::ui::session::SessionUser;
@@ -21,12 +22,7 @@ pub async fn ui_upload(
 ) -> Response {
     let store = match state.file_store.as_ref() {
         Some(s) => s,
-        None => {
-            return err(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "file storage not configured",
-            );
-        }
+        None => return err(StatusCode::SERVICE_UNAVAILABLE, "file storage not configured"),
     };
 
     let tenant = user.tenant_context();
@@ -60,30 +56,34 @@ pub async fn ui_upload(
         return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("storage: {e}"));
     }
 
-    let token = Uuid::new_v4().to_string();
-    {
-        let mut tokens = state.presigned_tokens.lock().unwrap();
-        tokens.insert(
-            token.clone(),
-            (
-                object_key,
-                std::time::Instant::now(),
-                std::time::Duration::from_secs(3600),
-                tenant.tenant_id.to_string(),
-            ),
-        );
-    }
-
     let payload: Value = json!({
-        "id": token,
+        "id": object_key,
         "filename": filename,
         "size": size,
         "content_type": content_type,
-        "download_url": format!("/ui/files/{token}"),
+        "download_url": format!("/ui/files/download?key={}", urlencoding::encode(&object_key)),
     });
     (StatusCode::OK, Json(payload)).into_response()
 }
 
 fn err(code: StatusCode, msg: &str) -> Response {
     (code, Json(json!({ "error": msg }))).into_response()
+}
+
+fn urlencoding_encode(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~' || c == '/' {
+                vec![c]
+            } else {
+                format!("%{:02X}", c as u32).chars().collect()
+            }
+        })
+        .collect()
+}
+
+mod urlencoding {
+    pub fn encode(s: &str) -> String {
+        super::urlencoding_encode(s)
+    }
 }

@@ -13,7 +13,7 @@ pub fn ui_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/ui/stream", post(chat::ui_stream))
         .route("/ui/upload", post(upload::ui_upload))
-        .route("/ui/files/{token}", get(files::ui_download))
+        .route("/ui/files/download", get(files::ui_download))
         .route("/ui/extract-invoice", post(invoice::ui_extract_invoice))
         .route("/ui/admin/billing", get(billing_admin::billing_admin_dashboard))
 }

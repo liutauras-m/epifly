@@ -9,6 +9,8 @@ license.workspace    = true
 
 [dependencies]
 common        = { path = "../common" }
+rustfs-admin  = { path = "../rustfs-admin" }
+aes-gcm.workspace = true
 tokio.workspace       = true
 rig-core.workspace    = true
 redb.workspace        = true
@@ -37,6 +39,7 @@ reqwest.workspace     = true
 object_store.workspace = true
 bytes.workspace        = true
 async-recursion        = { version = "1" }
+url                    = { version = "2" }
 moka.workspace         = true
 blake3.workspace       = true
 

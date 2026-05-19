@@ -22,12 +22,14 @@ mod capabilities;
 pub mod chat;
 mod files;
 mod health;
+pub(crate) mod internal;
 mod mcp;
 pub mod realtime;
 mod search;
 mod shells;
 mod tasks;
 mod threads;
+mod uploads;
 mod workspaces;
 
 /// Adds security scheme definitions to the generated OpenAPI spec.
@@ -94,7 +96,6 @@ impl Modify for SecurityAddon {
         workspaces::move_node,
         workspaces::share_node,
         workspaces::unshare_node,
-        files::upload,
         admin_devices::issue_device,
         admin_devices::list_devices,
         admin_devices::revoke_device,
@@ -107,37 +108,29 @@ impl Modify for SecurityAddon {
         (name = "mcp", description = "MCP JSON-RPC 2.0 tool protocol"),
         (name = "workspaces", description = "Hierarchical workspace management"),
         (name = "audit", description = "Audit log"),
-        (name = "files", description = "File storage"),
+        (name = "files", description = "File storage — presigned URL based"),
+        (name = "uploads", description = "Multipart upload for large files"),
         (name = "admin", description = "Platform administration (device tokens, etc.)"),
     ),
 )]
 pub struct ApiDoc;
 
-/// Routes that require no auth (health probe, auth, file download, OpenAPI).
+/// Routes that require no auth (health probe, auth, OpenAPI).
+/// Note: the old `GET /v1/files/{token}` UUID download shim is REMOVED.
 pub fn public_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/health", get(health::health))
         .route("/login", get(auth::login_page))
-        // Auth: legacy HMAC/JWT login (deprecated — use OIDC via /auth/login).
-        // Kept at /v1/auth/login for 30-day backwards compat; will be removed.
         .route("/v1/auth/login", post(auth::login))
         .route("/v1/auth/legacy/login", post(auth::login))
         // Lago billing webhooks — signature verified inside handler.
         .route("/v1/billing/webhooks", post(billing_webhook::handle_webhook))
-        // File download: UUID token acts as a presigned URL credential (1h TTL, no JWT needed).
-        // This allows the agent loop's resolve_image_path to fetch uploaded files without auth.
-        .route("/v1/files/{token}", get(files::download))
         // Self-registration for external capability services.
-        // Auth: if PLATFORM_ADMIN_TOKEN is set the request must carry
-        //   `Authorization: Bearer <token>`.  In dev (token unset) all
-        //   requests are accepted.
         .route(
             "/admin/capabilities/register",
             post(admin_capabilities::register_capability),
         )
-        // OpenAPI spec (machine-readable) + Swagger UI
-        // SwaggerUi registers GET /openapi.json itself, so we don't add a
-        // separate route to avoid an "Overlapping method route" panic.
+        // OpenAPI spec + Swagger UI
         .merge(SwaggerUi::new("/docs").url("/openapi.json", ApiDoc::openapi()))
 }
 
@@ -214,6 +207,12 @@ pub fn admin_router() -> Router<Arc<AppState>> {
         .layer(middleware::from_fn(require_super_admin_jwt))
 }
 
+/// Internal routes — not exposed externally (mount behind a firewall or IP allowlist in prod).
+pub fn internal_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/internal/rustfs/events", post(internal::rustfs_events))
+}
+
 /// Routes protected by the tenant middleware.
 pub fn protected_router(
     quota: Option<std::sync::Arc<billing_core::quota::QuotaChecker>>,
@@ -229,17 +228,22 @@ pub fn protected_router(
         // OpenAI-compatible chat
         .route("/v1/chat/completions", post(chat::completions))
         // Agent with tool calling + optional thread memory
-        // Wrapped with RouterQuotaLayer to enforce per-turn tool/invoke caps.
         .route("/v1/agent/completions", post(agent::agent_completions))
         .route_layer(RouterQuotaLayer::new(quota_cfg))
-        // Tool registry (path kept as /v1/capabilities for API compatibility)
+        // Tool registry
         .route("/v1/capabilities", get(capabilities::list_capabilities))
-        // Semantic capability search (Qdrant ANN)
+        // Semantic capability search
         .route("/v1/capabilities/search", get(search::search))
         // MCP JSON-RPC 2.0
         .route("/mcp", post(mcp::dispatch))
-        // File storage (RustFS-backed) — upload requires JWT; download is in public_router
-        .route("/v1/files", post(files::upload))
+        // ── File storage — presigned URL based (no proxy download) ───────────
+        .route("/v1/files/upload-url", post(files::presign_upload))
+        .route("/v1/files/download-url", get(files::presign_download))
+        // ── Multipart upload for large files ────────────────────────────────
+        .route("/v1/uploads/initiate", post(uploads::initiate))
+        .route("/v1/uploads/{upload_id}/parts/{n}/presign", post(uploads::presign_part))
+        .route("/v1/uploads/{upload_id}/complete", post(uploads::complete))
+        .route("/v1/uploads/{upload_id}/abort", post(uploads::abort))
         // ── Audit log ──────────────────────────────────────────────────────
         .route("/v1/audit", get(audit::list_audit))
         // ── Workspace ──────────────────────────────────────────────────────
@@ -249,16 +253,16 @@ pub fn protected_router(
         .route("/v1/workspaces/{id}", get(workspaces::get_node))
         .route("/v1/workspaces/{id}", delete(workspaces::delete_node))
         .route("/v1/workspaces/{id}/content", get(workspaces::get_content))
-        .route(
-            "/v1/workspaces/{id}/content",
-            patch(workspaces::patch_content),
-        )
+        .route("/v1/workspaces/{id}/content", patch(workspaces::patch_content))
         .route("/v1/workspaces/{id}/move", post(workspaces::move_node))
         .route("/v1/workspaces/{id}/share", post(workspaces::share_node))
-        .route(
-            "/v1/workspaces/{id}/unshare",
-            post(workspaces::unshare_node),
-        )
+        .route("/v1/workspaces/{id}/unshare", post(workspaces::unshare_node))
+        // ── Workspace presign endpoints ─────────────────────────────────────
+        .route("/v1/workspaces/{id}/presign-upload", post(workspaces::presign_upload))
+        .route("/v1/workspaces/{id}/presign-download", get(workspaces::presign_download))
+        // ── Workspace versioning ────────────────────────────────────────────
+        .route("/v1/workspaces/nodes/{id}/versions", get(workspaces::list_versions))
+        .route("/v1/workspaces/nodes/{id}/restore", post(workspaces::restore_version))
         // ── Tasks (background job polling + SSE) ────────────────────────────
         .route("/v1/tasks", get(tasks::list_tasks))
         .route("/v1/tasks/{id}", get(tasks::get_task))
@@ -267,7 +271,7 @@ pub fn protected_router(
         .route("/v1/threads/{id}/messages", get(threads::get_messages))
         // ── Realtime ────────────────────────────────────────────────────────
         .route("/api/realtime/workspace", get(realtime::realtime_workspace))
-        // ── Shell control (browser-shell WS; gated by feature flag) ─────────
+        // ── Shell control ────────────────────────────────────────────────────
         .route("/v1/shells/{device_id}/control", get(shells::shell_control))
         // ── Billing ─────────────────────────────────────────────────────────
         .route("/v1/billing/plans", get(billing::list_plans))

@@ -364,6 +364,22 @@ impl QdrantVectorStore {
         self.upsert_content_embedding_full(chunk_id, node_id, chunk_idx, content, embedding, "", "", &[]).await
     }
 
+    /// Delete all content embedding chunks for a given document (by `node_id` / virtual path).
+    #[instrument(skip(self), fields(doc_id))]
+    pub async fn delete_content_embeddings_for_doc(&self, doc_id: &str) -> anyhow::Result<()> {
+        let Ok(client) = self.client() else { return Ok(()) };
+        use qdrant_client::qdrant::{DeletePointsBuilder, Filter, Condition};
+        let filter = Filter::must(vec![Condition::matches("node_id", doc_id.to_string())]);
+        client
+            .delete_points(
+                DeletePointsBuilder::new(CONTENT_COLLECTION)
+                    .points(filter)
+                    .wait(true),
+            )
+            .await?;
+        Ok(())
+    }
+
     #[instrument(skip(self, embedding))]
     pub async fn upsert_content_embedding_full(
         &self,

@@ -54,8 +54,9 @@ pub use indexing::{
 pub use memory::{ContextBuilder, ContextTruncator, OldestFirstTruncator};
 pub use realtime::{RealtimeService, WorkspaceChangeEvent};
 pub use store::{
-    HttpMarkerClient, MarkerClient, NoopMarkerClient, QdrantVectorStore, RedbMetadataStore,
-    RustFsContentStore,
+    CredentialStore, HttpMarkerClient, MarkerClient, NoopMarkerClient, QdrantVectorStore,
+    RedbMetadataStore, RustFsContentStore, StorageCreds, StorageQuotaService,
+    presign_get, presign_put, presign_tmp_put,
 };
 
 pub use llm::{
