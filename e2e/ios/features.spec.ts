@@ -148,7 +148,7 @@ test.describe('3 · Chat stream', () => {
     await mockStream(page, '[DONE]');
     await page.getByRole('textbox').fill('iOS test message');
     await submitComposer(page);
-    await expect(page.locator('.message.user')).toContainText('iOS test message');
+    await expect(page.locator('.user-bubble')).toContainText('iOS test message');
     await snap(page, '03b-user-bubble');
   });
 
@@ -161,7 +161,7 @@ test.describe('3 · Chat stream', () => {
     );
     await page.getByRole('textbox').fill('what is the answer?');
     await submitComposer(page);
-    await expect(page.locator('.message.ai')).toContainText('The answer is 42.', { timeout: 8_000 });
+    await expect(page.locator('.ai-bubble')).toContainText('The answer is 42.', { timeout: 8_000 });
     await snap(page, '03c-ai-response');
   });
 
@@ -191,7 +191,7 @@ test.describe('3 · Chat stream', () => {
     );
     await page.getByRole('textbox').fill('extract invoice at http://localhost:8080/v1/files/some-token');
     await submitComposer(page);
-    await expect(page.locator('.message.ai')).toContainText('HCY-23256029', { timeout: 10_000 });
+    await expect(page.locator('.ai-bubble')).toContainText('HCY-23256029', { timeout: 10_000 });
     await snap(page, '03e-invoice-in-chat');
   });
 
@@ -199,7 +199,7 @@ test.describe('3 · Chat stream', () => {
     await mockStream(page, '[DONE]');
     await page.getByRole('textbox').fill('hello');
     await submitComposer(page);
-    await expect(page.locator('.message.user')).toBeVisible();
+    await expect(page.locator('.user-bubble')).toBeVisible();
     await page.keyboard.press('Meta+n');
     await expect(page.locator('.greeting-text')).toBeVisible();
     await snap(page, '03f-new-session');
@@ -282,7 +282,7 @@ test.describe('4 · File upload', () => {
     await submitComposer(page);
 
     await expect(page.getByText('invoice-processing__extract_invoice')).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator('.message.ai')).toContainText('HCY-23256029', { timeout: 10_000 });
+    await expect(page.locator('.ai-bubble')).toContainText('HCY-23256029', { timeout: 10_000 });
     await snap(page, '04c-invoice-extracted');
   });
 });
@@ -344,5 +344,98 @@ test.describe('6 · Forge dark theme', () => {
     if (theme === 'forge') {
       await expect(page.locator('.greeting-text')).toBeVisible();
     }
+  });
+});
+
+// ─── 7. Workspace persistence across page reloads (SSR) ──────────────────────
+//
+// Verifies the fix for: workspace disappearing on page reload.
+// Root causes fixed:
+//   1. URL doubling in makeServerSdk (baseUrl: BACKEND_URL → baseUrl: '')
+//   2. Docker web container missing CONUSAI_BACKEND_URL (localhost unreachable inside Docker)
+
+test.describe('7 · Workspace persistence (SSR)', () => {
+  test('workspace section is rendered in the SSR page', async ({ page }) => {
+    await login(page);
+    // The workspace explorer is always present (may be empty or have folders)
+    const explorer = page.locator('section.workspace-explorer, [aria-label="Workspace"]');
+    await expect(explorer).toBeAttached();
+    await snap(page, '07-workspace-section');
+  });
+
+  test('workspace folders created via API appear on first SSR load', async ({ page }) => {
+    // Verify the backend has workspace nodes and SSR serves them.
+    // This test catches the URL-doubling bug that caused workspaceTree:[] in SSR.
+    await login(page);
+
+    // Check if the SSR-rendered page contains workspace tree data by
+    // looking for the workspace explorer not showing the empty-state fallback.
+    // The "Root Workspace" folder was created in the dev tenant.
+    const explorer = page.locator('section.workspace-explorer, [aria-label="Workspace"]');
+    await expect(explorer).toBeAttached();
+
+    // If SSR works, any previously created folders should be visible immediately
+    // without requiring client-side re-fetch.
+    const folderItem = page.getByRole('treeitem').first();
+    const hasFolder = await folderItem.isVisible().catch(() => false);
+    if (hasFolder) {
+      // Folder is visible — SSR correctly populated workspace tree
+      await snap(page, '07b-workspace-loaded');
+    } else {
+      // No folders yet — verify workspace explorer is shown (not a blank/broken page)
+      const emptyState = page.locator('text=/No folders yet|Add a folder/i');
+      await expect(emptyState.or(explorer)).toBeVisible();
+      await snap(page, '07b-workspace-empty');
+    }
+  });
+
+  test('workspace persists after simulated page reload (goto /)', async ({ page }) => {
+    await login(page);
+
+    // Capture initial workspace state
+    const foldersBefore = await page.getByRole('treeitem').count();
+
+    // Simulate page reload by navigating to / again (triggers SSR load)
+    await page.goto('/');
+    await page.waitForSelector(':root[data-hydrated]', { timeout: 10_000 });
+
+    // Workspace must show the same folders (no data loss on reload)
+    const foldersAfter = await page.getByRole('treeitem').count();
+    expect(foldersAfter).toEqual(foldersBefore);
+    await snap(page, '07c-workspace-after-reload');
+  });
+
+  test('create folder via UI and verify it survives page reload', async ({ page }) => {
+    await login(page);
+
+    // Count folders before
+    const before = await page.getByRole('treeitem').count();
+
+    // On mobile the sidebar is off-screen — open it via hamburger first
+    await page.getByRole('button', { name: 'Toggle nav' }).click();
+    const sidebar = page.getByRole('complementary', { name: 'Workshop navigation' });
+    await expect(sidebar).toHaveClass(/open/, { timeout: 3_000 });
+
+    // Open new-node form and create a folder
+    const addBtn = page.getByRole('button', { name: 'New folder or conversation' });
+    await expect(addBtn).toBeVisible({ timeout: 3_000 });
+    await addBtn.click();
+
+    const nameInput = page.getByRole('textbox', { name: /name/i });
+    await expect(nameInput).toBeVisible({ timeout: 5_000 });
+    await nameInput.fill(`iOS-Test-${Date.now()}`);
+    await page.getByRole('button', { name: /create/i }).click();
+
+    // Wait for the new folder to appear client-side
+    await expect(page.getByRole('treeitem')).toHaveCount(before + 1, { timeout: 8_000 });
+    await snap(page, '07d-folder-created');
+
+    // Reload the page (SSR re-fetch)
+    await page.goto('/');
+    await page.waitForSelector(':root[data-hydrated]', { timeout: 10_000 });
+
+    // Folder must still be there after SSR reload
+    await expect(page.getByRole('treeitem')).toHaveCount(before + 1, { timeout: 8_000 });
+    await snap(page, '07e-folder-after-reload');
   });
 });

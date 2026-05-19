@@ -51,6 +51,8 @@ The table below reflects the **current workspace code paths**.
 | **Dynamic tool registration — Phase 5 (Super-admin UI)** | ✅ Browser-Verified | Login/logout flow; Super Admin sidebar link gated on role (John Smith=no link, Super Admin=link); /super-admin list (8 caps, Name/Kind/Tags/Status/Last Error/Actions columns); new-cap form (TOML → Create → detail redirect); edit/save (flash "Capability updated successfully."); disable toggle (absent from public sidebar); delete → confirm dialog → list redirect. Re-verified 2026-05-05 |
 | **Dynamic tool registration — Phase 6 (limits/safety)** | ✅ Browser-Verified | `AdminLimits::from_env()` confirmed; agent-verify-tool registered at runtime → immediately in /v1/capabilities (9 caps) + MCP tools/list (16 tools); disabled → drops to 8 caps; deleted → back to 8 caps / 15 tools. Re-verified 2026-05-05 |
 | **Scheduled + Background Jobs (v0.3)** | ✅ API-Verified | `GET /admin/jobs` → 3 jobs (`capability-health-check` scheduled, `audit-log-cleanup` scheduled, `video-transcription` background). User JWT → 403. `POST /admin/jobs/video-transcription/run {file_id,tenant_id}` → 202 `{task_id, status:"queued"}`. `GET /v1/tasks/{id}` → `{state:"completed", result:{file_id,tenant_id,transcript,chars}}`. Transcript placeholder when no `OPENAI_API_KEY`. Re-verified 2026-05-05 |
+| **Workspace persistence (SSR)** | ✅ Browser-Verified | Two root causes fixed: (1) URL doubling in `makeServerSdk` (`baseUrl: BACKEND_URL` + `createServerFetch` both prepended backend URL → set `baseUrl: ''`); (2) Docker web container had no `CONUSAI_BACKEND_URL` env var (used `localhost:8080` = ECONNREFUSED inside container → added to `docker-compose.yml`). CORS: added `http://localhost:4173` (Playwright test server) to `WEB_ORIGIN`. SSR `workspaceTree` confirmed via curl. Verified 2026-05-19 |
+| **Workspace persistence (iOS WebKit)** | ✅ Browser-Verified | Playwright `ios-mobile-web` project (WebKit + iPhone 15 viewport 393×852, DPR 3). 34/34 tests pass including 4 new workspace-persistence tests: (1) workspace section rendered in SSR page, (2) API-created folders visible on first SSR load, (3) workspace persists after simulated `goto /` reload, (4) folder created via mobile UI (hamburger → new folder form) survives page reload. Verified 2026-05-19 |
 
 ### Verdict
 
@@ -77,6 +79,8 @@ The table below reflects the **current workspace code paths**.
 - Phase 6b zero-code path correction: verify.md previously referenced `capabilities/` but Docker mounts `apps/backend/capabilities/` → all examples updated
 - `GET /v1/files/{token}` download is now token-gated only (moved out of JWT middleware); agent loop can fetch uploaded files without forwarding credentials
 - video-transcription job returns placeholder transcript without `OPENAI_API_KEY`
+- Workspace persistence (SSR): two-part fix — `baseUrl: ''` in `makeServerSdk` (was `BACKEND_URL`, causing URL doubling) + `CONUSAI_BACKEND_URL` env var added to docker-compose web service. Verified 2026-05-19
+- Workspace persistence (iOS WebKit): Playwright ios-mobile-web — 34/34 pass. Root cause for "Load failed" in folder-create test was missing `http://localhost:4173` in CORS `WEB_ORIGIN`. Added to `.env` / `.env.local` and gateway restarted. Verified 2026-05-19
 
 ---
 

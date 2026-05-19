@@ -1,26 +1,26 @@
-//! File storage routes — direct upload via presigned URLs only.
-//!
-//! The old UUID-token download shim (`GET /v1/files/{token}`) is removed.
-//! All uploads/downloads now use real S3 presigned URLs signed with
-//! per-tenant credentials.
+//! File storage routes — direct upload/download via presigned URLs.
 //!
 //! POST /v1/files/upload-url  — issue a presigned PUT URL for direct browser → RustFS upload
-//! POST /v1/files/confirm     — record metadata after upload completes
+//! GET  /v1/files/download-url?virtual_path= — issue a presigned GET URL
 
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
-use agent_core::{presign_put, presign_tmp_put};
-
-fn per_tenant_iam() -> bool {
-    std::env::var("RUSTFS_PER_TENANT_IAM").as_deref() != Ok("off")
-}
-use axum::{Extension, Json, extract::State, http::StatusCode};
+use agent_core::VirtualPath;
+use axum::{Extension, Json, extract::State};
 use chrono::Utc;
 use common::error::HttpError;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use tracing::instrument;
-use ulid::Ulid;
+
+fn presign_ttl() -> Duration {
+    let secs: u64 = std::env::var("RUSTFS_PRESIGN_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(900)
+        .min(3600);
+    Duration::from_secs(secs)
+}
 
 #[derive(Deserialize)]
 pub struct PresignUploadBody {
@@ -50,7 +50,6 @@ pub async fn presign_upload(
         return Err(HttpError::rate_limit(None));
     }
 
-    // Check storage quota
     if let Err(e) = state
         .storage_quota
         .check(&tenant.0.tenant_id, &tenant.0.plan, body.size_bytes)
@@ -62,53 +61,26 @@ pub async fn presign_upload(
         ));
     }
 
-    let creds = state
-        .cred_store
+    let factory = state
+        .tenant_storage
         .as_ref()
-        .ok_or_else(|| HttpError::agent("credential store not configured"))?
-        .load(&tenant.0.tenant_id)
+        .ok_or_else(|| HttpError::agent("storage not configured"))?;
+
+    let storage = factory
+        .for_tenant(&tenant.0.tenant_id)
         .await
-        .map_err(|e| HttpError::agent(format!("load creds: {e}")))?;
+        .map_err(|e| HttpError::agent(format!("storage: {e}")))?;
 
-    let creds = match creds {
-        Some(c) => c,
-        None if per_tenant_iam() => {
-            return Err(HttpError::agent("IAM credentials not provisioned for tenant"));
-        }
-        None => agent_core::StorageCreds {
-            access_key: std::env::var("RUSTFS_ROOT_ACCESS_KEY")
-                .or_else(|_| std::env::var("AWS_ACCESS_KEY_ID"))
-                .unwrap_or_else(|_| "rustfsadmin".into()),
-            secret_key: std::env::var("RUSTFS_ROOT_SECRET_KEY")
-                .or_else(|_| std::env::var("AWS_SECRET_ACCESS_KEY"))
-                .unwrap_or_else(|_| "rustfsadmin".into()),
-            created_at: 0,
-            bucket: None,
-        },
-    };
+    let vp = VirtualPath::parse(&body.virtual_path)
+        .map_err(|e| HttpError::validation("virtual_path", e.to_string()))?;
 
-    let endpoint = std::env::var("S3_ENDPOINT")
-        .unwrap_or_else(|_| "http://rustfs:9000".into());
-    let bucket = std::env::var("S3_BUCKET")
-        .unwrap_or_else(|_| "workspace".into());
+    let ttl = presign_ttl();
+    let url = storage
+        .presign_workspace_put(&vp, ttl)
+        .await
+        .map_err(|e| HttpError::agent(format!("presign PUT: {e}")))?;
 
-    let url = presign_put(
-        &tenant.0.tenant_id,
-        &body.virtual_path,
-        &creds,
-        &endpoint,
-        &bucket,
-        None,
-    )
-    .await
-    .map_err(|e| HttpError::agent(format!("presign PUT: {e}")))?;
-
-    let ttl_secs: i64 = std::env::var("RUSTFS_PRESIGN_TTL_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(900)
-        .min(3600);
-    let expires_at = (Utc::now() + chrono::Duration::seconds(ttl_secs)).to_rfc3339();
+    let expires_at = (Utc::now() + chrono::Duration::seconds(ttl.as_secs() as i64)).to_rfc3339();
 
     Ok(Json(PresignUploadResponse {
         url: url.to_string(),
@@ -135,56 +107,30 @@ pub async fn presign_download(
     Extension(tenant): Extension<ResolvedTenant>,
     axum::extract::Query(q): axum::extract::Query<PresignDownloadQuery>,
 ) -> Result<Json<PresignDownloadResponse>, HttpError> {
-    let creds = state
-        .cred_store
+    let factory = state
+        .tenant_storage
         .as_ref()
-        .ok_or_else(|| HttpError::agent("credential store not configured"))?
-        .load(&tenant.0.tenant_id)
+        .ok_or_else(|| HttpError::agent("storage not configured"))?;
+
+    let storage = factory
+        .for_tenant(&tenant.0.tenant_id)
         .await
-        .map_err(|e| HttpError::agent(format!("load creds: {e}")))?;
+        .map_err(|e| HttpError::agent(format!("storage: {e}")))?;
 
-    let creds = match creds {
-        Some(c) => c,
-        None if per_tenant_iam() => {
-            return Err(HttpError::agent("IAM credentials not provisioned for tenant"));
-        }
-        None => agent_core::StorageCreds {
-            access_key: std::env::var("RUSTFS_ROOT_ACCESS_KEY")
-                .or_else(|_| std::env::var("AWS_ACCESS_KEY_ID"))
-                .unwrap_or_else(|_| "rustfsadmin".into()),
-            secret_key: std::env::var("RUSTFS_ROOT_SECRET_KEY")
-                .or_else(|_| std::env::var("AWS_SECRET_ACCESS_KEY"))
-                .unwrap_or_else(|_| "rustfsadmin".into()),
-            created_at: 0,
-            bucket: None,
-        },
-    };
+    let vp = VirtualPath::parse(&q.virtual_path)
+        .map_err(|e| HttpError::validation("virtual_path", e.to_string()))?;
 
-    let endpoint = std::env::var("S3_ENDPOINT")
-        .unwrap_or_else(|_| "http://rustfs:9000".into());
-    let bucket = std::env::var("S3_BUCKET")
-        .unwrap_or_else(|_| "workspace".into());
+    let ttl = presign_ttl();
+    let url = storage
+        .presign_workspace_get(&vp, ttl, None)
+        .await
+        .map_err(|e| HttpError::agent(format!("presign GET: {e}")))?;
 
-    let url = agent_core::presign_get(
-        &tenant.0.tenant_id,
-        &q.virtual_path,
-        &creds,
-        &endpoint,
-        &bucket,
-        None,
-    )
-    .await
-    .map_err(|e| HttpError::agent(format!("presign GET: {e}")))?;
-
-    let ttl_secs: i64 = std::env::var("RUSTFS_PRESIGN_TTL_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(900)
-        .min(3600);
-    let expires_at = (Utc::now() + chrono::Duration::seconds(ttl_secs)).to_rfc3339();
+    let expires_at = (Utc::now() + chrono::Duration::seconds(ttl.as_secs() as i64)).to_rfc3339();
 
     Ok(Json(PresignDownloadResponse {
         url: url.to_string(),
         expires_at,
     }))
 }
+

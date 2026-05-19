@@ -10,7 +10,7 @@ function makeServerSdk(sessionCookie: string) {
 	const serverFetch = createServerFetch(sessionCookie);
 	return createConusSdk({
 		fetch: serverFetch,
-		baseUrl: BACKEND_URL,
+		baseUrl: '',
 		tokenProvider: { get: async () => null },
 	});
 }

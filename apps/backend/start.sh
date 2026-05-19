@@ -78,14 +78,18 @@ echo "✅ Qdrant ready"
 
 # ── Wait for RustFS ───────────────────────────────────────────────────────────
 echo "⏳ Waiting for RustFS..."
-until curl -sf http://localhost:9000/ > /dev/null 2>&1; do sleep 1; done
+until [[ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9000/ || true)" =~ ^(200|403)$ ]]; do sleep 1; done
 echo "✅ RustFS ready"
 
 # ── Build agent-gateway (if running full profile) ─────────────────────────────
 if [ "$PROFILE" = "full" ]; then
-  echo "▶ Building agent-gateway..."
-  cargo build --release --bin agent-gateway --features agent-gateway/local-embeddings
-  echo "✅ Build complete — gateway running in Docker"
+  if [ "${CONUSAI_BUILD_GATEWAY:-0}" = "1" ]; then
+    echo "▶ Building agent-gateway..."
+    cargo build --release --bin agent-gateway --features agent-gateway/local-embeddings
+    echo "✅ Build complete — gateway running in Docker"
+  else
+    echo "ℹ️  Skipping local gateway build (set CONUSAI_BUILD_GATEWAY=1 to enable)"
+  fi
 fi
 
 # ── Capability discovery info ─────────────────────────────────────────────────

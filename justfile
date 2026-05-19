@@ -52,20 +52,19 @@ types:
 # ── Full verify (CI gate) ─────────────────────────────────────────────────────
 
 # ── Tenant path lint (CI guard) ───────────────────────────────────────────────
-# Rejects any hand-rolled `tenants/{...}` string literals outside tenant_storage.rs.
+# Rejects any hand-rolled `tenants/{...}` or starts_with/strip_prefix("tenants/")
+# literals outside the single source-of-truth module (tenant_storage.rs).
 lint-tenant-paths:
-    @! grep -rnE 'tenants/\{|format!\("tenants/' \
+    @! grep -rnE 'tenants/\{|format!\("tenants/|starts_with\("tenants/|strip_prefix\("tenants/' \
         --include='*.rs' \
         --exclude-dir=target \
-        --exclude-dir=tests \
         apps/backend/crates \
       | grep -vE ':[[:space:]]*//' \
       | grep -v 'apps/backend/crates/agent-core/src/store/tenant_storage.rs' \
-      | grep -v 'apps/backend/crates/agent-core/src/store/presign.rs' \
       | grep -v 'apps/backend/crates/rustfs-admin/' \
-      | grep -v 'apps/backend/crates/agent-core/src/context/tenant.rs' \
-      | grep -v 'apps/backend/crates/agent-gateway/src/ui/handlers/' \
       | grep -v 'apps/backend/crates/common/src/path_safety.rs' \
+      | grep -v 'apps/backend/crates/jobs/src/jobs/tenant_bucket_migration.rs' \
+      | grep -v 'apps/backend/crates/agent-gateway/src/routes/mod.rs' \
       || (echo "ERROR: Forbidden hand-rolled tenant path literal outside tenant_storage.rs"; exit 1)
 
 # ── Capability storage isolation guard (CI guard) ─────────────────────────────

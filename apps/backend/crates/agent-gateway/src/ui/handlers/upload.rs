@@ -27,6 +27,15 @@ pub async fn ui_upload(
 
     let tenant = user.tenant_context();
 
+    let storage_factory = match state.tenant_storage.as_ref() {
+        Some(f) => f,
+        None => return err(StatusCode::SERVICE_UNAVAILABLE, "storage not configured"),
+    };
+    let storage = match storage_factory.for_tenant(tenant.tenant_id.as_str()).await {
+        Ok(s) => s,
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("storage: {e}")),
+    };
+
     let field = match multipart.next_field().await {
         Ok(Some(f)) => f,
         Ok(None) => return err(StatusCode::BAD_REQUEST, "no file in upload"),
@@ -48,7 +57,7 @@ pub async fn ui_upload(
     };
     let size = data.len();
 
-    let object_key = format!("{}{}/{}", tenant.storage_prefix(), Uuid::new_v4(), filename);
+    let object_key = storage.attachment_s3_key(&Uuid::new_v4().to_string(), &filename);
     let os_path = OsPath::from(object_key.as_str());
 
     if let Err(e) = store.put(&os_path, data.into()).await {

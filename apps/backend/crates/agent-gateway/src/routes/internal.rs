@@ -6,6 +6,7 @@
 //! the HMAC signature, parses the event, and dispatches to the workspace indexer.
 
 use crate::state::AppState;
+use agent_core::{extract_tenant_from_legacy_key, extract_virtual_path_from_key};
 use axum::{
     body::Bytes,
     extract::State,
@@ -106,7 +107,7 @@ pub async fn rustfs_events(
         let bucket = &record.s3.bucket.name;
 
         // Extract tenant_id — try legacy key prefix first, then modern bucket name.
-        let tenant_id = extract_tenant_from_key(key)
+        let tenant_id = extract_tenant_from_legacy_key(key)
             .or_else(|| extract_tenant_from_bucket(bucket));
         let Some(tenant_id) = tenant_id else {
             warn!(key, bucket, "could not extract tenant_id from object key or bucket");
@@ -117,7 +118,7 @@ pub async fn rustfs_events(
 
         if event.starts_with("s3:ObjectCreated") || event.starts_with("s3:ObjectRemoved") {
             let is_delete = event.starts_with("s3:ObjectRemoved");
-            let virtual_path = extract_virtual_path(key);
+            let virtual_path = extract_virtual_path_from_key(key);
             let vector_store = Arc::clone(&state.vector_store);
             let embedding_svc = Arc::clone(&state.embedding_service);
             let workspace_content = Arc::clone(&state.workspace_content);
@@ -183,27 +184,7 @@ pub async fn rustfs_events(
     StatusCode::NO_CONTENT
 }
 
-fn extract_tenant_from_key(key: &str) -> Option<&str> {
-    // Legacy key format: tenants/{tenant_id}/workspaces/{virtual_path}
-    let after = key.strip_prefix("tenants/")?;
-    let slash = after.find('/')?;
-    Some(&after[..slash])
-}
-
 fn extract_tenant_from_bucket(bucket_name: &str) -> Option<&str> {
     // Modern bucket name: ws-{tenant_id}
     bucket_name.strip_prefix("ws-")
-}
-
-fn extract_virtual_path(key: &str) -> &str {
-    // Handle both layouts:
-    // Legacy:  tenants/{id}/workspaces/{vp}
-    // Modern:  workspaces/{vp}
-    if let Some(pos) = key.find("/workspaces/") {
-        &key[pos + "/workspaces/".len()..]
-    } else if let Some(stripped) = key.strip_prefix("workspaces/") {
-        stripped
-    } else {
-        key
-    }
 }

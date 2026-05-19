@@ -9,6 +9,7 @@ use crate::routes::agent;
 use crate::routes::chat::{ChatMessage, ChatRequest};
 use crate::state::AppState;
 use crate::ui::session::SessionUser;
+use agent_core::TenantStorage;
 use axum::{
     http::HeaderMap,
     Json,
@@ -60,14 +61,21 @@ pub async fn ui_stream(
         return HttpError::rate_limit(None).into_response();
     }
 
+    // Resolve TenantStorage once; passed into attachment helpers for ownership checks.
+    let storage = if let Some(factory) = state.tenant_storage.as_ref() {
+        factory.for_tenant(tenant.0.tenant_id.as_str()).await.ok()
+    } else {
+        None
+    };
+
     let attachment_content = if !body.attachment_ids.is_empty() {
-        resolve_attachments(&state, &body.attachment_ids, tenant.0.tenant_id.as_str()).await
+        resolve_attachments(&state, &body.attachment_ids, storage.as_ref()).await
     } else {
         vec![]
     };
 
     let attachment_hint = if !body.attachment_ids.is_empty() {
-        build_attachment_hint(&state, &headers, &body.attachment_ids, tenant.0.tenant_id.as_str())
+        build_attachment_hint(&state, &headers, &body.attachment_ids, storage.as_ref())
     } else {
         String::new()
     };
@@ -103,14 +111,13 @@ fn build_attachment_hint(
     state: &Arc<AppState>,
     headers: &HeaderMap,
     attachment_ids: &[String],
-    tenant_id: &str,
+    storage: Option<&TenantStorage>,
 ) -> String {
     let origin = request_origin(headers);
-    let expected_prefix = format!("tenants/{tenant_id}/");
 
     let mut lines = Vec::new();
     for object_key in attachment_ids {
-        if !object_key.starts_with(&expected_prefix) {
+        if !storage.map(|s| s.owns_object_key(object_key)).unwrap_or(false) {
             continue;
         }
         let filename = object_key.split('/').next_back().unwrap_or("file");
@@ -165,18 +172,17 @@ fn request_origin(headers: &HeaderMap) -> String {
 async fn resolve_attachments(
     state: &Arc<AppState>,
     attachment_ids: &[String],
-    tenant_id: &str,
+    storage: Option<&TenantStorage>,
 ) -> Vec<Value> {
     let Some(store) = state.file_store.as_ref() else {
         return vec![];
     };
 
-    let expected_prefix = format!("tenants/{tenant_id}/");
     let mut blocks = Vec::with_capacity(attachment_ids.len());
 
     for object_key in attachment_ids {
         // attachment_ids are now object keys directly (no UUID token lookup)
-        if !object_key.starts_with(&expected_prefix) {
+        if !storage.map(|s| s.owns_object_key(object_key)).unwrap_or(false) {
             continue;
         }
         let object_key = object_key.clone();

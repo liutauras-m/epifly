@@ -93,6 +93,12 @@ impl RedbMetadataStore {
         store
     }
 
+    /// Return the underlying shared Database handle (used by stores that
+    /// must share the same redb file, e.g. CredentialStore).
+    pub fn db(&self) -> Arc<Database> {
+        Arc::clone(&self.db)
+    }
+
     /// Subscribe to capability-spec change events (namespace, tool_name).
     /// Replaces PG LISTEN/NOTIFY for hot-reload.
     pub fn subscribe_spec_changes(

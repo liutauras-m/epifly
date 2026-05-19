@@ -138,11 +138,6 @@ impl TenantContext {
         common::path_safety::safe_join(&root, rel)
     }
 
-    /// S3 / RustFS key prefix for this tenant.
-    pub fn storage_prefix(&self) -> String {
-        format!("tenants/{}/", &*self.tenant_id)
-    }
-
     /// Storage namespace prefix for this tenant (e.g. Postgres table prefix).
     pub fn tenant_namespace(&self, kind: &str) -> String {
         format!("{}_{}", kind, &*self.tenant_id)

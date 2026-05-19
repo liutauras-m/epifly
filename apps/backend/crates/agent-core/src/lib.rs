@@ -59,7 +59,7 @@ pub use store::{
     QdrantVectorStore, RedbMetadataStore, RustFsContentStore, StorageCreds, StorageError,
     StorageLayout, StorageQuotaService, TenantKind, TenantStorage, TenantStorageFactory,
     TenantStorageMode, VirtualPath, WorkspaceStorage, build_root_store,
-    presign_get, presign_put, presign_tmp_put,
+    extract_tenant_from_legacy_key, extract_virtual_path_from_key,
 };
 pub use store::onboarding::TenantOnboardingService;
 

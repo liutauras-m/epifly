@@ -33,10 +33,17 @@ pub async fn ui_extract_invoice(
         None => return err(StatusCode::SERVICE_UNAVAILABLE, "file storage not configured"),
     };
 
-    // Verify tenant ownership: key must be under tenants/{tenant_id}/
+    // Verify tenant ownership via TenantStorage (layout-aware).
     let tenant = user.tenant_context();
-    let expected_prefix = format!("tenants/{}/", tenant.tenant_id.as_str());
-    if !body.object_key.starts_with(&expected_prefix) {
+    let owned = if let Some(factory) = state.tenant_storage.as_ref() {
+        match factory.for_tenant(tenant.tenant_id.as_str()).await {
+            Ok(storage) => storage.owns_object_key(&body.object_key),
+            Err(_) => false,
+        }
+    } else {
+        false
+    };
+    if !owned {
         return err(StatusCode::FORBIDDEN, "object does not belong to your tenant");
     }
 

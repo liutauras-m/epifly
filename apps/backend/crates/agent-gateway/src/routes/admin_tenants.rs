@@ -49,9 +49,13 @@ pub async fn delete_tenant(
                         info!(tenant_id, bucket = bucket_name, "deleted per-tenant bucket");
                     }
                 } else {
-                    // Phase 1 (legacy): delete objects under `tenants/{tenant_id}/` prefix in shared bucket.
-                    let prefix = format!("tenants/{tenant_id}/");
-                    purge_legacy_prefix(admin, &prefix, &tenant_id).await;
+                    // Phase 1 (legacy): objects under the tenant prefix in shared bucket.
+                    // Cleanup is deferred to the migration job — see tenant_bucket_migration.rs.
+                    warn!(
+                        tenant_id,
+                        "legacy prefix objects in shared bucket NOT deleted automatically \
+                         — run migration job with MIGRATION_CLEANUP=true to purge"
+                    );
                 }
             }
             Ok(None) => {
@@ -82,30 +86,4 @@ pub async fn delete_tenant(
 
     info!(tenant_id, "tenant permanently deleted");
     Ok(StatusCode::NO_CONTENT)
-}
-
-/// Delete all objects under `prefix` in the shared (root-admin) bucket.
-/// Best-effort — logs warnings on errors but does not abort.
-async fn purge_legacy_prefix(
-    admin: &rustfs_admin::RustFsAdminClient,
-    prefix: &str,
-    tenant_id: &str,
-) {
-    // Re-use purge_bucket on a temporary client pointed at the shared bucket would require
-    // forking the client. Instead we use the existing list_object_versions which returns
-    // (version_id, last_modified, size, is_latest) tuples. The key is embedded in the XML
-    // but not surfaced by parse_version_list. We therefore call purge_bucket on a per-prefix
-    // basis via the admin client's shared bucket using the ListObjectsV2 path through
-    // purge_bucket — but purge_bucket deletes the bucket itself. For the legacy shared bucket
-    // we must NOT delete the bucket, only the objects.
-    //
-    // Simplest safe approach: emit a warning and leave it for the operator. Legacy prefix
-    // cleanup is a one-time migration concern and the per-tenant bucket migration job handles
-    // the data. Object content without a cred entry is unreachable by tenants.
-    warn!(
-        tenant_id,
-        prefix,
-        "legacy prefix objects in shared bucket NOT deleted automatically \
-         — run migration job with MIGRATION_CLEANUP=true to purge"
-    );
 }

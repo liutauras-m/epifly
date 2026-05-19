@@ -23,7 +23,6 @@ use jobs::jobs::{AuditLogCleanupJob, CapabilityHealthCheckJob, LagoReconcileJob,
 use jobs::{JobAdmin, JobContext, JobExecutor, JobRegistry};
 use object_store::aws::AmazonS3Builder;
 use object_store::ObjectStore;
-use redb::Database;
 use rustfs_admin::RustFsAdminClient;
 use crate::metrics::RustFsMetrics;
 use std::collections::HashMap;
@@ -103,13 +102,9 @@ impl AppState {
         let metadata_store: Arc<RedbMetadataStore> = RedbMetadataStore::open(&redb_path)
             .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?;
 
-        // Open a separate Database handle for the credential store.
-        let cred_db: Arc<Database> = Arc::new(
-            Database::create(&redb_path)
-                .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?,
-        );
+        // Share the same Database handle — redb v2 forbids two instances on one file.
         let cred_store: Arc<CredentialStore> = Arc::new(
-            CredentialStore::new(cred_db)
+            CredentialStore::new(metadata_store.db())
                 .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?,
         );
 

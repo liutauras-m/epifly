@@ -568,6 +568,66 @@ impl TenantStorage {
         &self.tenant_id
     }
 
+    /// Returns `true` if the raw S3 object key belongs to this tenant.
+    /// Layout-aware: legacy prefix checks the `tenants/{id}/` prefix;
+    /// modern layout always returns `true` (per-tenant bucket).
+    pub fn owns_object_key(&self, key: &str) -> bool {
+        match &self.layout {
+            StorageLayout::LegacyPrefix { tenant_id } => {
+                let prefix = format!("tenants/{tenant_id}/");
+                key.starts_with(&prefix)
+            }
+            StorageLayout::Modern => true,
+        }
+    }
+
+    /// S3 key for a UI chat attachment (not stored under `workspaces/`).
+    /// Legacy layout: `tenants/{id}/{upload_id}/{safe_filename}`
+    /// Modern layout:  `attachments/{upload_id}/{safe_filename}`
+    pub fn attachment_s3_key(&self, upload_id: &str, filename: &str) -> String {
+        let safe_filename: String = filename
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+            .collect();
+        match &self.layout {
+            StorageLayout::LegacyPrefix { tenant_id } => {
+                format!("tenants/{tenant_id}/{upload_id}/{safe_filename}")
+            }
+            StorageLayout::Modern => format!("attachments/{upload_id}/{safe_filename}"),
+        }
+    }
+
+    /// Build a `TenantStorage` directly from raw credentials.
+    ///
+    /// Intended for backward-compat presign wrappers and admin ops that already
+    /// have explicit credentials. Uses `LegacyPrefix` layout and a no-op audit store.
+    pub fn from_raw_creds(
+        tenant_id: &str,
+        creds: StorageCreds,
+        endpoint: &str,
+        bucket: &str,
+    ) -> Result<Self, StorageError> {
+        use common::memory::InMemoryAuditStore;
+        let store = AmazonS3Builder::new()
+            .with_endpoint(endpoint)
+            .with_bucket_name(bucket)
+            .with_access_key_id(&creds.access_key)
+            .with_secret_access_key(&creds.secret_key)
+            .with_allow_http(true)
+            .with_region("us-east-1")
+            .build()
+            .map_err(|e| StorageError::Internal(anyhow::anyhow!("from_raw_creds: {e}")))?;
+        Ok(TenantStorage {
+            tenant_id: tenant_id.to_owned(),
+            client: Arc::new(store),
+            creds,
+            bucket: Arc::from(bucket),
+            endpoint: Arc::from(endpoint),
+            layout: StorageLayout::LegacyPrefix { tenant_id: tenant_id.to_owned() },
+            audit: Arc::new(InMemoryAuditStore::new()),
+        })
+    }
+
     /// Used by `StorageQuotaService` to list all objects for a tenant.
     pub async fn list_all_tenant_objects(&self) -> Result<Vec<ObjectMeta>, StorageError> {
         use futures::TryStreamExt;
@@ -752,6 +812,37 @@ impl TenantStorageFactory {
 
     pub fn shared_bucket(&self) -> &str {
         &self.bucket
+    }
+}
+
+// ── Static key parsers ────────────────────────────────────────────────────────
+//
+// These belong here — not in call-sites — so that all knowledge of key formats
+// is centralized in this module and the lint guard (`just lint-tenant-paths`)
+// only needs to exclude this one file.
+
+/// Extract the tenant ID from a legacy-layout S3 object key.
+///
+/// Legacy format: `tenants/{tenant_id}/…`
+/// Returns `None` if the key does not match the legacy prefix format.
+pub fn extract_tenant_from_legacy_key(key: &str) -> Option<&str> {
+    let after = key.strip_prefix("tenants/")?;
+    let slash = after.find('/')?;
+    Some(&after[..slash])
+}
+
+/// Extract the virtual-path portion from any layout's S3 object key.
+///
+/// - Legacy:  `tenants/{id}/workspaces/{vp}` → `{vp}`
+/// - Modern:  `workspaces/{vp}`              → `{vp}`
+/// - Fallback: returns `key` unchanged.
+pub fn extract_virtual_path_from_key(key: &str) -> &str {
+    if let Some(pos) = key.find("/workspaces/") {
+        &key[pos + "/workspaces/".len()..]
+    } else if let Some(stripped) = key.strip_prefix("workspaces/") {
+        stripped
+    } else {
+        key
     }
 }
 
