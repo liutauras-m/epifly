@@ -25,6 +25,9 @@ pub struct StorageCreds {
     /// Unix timestamp (seconds) when these credentials were created/rotated.
     #[serde(default)]
     pub created_at: i64,
+    /// Per-tenant bucket name (`ws-{tenant_id}`). None → legacy shared `workspace` bucket.
+    #[serde(default)]
+    pub bucket: Option<String>,
 }
 
 /// Encrypted credential store backed by redb, with an in-process LRU cache.

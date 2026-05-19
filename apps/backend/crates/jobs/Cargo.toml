@@ -27,6 +27,7 @@ opentelemetry        = { workspace = true }
 prometheus           = { workspace = true }
 reqwest              = { workspace = true }
 object_store.workspace = true
+bytes.workspace        = true
 
 [dev-dependencies]
 tokio = { workspace = true }

@@ -53,6 +53,10 @@ const IDX_PATH: TableDefinition<(&str, &str), &str> =
 const AUDIT: TableDefinition<(&str, i64, &str), &[u8]> =
     TableDefinition::new("audit_events");
 
+/// tenant seeding flags: tenant_id → bool (stored as 1-byte)
+const TENANT_SEEDED: TableDefinition<&str, u8> =
+    TableDefinition::new("tenant_seeded");
+
 // ── Store ─────────────────────────────────────────────────────────────────────
 
 pub struct RedbMetadataStore {
@@ -83,6 +87,7 @@ impl RedbMetadataStore {
             let _ = txn.open_table(NODES);
             let _ = txn.open_table(IDX_PATH);
             let _ = txn.open_table(AUDIT);
+            let _ = txn.open_table(TENANT_SEEDED);
             let _ = txn.commit();
         }
         store
@@ -466,18 +471,69 @@ impl WorkspaceStore for RedbMetadataStore {
             let txn = db.begin_write()?;
             {
                 let mut tbl = txn.open_table(NODES)?;
-                if let Some(v) = tbl.remove((tenant.as_str(), nid.as_str()))? {
-                    if let Ok(node) = de_node(v.value()) {
-                        drop(v);
-                        let mut idx = txn.open_table(IDX_PATH)?;
-                        let _ = idx.remove((tenant.as_str(), node.virtual_path.as_str()))?;
+                let maybe_node = tbl
+                    .get((tenant.as_str(), nid.as_str()))?
+                    .map(|v| de_node(v.value()))
+                    .transpose()?;
+                if let Some(node) = maybe_node {
+                    if node.is_protected_root {
+                        anyhow::bail!("cannot delete protected workspace root folder");
                     }
+                    tbl.remove((tenant.as_str(), nid.as_str()))?;
+                    let mut idx = txn.open_table(IDX_PATH)?;
+                    let _ = idx.remove((tenant.as_str(), node.virtual_path.as_str()))?;
                 }
             }
             txn.commit()?;
             Ok(())
         })
         .await?
+    }
+
+    async fn rename_node(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+        node_id: Ulid,
+        new_name: String,
+    ) -> anyhow::Result<WorkspaceNode> {
+        let node = self.get_accessible_node(tenant_id, user_id, node_id).await?;
+        validate_name(&new_name, node.kind)?;
+        let tenant = tenant_id.to_string();
+        let nid = node_id.to_string();
+        let db = Arc::clone(&self.db);
+        let updated = task::spawn_blocking(move || -> anyhow::Result<WorkspaceNode> {
+            let txn = db.begin_write()?;
+            let updated = {
+                let mut tbl = txn.open_table(NODES)?;
+                let key = (tenant.as_str(), nid.as_str());
+                let raw_bytes = tbl
+                    .get(key)?
+                    .ok_or_else(|| anyhow::anyhow!("node not found"))?
+                    .value()
+                    .to_vec();
+                let mut n: WorkspaceNode = de_node(&raw_bytes)?;
+                let parent_prefix = n
+                    .virtual_path
+                    .rsplit_once('/')
+                    .map(|(p, _)| format!("{p}/"))
+                    .unwrap_or_default();
+                let old_path = n.virtual_path.clone();
+                n.name = new_name.clone();
+                n.virtual_path = format!("{parent_prefix}{new_name}");
+                n.last_modified = Utc::now();
+                tbl.insert(key, ser_node(&n)?.as_slice())?;
+                // Update path index.
+                let mut idx = txn.open_table(IDX_PATH)?;
+                let _ = idx.remove((tenant.as_str(), old_path.as_str()))?;
+                idx.insert((tenant.as_str(), n.virtual_path.as_str()), nid.as_str())?;
+                n
+            };
+            txn.commit()?;
+            Ok(updated)
+        })
+        .await??;
+        Ok(updated)
     }
 
     async fn share_node(
@@ -590,6 +646,115 @@ impl WorkspaceStore for RedbMetadataStore {
             n.metadata["thread_id"] = json!(tid);
         })
         .await
+    }
+
+    async fn is_tenant_seeded(&self, tenant_id: &str) -> anyhow::Result<bool> {
+        let key = tenant_id.to_string();
+        let db = Arc::clone(&self.db);
+        task::spawn_blocking(move || -> anyhow::Result<bool> {
+            let txn = db.begin_read()?;
+            let tbl = match txn.open_table(TENANT_SEEDED) {
+                Ok(t) => t,
+                Err(redb::TableError::TableDoesNotExist(_)) => return Ok(false),
+                Err(e) => return Err(anyhow::anyhow!("open tenant_seeded: {e}")),
+            };
+            Ok(tbl.get(key.as_str())?.is_some())
+        })
+        .await?
+    }
+
+    async fn mark_tenant_seeded(&self, tenant_id: &str) -> anyhow::Result<()> {
+        let key = tenant_id.to_string();
+        let db = Arc::clone(&self.db);
+        task::spawn_blocking(move || -> anyhow::Result<()> {
+            let txn = db.begin_write()?;
+            {
+                let mut tbl = txn.open_table(TENANT_SEEDED)?;
+                tbl.insert(key.as_str(), 1u8)?;
+            }
+            txn.commit()?;
+            Ok(())
+        })
+        .await?
+    }
+
+    async fn create_protected_root_folder(
+        &self,
+        tenant_id: &str,
+        owner_id: &str,
+        name: &str,
+    ) -> anyhow::Result<WorkspaceNode> {
+        validate_name(name, NodeKind::Folder)?;
+        let virtual_path = name.to_owned();
+        let mut node = WorkspaceNode::new_folder(tenant_id, owner_id, None, name, &virtual_path);
+        node.is_protected_root = true;
+        self.insert_node(node.clone()).await?;
+        Ok(node)
+    }
+
+    async fn purge_tenant_data(&self, tenant_id: &str) -> anyhow::Result<()> {
+        let tenant = tenant_id.to_string();
+        let db = Arc::clone(&self.db);
+        task::spawn_blocking(move || -> anyhow::Result<()> {
+            let txn = db.begin_write()?;
+            // Workspace nodes
+            {
+                let mut tbl = txn.open_table(NODES)?;
+                let keys: Vec<(String, String)> = tbl
+                    .range((tenant.as_str(), "")..(tenant.as_str(), "\u{FFFF}"))?
+                    .map(|r| r.map(|(k, _)| (k.value().0.to_string(), k.value().1.to_string())))
+                    .collect::<Result<_, _>>()?;
+                for (t, n) in &keys {
+                    tbl.remove((t.as_str(), n.as_str()))?;
+                }
+            }
+            // Path index
+            {
+                let mut idx = txn.open_table(IDX_PATH)?;
+                let keys: Vec<(String, String)> = idx
+                    .range((tenant.as_str(), "")..(tenant.as_str(), "\u{FFFF}"))?
+                    .map(|r| r.map(|(k, _)| (k.value().0.to_string(), k.value().1.to_string())))
+                    .collect::<Result<_, _>>()?;
+                for (t, p) in &keys {
+                    idx.remove((t.as_str(), p.as_str()))?;
+                }
+            }
+            // Threads
+            {
+                let mut tbl = txn.open_table(THREADS)?;
+                let keys: Vec<(String, String)> = tbl
+                    .range((tenant.as_str(), "")..(tenant.as_str(), "\u{FFFF}"))?
+                    .map(|r| r.map(|(k, _)| (k.value().0.to_string(), k.value().1.to_string())))
+                    .collect::<Result<_, _>>()?;
+                for (t, tid) in &keys {
+                    tbl.remove((t.as_str(), tid.as_str()))?;
+                }
+            }
+            // Messages (triple-key table)
+            {
+                let mut tbl = txn.open_table(MESSAGES)?;
+                let keys: Vec<(String, String, u64)> = tbl
+                    .range((tenant.as_str(), "", 0)..(tenant.as_str(), "\u{FFFF}", u64::MAX))?
+                    .map(|r| {
+                        r.map(|(k, _)| {
+                            let (t, tid, seq) = k.value();
+                            (t.to_string(), tid.to_string(), seq)
+                        })
+                    })
+                    .collect::<Result<_, _>>()?;
+                for (t, tid, seq) in &keys {
+                    tbl.remove((t.as_str(), tid.as_str(), *seq))?;
+                }
+            }
+            // Tenant seeding flag
+            {
+                let mut tbl = txn.open_table(TENANT_SEEDED)?;
+                tbl.remove(tenant.as_str())?;
+            }
+            txn.commit()?;
+            Ok(())
+        })
+        .await?
     }
 }
 

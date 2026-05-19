@@ -184,6 +184,34 @@ impl HttpError {
         }
     }
 
+    pub fn forbidden(msg: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            body: ApiErrorBody {
+                r#type: "forbidden",
+                message: msg.into(),
+                field: None,
+                resource: None,
+                retry_after: None,
+                request_id: None,
+            },
+        }
+    }
+
+    pub fn bad_request(msg: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            body: ApiErrorBody {
+                r#type: "bad_request",
+                message: msg.into(),
+                field: None,
+                resource: None,
+                retry_after: None,
+                request_id: None,
+            },
+        }
+    }
+
     pub fn internal(msg: impl Into<String>, request_id: Option<String>) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,

@@ -1,11 +1,15 @@
 //! Per-tenant IAM provisioning and credential management.
 //!
-//! Each tenant gets a service account (access key + secret key) with an inline
-//! policy restricting S3 access to `tenants/{tenant_id}/*` in the workspace
-//! bucket. Credentials are returned to the caller (encrypted at rest by the
-//! gateway's credential store).
+//! In Phase 2 each tenant gets a **dedicated bucket** (`ws-{tenant_id}`) plus a
+//! service account whose inline policy is scoped to that specific bucket — no
+//! `s3:prefix` condition required. The bucket name is returned in `IamCreds` and
+//! stored alongside the access/secret keys in `CredentialStore`.
+//!
+//! `TenantStorageFactory::for_tenant` reads `creds.bucket`:
+//!  - `None`       → Phase 1 legacy layout (`tenants/{id}/workspaces/…` in shared bucket)
+//!  - `Some(name)` → Phase 2 modern layout (`workspaces/…` in `ws-{id}` bucket)
 
-use crate::RustFsAdminClient;
+use crate::{RustFsAdminClient, bucket::sanitize_bucket_name};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
@@ -18,28 +22,70 @@ pub struct IamCreds {
     pub secret_key: String,
     /// The key that should be revoked when these creds are rotated.
     pub prev_access_key: Option<String>,
+    /// Per-tenant dedicated bucket name (`ws-{id}`). `None` for legacy shared-bucket tenants.
+    pub bucket: Option<String>,
 }
 
-/// Create a RustFS service account scoped to `tenants/{tenant_id}/*`.
+/// Create a RustFS service account and (Phase 2) a dedicated per-tenant bucket.
 ///
-/// Returns the raw credentials. The caller is responsible for encrypting and
-/// storing them. Idempotent: if the service account already exists it will
-/// create a new one (rotation-safe).
+/// The service account policy is scoped to the per-tenant bucket when one is
+/// created, or to `tenants/{tenant_id}/*` in the shared bucket otherwise.
+///
+/// Returns `IamCreds` with `bucket = Some(name)` for Phase 2 tenants.
+/// Idempotent: safe to re-invoke; creates a new service account on each call
+/// (rotation-safe — old key must be deprovisioned separately).
 #[instrument(skip(client), fields(tenant_id))]
 pub async fn provision_tenant(
     client: &RustFsAdminClient,
     tenant_id: &str,
 ) -> Result<IamCreds> {
+    // Compute per-tenant bucket name.
+    let bucket_name = sanitize_bucket_name(&format!("ws-{tenant_id}"));
+
+    // Ensure the bucket exists with versioning + SSE.
+    client.ensure_bucket_named(&bucket_name).await?;
+
+    // Create a service account with bucket-scoped policy (no prefix condition).
     let (access_key, secret_key) = client
-        .create_service_account("", tenant_id, &client.bucket.clone())
+        .create_bucket_scoped_service_account(tenant_id, &bucket_name)
         .await?;
 
-    tracing::info!(tenant_id, access_key, "provisioned per-tenant IAM service account");
+    tracing::info!(
+        tenant_id,
+        access_key,
+        bucket = bucket_name,
+        "provisioned per-tenant IAM service account with dedicated bucket"
+    );
 
     Ok(IamCreds {
         access_key,
         secret_key,
         prev_access_key: None,
+        bucket: Some(bucket_name),
+    })
+}
+
+/// Rotate credentials for an existing tenant: create a new service account scoped
+/// to `bucket_name` (the tenant's existing bucket) without creating a new bucket.
+///
+/// Use this for scheduled key rotation. Use `provision_tenant` only for new tenants.
+#[instrument(skip(client), fields(tenant_id))]
+pub async fn rotate_tenant_credentials(
+    client: &RustFsAdminClient,
+    tenant_id: &str,
+    bucket_name: &str,
+) -> Result<IamCreds> {
+    let (access_key, secret_key) = client
+        .create_bucket_scoped_service_account(tenant_id, bucket_name)
+        .await?;
+
+    tracing::info!(tenant_id, access_key, bucket = bucket_name, "rotated per-tenant IAM credentials");
+
+    Ok(IamCreds {
+        access_key,
+        secret_key,
+        prev_access_key: None,
+        bucket: Some(bucket_name.to_owned()),
     })
 }
 

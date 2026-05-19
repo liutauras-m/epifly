@@ -54,10 +54,14 @@ pub use indexing::{
 pub use memory::{ContextBuilder, ContextTruncator, OldestFirstTruncator};
 pub use realtime::{RealtimeService, WorkspaceChangeEvent};
 pub use store::{
-    CredentialStore, HttpMarkerClient, MarkerClient, NoopMarkerClient, QdrantVectorStore,
-    RedbMetadataStore, RustFsContentStore, StorageCreds, StorageQuotaService,
+    CompletedPart, CredentialStore, DEFAULT_TENANT_ROOT_NAME, FinalizeResult,
+    HttpMarkerClient, MarkerClient, NoopMarkerClient, OnboardingError, OnboardingOptions,
+    QdrantVectorStore, RedbMetadataStore, RustFsContentStore, StorageCreds, StorageError,
+    StorageLayout, StorageQuotaService, TenantKind, TenantStorage, TenantStorageFactory,
+    TenantStorageMode, VirtualPath, WorkspaceStorage, build_root_store,
     presign_get, presign_put, presign_tmp_put,
 };
+pub use store::onboarding::TenantOnboardingService;
 
 pub use llm::{
     CompletionProvider, LlmBinding, LlmChunk, LlmError, LlmRegistry, LlmRequest, LlmResponse,

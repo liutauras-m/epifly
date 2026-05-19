@@ -2,12 +2,12 @@
 //!
 //! POST /v1/uploads/initiate              — start a multipart upload
 //! POST /v1/uploads/:id/parts/:n/presign  — presigned URL for part N
-//! POST /v1/uploads/:id/complete          — complete multipart
+//! POST /v1/uploads/:id/complete          — complete multipart (streaming, no RAM buffering)
 //! POST /v1/uploads/:id/abort             — abort and clean up
 
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
-use agent_core::{StorageCreds, presign_tmp_put};
+use agent_core::VirtualPath;
 use axum::{
     Extension, Json,
     extract::{Path, State},
@@ -15,39 +15,22 @@ use axum::{
 };
 use chrono::Utc;
 use common::error::HttpError;
-use object_store::path::Path as OsPath;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::instrument;
 use ulid::Ulid;
 
-fn per_tenant_iam() -> bool {
-    std::env::var("RUSTFS_PER_TENANT_IAM").as_deref() != Ok("off")
+fn presign_ttl_secs() -> i64 {
+    std::env::var("RUSTFS_PRESIGN_TTL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(900)
+        .min(3600)
 }
 
-async fn tenant_creds(state: &AppState, tenant_id: &str) -> Result<StorageCreds, HttpError> {
-    match state
-        .cred_store
-        .as_ref()
-        .ok_or_else(|| HttpError::agent("credential store not configured"))?
-        .load(tenant_id)
-        .await
-        .map_err(|e| HttpError::agent(format!("load creds: {e}")))?
-    {
-        Some(c) => Ok(c),
-        None if per_tenant_iam() => Err(HttpError::agent(
-            "IAM credentials not provisioned for tenant",
-        )),
-        None => Ok(StorageCreds {
-            access_key: std::env::var("RUSTFS_ROOT_ACCESS_KEY")
-                .or_else(|_| std::env::var("AWS_ACCESS_KEY_ID"))
-                .unwrap_or_else(|_| "rustfsadmin".into()),
-            secret_key: std::env::var("RUSTFS_ROOT_SECRET_KEY")
-                .or_else(|_| std::env::var("AWS_SECRET_ACCESS_KEY"))
-                .unwrap_or_else(|_| "rustfsadmin".into()),
-            created_at: 0,
-        }),
-    }
+fn presign_ttl() -> Duration {
+    Duration::from_secs(presign_ttl_secs() as u64)
 }
 
 #[derive(Deserialize)]
@@ -113,27 +96,20 @@ pub async fn presign_part(
         .and_then(|v| v.as_str())
         .unwrap_or("part.bin");
 
-    let creds = tenant_creds(&state, &tenant.0.tenant_id).await?;
-    let endpoint = std::env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://rustfs:9000".into());
-    let bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "workspace".into());
+    let storage = state
+        .tenant_storage
+        .as_ref()
+        .ok_or_else(|| HttpError::agent("tenant storage not configured"))?
+        .for_tenant(&tenant.0.tenant_id)
+        .await
+        .map_err(|e| HttpError::agent(format!("storage for tenant: {e}")))?;
 
-    let url = presign_tmp_put(
-        &tenant.0.tenant_id,
-        &upload_id,
-        filename,
-        &creds,
-        &endpoint,
-        &bucket,
-    )
-    .await
-    .map_err(|e| HttpError::agent(format!("presign part: {e}")))?;
+    let url = storage
+        .presign_staging_put(&upload_id, filename, presign_ttl())
+        .await
+        .map_err(|e| HttpError::agent(format!("presign part: {e}")))?;
 
-    let ttl_secs: i64 = std::env::var("RUSTFS_PRESIGN_TTL_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(900)
-        .min(3600);
-    let expires_at = (Utc::now() + chrono::Duration::seconds(ttl_secs)).to_rfc3339();
+    let expires_at = (Utc::now() + chrono::Duration::seconds(presign_ttl_secs())).to_rfc3339();
 
     Ok(Json(PartPresignResponse {
         url: url.to_string(),
@@ -159,12 +135,7 @@ pub struct CompleteResponse {
     pub size_bytes: u64,
 }
 
-/// POST /v1/uploads/:upload_id/complete — finalize multipart upload.
-///
-/// The client must have already PUT all parts to their presigned URLs.
-/// This endpoint reads staged parts from `tenants/{id}/uploads/tmp/{upload_id}/`,
-/// concatenates them in sort order, writes to the permanent workspace path,
-/// deletes the staging objects, and returns the real byte count.
+/// POST /v1/uploads/:upload_id/complete — finalize multipart upload (streaming).
 #[instrument(skip(state, tenant, body))]
 pub async fn complete(
     State(state): State<Arc<AppState>>,
@@ -172,59 +143,33 @@ pub async fn complete(
     Path(upload_id): Path<String>,
     Json(body): Json<CompleteBody>,
 ) -> Result<Json<CompleteResponse>, HttpError> {
-    let file_store = state
-        .file_store
+    let dest_vp = VirtualPath::parse(&body.destination_path)
+        .map_err(|e| HttpError::validation("destination_path", format!("{e}")))?;
+
+    let storage = state
+        .tenant_storage
         .as_ref()
-        .ok_or_else(|| HttpError::agent("file store not configured"))?;
-
-    let staging_prefix = OsPath::from(format!(
-        "tenants/{}/uploads/tmp/{}/",
-        tenant.0.tenant_id, upload_id
-    ));
-
-    let listed = file_store
-        .list_with_delimiter(Some(&staging_prefix))
+        .ok_or_else(|| HttpError::agent("tenant storage not configured"))?
+        .for_tenant(&tenant.0.tenant_id)
         .await
-        .map_err(|e| HttpError::agent(format!("list staged parts: {e}")))?;
+        .map_err(|e| HttpError::agent(format!("storage for tenant: {e}")))?;
 
-    if listed.objects.is_empty() {
-        return Err(HttpError::not_found("no staged parts found for upload"));
-    }
+    let parts: Vec<agent_core::CompletedPart> = body
+        .parts
+        .iter()
+        .map(|p| agent_core::CompletedPart { n: p.n, etag: p.etag.clone() })
+        .collect();
 
-    let mut objects = listed.objects;
-    objects.sort_by(|a, b| a.location.as_ref().cmp(b.location.as_ref()));
-
-    let mut combined: Vec<u8> = Vec::new();
-    for obj in &objects {
-        let result = file_store
-            .get(&obj.location)
-            .await
-            .map_err(|e| HttpError::agent(format!("read staged part: {e}")))?;
-        let bytes = result
-            .bytes()
-            .await
-            .map_err(|e| HttpError::agent(format!("read staged bytes: {e}")))?;
-        combined.extend_from_slice(&bytes);
-    }
-
-    let size_bytes = combined.len() as u64;
-    let content = String::from_utf8_lossy(&combined).into_owned();
-
-    state
-        .workspace_content
-        .write(&tenant.0.tenant_id, &body.destination_path, &content)
+    let result = storage
+        .finalize_staged_upload(&upload_id, &parts, &dest_vp)
         .await
-        .map_err(|e| HttpError::agent(format!("write to destination: {e}")))?;
-
-    for obj in &objects {
-        let _ = file_store.delete(&obj.location).await;
-    }
+        .map_err(|e| HttpError::agent(format!("finalize upload: {e}")))?;
 
     state.storage_quota.invalidate(&tenant.0.tenant_id);
 
     Ok(Json(CompleteResponse {
-        virtual_path: body.destination_path,
-        size_bytes,
+        virtual_path: result.virtual_path.to_string(),
+        size_bytes: result.size_bytes,
     }))
 }
 
@@ -235,7 +180,6 @@ pub async fn abort(
     Extension(tenant): Extension<ResolvedTenant>,
     Path(upload_id): Path<String>,
 ) -> StatusCode {
-    // Parts in uploads/tmp/{upload_id}/ will be cleaned up by lifecycle rules (24h TTL).
     tracing::info!(
         tenant_id = %tenant.0.tenant_id,
         upload_id,

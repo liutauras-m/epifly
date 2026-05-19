@@ -1,7 +1,7 @@
 //! Built-in workspace capability — lets the agent save documents and list folders.
 //!
-//! Registered at startup with `include_always` so it is always available regardless
-//! of semantic routing results.
+//! Gateway routes inject `Arc<dyn WorkspaceStorage>` (the narrow Phase-1 trait) so
+//! capabilities cannot access multipart, staging, or raw credentials.
 //!
 //! # Tools
 //! - `workspace__save_document` — create a markdown document under a workspace folder
@@ -11,7 +11,9 @@ use agent_core::capabilities::card::CapabilityCard;
 use agent_core::capabilities::manifest::{ToolDef, ToolKind, ToolManifest};
 use agent_core::capabilities::provider::CapabilityProvider;
 use agent_core::context::tenant::TenantContext;
+use agent_core::{VirtualPath, WorkspaceStorage};
 use async_trait::async_trait;
+use bytes::Bytes;
 use common::memory::store::{WorkspaceContentStore, WorkspaceStore};
 use common::memory::workspace::NodeKind;
 use serde_json::{Value, json};
@@ -22,12 +24,23 @@ pub struct WorkspaceProvider {
     manifest: ToolManifest,
     workspace_store: Arc<dyn WorkspaceStore>,
     workspace_content: Arc<dyn WorkspaceContentStore>,
+    /// Narrow capability-safe storage interface. When provided, `save_document`
+    /// uses it instead of the legacy `WorkspaceContentStore`.
+    workspace_storage: Option<Arc<dyn WorkspaceStorage>>,
 }
 
 impl WorkspaceProvider {
     pub fn new(
         workspace_store: Arc<dyn WorkspaceStore>,
         workspace_content: Arc<dyn WorkspaceContentStore>,
+    ) -> Self {
+        Self::with_storage(workspace_store, workspace_content, None)
+    }
+
+    pub fn with_storage(
+        workspace_store: Arc<dyn WorkspaceStore>,
+        workspace_content: Arc<dyn WorkspaceContentStore>,
+        workspace_storage: Option<Arc<dyn WorkspaceStorage>>,
     ) -> Self {
         let manifest = ToolManifest {
             name: "workspace".into(),
@@ -84,7 +97,7 @@ impl WorkspaceProvider {
                 "file".into(),
             ],
         };
-        Self { manifest, workspace_store, workspace_content }
+        Self { manifest, workspace_store, workspace_content, workspace_storage }
     }
 
     pub fn into_card(self) -> CapabilityCard {
@@ -144,7 +157,6 @@ impl WorkspaceProvider {
             anyhow::bail!("folder_name and filename must not be empty");
         }
 
-        // Ensure the document name ends in .md (conversation nodes require it).
         let doc_name = if filename.ends_with(".md") {
             filename.to_string()
         } else {
@@ -169,20 +181,27 @@ impl WorkspaceProvider {
                 .map_err(|e| anyhow::anyhow!("create folder '{folder_name}': {e}"))?
         };
 
-        // Create the conversation (document) node inside the folder.
         let node = self
             .workspace_store
             .create_conversation(tenant_id, user_id, Some(folder.id), &doc_name)
             .await
             .map_err(|e| anyhow::anyhow!("create document '{doc_name}': {e}"))?;
 
-        // Write the markdown content to object storage.
-        if let Err(e) = self
-            .workspace_content
-            .write(tenant_id, &node.virtual_path, content)
-            .await
-        {
-            // Log but don't fail — the node exists even if the content write fails.
+        // Write content — prefer the narrow WorkspaceStorage trait if available.
+        let write_result = if let Some(ref ws) = self.workspace_storage {
+            let vp = VirtualPath::parse(&node.virtual_path)
+                .map_err(|e| anyhow::anyhow!("invalid virtual path: {e}"))?;
+            ws.put_object(&vp, Bytes::from(content.to_owned()), "text/markdown")
+                .await
+                .map(|_| ())
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        } else {
+            self.workspace_content
+                .write(tenant_id, &node.virtual_path, content)
+                .await
+        };
+
+        if let Err(e) = write_result {
             warn!(
                 error = %e,
                 path = node.virtual_path,

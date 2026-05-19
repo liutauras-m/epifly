@@ -4,11 +4,13 @@
 //! via AWS SigV4, plus plain S3 API calls for bucket configuration.
 
 pub mod bootstrap;
+pub mod bucket;
 pub mod iam;
 pub mod signing;
 
 pub use bootstrap::{BootstrapConfig, bootstrap_storage};
 pub use iam::{IamCreds, provision_tenant, deprovision_tenant};
+pub use bucket::sanitize_bucket_name;
 
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
@@ -272,6 +274,173 @@ impl RustFsAdminClient {
         }
     }
 
+    /// Create a named bucket if it does not yet exist; apply versioning + SSE.
+    ///
+    /// Idempotent: existing buckets are left unchanged.
+    #[instrument(skip(self), fields(bucket_name))]
+    pub async fn ensure_bucket_named(&self, bucket_name: &str) -> Result<()> {
+        let path = format!("/{bucket_name}");
+        let resp = self
+            .s3_request(Method::PUT, &path, "", &BTreeMap::new(), Bytes::new())
+            .await?;
+        match resp.status() {
+            StatusCode::OK | StatusCode::CONFLICT => {}
+            s => {
+                let body = resp.text().await.unwrap_or_default();
+                if !body.contains("BucketAlreadyOwnedByYou") && !body.contains("BucketAlreadyExists") {
+                    bail!("ensure_bucket_named({bucket_name}) failed: {s} — {body}")
+                }
+            }
+        }
+
+        // Enable versioning on the new bucket.
+        let versioning_xml = r#"<?xml version="1.0" encoding="UTF-8"?><VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Enabled</Status></VersioningConfiguration>"#;
+        let mut headers = BTreeMap::new();
+        headers.insert("content-type".into(), "application/xml".into());
+        let resp = self
+            .s3_request(
+                Method::PUT,
+                &path,
+                "versioning",
+                &headers,
+                Bytes::from(versioning_xml),
+            )
+            .await?;
+        if !resp.status().is_success() {
+            let t = resp.text().await.unwrap_or_default();
+            tracing::warn!(bucket_name, "set_versioning on new bucket failed: {t}");
+        }
+
+        // Apply SSE-S3 default encryption.
+        let sse_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<ServerSideEncryptionConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Rule><ApplyServerSideEncryptionByDefault><SSEAlgorithm>AES256</SSEAlgorithm></ApplyServerSideEncryptionByDefault></Rule>
+</ServerSideEncryptionConfiguration>"#;
+        headers.clear();
+        headers.insert("content-type".into(), "application/xml".into());
+        let resp = self
+            .s3_request(
+                Method::PUT,
+                &path,
+                "encryption=",
+                &headers,
+                Bytes::from(sse_xml),
+            )
+            .await?;
+        if !resp.status().is_success() {
+            let t = resp.text().await.unwrap_or_default();
+            tracing::warn!(bucket_name, "put_bucket_encryption on new bucket failed: {t}");
+        }
+
+        // Apply lifecycle rules: expire uploads/tmp/ after 1 day, exports/ after 7 days.
+        // Also adds AbortIncompleteMultipartUpload after 1 day as defence-in-depth.
+        let lifecycle_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<LifecycleConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Rule>
+    <ID>expire-staging-parts</ID>
+    <Status>Enabled</Status>
+    <Filter><Prefix>uploads/tmp/</Prefix></Filter>
+    <Expiration><Days>1</Days></Expiration>
+    <AbortIncompleteMultipartUpload><DaysAfterInitiation>1</DaysAfterInitiation></AbortIncompleteMultipartUpload>
+  </Rule>
+  <Rule>
+    <ID>expire-exports</ID>
+    <Status>Enabled</Status>
+    <Filter><Prefix>exports/</Prefix></Filter>
+    <Expiration><Days>7</Days></Expiration>
+  </Rule>
+</LifecycleConfiguration>"#;
+        headers.clear();
+        headers.insert("content-type".into(), "application/xml".into());
+        let resp = self
+            .s3_request(
+                Method::PUT,
+                &path,
+                "lifecycle",
+                &headers,
+                Bytes::from(lifecycle_xml),
+            )
+            .await?;
+        if !resp.status().is_success() {
+            let t = resp.text().await.unwrap_or_default();
+            tracing::warn!(bucket_name, "put_lifecycle on new bucket failed (non-fatal): {t}");
+        }
+
+        debug!(bucket_name, "per-tenant bucket ready");
+        Ok(())
+    }
+
+    /// Delete a bucket by name. The bucket must be empty first; use
+    /// `purge_bucket` to empty-then-delete in one call.
+    /// Returns Ok(()) if the bucket doesn't exist (idempotent).
+    #[instrument(skip(self), fields(bucket_name))]
+    pub async fn delete_bucket(&self, bucket_name: &str) -> Result<()> {
+        let path = format!("/{bucket_name}");
+        let resp = self
+            .s3_request(Method::DELETE, &path, "", &BTreeMap::new(), Bytes::new())
+            .await?;
+        match resp.status() {
+            s if s.is_success() => Ok(()),
+            StatusCode::NOT_FOUND => Ok(()),
+            s => {
+                let t = resp.text().await.unwrap_or_default();
+                bail!("delete_bucket({bucket_name}) failed: {s} — {t}")
+            }
+        }
+    }
+
+    /// Delete every object version in `bucket_name` then delete the bucket.
+    /// No-op if the bucket doesn't exist.
+    #[instrument(skip(self), fields(bucket_name))]
+    pub async fn purge_bucket(&self, bucket_name: &str) -> Result<()> {
+        // List all objects (using ListObjectsV2 without versions first as a simpler path).
+        let path = format!("/{bucket_name}");
+        let mut continuation: Option<String> = None;
+        loop {
+            let query = if let Some(ref tok) = continuation {
+                format!("list-type=2&max-keys=1000&continuation-token={}", urlencoding(tok))
+            } else {
+                "list-type=2&max-keys=1000".to_string()
+            };
+            let resp = self
+                .s3_request(Method::GET, &path, &query, &BTreeMap::new(), Bytes::new())
+                .await?;
+            match resp.status() {
+                StatusCode::NOT_FOUND => return Ok(()),
+                s if !s.is_success() => {
+                    let t = resp.text().await.unwrap_or_default();
+                    bail!("purge_bucket list({bucket_name}) failed: {s} — {t}");
+                }
+                _ => {}
+            }
+            let xml = resp.text().await.context("read list body")?;
+            let keys = parse_list_objects_v2(&xml);
+            if keys.is_empty() {
+                break;
+            }
+            for key in &keys {
+                let obj_path = format!("/{bucket_name}/{}", urlencoding(key));
+                let resp = self
+                    .s3_request(Method::DELETE, &obj_path, "", &BTreeMap::new(), Bytes::new())
+                    .await?;
+                if !resp.status().is_success() && resp.status() != StatusCode::NOT_FOUND {
+                    let s = resp.status();
+                    let t = resp.text().await.unwrap_or_default();
+                    bail!("purge_bucket delete({key}) failed: {s} — {t}");
+                }
+            }
+            // Check truncated
+            if !xml.contains("<IsTruncated>true</IsTruncated>") {
+                break;
+            }
+            continuation = parse_next_continuation_token(&xml);
+            if continuation.is_none() {
+                break;
+            }
+        }
+        self.delete_bucket(bucket_name).await
+    }
+
     // ── MinIO admin API — IAM / service accounts ─────────────────────────
 
     /// Create a service account (access key) for the given IAM user with an
@@ -329,6 +498,72 @@ impl RustFsAdminClient {
         if !s.is_success() {
             let t = resp.text().await.unwrap_or_default();
             bail!("create_service_account failed: {s} — {t}");
+        }
+
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct ServiceAccountResp {
+            access_key: String,
+            secret_key: String,
+        }
+
+        let sa: ServiceAccountResp = resp
+            .json()
+            .await
+            .context("parse service-account response")?;
+        Ok((sa.access_key, sa.secret_key))
+    }
+
+    /// Create a service account with a **bucket-scoped** policy (Phase 2).
+    ///
+    /// The policy grants full access to the named per-tenant bucket with no
+    /// `s3:prefix` condition — simpler and smaller blast radius than the legacy
+    /// prefix-scoped variant. Use this for tenants on the Modern layout.
+    #[instrument(skip(self), fields(tenant_id, bucket_name))]
+    pub async fn create_bucket_scoped_service_account(
+        &self,
+        tenant_id: &str,
+        bucket_name: &str,
+    ) -> Result<(String, String)> {
+        let policy = serde_json::json!({
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "s3:GetObject", "s3:PutObject", "s3:DeleteObject",
+                        "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts",
+                        "s3:CreateMultipartUpload", "s3:CompleteMultipartUpload",
+                        "s3:UploadPart"
+                    ],
+                    "Resource": [format!("arn:aws:s3:::{bucket_name}/*")]
+                },
+                {
+                    "Effect": "Allow",
+                    "Action": ["s3:ListBucket"],
+                    "Resource": [format!("arn:aws:s3:::{bucket_name}")]
+                }
+            ]
+        });
+
+        let body = serde_json::json!({
+            "policy": policy.to_string(),
+            "description": format!("tenant-{tenant_id}"),
+        });
+
+        let resp = self
+            .admin_request(
+                Method::PUT,
+                "/add-service-account",
+                "",
+                Bytes::from(serde_json::to_vec(&body)?),
+            )
+            .await?;
+
+        let s = resp.status();
+        if !s.is_success() {
+            let t = resp.text().await.unwrap_or_default();
+            bail!("create_bucket_scoped_service_account failed: {s} — {t}");
         }
 
         #[derive(Deserialize)]
@@ -527,6 +762,22 @@ fn extract_xml_text<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
     let start = xml.find(&open)? + open.len();
     let end = xml[start..].find(&close)? + start;
     Some(&xml[start..end])
+}
+
+fn parse_list_objects_v2(xml: &str) -> Vec<String> {
+    let mut keys = Vec::new();
+    for block in xml.split("<Key>").skip(1) {
+        let end = block.find("</Key>").unwrap_or(block.len());
+        let key = &block[..end];
+        if !key.is_empty() {
+            keys.push(key.to_string());
+        }
+    }
+    keys
+}
+
+fn parse_next_continuation_token(xml: &str) -> Option<String> {
+    extract_xml_text(xml, "NextContinuationToken").map(|s| s.to_string())
 }
 
 fn urlencoding(s: &str) -> String {

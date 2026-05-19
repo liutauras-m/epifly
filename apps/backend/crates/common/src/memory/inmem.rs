@@ -161,6 +161,7 @@ impl ThreadStore for InMemoryThreadStore {
 pub struct InMemoryWorkspaceStore {
     nodes: Mutex<HashMap<Ulid, WorkspaceNode>>,
     content: Mutex<HashMap<Ulid, String>>,
+    seeded: Mutex<std::collections::HashSet<String>>,
 }
 
 impl InMemoryWorkspaceStore {
@@ -321,7 +322,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         user_id: &str,
         node_id: Ulid,
     ) -> anyhow::Result<()> {
-        // Verify access first
+        // Verify access first; block deletion of protected roots.
         {
             let nodes = self.nodes.lock().unwrap();
             let node = nodes
@@ -332,7 +333,9 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
                         "node {node_id}"
                     )))
                 })?;
-            let _ = node; // just checking access
+            if node.is_protected_root {
+                anyhow::bail!("cannot delete protected workspace root folder");
+            }
         }
 
         // Worklist-based recursive delete
@@ -351,6 +354,34 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
             self.content.lock().unwrap().remove(&current);
         }
         Ok(())
+    }
+
+    async fn rename_node(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+        node_id: Ulid,
+        new_name: String,
+    ) -> anyhow::Result<WorkspaceNode> {
+        let mut nodes = self.nodes.lock().unwrap();
+        let node = nodes
+            .get_mut(&node_id)
+            .filter(|n| n.tenant_id == tenant_id && Self::check_access(n, user_id))
+            .ok_or_else(|| {
+                anyhow::anyhow!(crate::error::ConusAiError::NotFound(format!(
+                    "node {node_id}"
+                )))
+            })?;
+        validate_name(&new_name, node.kind).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let parent_prefix = node
+            .virtual_path
+            .rsplit_once('/')
+            .map(|(p, _)| format!("{p}/"))
+            .unwrap_or_default();
+        node.name = new_name.clone();
+        node.virtual_path = format!("{parent_prefix}{new_name}");
+        node.last_modified = chrono::Utc::now();
+        Ok(node.clone())
     }
 
     async fn share_node(
@@ -481,6 +512,38 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         node.metadata = serde_json::Value::Object(meta);
         node.last_modified = Utc::now();
         Ok(node.clone())
+    }
+
+    async fn is_tenant_seeded(&self, tenant_id: &str) -> anyhow::Result<bool> {
+        Ok(self.seeded.lock().unwrap().contains(tenant_id))
+    }
+
+    async fn mark_tenant_seeded(&self, tenant_id: &str) -> anyhow::Result<()> {
+        self.seeded.lock().unwrap().insert(tenant_id.to_owned());
+        Ok(())
+    }
+
+    async fn create_protected_root_folder(
+        &self,
+        tenant_id: &str,
+        owner_id: &str,
+        name: &str,
+    ) -> anyhow::Result<WorkspaceNode> {
+        validate_name(name, NodeKind::Folder).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let virtual_path = name.to_owned();
+        let mut node = WorkspaceNode::new_folder(tenant_id, owner_id, None, name, virtual_path);
+        node.is_protected_root = true;
+        self.nodes.lock().unwrap().insert(node.id, node.clone());
+        Ok(node)
+    }
+
+    async fn purge_tenant_data(&self, tenant_id: &str) -> anyhow::Result<()> {
+        self.nodes
+            .lock()
+            .unwrap()
+            .retain(|_, node| node.tenant_id != tenant_id);
+        self.seeded.lock().unwrap().remove(tenant_id);
+        Ok(())
     }
 }
 
