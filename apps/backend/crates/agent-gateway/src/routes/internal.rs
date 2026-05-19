@@ -24,9 +24,12 @@ fn verify_hmac(secret: &str, payload: &[u8], signature: &str) -> bool {
         Err(_) => return false,
     };
     mac.update(payload);
-    let expected = hex::encode(mac.finalize().into_bytes());
-    // Compare in constant time via byte comparison of hex strings
-    expected.as_bytes() == signature.trim_start_matches("sha256=").as_bytes()
+    // Decode the hex signature and use constant-time verify_slice to prevent timing attacks.
+    let sig_hex = signature.trim_start_matches("sha256=");
+    match hex::decode(sig_hex) {
+        Ok(sig_bytes) => mac.verify_slice(&sig_bytes).is_ok(),
+        Err(_) => false,
+    }
 }
 
 /// S3 event record (subset of the full S3 notification schema).
@@ -174,7 +177,7 @@ pub async fn rustfs_events(
         }
     }
 
-    StatusCode::OK
+    StatusCode::NO_CONTENT
 }
 
 fn extract_tenant_from_key(key: &str) -> Option<&str> {

@@ -408,6 +408,70 @@ impl RustFsAdminClient {
         }
     }
 
+    /// List object versions for a key prefix via S3 `GET /{bucket}?versions&prefix=`.
+    ///
+    /// Returns a list of `(version_id, last_modified_rfc3339, size, is_latest)` tuples.
+    /// Parses the S3 XML response without an XML library using targeted string extraction.
+    #[instrument(skip(self), fields(prefix))]
+    pub async fn list_object_versions(
+        &self,
+        prefix: &str,
+    ) -> Result<Vec<(String, String, u64, bool)>> {
+        let path = format!("/{}", self.bucket);
+        let query = format!("versions=&prefix={}", urlencoding(prefix));
+        let resp = self
+            .s3_request(Method::GET, &path, &query, &BTreeMap::new(), Bytes::new())
+            .await?;
+        let s = resp.status();
+        if !s.is_success() {
+            let t = resp.text().await.unwrap_or_default();
+            bail!("list_object_versions failed: {s} — {t}");
+        }
+        let xml = resp.text().await.context("read list versions body")?;
+        Ok(parse_version_list(&xml))
+    }
+
+    /// GET a specific object version from S3 (`?versionId={id}`).
+    pub async fn get_object_version(&self, key: &str, version_id: &str) -> Result<bytes::Bytes> {
+        let path = format!("/{}/{}", self.bucket, key);
+        let query = format!("versionId={}", urlencoding(version_id));
+        let resp = self
+            .s3_request(Method::GET, &path, &query, &BTreeMap::new(), Bytes::new())
+            .await?;
+        let s = resp.status();
+        if !s.is_success() {
+            let t = resp.text().await.unwrap_or_default();
+            bail!("get_object_version {key}?{version_id} failed: {s} — {t}");
+        }
+        Ok(resp.bytes().await.context("read object version bytes")?)
+    }
+
+    /// PUT bucket default encryption (SSE-S3 AES256).
+    #[instrument(skip(self), fields(bucket = %self.bucket))]
+    pub async fn put_bucket_encryption(&self) -> Result<()> {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<ServerSideEncryptionConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Rule>
+    <ApplyServerSideEncryptionByDefault>
+      <SSEAlgorithm>AES256</SSEAlgorithm>
+    </ApplyServerSideEncryptionByDefault>
+  </Rule>
+</ServerSideEncryptionConfiguration>"#;
+        let path = format!("/{}", self.bucket);
+        let mut headers = BTreeMap::new();
+        headers.insert("content-type".into(), "application/xml".into());
+        let resp = self
+            .s3_request(Method::PUT, &path, "encryption=", &headers, Bytes::from(xml))
+            .await?;
+        let s = resp.status();
+        if s.is_success() {
+            Ok(())
+        } else {
+            let t = resp.text().await.unwrap_or_default();
+            bail!("put_bucket_encryption failed: {s} — {t}")
+        }
+    }
+
     /// Attach a named policy to a user.
     #[instrument(skip(self), fields(policy_name, user))]
     pub async fn attach_policy(&self, policy_name: &str, user: &str) -> Result<()> {
@@ -431,6 +495,38 @@ impl RustFsAdminClient {
             bail!("attach_policy failed: {s} — {t}")
         }
     }
+}
+
+/// Parse a subset of the S3 `ListVersionsResult` XML without a full XML library.
+/// Extracts `<Version>` blocks (not `<DeleteMarker>`) and returns
+/// `(version_id, last_modified, size, is_latest)`.
+fn parse_version_list(xml: &str) -> Vec<(String, String, u64, bool)> {
+    let mut out = Vec::new();
+    // Split on <Version> open tags; each piece after index 0 is one version block.
+    for block in xml.split("<Version>").skip(1) {
+        let end = block.find("</Version>").unwrap_or(block.len());
+        let inner = &block[..end];
+        let version_id = extract_xml_text(inner, "VersionId").unwrap_or_default().to_string();
+        let last_modified = extract_xml_text(inner, "LastModified").unwrap_or_default().to_string();
+        let size = extract_xml_text(inner, "Size")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let is_latest = extract_xml_text(inner, "IsLatest")
+            .map(|s| s.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        if !version_id.is_empty() {
+            out.push((version_id, last_modified, size, is_latest));
+        }
+    }
+    out
+}
+
+fn extract_xml_text<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = xml.find(&open)? + open.len();
+    let end = xml[start..].find(&close)? + start;
+    Some(&xml[start..end])
 }
 
 fn urlencoding(s: &str) -> String {

@@ -4,8 +4,8 @@
 //! credentials stored in `CredentialStore`. Falls back to root credentials when
 //! `RUSTFS_PER_TENANT_IAM=off` (dev only).
 //!
-//! SSE-S3 (`x-amz-server-side-encryption: AES256`) is applied on every write
-//! when `RUSTFS_SSE=on` (default).
+//! SSE-S3 is enforced at the bucket level via declarative bootstrap (PUT bucket
+//! encryption). No per-request SSE headers are needed.
 //!
 //! Key scheme: `tenants/{tenant_id}/workspaces/{virtual_path}`
 
@@ -28,10 +28,6 @@ fn s3_endpoint() -> String {
 
 fn s3_bucket() -> String {
     std::env::var("S3_BUCKET").unwrap_or_else(|_| "workspace".into())
-}
-
-fn sse_enabled() -> bool {
-    std::env::var("RUSTFS_SSE").as_deref() != Ok("off")
 }
 
 fn per_tenant_iam() -> bool {
@@ -146,10 +142,8 @@ impl WorkspaceContentStore for RustFsContentStore {
         let key = Self::object_key(tenant_id, virtual_path);
 
         let mut opts = PutOptions::default();
-        if sse_enabled() {
-            opts.attributes
-                .insert(object_store::Attribute::ContentType, "text/markdown".into());
-        }
+        opts.attributes
+            .insert(object_store::Attribute::ContentType, "text/markdown".into());
 
         let payload: PutPayload = Bytes::from(body.to_owned()).into();
         store

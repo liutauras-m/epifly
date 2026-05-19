@@ -2,7 +2,6 @@ pub mod coco_indexer;
 pub mod embedding_service;
 #[cfg(feature = "local-embeddings")]
 pub mod local_embedding_service;
-pub mod real_fs_watcher;
 
 pub use coco_indexer::WorkspaceIndexer;
 pub use embedding_service::{
@@ -10,4 +9,3 @@ pub use embedding_service::{
 };
 #[cfg(feature = "local-embeddings")]
 pub use local_embedding_service::LocalEmbeddingService;
-pub use real_fs_watcher::RealFsWatcher;
