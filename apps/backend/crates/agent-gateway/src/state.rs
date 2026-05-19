@@ -7,7 +7,8 @@ use agent_core::{
     DefaultConversationService, EmbeddingService, LlmRegistry, NamespaceFilter,
     NoopEmbeddingService, OpenAiEmbeddingService, QdrantVectorStore, RealtimeService,
     RedbMetadataStore, RustFsContentStore, SemanticCapabilityRouter, SemanticRouterConfig,
-    StorageQuotaService, build_admin,
+    StorageQuotaService, TenantOnboardingService, TenantStorageFactory, build_admin,
+    build_root_store,
 };
 use agent_core::identity::IdentityManager;
 use agent_core::{LegacyIdentityProvider, ZitadelProvider};
@@ -18,11 +19,13 @@ use common::memory::{
     InMemoryAuditStore, InMemoryThreadStore, InMemoryWorkspaceContent, InMemoryWorkspaceStore,
     ThreadStore, WorkspaceContentStore, WorkspaceStore,
 };
-use jobs::jobs::{AuditLogCleanupJob, CapabilityHealthCheckJob, LagoReconcileJob, RustFsKeyRotationJob, VideoTranscriptionJob};
+use jobs::jobs::{AuditLogCleanupJob, CapabilityHealthCheckJob, LagoReconcileJob, RustFsKeyRotationJob, TenantBucketMigrationJob, VideoTranscriptionJob};
 use jobs::{JobAdmin, JobContext, JobExecutor, JobRegistry};
-use object_store::{ObjectStore, aws::AmazonS3Builder};
+use object_store::aws::AmazonS3Builder;
+use object_store::ObjectStore;
 use redb::Database;
 use rustfs_admin::RustFsAdminClient;
+use crate::metrics::RustFsMetrics;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
@@ -37,8 +40,16 @@ pub struct AppState {
     pub rustfs_admin: Option<Arc<RustFsAdminClient>>,
     /// Per-tenant credential store (encrypted in redb)
     pub cred_store: Option<Arc<CredentialStore>>,
+    /// Per-tenant storage factory — single source of truth for all S3 operations
+    pub tenant_storage: Option<Arc<TenantStorageFactory>>,
+    /// Tenant onboarding service — provisions IAM + default workspace root
+    pub onboarding: Option<Arc<TenantOnboardingService>>,
     /// Per-tenant storage quota service
     pub storage_quota: Arc<StorageQuotaService>,
+    /// Prometheus metrics for storage operations and fallbacks.
+    pub rustfs_metrics: Option<Arc<RustFsMetrics>>,
+    /// Per-tenant single-flight mutex for the onboarding safety net in the `tree` route.
+    pub onboarding_guards: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     /// In-memory device tokens for browser-shell (keyed by blake3 hash of plaintext token).
     pub device_tokens: Mutex<HashMap<String, DeviceToken>>,
     pub thread_store: Arc<dyn ThreadStore>,
@@ -110,11 +121,6 @@ impl AppState {
                 .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?,
         );
 
-        let workspace_content: Arc<dyn WorkspaceContentStore> =
-            RustFsContentStore::new(Some(Arc::clone(&cred_store)));
-
-        info!("workspace content: RustFS/S3 object store (per-tenant IAM)");
-
         let thread_store: Arc<dyn ThreadStore> = {
             let s: Arc<RedbMetadataStore> = Arc::clone(&metadata_store);
             s
@@ -128,11 +134,30 @@ impl AppState {
             s
         };
 
+        let tenant_storage = Arc::new(TenantStorageFactory::new(
+            Arc::clone(&cred_store),
+            Arc::clone(&audit_store),
+        ));
+
+        let workspace_content: Arc<dyn WorkspaceContentStore> =
+            RustFsContentStore::new(Arc::clone(&tenant_storage));
+
+        info!("workspace content: RustFS/S3 object store (per-tenant IAM via TenantStorageFactory)");
+
         let file_store = init_file_store();
 
         let rustfs_admin = init_rustfs_admin();
 
-        let storage_quota = StorageQuotaService::new(Some(Arc::clone(&cred_store)));
+        let onboarding = rustfs_admin.as_ref().map(|admin| {
+            TenantOnboardingService::new(
+                Arc::clone(&workspace_store),
+                Arc::clone(&tenant_storage),
+                Arc::clone(&cred_store),
+                Arc::clone(admin),
+            )
+        });
+
+        let storage_quota = StorageQuotaService::new(Arc::clone(&tenant_storage));
 
         let embedding_service: Arc<dyn EmbeddingService> = match std::env::var("EMBEDDING_BACKEND")
             .as_deref()
@@ -266,6 +291,10 @@ impl AppState {
         if let (Some(ra), Some(cs)) = (rustfs_admin.as_ref(), Some(&cred_store)) {
             job_ctx = job_ctx.with_rustfs(Arc::clone(ra), Arc::clone(cs));
         }
+        job_ctx = job_ctx.with_storage(
+            Arc::clone(&tenant_storage),
+            Arc::clone(&workspace_store),
+        );
         let job_ctx = Arc::new(job_ctx);
         let job_registry = build_job_registry(job_ctx, billing.clone());
         let job_executor = JobExecutor::new(Arc::clone(&job_registry));
@@ -287,7 +316,11 @@ impl AppState {
             file_store,
             rustfs_admin,
             cred_store: Some(cred_store),
+            tenant_storage: Some(tenant_storage),
+            onboarding,
             storage_quota,
+            rustfs_metrics: None,
+            onboarding_guards: Arc::new(Mutex::new(HashMap::new())),
             device_tokens: Mutex::new(HashMap::new()),
             thread_store,
             audit_store,
@@ -379,7 +412,11 @@ impl AppState {
             file_store: None,
             rustfs_admin: None,
             cred_store: None,
-            storage_quota: StorageQuotaService::new(None),
+            tenant_storage: None,
+            onboarding: None,
+            storage_quota: noop_quota_service(),
+            rustfs_metrics: None,
+            onboarding_guards: Arc::new(Mutex::new(HashMap::new())),
             device_tokens: Mutex::new(HashMap::new()),
             thread_store,
             audit_store,
@@ -403,6 +440,26 @@ impl AppState {
             plan_catalog,
         })
     }
+}
+
+/// Build a quota service backed by a dev-fallback factory (for test mode).
+fn noop_quota_service() -> Arc<StorageQuotaService> {
+    // In test mode there's no redb or RustFS. Use a factory that always falls back.
+    // RUSTFS_DEV_FALLBACK_ROOT=on is set by the test harness so for_tenant won't error.
+    // Quota checks are disabled in test mode anyway (RUSTFS_QUOTAS=off default).
+    use agent_core::store::creds::CredentialStore;
+    use redb::Database;
+    let db = Arc::new(
+        Database::builder()
+            .create_with_backend(redb::backends::InMemoryBackend::new())
+            .unwrap(),
+    );
+    let cs = Arc::new(CredentialStore::new(db).unwrap());
+    let audit: Arc<dyn common::audit::AuditStore> =
+        Arc::new(common::memory::InMemoryAuditStore::new());
+    // Safety: single-threaded at startup in test/dev mode; no concurrent env reads.
+    unsafe { std::env::set_var("RUSTFS_DEV_FALLBACK_ROOT", "on") };
+    StorageQuotaService::new(Arc::new(TenantStorageFactory::new(cs, audit)))
 }
 
 fn init_file_store() -> Option<Arc<dyn ObjectStore>> {
@@ -483,6 +540,7 @@ fn build_job_registry(
     registry.register_scheduled(AuditLogCleanupJob);
     registry.register_scheduled(LagoReconcileJob);
     registry.register_scheduled(RustFsKeyRotationJob);
+    registry.register_scheduled(TenantBucketMigrationJob);
     registry.register_background(VideoTranscriptionJob);
     Arc::new(registry)
 }

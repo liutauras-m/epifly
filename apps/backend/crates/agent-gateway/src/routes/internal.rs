@@ -103,10 +103,13 @@ pub async fn rustfs_events(
     for record in &payload.records {
         let key = &record.s3.object.key;
         let event = &record.event_name;
+        let bucket = &record.s3.bucket.name;
 
-        // Extract tenant_id from key: tenants/{tenant_id}/workspaces/{virtual_path}
-        let Some(tenant_id) = extract_tenant_from_key(key) else {
-            warn!(key, "could not extract tenant_id from object key");
+        // Extract tenant_id — try legacy key prefix first, then modern bucket name.
+        let tenant_id = extract_tenant_from_key(key)
+            .or_else(|| extract_tenant_from_bucket(bucket));
+        let Some(tenant_id) = tenant_id else {
+            warn!(key, bucket, "could not extract tenant_id from object key or bucket");
             continue;
         };
 
@@ -181,16 +184,25 @@ pub async fn rustfs_events(
 }
 
 fn extract_tenant_from_key(key: &str) -> Option<&str> {
-    // key format: tenants/{tenant_id}/workspaces/{virtual_path}
+    // Legacy key format: tenants/{tenant_id}/workspaces/{virtual_path}
     let after = key.strip_prefix("tenants/")?;
     let slash = after.find('/')?;
     Some(&after[..slash])
 }
 
+fn extract_tenant_from_bucket(bucket_name: &str) -> Option<&str> {
+    // Modern bucket name: ws-{tenant_id}
+    bucket_name.strip_prefix("ws-")
+}
+
 fn extract_virtual_path(key: &str) -> &str {
-    // Strip "tenants/{id}/workspaces/" prefix
+    // Handle both layouts:
+    // Legacy:  tenants/{id}/workspaces/{vp}
+    // Modern:  workspaces/{vp}
     if let Some(pos) = key.find("/workspaces/") {
         &key[pos + "/workspaces/".len()..]
+    } else if let Some(stripped) = key.strip_prefix("workspaces/") {
+        stripped
     } else {
         key
     }

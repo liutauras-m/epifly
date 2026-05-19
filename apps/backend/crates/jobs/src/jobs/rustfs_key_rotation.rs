@@ -80,8 +80,14 @@ impl ScheduledJob for RustFsKeyRotationJob {
                 "rustfs-key-rotation: rotating credentials"
             );
 
-            // Provision a new service account.
-            let new_iam = match iam::provision_tenant(admin, tenant_id).await {
+            // Rotate to a new service account, preserving the existing bucket.
+            // Use the dedicated rotate function (not provision_tenant) to avoid
+            // attempting to create a new bucket on credential rotation.
+            let effective_bucket = creds.bucket.clone()
+                .unwrap_or_else(|| rustfs_admin::bucket::sanitize_bucket_name(
+                    &format!("ws-{tenant_id}")
+                ));
+            let new_iam = match iam::rotate_tenant_credentials(admin, tenant_id, &effective_bucket).await {
                 Ok(c) => c,
                 Err(e) => {
                     warn!(tenant_id, error = %e, "rustfs-key-rotation: failed to provision new creds");
@@ -96,6 +102,7 @@ impl ScheduledJob for RustFsKeyRotationJob {
                 access_key: new_iam.access_key.clone(),
                 secret_key: new_iam.secret_key.clone(),
                 created_at: 0, // will be stamped by CredentialStore::store
+                bucket: creds.bucket.clone(), // preserve existing bucket
             };
             if let Err(e) = cred_store.store(tenant_id, &new_creds).await {
                 warn!(tenant_id, error = %e, "rustfs-key-rotation: failed to persist new creds; aborting rotation for this tenant");

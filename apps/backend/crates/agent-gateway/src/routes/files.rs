@@ -83,6 +83,7 @@ pub async fn presign_upload(
                 .or_else(|_| std::env::var("AWS_SECRET_ACCESS_KEY"))
                 .unwrap_or_else(|_| "rustfsadmin".into()),
             created_at: 0,
+            bucket: None,
         },
     };
 
@@ -155,6 +156,7 @@ pub async fn presign_download(
                 .or_else(|_| std::env::var("AWS_SECRET_ACCESS_KEY"))
                 .unwrap_or_else(|_| "rustfsadmin".into()),
             created_at: 0,
+            bucket: None,
         },
     };
 

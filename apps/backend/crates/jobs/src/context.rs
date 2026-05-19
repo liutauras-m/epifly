@@ -1,8 +1,9 @@
 //! `JobContext` — shared dependencies injected into every job run.
 
-use agent_core::store::CredentialStore;
+use agent_core::store::{CredentialStore, tenant_storage::TenantStorageFactory};
 use billing_core::provider::BillingProvider;
 use common::audit::AuditStore;
+use common::memory::store::WorkspaceStore;
 use rustfs_admin::RustFsAdminClient;
 use std::sync::Arc;
 
@@ -23,6 +24,10 @@ pub struct JobContext {
     pub rustfs_admin: Option<Arc<RustFsAdminClient>>,
     /// Per-tenant credential store (read/write encrypted creds in redb).
     pub cred_store: Option<Arc<CredentialStore>>,
+    /// Tenant storage factory — used by the bucket migration backfill job.
+    pub tenant_storage_factory: Option<Arc<TenantStorageFactory>>,
+    /// Workspace metadata store — used by the bucket migration job.
+    pub workspace_store: Option<Arc<dyn WorkspaceStore>>,
 }
 
 impl JobContext {
@@ -38,6 +43,8 @@ impl JobContext {
             billing: None,
             rustfs_admin: None,
             cred_store: None,
+            tenant_storage_factory: None,
+            workspace_store: None,
         }
     }
 
@@ -53,6 +60,16 @@ impl JobContext {
     ) -> Self {
         self.rustfs_admin = Some(admin);
         self.cred_store = Some(cred_store);
+        self
+    }
+
+    pub fn with_storage(
+        mut self,
+        factory: Arc<TenantStorageFactory>,
+        workspace_store: Arc<dyn WorkspaceStore>,
+    ) -> Self {
+        self.tenant_storage_factory = Some(factory);
+        self.workspace_store = Some(workspace_store);
         self
     }
 }

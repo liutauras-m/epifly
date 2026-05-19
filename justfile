@@ -51,8 +51,50 @@ types:
 
 # ── Full verify (CI gate) ─────────────────────────────────────────────────────
 
+# ── Tenant path lint (CI guard) ───────────────────────────────────────────────
+# Rejects any hand-rolled `tenants/{...}` string literals outside tenant_storage.rs.
+lint-tenant-paths:
+    @! grep -rnE 'tenants/\{|format!\("tenants/' \
+        --include='*.rs' \
+        --exclude-dir=target \
+        --exclude-dir=tests \
+        apps/backend/crates \
+      | grep -vE ':[[:space:]]*//' \
+      | grep -v 'apps/backend/crates/agent-core/src/store/tenant_storage.rs' \
+      | grep -v 'apps/backend/crates/agent-core/src/store/presign.rs' \
+      | grep -v 'apps/backend/crates/rustfs-admin/' \
+      | grep -v 'apps/backend/crates/agent-core/src/context/tenant.rs' \
+      | grep -v 'apps/backend/crates/agent-gateway/src/ui/handlers/' \
+      | grep -v 'apps/backend/crates/common/src/path_safety.rs' \
+      || (echo "ERROR: Forbidden hand-rolled tenant path literal outside tenant_storage.rs"; exit 1)
+
+# ── Capability storage isolation guard (CI guard) ─────────────────────────────
+# Rejects capability files that import object_store, TenantStorage, or S3_BUCKET
+# directly — capabilities must use Arc<dyn WorkspaceStorage> only.
+lint-capability-storage:
+    @! grep -rnE 'use object_store|TenantStorage|S3_BUCKET|format!\("tenants/' \
+        --include='*.rs' \
+        --exclude-dir=target \
+        apps/backend/crates/agent-gateway/src/capabilities \
+      || (echo "ERROR: Capability code must not access object_store/TenantStorage/S3_BUCKET directly — use Arc<dyn WorkspaceStorage>"; exit 1)
+
+# ── Tenant bucket migration (Phase 2 operator gate) ──────────────────────────
+# Migrates tenants from the shared `workspace` bucket to per-tenant `ws-{id}` buckets.
+# Safe to re-run; already-migrated tenants are skipped.
+#
+#   just migrate-tenant-buckets              # migrate all pending tenants
+#   just migrate-tenant-buckets -- --dry-run # print plan, no data movement
+#   just migrate-tenant-buckets -- --tenant acme-corp  # canary single tenant
+migrate-tenant-buckets *args:
+    @echo "Triggering tenant bucket migration job..."
+    @MIGRATION_DRY_RUN=$(echo "{{args}}" | grep -q '\-\-dry-run' && echo true || echo false) \
+     MIGRATION_TENANT_ID=$(echo "{{args}}" | grep -oP '(?<=--tenant )\S+' || true) \
+     cargo run -p agent-gateway --bin trigger-job -- tenant-bucket-migration
+
 verify:
     cargo clippy --workspace -- -D warnings
+    just lint-tenant-paths
+    just lint-capability-storage
     pnpm -w lint
     pnpm -w test
     cargo test --workspace

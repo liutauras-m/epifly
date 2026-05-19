@@ -4,7 +4,7 @@
 /// Access model: every node is private to owner_id; sharing is explicit per node.
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
-use agent_core::{StorageCreds, presign_get, presign_put};
+use agent_core::VirtualPath;
 use axum::{
     Extension, Json,
     extract::{Path, Query, State},
@@ -15,6 +15,7 @@ use common::error::HttpError;
 use common::memory::workspace::{NodeKind, WorkspaceNode, effective_user_id, validate_name};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::instrument;
 use ulid::Ulid;
 
@@ -227,6 +228,60 @@ pub async fn tree(
         .list_accessible_children(&tenant.tenant_id, user, q.parent_id)
         .await
         .map_err(map_err)?;
+
+    // § 1.6 Runtime safety net: first-time root listing for unseeded tenants.
+    // If this is a root-level query, the list is empty, and the tenant has not
+    // been seeded yet, run idempotent provisioning (single-flight per tenant).
+    if q.parent_id.is_none() && nodes.is_empty() {
+        if let Some(ref onboarding) = state.onboarding {
+            let seeded = state
+                .workspace_store
+                .is_tenant_seeded(&tenant.tenant_id)
+                .await
+                .unwrap_or(true); // on error, assume seeded to avoid repeated provision
+
+            if !seeded {
+                // Acquire the per-tenant single-flight lock before provisioning.
+                let guard = {
+                    let mut guards = state.onboarding_guards.lock().unwrap();
+                    guards
+                        .entry(tenant.tenant_id.as_str().to_owned())
+                        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                        .clone()
+                };
+                let _lock = guard.lock().await;
+
+                // Re-check after acquiring lock (another request may have seeded).
+                let still_unseeded = state
+                    .workspace_store
+                    .is_tenant_seeded(&tenant.tenant_id)
+                    .await
+                    .unwrap_or(true);
+
+                if !still_unseeded {
+                    use agent_core::store::onboarding::{OnboardingOptions, TenantKind};
+                    let owner = tenant.user_id.as_deref().unwrap_or("__dev__");
+                    let opts = OnboardingOptions { kind: TenantKind::Normal, root_name: None };
+                    if let Err(e) = onboarding.provision(&tenant.tenant_id, owner, opts).await {
+                        tracing::warn!(
+                            error = %e,
+                            tenant_id = %tenant.tenant_id,
+                            "tree safety-net: onboarding provision failed"
+                        );
+                    }
+
+                    // Re-fetch after provisioning so the root folder appears immediately.
+                    let fresh = state
+                        .workspace_store
+                        .list_accessible_children(&tenant.tenant_id, user, None)
+                        .await
+                        .map_err(map_err)?;
+                    return Ok(Json(apply_cursor(fresh, q.after)));
+                }
+            }
+        }
+    }
+
     Ok(Json(apply_cursor(nodes, q.after)))
 }
 
@@ -453,6 +508,57 @@ pub async fn move_node(
     Ok(Json(node))
 }
 
+/// POST /v1/workspaces/:id/rename — rename a workspace node.
+///
+/// Protected root folders can only be renamed by users with `tenant:admin` role.
+#[utoipa::path(
+    post,
+    path = "/v1/workspaces/{id}/rename",
+    params(("id" = String, Path, description = "Node ULID")),
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Updated node", body = serde_json::Value),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "workspaces",
+)]
+#[instrument(skip(state, tenant, body))]
+pub async fn rename_node(
+    State(state): State<Arc<AppState>>,
+    Extension(ResolvedTenant(tenant)): Extension<ResolvedTenant>,
+    Path(id): Path<Ulid>,
+    Json(body): Json<RenameBody>,
+) -> Result<Json<WorkspaceNode>, HttpError> {
+    use agent_core::context::tenant::UserRole;
+    if !state
+        .rate_limiter
+        .check(&tenant.tenant_id, tenant.plan.rate_limit_rpm())
+    {
+        return Err(HttpError::rate_limit(None));
+    }
+    let user = effective_user_id(tenant.user_id.as_deref());
+
+    // Check if node is a protected root — only admins may rename it.
+    if let Ok(node) = state.workspace_store.get_accessible_node(&tenant.tenant_id, user, id).await {
+        if node.is_protected_root && tenant.role == UserRole::User {
+            return Err(HttpError::forbidden("only admins may rename the workspace root folder"));
+        }
+    }
+
+    let updated = state
+        .workspace_store
+        .rename_node(&tenant.tenant_id, user, id, body.name)
+        .await
+        .map_err(map_err)?;
+
+    Ok(Json(updated))
+}
+
+#[derive(Deserialize)]
+pub struct RenameBody {
+    pub name: String,
+}
+
 /// POST /v1/workspaces/:id/share — add a user to shared_with.
 #[utoipa::path(
     post,
@@ -465,7 +571,6 @@ pub async fn move_node(
     security(("bearer_auth" = [])),
     tag = "workspaces",
 )]
-#[instrument(skip(state, tenant, body))]
 pub async fn share_node(
     State(state): State<Arc<AppState>>,
     Extension(ResolvedTenant(tenant)): Extension<ResolvedTenant>,
@@ -573,38 +678,16 @@ pub async fn delete_node(
 
 // ── Helpers for presign routes ───────────────────────────────────────────────
 
-fn per_tenant_iam() -> bool {
-    std::env::var("RUSTFS_PER_TENANT_IAM").as_deref() != Ok("off")
-}
-
-async fn resolve_creds(state: &AppState, tenant_id: &str) -> Result<StorageCreds, HttpError> {
-    let cs = state
-        .cred_store
-        .as_ref()
-        .ok_or_else(|| HttpError::agent("credential store not configured"))?;
-    match cs.load(tenant_id).await.map_err(|e| HttpError::agent(format!("load creds: {e}")))? {
-        Some(c) => Ok(c),
-        None if per_tenant_iam() => Err(HttpError::agent(
-            "IAM credentials not provisioned for tenant",
-        )),
-        None => Ok(StorageCreds {
-            access_key: std::env::var("RUSTFS_ROOT_ACCESS_KEY")
-                .or_else(|_| std::env::var("AWS_ACCESS_KEY_ID"))
-                .unwrap_or_else(|_| "rustfsadmin".into()),
-            secret_key: std::env::var("RUSTFS_ROOT_SECRET_KEY")
-                .or_else(|_| std::env::var("AWS_SECRET_ACCESS_KEY"))
-                .unwrap_or_else(|_| "rustfsadmin".into()),
-            created_at: 0,
-        }),
-    }
-}
-
 fn presign_ttl_secs() -> i64 {
     std::env::var("RUSTFS_PRESIGN_TTL_SECS")
         .ok()
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or(900)
         .min(3600)
+}
+
+fn presign_ttl() -> Duration {
+    Duration::from_secs(presign_ttl_secs() as u64)
 }
 
 // ── Presigned URL endpoints ──────────────────────────────────────────────────
@@ -653,20 +736,21 @@ pub async fn presign_upload(
         }
     }
 
-    let creds = resolve_creds(&state, &tenant.tenant_id).await?;
-    let endpoint = std::env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://rustfs:9000".into());
-    let bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "workspace".into());
+    let vp = VirtualPath::parse(&body.virtual_path)
+        .map_err(|e| HttpError::validation("virtual_path", format!("{e}")))?;
 
-    let url = presign_put(
-        &tenant.tenant_id,
-        &body.virtual_path,
-        &creds,
-        &endpoint,
-        &bucket,
-        None,
-    )
-    .await
-    .map_err(|e| HttpError::agent(format!("presign PUT: {e}")))?;
+    let storage = state
+        .tenant_storage
+        .as_ref()
+        .ok_or_else(|| HttpError::agent("tenant storage not configured"))?
+        .for_tenant(&tenant.tenant_id)
+        .await
+        .map_err(|e| HttpError::agent(format!("storage for tenant: {e}")))?;
+
+    let url = storage
+        .presign_workspace_put(&vp, presign_ttl())
+        .await
+        .map_err(|e| HttpError::agent(format!("presign PUT: {e}")))?;
 
     let ttl = presign_ttl_secs();
     let expires_at = (Utc::now() + chrono::Duration::seconds(ttl)).to_rfc3339();
@@ -704,20 +788,21 @@ pub async fn presign_download(
         .await
         .map_err(map_err)?;
 
-    let creds = resolve_creds(&state, &tenant.tenant_id).await?;
-    let endpoint = std::env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://rustfs:9000".into());
-    let bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "workspace".into());
+    let vp = VirtualPath::parse(&q.virtual_path)
+        .map_err(|e| HttpError::validation("virtual_path", format!("{e}")))?;
 
-    let url = presign_get(
-        &tenant.tenant_id,
-        &q.virtual_path,
-        &creds,
-        &endpoint,
-        &bucket,
-        None,
-    )
-    .await
-    .map_err(|e| HttpError::agent(format!("presign GET: {e}")))?;
+    let storage = state
+        .tenant_storage
+        .as_ref()
+        .ok_or_else(|| HttpError::agent("tenant storage not configured"))?
+        .for_tenant(&tenant.tenant_id)
+        .await
+        .map_err(|e| HttpError::agent(format!("storage for tenant: {e}")))?;
+
+    let url = storage
+        .presign_workspace_get(&vp, presign_ttl(), None)
+        .await
+        .map_err(|e| HttpError::agent(format!("presign GET: {e}")))?;
 
     let ttl = presign_ttl_secs();
     let expires_at = (Utc::now() + chrono::Duration::seconds(ttl)).to_rfc3339();
@@ -757,7 +842,17 @@ pub async fn list_versions(
         .as_ref()
         .ok_or_else(|| HttpError::agent("RustFS admin client not configured"))?;
 
-    let prefix = format!("tenants/{}/workspaces/{}", tenant.tenant_id, node.virtual_path);
+    let storage = state
+        .tenant_storage
+        .as_ref()
+        .ok_or_else(|| HttpError::agent("tenant storage not configured"))?
+        .for_tenant(&tenant.tenant_id)
+        .await
+        .map_err(|e| HttpError::agent(format!("storage for tenant: {e}")))?;
+
+    let prefix = storage
+        .workspace_s3_key(&node.virtual_path)
+        .map_err(|e| HttpError::agent(format!("path: {e}")))?;
 
     let raw = admin
         .list_object_versions(&prefix)
@@ -804,7 +899,16 @@ pub async fn restore_version(
 
     // The version_id is a real S3 VersionId returned by list_object_versions.
     // Fetch the versioned bytes directly via ?versionId= query.
-    let object_key = format!("tenants/{}/workspaces/{}", tenant.tenant_id, node.virtual_path);
+    let restore_storage = state
+        .tenant_storage
+        .as_ref()
+        .ok_or_else(|| HttpError::agent("tenant storage not configured"))?
+        .for_tenant(&tenant.tenant_id)
+        .await
+        .map_err(|e| HttpError::agent(format!("storage for tenant: {e}")))?;
+    let object_key = restore_storage
+        .workspace_s3_key(&node.virtual_path)
+        .map_err(|e| HttpError::agent(format!("path: {e}")))?;
     let version_bytes = admin
         .get_object_version(&object_key, &body.version_id)
         .await

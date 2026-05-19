@@ -82,9 +82,51 @@ async fn main() -> Result<()> {
     billing_core::metrics::register(&prom_registry);
     let rustfs_metrics = metrics::RustFsMetrics::register(&prom_registry);
 
-    let state = Arc::new(AppState::from_env().await?);
+    let mut state = AppState::from_env().await?;
+    state.rustfs_metrics = Some(Arc::clone(&rustfs_metrics));
+    let state = Arc::new(state);
     let loaded = state.registry.lock().unwrap().len();
     info!(capabilities = loaded, "capability registry loaded");
+
+    // ── Sync atomic counters into Prometheus (every 30 s) ────────────────
+    // Both TenantStorageFactory and TenantOnboardingService use AtomicU64
+    // counters that we mirror into Prometheus IntCounterVec here.
+    if let Some(m) = state.rustfs_metrics.clone() {
+        let factory = state.tenant_storage.clone();
+        let onboarding = state.onboarding.clone();
+        tokio::spawn(async move {
+            let mut last_fallback = 0u64;
+            let mut last_onboarding = 0u64;
+            let mut last_marker_failed = 0u64;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+
+                if let Some(ref f) = factory {
+                    let cur = f.fallback_count.load(std::sync::atomic::Ordering::Relaxed);
+                    if cur > last_fallback {
+                        m.record_storage_fallback("dev_fallback");
+                        last_fallback = cur;
+                    }
+                }
+
+                if let Some(ref svc) = onboarding {
+                    let cur = svc.onboarding_total.load(std::sync::atomic::Ordering::Relaxed);
+                    if cur > last_onboarding {
+                        // Attribute all newly counted provisions as "normal" (system tenants
+                        // rarely provision via the onboarding service in practice).
+                        m.record_onboarding("normal");
+                        last_onboarding = cur;
+                    }
+
+                    let cur = svc.marker_failed.load(std::sync::atomic::Ordering::Relaxed);
+                    if cur > last_marker_failed {
+                        m.record_onboarding_marker_failed();
+                        last_marker_failed = cur;
+                    }
+                }
+            }
+        });
+    }
 
     // ── Declarative RustFS bootstrap ──────────────────────────────────────
     if let Some(ref admin) = state.rustfs_admin {

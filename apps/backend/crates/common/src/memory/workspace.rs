@@ -29,6 +29,9 @@ pub struct WorkspaceNode {
     pub shared_with: Vec<String>,
     #[serde(default)]
     pub metadata: serde_json::Value,
+    /// Protected root folders cannot be deleted or moved. Only tenant admin deletion cascades through.
+    #[serde(default)]
+    pub is_protected_root: bool,
 }
 
 impl WorkspaceNode {
@@ -51,6 +54,7 @@ impl WorkspaceNode {
             last_modified: now,
             shared_with: vec![],
             metadata: serde_json::Value::Null,
+            is_protected_root: false,
         }
     }
 
@@ -73,6 +77,7 @@ impl WorkspaceNode {
             last_modified: now,
             shared_with: vec![],
             metadata: serde_json::Value::Null,
+            is_protected_root: false,
         }
     }
 }
@@ -140,6 +145,7 @@ mod tests {
             last_modified: Utc::now(),
             shared_with: vec!["user-2".into()],
             metadata: serde_json::json!({"color": "blue"}),
+            is_protected_root: false,
         };
         let json = serde_json::to_string(&node).unwrap();
         let back: WorkspaceNode = serde_json::from_str(&json).unwrap();

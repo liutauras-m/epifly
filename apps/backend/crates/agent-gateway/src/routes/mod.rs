@@ -13,6 +13,7 @@ use utoipa_swagger_ui::SwaggerUi;
 mod admin_capabilities;
 pub(crate) mod admin_devices;
 mod admin_jobs;
+mod admin_tenants;
 pub mod agent;
 mod audit;
 pub mod auth;
@@ -94,6 +95,7 @@ impl Modify for SecurityAddon {
         workspaces::get_content,
         workspaces::patch_content,
         workspaces::move_node,
+        workspaces::rename_node,
         workspaces::share_node,
         workspaces::unshare_node,
         admin_devices::issue_device,
@@ -204,6 +206,8 @@ pub fn admin_router() -> Router<Arc<AppState>> {
         .route("/admin/billing/credits", post(billing::admin_add_credits))
         .route("/admin/billing/cancel/{tenant_id}", post(billing::admin_cancel_subscription))
         .route("/admin/billing/dashboard", get(billing::admin_billing_dashboard))
+        // ── Tenant lifecycle ─────────────────────────────────────────────────
+        .route("/admin/tenants/{id}", delete(admin_tenants::delete_tenant))
         .layer(middleware::from_fn(require_super_admin_jwt))
 }
 
@@ -255,6 +259,7 @@ pub fn protected_router(
         .route("/v1/workspaces/{id}/content", get(workspaces::get_content))
         .route("/v1/workspaces/{id}/content", patch(workspaces::patch_content))
         .route("/v1/workspaces/{id}/move", post(workspaces::move_node))
+        .route("/v1/workspaces/{id}/rename", post(workspaces::rename_node))
         .route("/v1/workspaces/{id}/share", post(workspaces::share_node))
         .route("/v1/workspaces/{id}/unshare", post(workspaces::unshare_node))
         // ── Workspace presign endpoints ─────────────────────────────────────

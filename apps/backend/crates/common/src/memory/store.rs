@@ -118,6 +118,17 @@ pub trait WorkspaceStore: Send + Sync + 'static {
         node_id: Ulid,
     ) -> anyhow::Result<()>;
 
+    /// Rename a workspace node. Protected root folders can be renamed by admins
+    /// (`tenant:admin` role is checked at the route layer, not here).
+    /// Returns the updated node.
+    async fn rename_node(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+        node_id: Ulid,
+        new_name: String,
+    ) -> anyhow::Result<WorkspaceNode>;
+
     async fn share_node(
         &self,
         tenant_id: &str,
@@ -174,6 +185,24 @@ pub trait WorkspaceStore: Send + Sync + 'static {
         node_id: Ulid,
         thread_id: &str,
     ) -> anyhow::Result<WorkspaceNode>;
+
+    /// Returns true if the tenant has been provisioned with a default workspace root folder.
+    async fn is_tenant_seeded(&self, tenant_id: &str) -> anyhow::Result<bool>;
+
+    /// Mark the tenant as seeded — idempotent.
+    async fn mark_tenant_seeded(&self, tenant_id: &str) -> anyhow::Result<()>;
+
+    /// Create a protected root folder (parent_id = None) that cannot be deleted or moved.
+    async fn create_protected_root_folder(
+        &self,
+        tenant_id: &str,
+        owner_id: &str,
+        name: &str,
+    ) -> anyhow::Result<WorkspaceNode>;
+
+    /// Permanently delete all workspace nodes, threads, messages, audit events, and the
+    /// seeding flag for `tenant_id`. Called during tenant teardown — irreversible.
+    async fn purge_tenant_data(&self, tenant_id: &str) -> anyhow::Result<()>;
 }
 
 /// Reads and writes the markdown body of Conversation nodes from RustFS.
