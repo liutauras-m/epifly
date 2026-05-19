@@ -1,5 +1,5 @@
 //! Direct invoice extraction — bypasses the agent loop entirely.
-//! POST /ui/extract-invoice: token → RustFS bytes → InvoicePipeline → InvoiceData JSON.
+//! POST /ui/extract-invoice: object_key → RustFS bytes → InvoicePipeline → InvoiceData JSON.
 
 use crate::state::AppState;
 use crate::ui::session::SessionUser;
@@ -18,10 +18,11 @@ use tracing::{info, instrument};
 
 #[derive(Deserialize)]
 pub struct ExtractRequest {
-    pub token: String,
+    /// Object key in RustFS (replaces the old UUID token).
+    pub object_key: String,
 }
 
-#[instrument(skip(state, user, body), fields(token = %body.token))]
+#[instrument(skip(state, user, body), fields(key = %body.object_key))]
 pub async fn ui_extract_invoice(
     State(state): State<Arc<AppState>>,
     user: SessionUser,
@@ -29,76 +30,34 @@ pub async fn ui_extract_invoice(
 ) -> Response {
     let store = match state.file_store.as_ref() {
         Some(s) => s,
-        None => {
-            return err(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "file storage not configured",
-            );
-        }
+        None => return err(StatusCode::SERVICE_UNAVAILABLE, "file storage not configured"),
     };
 
-    // Resolve token → object key, verifying this session's tenant owns it
-    let object_key = {
-        let tokens = state.presigned_tokens.lock().unwrap();
-        let tenant = user.tenant_context();
-        match tokens.get(&body.token) {
-            Some((key, created, ttl, stored_tid)) => {
-                if created.elapsed() > *ttl {
-                    return err(StatusCode::GONE, "upload token expired");
-                }
-                if stored_tid != tenant.tenant_id.as_str() {
-                    return err(
-                        StatusCode::NOT_FOUND,
-                        "token not found — upload the file first",
-                    );
-                }
-                key.clone()
-            }
-            None => {
-                return err(
-                    StatusCode::NOT_FOUND,
-                    "token not found — upload the file first",
-                );
-            }
-        }
-    };
+    // Verify tenant ownership: key must be under tenants/{tenant_id}/
+    let tenant = user.tenant_context();
+    let expected_prefix = format!("tenants/{}/", tenant.tenant_id.as_str());
+    if !body.object_key.starts_with(&expected_prefix) {
+        return err(StatusCode::FORBIDDEN, "object does not belong to your tenant");
+    }
 
-    info!(key = %object_key, "downloading from object store for invoice extraction");
+    info!(key = %body.object_key, "downloading from object store for invoice extraction");
 
-    // Download bytes from RustFS
-    let os_path = OsPath::from(object_key.as_str());
+    let os_path = OsPath::from(body.object_key.as_str());
     let get_result = match store.get(&os_path).await {
         Ok(r) => r,
-        Err(e) => {
-            return err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("storage get: {e}"),
-            );
-        }
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("storage get: {e}")),
     };
     let bytes = match get_result.bytes().await {
         Ok(b) => b,
-        Err(e) => {
-            return err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("storage read: {e}"),
-            );
-        }
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("storage read: {e}")),
     };
 
-    info!(
-        bytes = bytes.len(),
-        "running InvoicePipeline::extract_from_bytes"
-    );
+    info!(bytes = bytes.len(), "running InvoicePipeline::extract_from_bytes");
 
-    // Run the chain directly — no agent, no tool-calling
     let chain = InvoicePipeline::new();
     match chain.extract_from_bytes(&bytes).await {
         Ok(data) => (StatusCode::OK, Json(data)).into_response(),
-        Err(e) => err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &format!("extraction failed: {e}"),
-        ),
+        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &format!("extraction failed: {e}")),
     }
 }
 

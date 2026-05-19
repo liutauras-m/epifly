@@ -106,20 +106,26 @@ fn build_attachment_hint(
     tenant_id: &str,
 ) -> String {
     let origin = request_origin(headers);
-    let tokens = state.presigned_tokens.lock().unwrap();
+    let expected_prefix = format!("tenants/{tenant_id}/");
 
     let mut lines = Vec::new();
-    for token in attachment_ids {
-        let Some((key, created, ttl, stored_tid)) = tokens.get(token) else {
-            continue;
-        };
-        if created.elapsed() > *ttl || stored_tid != tenant_id {
+    for object_key in attachment_ids {
+        if !object_key.starts_with(&expected_prefix) {
             continue;
         }
-
-        let filename = key.split('/').next_back().unwrap_or("file");
+        let filename = object_key.split('/').next_back().unwrap_or("file");
+        let encoded_key = object_key
+            .chars()
+            .flat_map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~' || c == '/' {
+                    vec![c]
+                } else {
+                    format!("%{:02X}", c as u32).chars().collect()
+                }
+            })
+            .collect::<String>();
         lines.push(format!(
-            "- {filename} (image_path: {origin}/v1/files/{token})"
+            "- {filename} (image_path: {origin}/ui/files/download?key={encoded_key})"
         ));
     }
 
@@ -165,22 +171,15 @@ async fn resolve_attachments(
         return vec![];
     };
 
+    let expected_prefix = format!("tenants/{tenant_id}/");
     let mut blocks = Vec::with_capacity(attachment_ids.len());
 
-    for token in attachment_ids {
-        let object_key = {
-            let tokens = state.presigned_tokens.lock().unwrap();
-            let Some((key, created, ttl, stored_tid)) = tokens.get(token) else {
-                continue;
-            };
-            if created.elapsed() > *ttl {
-                continue;
-            }
-            if stored_tid != tenant_id {
-                continue;
-            }
-            key.clone()
-        };
+    for object_key in attachment_ids {
+        // attachment_ids are now object keys directly (no UUID token lookup)
+        if !object_key.starts_with(&expected_prefix) {
+            continue;
+        }
+        let object_key = object_key.clone();
 
         let filename = object_key.split('/').next_back().unwrap_or("file").to_string();
         let ct = content_type_from_filename(&filename);

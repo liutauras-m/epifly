@@ -1,10 +1,17 @@
 # RustFS Full Integration Plan
 
-Status: living plan · Owner: platform team · Last updated: 2026-05-19 (rev 6,
-review polish: `RedbHealth` startup check, `store/mod.rs` re-exports only
-facades, `IndexableContent` trait, mandatory compile-fail + threat-model
-gates before Phase 1, deterministic retry-queue test, refined estimate
-78–95 h, long-term `aws-sigv4` lighter presigner note)
+Status: implemented · Owner: platform team · Last updated: 2026-05-19
+
+| Phase | Completed |
+|-------|-----------|
+| 1 — Admin client & bootstrap | 2026-05-19 |
+| 2 — Per-tenant IAM | 2026-05-19 |
+| 3 — Real S3 presigned URLs | 2026-05-19 |
+| 4 — SSE, versioning, lifecycle | 2026-05-19 |
+| 5 — Event-driven indexing | 2026-05-19 |
+| 6 — Quotas, multipart, large files | 2026-05-19 |
+| 7 — Observability & security hardening | 2026-05-19 |
+| 8 — Backup, DR, multi-region | 2026-05-19 |
 
 This plan turns our current "S3-compatible client pointing at RustFS" into a
 **RustFS-native, multi-tenant, audit-grade object backend**. It is aggressive

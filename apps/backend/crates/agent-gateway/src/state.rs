@@ -3,10 +3,11 @@ use crate::routes::admin_devices::DeviceToken;
 use agent_core::llm::providers::anthropic::AnthropicProvider;
 use agent_core::{
     ArtifactBridge, BulkCapabilityFactory, CapabilityAdmin, CapabilityDiscovery,
-    CapabilityRegistry, CapabilitySpecFactory, ConversationService, DefaultConversationService,
-    EmbeddingService, LlmRegistry, NamespaceFilter, NoopEmbeddingService, OpenAiEmbeddingService,
-    QdrantVectorStore, RealtimeService, RedbMetadataStore, RustFsContentStore,
-    SemanticCapabilityRouter, SemanticRouterConfig, build_admin,
+    CapabilityRegistry, CapabilitySpecFactory, ConversationService, CredentialStore,
+    DefaultConversationService, EmbeddingService, LlmRegistry, NamespaceFilter,
+    NoopEmbeddingService, OpenAiEmbeddingService, QdrantVectorStore, RealtimeService,
+    RedbMetadataStore, RustFsContentStore, SemanticCapabilityRouter, SemanticRouterConfig,
+    StorageQuotaService, build_admin,
 };
 use agent_core::identity::IdentityManager;
 use agent_core::{LegacyIdentityProvider, ZitadelProvider};
@@ -17,9 +18,11 @@ use common::memory::{
     InMemoryAuditStore, InMemoryThreadStore, InMemoryWorkspaceContent, InMemoryWorkspaceStore,
     ThreadStore, WorkspaceContentStore, WorkspaceStore,
 };
-use jobs::jobs::{AuditLogCleanupJob, CapabilityHealthCheckJob, LagoReconcileJob, VideoTranscriptionJob};
+use jobs::jobs::{AuditLogCleanupJob, CapabilityHealthCheckJob, LagoReconcileJob, RustFsKeyRotationJob, VideoTranscriptionJob};
 use jobs::{JobAdmin, JobContext, JobExecutor, JobRegistry};
 use object_store::{ObjectStore, aws::AmazonS3Builder};
+use redb::Database;
+use rustfs_admin::RustFsAdminClient;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
@@ -28,11 +31,14 @@ pub struct AppState {
     pub registry: Arc<Mutex<CapabilityRegistry>>,
     pub rate_limiter: RateLimiter,
     pub llm: Arc<LlmRegistry>,
-    /// RustFS / S3-compatible file store (None if not configured)
+    /// RustFS / S3-compatible file store (root credentials — admin path only)
     pub file_store: Option<Arc<dyn ObjectStore>>,
-    /// In-memory map of download tokens → (object_key, issued_at, ttl, tenant_id)
-    pub presigned_tokens:
-        Mutex<HashMap<String, (String, std::time::Instant, std::time::Duration, String)>>,
+    /// RustFS admin client (root credentials — used for bootstrap and provisioning)
+    pub rustfs_admin: Option<Arc<RustFsAdminClient>>,
+    /// Per-tenant credential store (encrypted in redb)
+    pub cred_store: Option<Arc<CredentialStore>>,
+    /// Per-tenant storage quota service
+    pub storage_quota: Arc<StorageQuotaService>,
     /// In-memory device tokens for browser-shell (keyed by blake3 hash of plaintext token).
     pub device_tokens: Mutex<HashMap<String, DeviceToken>>,
     pub thread_store: Arc<dyn ThreadStore>,
@@ -86,6 +92,16 @@ impl AppState {
         let metadata_store: Arc<RedbMetadataStore> = RedbMetadataStore::open(&redb_path)
             .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?;
 
+        // Open a separate Database handle for the credential store.
+        let cred_db: Arc<Database> = Arc::new(
+            Database::create(&redb_path)
+                .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?,
+        );
+        let cred_store: Arc<CredentialStore> = Arc::new(
+            CredentialStore::new(cred_db)
+                .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?,
+        );
+
         let qdrant_url = std::env::var("QDRANT_URL")
             .unwrap_or_else(|_| "http://qdrant:6334".into());
         let vector_store = Arc::new(
@@ -95,16 +111,9 @@ impl AppState {
         );
 
         let workspace_content: Arc<dyn WorkspaceContentStore> =
-            match RustFsContentStore::from_env() {
-                Ok(store) => {
-                    info!("workspace content: RustFS/S3 object store");
-                    store
-                }
-                Err(e) => {
-                    warn!(error = %e, "RustFS not configured — workspace content will use noop");
-                    Arc::new(NoopWorkspaceContent)
-                }
-            };
+            RustFsContentStore::new(Some(Arc::clone(&cred_store)));
+
+        info!("workspace content: RustFS/S3 object store (per-tenant IAM)");
 
         let thread_store: Arc<dyn ThreadStore> = {
             let s: Arc<RedbMetadataStore> = Arc::clone(&metadata_store);
@@ -120,6 +129,10 @@ impl AppState {
         };
 
         let file_store = init_file_store();
+
+        let rustfs_admin = init_rustfs_admin();
+
+        let storage_quota = StorageQuotaService::new(Some(Arc::clone(&cred_store)));
 
         let embedding_service: Arc<dyn EmbeddingService> = match std::env::var("EMBEDDING_BACKEND")
             .as_deref()
@@ -245,11 +258,15 @@ impl AppState {
         let s3_endpoint = std::env::var("S3_ENDPOINT").ok();
         let bucket = std::env::var("S3_BUCKET")
             .unwrap_or_else(|_| "workspace".into());
-        let job_ctx = Arc::new(JobContext::new(
+        let mut job_ctx = JobContext::new(
             Arc::clone(&audit_store),
             s3_endpoint,
             Some(bucket),
-        ));
+        );
+        if let (Some(ra), Some(cs)) = (rustfs_admin.as_ref(), Some(&cred_store)) {
+            job_ctx = job_ctx.with_rustfs(Arc::clone(ra), Arc::clone(cs));
+        }
+        let job_ctx = Arc::new(job_ctx);
         let job_registry = build_job_registry(job_ctx, billing.clone());
         let job_executor = JobExecutor::new(Arc::clone(&job_registry));
         let job_admin = Arc::new(JobAdmin::new(
@@ -268,7 +285,9 @@ impl AppState {
             rate_limiter: RateLimiter::new(),
             llm,
             file_store,
-            presigned_tokens: Mutex::new(HashMap::new()),
+            rustfs_admin,
+            cred_store: Some(cred_store),
+            storage_quota,
             device_tokens: Mutex::new(HashMap::new()),
             thread_store,
             audit_store,
@@ -358,7 +377,9 @@ impl AppState {
             rate_limiter: RateLimiter::new(),
             llm,
             file_store: None,
-            presigned_tokens: Mutex::new(HashMap::new()),
+            rustfs_admin: None,
+            cred_store: None,
+            storage_quota: StorageQuotaService::new(None),
             device_tokens: Mutex::new(HashMap::new()),
             thread_store,
             audit_store,
@@ -384,33 +405,16 @@ impl AppState {
     }
 }
 
-/// Fallback content store used when RustFS is not configured.
-struct NoopWorkspaceContent;
-
-#[async_trait::async_trait]
-impl WorkspaceContentStore for NoopWorkspaceContent {
-    async fn read(&self, _: &str, _: &str) -> anyhow::Result<String> {
-        anyhow::bail!("workspace content store not configured (S3_ENDPOINT missing)")
-    }
-    async fn write(&self, _: &str, _: &str, _: &str) -> anyhow::Result<()> {
-        anyhow::bail!("workspace content store not configured (S3_ENDPOINT missing)")
-    }
-    async fn delete(&self, _: &str, _: &str) -> anyhow::Result<()> {
-        anyhow::bail!("workspace content store not configured (S3_ENDPOINT missing)")
-    }
-}
-
 fn init_file_store() -> Option<Arc<dyn ObjectStore>> {
     let endpoint = std::env::var("S3_ENDPOINT")
         .unwrap_or_else(|_| "http://rustfs:9000".into());
-
     let bucket = std::env::var("S3_BUCKET")
         .unwrap_or_else(|_| "workspace".into());
-
-    let access_key = std::env::var("AWS_ACCESS_KEY_ID")
+    let access_key = std::env::var("RUSTFS_ROOT_ACCESS_KEY")
+        .or_else(|_| std::env::var("AWS_ACCESS_KEY_ID"))
         .unwrap_or_else(|_| "rustfsadmin".into());
-
-    let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY")
+    let secret_key = std::env::var("RUSTFS_ROOT_SECRET_KEY")
+        .or_else(|_| std::env::var("AWS_SECRET_ACCESS_KEY"))
         .unwrap_or_else(|_| "rustfsadmin".into());
 
     match AmazonS3Builder::new()
@@ -423,16 +427,22 @@ fn init_file_store() -> Option<Arc<dyn ObjectStore>> {
         .build()
     {
         Ok(store) => {
-            info!(endpoint, bucket, "RustFS/S3 object store initialised");
+            info!(endpoint, bucket, "RustFS/S3 root file store initialised");
             Some(Arc::new(store))
         }
         Err(e) => {
-            warn!(
-                error = %e,
-                "Failed to initialise file store; file upload endpoints will be unavailable"
-            );
+            warn!(error = %e, "Failed to initialise file store");
             None
         }
+    }
+}
+
+fn init_rustfs_admin() -> Option<Arc<RustFsAdminClient>> {
+    if std::env::var("S3_ENDPOINT").is_ok() {
+        Some(Arc::new(RustFsAdminClient::from_env()))
+    } else {
+        warn!("S3_ENDPOINT not set — RustFS admin client disabled");
+        None
     }
 }
 
@@ -472,6 +482,7 @@ fn build_job_registry(
     registry.register_scheduled(CapabilityHealthCheckJob);
     registry.register_scheduled(AuditLogCleanupJob);
     registry.register_scheduled(LagoReconcileJob);
+    registry.register_scheduled(RustFsKeyRotationJob);
     registry.register_background(VideoTranscriptionJob);
     Arc::new(registry)
 }

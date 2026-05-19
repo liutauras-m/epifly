@@ -31,6 +31,7 @@ The table below reflects the **current workspace code paths**.
 | **Semantic capability search** | ✅ Implemented | `GET /v1/capabilities/search?q=finance` → Qdrant (`source: "vector"`) |
 | **RustFS file storage** | ✅ Implemented | `POST /v1/files` upload (JWT), `GET /v1/files/{token}` download (token-only, no JWT — UUID token is the presigned credential) |
 | **RustFS object storage — console** | ✅ Browser-Verified | RustFS console login (http://localhost:9001); navigate workspace → tenants → acme; verify file UUIDs, inspect metadata (name, size, last modified); confirm tenant isolation (files only visible in tenant folder). Re-verified 2026-05-19 |
+| **RustFS markdown file creation** | ✅ Browser-Verified | POST /v1/workspaces → folder + Kickoff.md; PATCH content → GET roundtrip passes; `aws s3 ls` shows `tenants/acme/workspaces/RustFSVerify/Kickoff.md` (119 B, ContentType: text/markdown); RustFS console preview shows full markdown body. Tenant isolation confirmed (acme/ and dev/ separate). Verified 2026-05-19 |
 | **WASM capability execution** | ✅ Implemented | wasmtime instantiates `capability.wasm`, calls `ping` → 42 |
 | **Google Workspace capability** | ✅ Implemented | YAML manifest (MCP type, OAuth2 config) |
 | Docker stack (Qdrant + RustFS) | ✅ Strong | Both services are configured in compose and back the gateway data plane |

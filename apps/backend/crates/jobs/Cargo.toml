@@ -10,6 +10,8 @@ repository.workspace = true
 [dependencies]
 common        = { path = "../common" }
 billing-core  = { path = "../billing-core" }
+agent-core    = { path = "../agent-core" }
+rustfs-admin  = { path = "../rustfs-admin" }
 
 tokio                = { workspace = true }
 tokio-cron-scheduler = { workspace = true }

@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "apps/backend/crates/common",
+    "apps/backend/crates/rustfs-admin",
     "apps/backend/crates/agent-core",
     "apps/backend/crates/jobs",
     "apps/backend/crates/billing-core",
@@ -78,6 +79,9 @@ base64       = { version = "0.22" }
 
 # Object / file storage (S3 — RustFS in dev, AWS S3 in prod)
 object_store = { version = "0.11", features = ["aws"] }
+
+# Encryption (AES-256-GCM for per-tenant credential storage)
+aes-gcm = { version = "0.10" }
 
 # Local embeddings (optional, feature-gated in agent-core)
 fastembed = { version = "5" }

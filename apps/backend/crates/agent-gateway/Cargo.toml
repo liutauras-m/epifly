@@ -16,6 +16,8 @@ common        = { path = "../common" }
 agent-core    = { path = "../agent-core" }
 billing-core  = { path = "../billing-core" }
 jobs          = { path = "../jobs" }
+rustfs-admin  = { path = "../rustfs-admin" }
+url           = { version = "2" }
 tokio.workspace       = true
 axum.workspace        = true
 tower.workspace       = true

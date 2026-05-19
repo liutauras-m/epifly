@@ -1,0 +1,194 @@
+//! Internal routes — not exposed to the public internet.
+//!
+//! POST /internal/rustfs/events — bucket notification webhook (HMAC-verified).
+//!
+//! RustFS sends S3 event notifications to this endpoint. The gateway verifies
+//! the HMAC signature, parses the event, and dispatches to the workspace indexer.
+
+use crate::state::AppState;
+use axum::{
+    body::Bytes,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+};
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+use std::sync::Arc;
+use tracing::{instrument, warn};
+
+type HmacSha256 = Hmac<Sha256>;
+
+fn verify_hmac(secret: &str, payload: &[u8], signature: &str) -> bool {
+    let mut mac = match HmacSha256::new_from_slice(secret.as_bytes()) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    mac.update(payload);
+    let expected = hex::encode(mac.finalize().into_bytes());
+    // Compare in constant time via byte comparison of hex strings
+    expected.as_bytes() == signature.trim_start_matches("sha256=").as_bytes()
+}
+
+/// S3 event record (subset of the full S3 notification schema).
+#[derive(Debug, serde::Deserialize)]
+struct S3Record {
+    #[serde(rename = "eventName")]
+    event_name: String,
+    s3: S3Detail,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct S3Detail {
+    bucket: BucketDetail,
+    object: ObjectDetail,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct BucketDetail {
+    name: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ObjectDetail {
+    key: String,
+    size: Option<u64>,
+    #[serde(rename = "eTag")]
+    etag: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct S3EventPayload {
+    #[serde(rename = "Records")]
+    records: Vec<S3Record>,
+}
+
+/// POST /internal/rustfs/events — handle RustFS bucket notifications.
+#[instrument(skip(state, headers, body))]
+pub async fn rustfs_events(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> StatusCode {
+    // HMAC verification
+    let webhook_secret = match std::env::var("RUSTFS_WEBHOOK_SECRET") {
+        Ok(s) => s,
+        Err(_) => {
+            warn!("RUSTFS_WEBHOOK_SECRET not set — rejecting all webhook events");
+            return StatusCode::UNAUTHORIZED;
+        }
+    };
+
+    let sig = headers
+        .get("x-rustfs-signature")
+        .or_else(|| headers.get("x-minio-signature"))
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if !verify_hmac(&webhook_secret, &body, sig) {
+        warn!("rustfs event HMAC verification failed");
+        return StatusCode::UNAUTHORIZED;
+    }
+
+    let payload: S3EventPayload = match serde_json::from_slice(&body) {
+        Ok(p) => p,
+        Err(e) => {
+            warn!(error = %e, "failed to parse S3 event payload");
+            return StatusCode::BAD_REQUEST;
+        }
+    };
+
+    for record in &payload.records {
+        let key = &record.s3.object.key;
+        let event = &record.event_name;
+
+        // Extract tenant_id from key: tenants/{tenant_id}/workspaces/{virtual_path}
+        let Some(tenant_id) = extract_tenant_from_key(key) else {
+            warn!(key, "could not extract tenant_id from object key");
+            continue;
+        };
+
+        tracing::info!(event, key, tenant_id, "RustFS event received");
+
+        if event.starts_with("s3:ObjectCreated") || event.starts_with("s3:ObjectRemoved") {
+            let is_delete = event.starts_with("s3:ObjectRemoved");
+            let virtual_path = extract_virtual_path(key);
+            let vector_store = Arc::clone(&state.vector_store);
+            let embedding_svc = Arc::clone(&state.embedding_service);
+            let workspace_content = Arc::clone(&state.workspace_content);
+            let tenant_id_owned = tenant_id.to_string();
+            let virtual_path_owned = virtual_path.to_string();
+
+            tokio::spawn(async move {
+                if is_delete {
+                    // Remove vectors for this document
+                    if let Err(e) = vector_store
+                        .delete_content_embeddings_for_doc(&virtual_path_owned)
+                        .await
+                    {
+                        warn!(error = %e, virtual_path = %virtual_path_owned, "failed to remove vectors");
+                    }
+                } else {
+                    // Fetch, chunk, embed, upsert
+                    let content = match workspace_content
+                        .read(&tenant_id_owned, &virtual_path_owned)
+                        .await
+                    {
+                        Ok(c) => c,
+                        Err(e) => {
+                            warn!(error = %e, "event indexing: failed to read content");
+                            return;
+                        }
+                    };
+
+                    if content.is_empty() {
+                        return;
+                    }
+
+                    const CHUNK: usize = 1500;
+                    let chunks: Vec<String> = content
+                        .chars()
+                        .collect::<Vec<_>>()
+                        .chunks(CHUNK)
+                        .map(|c| c.iter().collect::<String>())
+                        .collect();
+
+                    if let Ok(embeddings) = embedding_svc.embed_documents(chunks.clone()).await {
+                        for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
+                            let chunk_id = format!("{virtual_path_owned}_{i}");
+                            let _ = vector_store
+                                .upsert_content_embedding_full(
+                                    &chunk_id,
+                                    &virtual_path_owned,
+                                    i as i32,
+                                    chunk,
+                                    emb,
+                                    &tenant_id_owned,
+                                    &tenant_id_owned,
+                                    &[],
+                                )
+                                .await;
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    StatusCode::OK
+}
+
+fn extract_tenant_from_key(key: &str) -> Option<&str> {
+    // key format: tenants/{tenant_id}/workspaces/{virtual_path}
+    let after = key.strip_prefix("tenants/")?;
+    let slash = after.find('/')?;
+    Some(&after[..slash])
+}
+
+fn extract_virtual_path(key: &str) -> &str {
+    // Strip "tenants/{id}/workspaces/" prefix
+    if let Some(pos) = key.find("/workspaces/") {
+        &key[pos + "/workspaces/".len()..]
+    } else {
+        key
+    }
+}

@@ -1,9 +1,7 @@
-use agent_core::{WorkspaceIndexer, indexing::RealFsWatcher};
 use anyhow::Result;
 use axum::{Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
 use jobs::JobSchedulerService;
 use prometheus::Encoder;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer, ExposeHeaders};
 use tower_http::trace::TraceLayer;
@@ -11,6 +9,7 @@ use tracing::{info, warn};
 
 mod auth;
 mod capabilities;
+mod metrics;
 mod mw;
 mod routes;
 mod state;
@@ -41,12 +40,7 @@ async fn metrics_handler(State(registry): State<Arc<prometheus::Registry>>) -> i
 }
 
 /// Build a CORS layer that allows the configured web origin(s).
-///
-/// `WEB_ORIGIN` env → comma-separated origins (e.g. `https://app.conusai.com`).
-/// Falls back to `http://localhost:3000` for local dev.
 fn build_cors() -> CorsLayer {
-    // Comma-separated allowed origins. Set WEB_ORIGIN in the environment (see .env.example).
-    // Falls back to localhost dev origins so the server stays usable without any config.
     let raw = std::env::var("WEB_ORIGIN").unwrap_or_else(|_| {
         "http://localhost:3000,http://localhost:5173,https://tauri.localhost,tauri://localhost"
             .into()
@@ -71,8 +65,6 @@ fn build_cors() -> CorsLayer {
             axum::http::header::CONTENT_TYPE,
             axum::http::HeaderName::from_static("x-tenant-id"),
             axum::http::HeaderName::from_static("x-api-key"),
-            // Tauri WKWebView injects the HMAC session token as a header since
-            // WKWebView cannot send Secure cookies over plain HTTP.
             axum::http::HeaderName::from_static("x-session-token"),
         ]))
         .expose_headers(ExposeHeaders::list([axum::http::HeaderName::from_static(
@@ -83,18 +75,28 @@ fn build_cors() -> CorsLayer {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Hold the guard until process exit — flushes OTLP spans + metrics on shutdown.
     let (_telemetry, prom_registry) = common::telemetry::init("agent-gateway", "info");
     let prom_registry = Arc::new(prom_registry);
 
-    // Register billing/quota metrics into the shared Prometheus registry.
+    // Register billing/quota metrics + RustFS metrics.
     billing_core::metrics::register(&prom_registry);
+    let rustfs_metrics = metrics::RustFsMetrics::register(&prom_registry);
 
     let state = Arc::new(AppState::from_env().await?);
     let loaded = state.registry.lock().unwrap().len();
     info!(capabilities = loaded, "capability registry loaded");
 
-    // Wire capability-spec realtime hot-reload channel.
+    // ── Declarative RustFS bootstrap ──────────────────────────────────────
+    if let Some(ref admin) = state.rustfs_admin {
+        let cfg = rustfs_admin::BootstrapConfig::from_env();
+        if let Err(e) = rustfs_admin::bootstrap_storage(admin, &cfg).await {
+            warn!(error = %e, "RustFS bootstrap failed — storage may be degraded");
+        }
+    } else {
+        info!("RustFS admin not configured — skipping declarative bootstrap");
+    }
+
+    // ── Capability-spec realtime hot-reload ───────────────────────────────
     if let Some(spec_factory) = state.capability_spec_factory.clone() {
         let realtime = Arc::clone(&state.realtime_service);
         let registry = Arc::clone(&state.registry);
@@ -112,7 +114,7 @@ async fn main() -> Result<()> {
         info!("capability-spec realtime hot-reload listener started");
     }
 
-    // Register dynamic capabilities that depend on runtime services (e.g. JobExecutor).
+    // ── Register dynamic capabilities ────────────────────────────────────
     {
         use agent_core::capabilities::provider::CapabilityProvider;
         use capabilities::transcribe_video::TranscribeVideoCapability;
@@ -128,16 +130,14 @@ async fn main() -> Result<()> {
         info!("TranscribeVideoCapability registered");
     }
 
-    // Validate that all LLM aliases resolve to registered providers.
-    // Logs a warning on failure but does not abort startup (provider may be
-    // temporarily unavailable at deploy time).
+    // ── LLM registry verification ────────────────────────────────────────
     if let Err(e) = agent_core::llm::verify_llm_providers(&state.llm).await {
         tracing::warn!(error = %e, "LLM registry verification failed");
     } else {
         info!("LLM registry verified");
     }
 
-    // Seed Lago plan catalog (idempotent — safe to run on every startup).
+    // ── Lago plan catalog seeding ────────────────────────────────────────
     if let Some(ref billing) = state.billing {
         use billing_core::provider::BillingProvider as _;
         if let Err(e) = billing.ensure_plans(&state.plan_catalog).await {
@@ -147,51 +147,35 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Start the cron scheduler in the background.
-    // The `_scheduler` guard is kept alive for the process lifetime.
+    // ── Start cron scheduler ─────────────────────────────────────────────
     let _scheduler = JobSchedulerService::start(&state.job_registry).await?;
     info!("job scheduler started");
 
-    // Start the workspace file indexer if WORKSPACES_ROOT is configured.
-    // Runs an initial index pass then watches for changes at configurable intervals.
-    let _watcher = if let Ok(root) = std::env::var("WORKSPACES_ROOT") {
-        let root_path = PathBuf::from(root);
-        let indexer = Arc::new(WorkspaceIndexer::new(
-            root_path.clone(),
-            Arc::clone(&state.embedding_service),
-            Arc::clone(&state.vector_store),
-        ));
-        // Run the first indexing pass in the background; don't block startup.
-        let idx_clone = Arc::clone(&indexer);
-        tokio::spawn(async move {
-            if let Err(e) = idx_clone.index_once().await {
-                tracing::warn!(error = %e, "initial workspace index pass failed");
-            }
-        });
-        let watcher = RealFsWatcher::spawn(Arc::clone(&indexer));
-        info!(root = %root_path.display(), "workspace indexer started");
-        Some(watcher)
+    // ── Event-driven workspace indexer ───────────────────────────────────
+    // The old polling RealFsWatcher is removed. Indexing is now driven by
+    // RustFS bucket notifications → POST /internal/rustfs/events.
+    if std::env::var("RUSTFS_NOTIFICATIONS").as_deref() == Ok("off") {
+        warn!("RUSTFS_NOTIFICATIONS=off — workspace indexing is disabled");
     } else {
-        info!("WORKSPACES_ROOT not set — workspace indexer disabled");
-        None
-    };
+        info!("workspace indexer: event-driven via /internal/rustfs/events webhook");
+    }
 
+    // ── Build Axum router ────────────────────────────────────────────────
     let app = Router::new()
         .merge(routes::public_router())
-        // Prometheus metrics — no auth required (restrict via network/proxy in prod)
         .route(
             "/metrics",
             get(metrics_handler).with_state(Arc::clone(&prom_registry)),
         )
+        // Internal routes — not authenticated (restrict by network in prod)
+        .merge(routes::internal_router().with_state(Arc::clone(&state)))
         .merge(
             routes::protected_router(state.quota.clone())
-                // Outermost: usage metering (post-handler)
                 .layer(axum::middleware::from_fn_with_state(
                     Arc::clone(&state),
                     mw::meter::record_usage,
                 ))
                 .layer(axum::middleware::from_fn(mw::plan::enforce_plan))
-                // Zitadel identity extraction (runs before legacy extract_tenant)
                 .layer(axum::middleware::from_fn_with_state(
                     Arc::clone(&state),
                     mw::identity::extract_identity,
