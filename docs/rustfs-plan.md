@@ -1,240 +1,448 @@
-# MinIO → RustFS Migration Plan
+# RustFS Full Integration Plan
 
-**Status**: Proposed
-**Owner**: Platform / Infra
-**Created**: 2026-05-19
-**Reference**: <https://docs.rustfs.com/installation/docker/>
-**Strategy**: Aggressive — full drop-in replacement, no compatibility shims, no rollback path.
+Status: living plan · Owner: platform team · Last updated: 2026-05-19
 
----
+This plan turns our current "S3-compatible client pointing at RustFS" into a
+**RustFS-native, multi-tenant, audit-grade object backend**. It is aggressive
+and breaks backward compatibility where required. No data migrations are
+provided — dev/stage are wiped, prod is bootstrapped clean.
 
-## 1. Context
-
-Today, the service named `conusai-rustfs` in [docker-compose.yml](docker-compose.yml) actually runs the **MinIO** server image (`quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z`). "RustFS" is only a naming convention in this repo — there is no real RustFS code in the stack.
-
-The real **[RustFS](https://rustfs.com/)** project is a Rust-native, 100% S3-compatible, Apache-2.0–licensed distributed object store (image `rustfs/rustfs:latest`). It exposes the same S3 protocol on port 9000 with a web console on port 9001, but uses a different env-var prefix (`RUSTFS_*` instead of `MINIO_*`), runs as UID `10001`, and ships no `mc` (MinIO Client) binary inside the image.
-
-Replacing MinIO with the real RustFS aligns the implementation with the name we already use, removes a third-party (and licence-restricted under AGPLv3) dependency, and gives us a Rust-only object-storage runtime that matches the rest of the backend.
+It is organised in 8 phases. Each phase is independently shippable and ends
+with a concrete verification step (curl + UI + `aws-cli` against RustFS).
 
 ---
 
-## 2. Goals & Non-Goals
+## 0. Current state (baseline)
 
-### Goals
-1. Run `rustfs/rustfs:latest` in place of `quay.io/minio/minio` in all environments (dev, CI, prod).
-2. Replace every `MINIO_*` env var and `mc`-based bucket bootstrap with the equivalent RustFS-native mechanism.
-3. Update every doc, ADR, comment, script, and verification helper so that the word "MinIO" disappears from the repo, and the word "RustFS" refers exclusively to the real product.
-4. Keep the existing S3 client code (`object_store::aws::AmazonS3Builder`) unchanged — RustFS is wire-compatible.
-5. Keep the on-disk layout `workspace/tenants/{tenant_id}/{file_id}/{filename}` unchanged.
-6. Re-run the full Docker verification suite (verify.md Phases 4, 9, 9b, 12) end-to-end and update results.
+Implemented:
+- `RustFsContentStore` via `object_store::AmazonS3Builder`
+  (`apps/backend/crates/agent-core/src/store/rustfs_content.rs`).
+- Key scheme `tenants/{tenant_id}/workspaces/{virtual_path}`.
+- Tenant middleware (`mw/tenant.rs`) → `TenantContext` with `storage_prefix()`.
+- Per-node ACL (`owner` + `shared_with[]`) in workspace tree, 404-on-unauthorized.
+- `file-storage` MCP capability: `upload_file`, `download_file`, `presigned_url`
+  (token shim, not real S3 presign).
+- `docker-compose.yml` runs `rustfs/rustfs:latest` + `rustfs-init` (aws-cli
+  bucket bootstrap), single root credential `rustfsadmin`.
+- Append-only `AuditEvent` log.
 
-### Non-Goals
-- **No data migration** from existing MinIO volumes — local dev volumes are disposable; production has not yet shipped on MinIO.
-- **No TLS / IAM hardening** in this pass — keep the local stack on plain HTTP with a single root credential, matching today's posture.
-- **No multi-node / erasure-coded deployment** — we stay on Single-Node Single-Disk (SNSD) for dev; a follow-up ADR will cover production HA.
-- **No change** to the application API (`POST /v1/files`, `GET /v1/files/{token}`) or to the `object_store` crate.
-
----
-
-## 3. Scope — Files & Symbols to Change
-
-The migration touches **five buckets** of code/config. Every item listed here is an explicit edit, not a placeholder.
-
-### 3.1 Docker / Infra
-| File | Change |
-|------|--------|
-| [docker-compose.yml](docker-compose.yml) §`rustfs` service | Swap image to `rustfs/rustfs:latest`; replace `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` with `RUSTFS_ACCESS_KEY`/`RUSTFS_SECRET_KEY`; change command to `--console-enable --address :9000 /data`; replace healthcheck URL `/minio/health/live` with `/` or TCP probe on 9000. |
-| [docker-compose.yml](docker-compose.yml) §`rustfs-init` service | **Delete entirely.** RustFS image has no `mc`. Replace bucket-bootstrap with a tiny `amazon/aws-cli`-based init container (or, preferred, fold into the gateway startup — see §3.3). |
-| [docker-compose.yml](docker-compose.yml) §`rustfs_perms` (new) | Add an `alpine` init container that `chown -R 10001:10001 /fix_path` against the `rustfs_data` volume mount, with `condition: service_completed_successfully` on the `rustfs` service. |
-| [docker-compose.yml](docker-compose.yml) §`agent-gateway` env | Rename defaults: `AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-rustfsadmin}` and `AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-rustfsadmin}`. |
-| [apps/backend/start.sh](apps/backend/start.sh) line 81 | Replace `curl …/minio/health/live` with `curl -sf http://localhost:9000/` (or TCP wait on 9000). |
-| [apps/backend/Dockerfile](apps/backend/Dockerfile) | No change (we keep `object_store` 0.11 with `aws` feature). |
-
-### 3.2 Bucket Bootstrap
-RustFS's official image does **not** ship `mc`. Options considered:
-
-| Option | Verdict |
-|--------|---------|
-| Run `rustfs/rustfs` as init with a CLI subcommand | ❌ No documented bucket-create subcommand in the SNSD container today |
-| Use `amazon/aws-cli` against the new `rustfs:9000` endpoint | ✅ **Chosen.** Same image already used in [verify.md Phase 9](docs/verify/verify.md), AGPL-free, ~80 MB |
-| Move bucket bootstrap inside the gateway startup (`init_file_store`) | ⚠️ Acceptable fallback. Would call `PutBucket` via `object_store` extension API if the bucket is missing — but `object_store` 0.11 does not expose `CreateBucket`. Defer to a separate ticket. |
-
-**Decision**: replace `rustfs-init` with an `aws-cli` container that calls `s3 mb s3://workspace`, using `--endpoint-url http://conusai-rustfs:9000`.
-
-### 3.3 Rust Source
-| File | Change |
-|------|--------|
-| [Cargo.toml](Cargo.toml) line 79 comment | `# Object / file storage (MinIO / S3)` → `# Object / file storage (S3 — RustFS in dev, AWS S3 in prod)`. |
-| `apps/backend/crates/agent-gateway/src/state.rs` `init_file_store` | Change `unwrap_or_else` defaults: `S3_ENDPOINT="http://rustfs:9000"` (unchanged hostname — Docker DNS resolves to new container), `AWS_ACCESS_KEY_ID="rustfsadmin"`, `AWS_SECRET_ACCESS_KEY="rustfsadmin"`. Drop any inline references to "minio" in log messages. |
-| `apps/backend/crates/agent-gateway/src/bin/memory_migrate.rs` doc comment | Update example env vars to RustFS naming. |
-| Tests under `apps/backend/crates/*/tests/` referencing `minioadmin` (none verified — sweep with `rg minioadmin`) | Replace literal with `rustfsadmin`. |
-
-### 3.4 Documentation
-| File | Change |
-|------|--------|
-| [docs/arch.md](docs/arch.md) line 96 | `RustFS / S3 / MinIO content store` → `RustFS / AWS S3 content store`. |
-| [docs/arch.md](docs/arch.md) line 275 | `# object_store (S3/MinIO)` → `# object_store (S3 / RustFS)`. |
-| [docs/arch.md](docs/arch.md) line 475 | `RustFS / MinIO / S3 (object_store 0.11)` → `RustFS / AWS S3 (object_store 0.11)`. |
-| [docs/arch.md](docs/arch.md) — new §10 footnote | Add note: "Object storage is the real [RustFS](https://rustfs.com) (`rustfs/rustfs:latest`) running in SNSD mode; AGPLv3-licensed MinIO has been removed from the stack." |
-| [docs/project-instructions.md](docs/project-instructions.md) line 77 | `object_store 0.11 (aws/S3/MinIO)` → `object_store 0.11 (aws/S3/RustFS)`. |
-| [docs/project-instructions.md](docs/project-instructions.md) line 108 | `Multipart file upload (MinIO-backed)` → `Multipart file upload (RustFS-backed)`. |
-| [docs/capability-gaps-pan.md](docs/capability-gaps-pan.md) line 264 | `MINIO_*` reference → `RUSTFS_*` (or drop section if obsolete). |
-| [docs/verify/verify.md](docs/verify/verify.md) Phase 9, 9b, 12.3 | Replace `minioadmin/minioadmin` credentials with `rustfsadmin/rustfsadmin`; update Phase 9b "MinIO console" → "RustFS console"; replace `quay.io/minio/minio` example with `rustfs/rustfs:latest`. Update Coverage Assessment row to say **"RustFS object storage — console verification"**. |
-| [docs/adr/0009-redb-qdrant-rustfs.md](docs/adr/0009-redb-qdrant-rustfs.md) | Add an **amendment** section dated 2026-05-19: "Object storage backend swapped from MinIO container (placeholder) to the real RustFS server image (`rustfs/rustfs:latest`). Wire protocol (S3) and on-disk layout are unchanged." |
-
-### 3.5 Environment & Helper Scripts
-| File | Change |
-|------|--------|
-| `.env.example` (create if missing) | Document `AWS_ACCESS_KEY_ID=rustfsadmin`, `AWS_SECRET_ACCESS_KEY=rustfsadmin`, `S3_ENDPOINT=http://rustfs:9000`, `S3_BUCKET=workspace`. |
-| Any `start.sh` / `stop.sh` referencing `minio` | Sweep and rename. |
-| Existing `.env.local` (developer machines) | Document in PR notes that devs must `docker volume rm conusai-platform_rustfs_data` once before bringing the new stack up (MinIO and RustFS use incompatible on-disk metadata). |
+Gaps (this plan closes them):
+- Single root credential; no per-tenant IAM principals/policies.
+- No SSE, no versioning, no object lock, no lifecycle, no replication.
+- "Presigned URL" is an opaque server-issued UUID, not a real S3 signature.
+- No RustFS admin API client; bucket/policy/user config is hand-rolled in shell.
+- No event-driven indexing; we poll.
+- No per-tenant quota or storage-class tiering.
+- No CORS / bucket policy as code.
+- No backup/restore plan; no DR runbook.
 
 ---
 
-## 4. Target docker-compose Snippet
+## 1. Guiding principles
 
-```yaml
-  # ── Object storage permissions fix (RustFS runs as UID 10001) ────────────
-  rustfs-perms:
-    image: alpine:3
-    container_name: conusai-rustfs-perms
-    user: root
-    volumes:
-      - rustfs_data:/fix_path
-    command: chown -R 10001:10001 /fix_path
-    restart: "no"
+1. **Tenant = trust boundary**. Every byte read/written is scoped through
+   `TenantContext`. No request can address another tenant's prefix.
+2. **Least privilege at the storage layer**, not just in the gateway. RustFS
+   IAM enforces tenant isolation even if the gateway is compromised.
+3. **Server-side first**. Browsers/Tauri never see the root credential. Direct
+   upload/download uses short-lived presigned URLs derived from per-tenant
+   credentials.
+4. **Audit-grade by default for paid tiers**. Versioning + object lock +
+   lifecycle are enabled per plan tier, not per request.
+5. **Config as code**. All buckets, policies, users, lifecycle rules,
+   notification targets are declared in Rust (admin client) and reconciled on
+   boot, never created by ad-hoc shell.
+6. **Reversible**. Each phase ships a feature flag (`RUSTFS_*`) so we can
+   disable a new behaviour without redeploy.
 
-  # ── Object Storage — RustFS (S3-compatible, Apache 2.0) ───────────────────
-  rustfs:
-    image: rustfs/rustfs:latest
-    container_name: conusai-rustfs
-    depends_on:
-      rustfs-perms:
-        condition: service_completed_successfully
-    environment:
-      RUSTFS_ACCESS_KEY: "${AWS_ACCESS_KEY_ID:-rustfsadmin}"
-      RUSTFS_SECRET_KEY: "${AWS_SECRET_ACCESS_KEY:-rustfsadmin}"
-      RUSTFS_ADDRESS: ":9000"
-      RUSTFS_CONSOLE_ENABLE: "true"
-    command: ["--console-enable", "/data"]
-    ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # Web console
-    volumes:
-      - rustfs_data:/data
-    healthcheck:
-      test: ["CMD", "bash", "-lc", "echo > /dev/tcp/127.0.0.1/9000"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+---
 
-  # ── Bucket bootstrap (RustFS image has no `mc`) ───────────────────────────
-  rustfs-init:
-    image: amazon/aws-cli:latest
-    container_name: conusai-rustfs-init
-    depends_on:
-      rustfs:
-        condition: service_healthy
-    environment:
-      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-rustfsadmin}"
-      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-rustfsadmin}"
-      AWS_DEFAULT_REGION: us-east-1
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        aws --endpoint-url http://conusai-rustfs:9000 s3 mb s3://workspace 2>/dev/null || true
-        aws --endpoint-url http://conusai-rustfs:9000 s3 ls
-    restart: on-failure
+## 2. Target architecture
+
+```
+┌────────────┐   JWT/session    ┌──────────────────────┐   S3 (signed)   ┌──────────┐
+│  Web/Tauri │ ───────────────▶ │  agent-gateway       │ ──────────────▶ │  RustFS  │
+└────────────┘                  │  ├─ tenant mw        │                 │  bucket: │
+      ▲                         │  ├─ workspace svc    │                 │  workspace │
+      │  presigned PUT/GET      │  ├─ rustfs admin     │ admin API       │          │
+      └─────────────────────────┤  └─ presign service  │ ──────────────▶ │  IAM/    │
+                                └──────────────────────┘                 │  policies│
+                                          │ notifications (webhook)      └──────────┘
+                                          ▼
+                                  workspace indexer
+```
+
+Key choices:
+- **Single bucket `workspace`**, prefix-per-tenant
+  (`tenants/{tenant_id}/...`). Bucket-per-tenant is opt-in for Enterprise.
+- **Per-tenant IAM user** in RustFS with policy restricting it to
+  `arn:aws:s3:::workspace/tenants/{tenant_id}/*`.
+- **Per-tenant STS-style ephemeral credentials** (or rotated long-lived
+  credentials cached in redb) handed to the gateway request handler via
+  `TenantContext::storage_credentials()`.
+- **Presigned URLs** issued by the gateway using the tenant's credentials —
+  the browser uploads directly to RustFS, no proxy.
+
+Prefix layout inside the bucket:
+```
+tenants/{tenant_id}/
+  workspaces/{virtual_path}        # markdown bodies + uploads
+  uploads/tmp/{ulid}                # multipart staging (lifecycle: expire 24h)
+  exports/{ulid}.zip                # async export jobs (lifecycle: expire 7d)
+  audit/{yyyy}/{mm}/{dd}/{ulid}.json # mirrored audit (object-lock if Enterprise)
 ```
 
 ---
 
-## 5. Execution Plan (Phases)
+## 3. Phases
 
-> All phases are **aggressive** — no feature flags, no parallel "old + new" running, no opt-in env var.
+### Phase 1 — RustFS admin client & declarative bootstrap
 
-### Phase 0 — Pre-flight (5 min)
-- [ ] Snapshot current `docker-compose ps` and `docker volume ls` for the record.
-- [ ] Confirm no production traffic is hitting `conusai-rustfs` (this stack is local/dev-only today).
-- [ ] Pull `rustfs/rustfs:latest` and confirm it starts standalone: `docker run --rm -p 9000:9000 -p 9001:9001 rustfs/rustfs:latest /data` → expect log "listening on :9000".
+**Goal**: replace `rustfs-init` shell with a Rust admin client that reconciles
+bucket, policies, users, lifecycle, versioning, CORS, notifications on every
+gateway boot.
 
-### Phase 1 — Code & Config Changes (single commit)
-- [ ] Apply every edit in §3.1, §3.3, §3.5 above.
-- [ ] Run `cargo check --workspace` — expect zero changes (S3 wire protocol unchanged).
-- [ ] Run `cargo test --workspace` — expect green (no test references MinIO directly).
+Deliverables:
+- New crate `apps/backend/crates/rustfs-admin`:
+  - `RustFsAdminClient::new(endpoint, root_access_key, root_secret_key)`.
+  - Methods: `ensure_bucket`, `set_versioning`, `set_object_lock_config`,
+    `put_lifecycle`, `put_cors`, `put_bucket_notification`,
+    `create_user`, `attach_policy`, `put_policy`, `create_access_key`,
+    `delete_access_key`, `list_keys_for_user`.
+  - Implementation uses RustFS admin REST API (S3-compatible MinIO-style
+    admin endpoints documented at https://docs.rustfs.com).
+- Bootstrap module `agent-gateway::bootstrap::storage`:
+  - On startup, asserts bucket `workspace` exists with versioning + lifecycle
+    + CORS configured. Idempotent.
+- Remove `rustfs-init` container from `docker-compose.yml`.
 
-### Phase 2 — Local Bring-up (10 min)
-- [ ] `docker compose down -v` (destroys existing MinIO volume — **destructive but acceptable**, dev data only).
-- [ ] `docker compose up -d --build`.
-- [ ] Verify `docker compose ps` shows `conusai-rustfs` healthy and `conusai-rustfs-init` exited 0.
-- [ ] Browse <http://localhost:9001> → log in with `rustfsadmin`/`rustfsadmin` → confirm `workspace` bucket exists.
+Verification:
+- `cargo test -p rustfs-admin` against a docker-compose'd RustFS.
+- Boot gateway against a clean RustFS, confirm bucket+policies created.
 
-### Phase 3 — Re-run verify.md Phase 9 + 9b
-- [ ] Re-execute the Python upload/download script from the last verification run (terminal scrollback).
-- [ ] Expected: `POST /v1/files` returns a UUID token; `GET /v1/files/{token}` returns the PNG; the file is visible in the RustFS console at `workspace/tenants/acme/{uuid}/invoice.png`.
-- [ ] Re-run `aws --endpoint-url http://conusai-rustfs:9000 s3 ls s3://workspace/ --recursive` → expect identical hierarchy.
+Feature flag: `RUSTFS_BOOTSTRAP=on|off` (default on).
 
-### Phase 4 — Documentation Sweep
-- [ ] Apply every edit in §3.4 above (arch.md, project-instructions.md, verify.md, capability-gaps-pan.md, ADR 0009 amendment).
-- [ ] `rg -i 'minio'` across the repo → expect **zero** matches except inside `docs/rustfs-plan.md` itself (this file) and historic ADR amendment context.
-- [ ] `rg -i 'minioadmin'` → expect **zero** matches.
+### Phase 2 — Per-tenant IAM users and credential plumb-through
 
-### Phase 5 — CI / Branch Validation
-- [ ] Push branch, let CI rebuild Docker images and run the full verify suite.
-- [ ] Block merge until: (a) `docker compose up` cleanly bootstraps, (b) verify Phase 9 passes, (c) `rg -i minio` returns clean.
+**Goal**: each tenant gets its own RustFS IAM user; gateway uses that user's
+credentials for all S3 operations on behalf of the tenant.
 
-### Phase 6 — Merge & Announce
-- [ ] Merge.
-- [ ] Post in `#eng-platform`: "MinIO removed. Run `docker compose down -v && docker compose up -d` once to refresh your local stack. Console creds are now `rustfsadmin`/`rustfsadmin`."
+Deliverables:
+- Policy template (in `rustfs-admin`):
+  ```jsonc
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      { "Effect": "Allow",
+        "Action": ["s3:GetObject","s3:PutObject","s3:DeleteObject",
+                   "s3:AbortMultipartUpload","s3:ListMultipartUploadParts"],
+        "Resource": ["arn:aws:s3:::workspace/tenants/{tenant_id}/*"] },
+      { "Effect": "Allow",
+        "Action": ["s3:ListBucket"],
+        "Resource": ["arn:aws:s3:::workspace"],
+        "Condition": { "StringLike": { "s3:prefix": ["tenants/{tenant_id}/*"] } } }
+    ]
+  }
+  ```
+- Provisioning hook: when a tenant is created (Zitadel webhook or
+  `POST /v1/tenants`), `TenantProvisioner` calls
+  `rustfs-admin::provision_tenant(tenant_id)`:
+  1. `put_policy("tenant-{id}", rendered)`.
+  2. `create_user("tenant-{id}")`.
+  3. `attach_policy`.
+  4. `create_access_key` → store `(access_key, secret_key)` encrypted in
+     redb under `iam/tenant/{tenant_id}`.
+- New `TenantContext::storage_credentials() -> StorageCreds` returns the
+  per-tenant key pair (decrypted on demand).
+- `RustFsContentStore::for_tenant(&TenantContext)` builds an `AmazonS3`
+  client with those creds (LRU-cached, max 1024 entries, 5 min TTL).
+- Encryption: AES-256-GCM with key from `RUSTFS_IAM_ENC_KEY` env (32 bytes,
+  base64). Rotation procedure documented in `docs/ops/rustfs.md`.
+
+Breaking change: `RustFsContentStore::from_env()` only used for the
+**root** path (admin client). All workspace IO must go through
+`for_tenant`. Compile-time enforced by removing the generic implementation
+from `WorkspaceContentStore`.
+
+Verification:
+- New tenant provisioned via REST → RustFS admin shows user + policy.
+- Gateway attempts cross-tenant read → 403 from RustFS (not just 404 from
+  gateway).
+- `cargo test -p agent-gateway --test tenant_isolation`.
+
+Feature flag: `RUSTFS_PER_TENANT_IAM=on|off`. Off falls back to root creds
+(dev only).
+
+### Phase 3 — Real S3 presigned URLs
+
+**Goal**: replace UUID-token download with real `GetObject`/`PutObject`
+presigned URLs signed with the tenant's IAM credentials.
+
+Deliverables:
+- `presign` module in `agent-core`:
+  - `presign_get(tenant, virtual_path, ttl)` → `Url`.
+  - `presign_put(tenant, virtual_path, ttl, content_type, max_bytes)` → `Url`.
+  - Uses `object_store::signer::Signer` (preferred) or `aws-sigv4` crate
+    directly. Returns URLs valid for `min(ttl, 1h)`; default 15 min.
+- HTTP endpoints (replace token-based flows):
+  - `POST /v1/workspaces/{id}/presign-upload`
+    body `{ virtual_path, content_type, size_bytes }` →
+    `{ url, headers, expires_at }`.
+  - `GET /v1/workspaces/{id}/presign-download?virtual_path=...` →
+    `{ url, expires_at }`.
+- `file-storage` capability `presigned_url` tool now returns the real URL.
+- Frontend `apps/web` upload flow updated:
+  - Request presign → `PUT` directly to RustFS → `POST` confirm to gateway
+    (records node metadata + audit event).
+- CORS policy on bucket allows
+  `Origin: http://localhost:3000`, `https://app.epifly.*` for
+  `PUT, GET, HEAD` with headers `Content-Type, Authorization, x-amz-*`.
+- Remove `download_token` table + handler; remove UUID shim.
+
+Verification:
+- Browser DevTools shows `PUT https://rustfs.../workspace/tenants/...` 200.
+- `curl` with expired URL → 403 SignatureDoesNotMatch.
+- Cross-tenant presign attempt (forged path) → 403 at RustFS.
+
+Feature flag: `RUSTFS_REAL_PRESIGN=on|off`.
+
+### Phase 4 — Encryption, versioning, object lock, lifecycle
+
+**Goal**: durability + compliance posture matching enterprise expectations.
+
+Deliverables:
+- **SSE-S3 default**: `RustFsContentStore::write` always sets
+  `x-amz-server-side-encryption: AES256`. For Enterprise tier with KMS:
+  `aws:kms` + `x-amz-server-side-encryption-aws-kms-key-id` from tenant
+  config.
+- **Versioning**: enabled on bucket in Phase 1 bootstrap. New API
+  `GET /v1/workspaces/nodes/{id}/versions` lists versions (S3
+  `ListObjectVersions`); `POST .../restore` copies an older version over
+  the current one.
+- **Object lock** (Enterprise only): bucket configured with
+  `ObjectLockEnabled=Enabled`. Per-node opt-in retention via
+  `WorkspaceNode.retention { mode: COMPLIANCE|GOVERNANCE, until: RFC3339 }`.
+  Mirror of `audit/` prefix uses `COMPLIANCE` + 7 years.
+- **Lifecycle rules** (declared in Phase 1):
+  - `uploads/tmp/*` expire after 24h.
+  - `exports/*` expire after 7d.
+  - Non-current versions of `workspaces/*` expire after 90d (Pro+) /
+    never (Enterprise).
+  - `audit/*` transition to cold storage class after 30d (if supported by
+    RustFS tiering).
+- **Replication** (optional, Enterprise): cross-region rule pointing at a
+  secondary RustFS cluster. Declared per tenant.
+
+Verification:
+- `aws s3api get-bucket-versioning` → `Enabled`.
+- Overwrite a markdown file, list versions, restore, diff.
+- Attempt to delete a locked object → `AccessDenied: WORM`.
+- Upload to `uploads/tmp/foo`, wait, confirm GC.
+
+Feature flag: `RUSTFS_SSE=on|off`, `RUSTFS_VERSIONING=on|off`,
+`RUSTFS_OBJECT_LOCK=on|off`.
+
+### Phase 5 — Event-driven indexing via bucket notifications
+
+**Goal**: kill the polling indexer; index on `s3:ObjectCreated:*` /
+`s3:ObjectRemoved:*`.
+
+Deliverables:
+- RustFS notification target = webhook
+  `http://agent-gateway:8080/internal/rustfs/events`
+  (HMAC-signed with `RUSTFS_WEBHOOK_SECRET`).
+- New route `internal_routes::rustfs_events`:
+  - Verifies HMAC.
+  - Parses S3 event JSON, extracts `bucket`, `key`, `eventName`, `eTag`,
+    `size`, `userIdentity` (per-tenant IAM principal → tenant id).
+  - Dispatches to `WorkspaceIndexer::on_object_event`.
+- `WorkspaceIndexer`:
+  - On create/update: fetch object, parse (markdown/PDF/...), chunk,
+    embed, upsert into Qdrant collection `workspace_{tenant_id}`.
+  - On delete: remove vectors by `doc_id`.
+- Remove the periodic walker.
+
+Verification:
+- Upload a file, watch `Qdrant` collection grow within 2s.
+- Delete the file, vectors gone within 2s.
+- Replay with bad HMAC → 401.
+
+Feature flag: `RUSTFS_NOTIFICATIONS=on|off`.
+
+### Phase 6 — Quotas, tiering, multipart, large files
+
+**Goal**: predictable cost and performance for big workloads.
+
+Deliverables:
+- Per-tenant **storage quota** in `PlanTier`:
+  - FREE 1 GiB, PRO 100 GiB, ENTERPRISE unlimited.
+  - Enforced by `QuotaService` that aggregates
+    `ListObjectsV2` totals (cached 60s in redb).
+  - `presign_put` denies (HTTP 413) if `used + size > quota`.
+- **Multipart upload** for files > 16 MiB:
+  - `POST /v1/uploads/initiate` → `uploadId`.
+  - `POST /v1/uploads/{uploadId}/parts/{n}/presign` → presigned part URL.
+  - `POST /v1/uploads/{uploadId}/complete` body `{ parts: [{n, etag}] }`.
+  - `POST /v1/uploads/{uploadId}/abort`.
+- **Storage classes** (if RustFS supports):
+  - default `STANDARD`, exports → `STANDARD_IA`, audit cold → `GLACIER`.
+- **Range reads** in `RustFsContentStore::read_range(tenant, vp, range)`
+  for previewing large logs.
+
+Verification:
+- Upload 1 GiB file via multipart from CLI, completes < 30s on LAN.
+- Exceed quota → 413 with `code=quota_exceeded`.
+
+Feature flag: `RUSTFS_QUOTAS=on|off`.
+
+### Phase 7 — Observability, audit mirroring, security hardening
+
+Deliverables:
+- **Metrics** (Prometheus, scraped at `/metrics`):
+  - `rustfs_op_latency_seconds{op,tenant}` histogram.
+  - `rustfs_op_errors_total{op,code,tenant}`.
+  - `rustfs_bytes_in_total{tenant}`, `rustfs_bytes_out_total{tenant}`.
+  - `rustfs_storage_used_bytes{tenant}` gauge from QuotaService.
+- **Tracing**: every `RustFsContentStore` op already `#[instrument]`-ed;
+  add `tenant.id`, `s3.key`, `s3.bucket`, `http.status` span fields.
+- **Audit mirroring**: every mutating S3 op writes a JSON line to
+  `tenants/{id}/audit/.../{ulid}.json` with object-lock retention
+  (Enterprise) or 1 y lifecycle (others).
+- **Security**:
+  - Root credential only loaded in admin client; gateway request path
+    cannot construct an `AmazonS3` with root creds (compile-time guard:
+    `RootCredentials` is `!Send` outside `admin::*`).
+  - Rotate per-tenant access keys every 90d (background job).
+  - HSTS, `Cache-Control: private, no-store` on all presign responses.
+  - CSP `connect-src` includes RustFS endpoint per environment.
+- **Pen-test checklist** in `docs/ops/rustfs.md`:
+  cross-tenant prefix, path traversal in `virtual_path`, oversized
+  presign TTL, replay of presigned URL after rotation, etc.
+
+Verification:
+- `curl /metrics | grep rustfs_` shows all series.
+- Rotate a tenant's key, old presigns issued before rotation become 403
+  after key revoke (configurable: immediate vs 5 min grace).
+
+### Phase 8 — Backup, DR, multi-region
+
+Deliverables:
+- **Backup**: nightly `aws s3 sync s3://workspace s3://workspace-backup`
+  to a second RustFS cluster or external S3. Restore runbook in
+  `docs/ops/rustfs.md`.
+- **Point-in-time recovery** leverages versioning + lifecycle (Phase 4).
+- **Multi-region** (Enterprise): cross-region replication rule + a
+  region-aware client that prefers nearest endpoint
+  (`RustFsContentStore::for_tenant_in_region`).
+- **DR drill**: quarterly tabletop with `make rustfs-dr-drill` script
+  that spins up a fresh cluster, restores from backup, runs smoke tests.
+
+Verification:
+- Backup job logs success; restore script reproduces `Kickoff.md` in a
+  scratch cluster within RPO target (< 24h) and RTO target (< 1h).
 
 ---
 
-## 6. Risks & Mitigations
+## 4. Cross-cutting changes
 
-| Risk | Likelihood | Impact | Mitigation |
-|------|------------|--------|------------|
-| RustFS image incompatible with `object_store` 0.11 SigV4 quirks | Low | High (uploads fail) | Tested locally before merge; both products claim 100% S3 compatibility for SNSD mode |
-| `rustfs/rustfs:latest` lacks healthcheck endpoint | Medium | Medium (compose marks unhealthy) | Use TCP probe on port 9000 instead of HTTP path |
-| UID 10001 permission errors on bind mounts | High on first run | Low (init container fixes it) | `rustfs-perms` init container handles it; documented in Phase 6 announcement |
-| Dev volumes corrupted (MinIO data dir not portable) | Certain | Low | Aggressive plan accepts `docker compose down -v` — local dev data is disposable |
-| `mc` muscle memory in onboarding docs | Medium | Low | Replace every `mc` example with `aws --endpoint-url` |
-| RustFS console UI behaves differently than MinIO console | Certain | Low | Update verify.md Phase 9b screenshots/steps in Phase 4 |
-| Bucket auto-creation path differs (no `mc mb`) | Certain | Low | Use `aws s3 mb` from `amazon/aws-cli` init container |
+### 4.1 Config surface (gateway env)
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `S3_ENDPOINT` | `http://rustfs:9000` | RustFS endpoint |
+| `S3_BUCKET` | `workspace` | Primary bucket |
+| `RUSTFS_ROOT_ACCESS_KEY` | `rustfsadmin` | Admin client only |
+| `RUSTFS_ROOT_SECRET_KEY` | `rustfsadmin` | Admin client only |
+| `RUSTFS_IAM_ENC_KEY` | (required prod) | AES-256-GCM key for per-tenant creds |
+| `RUSTFS_WEBHOOK_SECRET` | (required prod) | HMAC for bucket notifications |
+| `RUSTFS_BOOTSTRAP` | `on` | Run declarative bootstrap on boot |
+| `RUSTFS_PER_TENANT_IAM` | `on` | Phase 2 |
+| `RUSTFS_REAL_PRESIGN` | `on` | Phase 3 |
+| `RUSTFS_SSE` | `on` | Phase 4 |
+| `RUSTFS_VERSIONING` | `on` | Phase 4 |
+| `RUSTFS_OBJECT_LOCK` | `off` | Phase 4, Enterprise |
+| `RUSTFS_NOTIFICATIONS` | `on` | Phase 5 |
+| `RUSTFS_QUOTAS` | `on` | Phase 6 |
+| `RUSTFS_PRESIGN_TTL_SECS` | `900` | Max 3600 |
+
+### 4.2 Breaking API/UI changes
+
+- Removed: `GET /v1/files/{token}` (UUID download shim).
+- Added: `POST /v1/workspaces/{id}/presign-upload`,
+  `GET /v1/workspaces/{id}/presign-download`,
+  `GET /v1/workspaces/nodes/{id}/versions`,
+  `POST /v1/workspaces/nodes/{id}/restore`,
+  multipart endpoints (Phase 6).
+- Web/Tauri upload UI switches to direct-to-RustFS PUT; loading
+  states reused; error mapping for 403/413 added.
+
+### 4.3 Path validation
+
+`virtual_path` is normalized with `Utf8PathBuf`, rejected if:
+- contains `..` or absolute components,
+- contains NUL, CR, LF, or any byte < 0x20,
+- > 1024 bytes,
+- has trailing whitespace or trailing `/`.
+
+This is enforced **before** signing presigned URLs and at the workspace
+service entrypoint. Tested with property tests (`proptest`).
+
+### 4.4 Testing strategy
+
+- Unit: `rustfs-admin` against a containerised RustFS (`testcontainers`).
+- Integration: `agent-gateway` E2E suite spins up RustFS + Postgres +
+  Qdrant, creates two tenants, asserts isolation, presign roundtrip,
+  notification → index, quota enforcement.
+- Browser E2E: Playwright spec uploads a 5 MiB file via presign,
+  asserts it appears in sidebar and chat retrieval finds it.
+- Chaos: kill RustFS mid-upload, confirm `abort` cleans staged parts.
+
+### 4.5 Rollout
+
+1. Land Phase 1 + 2 behind flags off in prod, on in dev/stage.
+2. Soak 48h.
+3. Flip Phase 2 on in prod for new tenants only.
+4. Backfill existing tenants in batches of 50 via a one-shot job
+   (provision IAM, no data move — prefix already correct).
+5. Land Phase 3, flip after web ships direct-upload UI.
+6. Phases 4–8 follow on weekly cadence.
+
+### 4.6 Out of scope
+
+- Lago billing of storage bytes (separate plan).
+- Cross-cloud (AWS S3, GCS) abstraction — RustFS only.
+- End-to-end client-side encryption (deferred; SSE-KMS covers most needs).
 
 ---
 
-## 7. Acceptance Criteria
+## 5. File/crate impact map
 
-A passing migration meets **all** of the following:
-
-1. ✅ `docker compose up -d` brings up `conusai-rustfs` (image `rustfs/rustfs:latest`) healthy in ≤ 30 s.
-2. ✅ `workspace` bucket is auto-created on first run.
-3. ✅ `curl -sf -X POST http://localhost:8080/v1/files -H "Authorization: Bearer $TOKEN" -F file=@invoice.png` returns a JSON body with a UUID `id`.
-4. ✅ `curl -sf http://localhost:8080/v1/files/{id} -o /tmp/x.png` followed by `file /tmp/x.png` reports `PNG image data`.
-5. ✅ The RustFS console at <http://localhost:9001> shows the uploaded file under `workspace/tenants/acme/{uuid}/invoice.png`.
-6. ✅ `cargo test --workspace` is green.
-7. ✅ `rg -i '(minio|minioadmin)'` returns zero matches outside [docs/rustfs-plan.md](docs/rustfs-plan.md) and the ADR amendment.
-8. ✅ [docs/arch.md](docs/arch.md), [docs/project-instructions.md](docs/project-instructions.md), [docs/verify/verify.md](docs/verify/verify.md), and [docs/adr/0009-redb-qdrant-rustfs.md](docs/adr/0009-redb-qdrant-rustfs.md) all reflect the new reality.
-
----
-
-## 8. Post-Migration arch.md Updates (preview)
-
-After the cutover, the following sections in [docs/arch.md](docs/arch.md) must read:
-
-- **§ Dependency table**: `object_store` 0.11 (`aws`) — *S3-compatible object store (RustFS in dev, AWS S3 in prod)*.
-- **§ Storage tree**: `rustfs_content.rs   # object_store (S3 / RustFS)`.
-- **§ Storage layer matrix**: Object content — *RustFS (rustfs/rustfs) / AWS S3 (object_store 0.11)* — `store/rustfs_content.rs`.
-- **§10 (new bullet)**: *"Local object storage runs the real [RustFS](https://rustfs.com) server (Apache-2.0, `rustfs/rustfs:latest`). MinIO is no longer part of the stack."*
-- **§ ADR cross-ref**: link to ADR 0009 amendment 2026-05-19.
+| Area | Path | Phase |
+|------|------|-------|
+| Admin client | `apps/backend/crates/rustfs-admin/**` | 1 |
+| Bootstrap | `apps/backend/crates/agent-gateway/src/bootstrap/storage.rs` | 1 |
+| TenantContext creds | `apps/backend/crates/agent-core/src/context/tenant.rs` | 2 |
+| Content store | `apps/backend/crates/agent-core/src/store/rustfs_content.rs` | 2,4,6 |
+| Presign service | `apps/backend/crates/agent-core/src/store/presign.rs` (new) | 3 |
+| HTTP routes | `apps/backend/crates/agent-gateway/src/routes/workspaces.rs` + new `uploads.rs` | 3,6 |
+| Webhook | `apps/backend/crates/agent-gateway/src/routes/internal.rs` (new) | 5 |
+| Indexer | `apps/backend/crates/workspace-indexer/**` | 5 |
+| Quota | `apps/backend/crates/agent-core/src/quota.rs` (new) | 6 |
+| Metrics | `apps/backend/crates/agent-gateway/src/metrics.rs` | 7 |
+| Web upload | `apps/web/src/lib/upload/**` | 3,6 |
+| Compose | `docker-compose.yml` (drop `rustfs-init`) | 1 |
+| Capability | `apps/backend/capabilities/file-storage/capability.toml` | 3 |
+| Docs | `docs/ops/rustfs.md` (new), `docs/arch.md` | all |
 
 ---
 
-## 9. Out of Scope (Follow-up Tickets)
+## 6. Definition of done
 
-- Multi-node / erasure-coded RustFS for production (new ADR).
-- TLS termination on RustFS S3 endpoint.
-- RustFS IAM tokens per tenant (replace shared `rustfsadmin` root key).
-- Moving bucket bootstrap from a sidecar container into the gateway's `init_file_store` once `object_store` exposes `CreateBucket` (or via a thin `aws-sdk-s3` dependency).
-- Versioning / lifecycle policy on the `workspace` bucket.
+- All 8 phases shipped behind flags, defaults as above.
+- E2E suite green: tenant isolation, presign roundtrip,
+  notification→index, quota, versioning, object-lock (Enterprise).
+- Root credential not reachable from any request-handling code path
+  (verified by `cargo deny`-style lint + grep).
+- DR drill executed once successfully and documented.
+- `docs/arch.md` updated to reference this plan; this file marked
+  `Status: implemented` with phase completion dates.
