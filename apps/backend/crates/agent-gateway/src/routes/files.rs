@@ -1,4 +1,4 @@
-/// File upload / download via MinIO (S3-compatible).
+/// File upload / download via RustFS (S3-compatible).
 ///
 /// POST /v1/files          — multipart upload, returns download token (requires JWT)
 /// GET  /v1/files/{token}  — stream file back (token-gated, 1h TTL; no JWT needed)

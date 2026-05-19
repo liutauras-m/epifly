@@ -74,7 +74,7 @@ conusai-platform/
 | Auth/Crypto | `jsonwebtoken` 9, `sha2` 0.10, `hmac` 0.12, `blake3` 1, `base64` 0.22 |
 | Schema/validation | `schemars` 0.8 (derive) |
 | OpenAPI | `utoipa` 5 (axum_extras, chrono, uuid, ulid), `utoipa-swagger-ui` 9 |
-| Object storage | `object_store` 0.11 (aws/S3/MinIO) |
+| Object storage | `object_store` 0.11 (aws/S3/RustFS) |
 | Embeddings (optional) | `fastembed` **5** (feature-gated: `local-embeddings`) |
 | Server-side UI | `askama` 0.12 (Foundry UI; server-rendered product surface) |
 | IDs | `ulid` 1.1 (time-sortable, serde) |
@@ -105,7 +105,7 @@ Three router groups — `public_router`, `protected_router` (tenant middleware),
 | GET | `/v1/capabilities` | List registered capabilities |
 | GET | `/v1/capabilities/search` | Semantic capability search (Qdrant ANN) |
 | POST | `/mcp` | MCP JSON-RPC 2.0 tool dispatch |
-| POST | `/v1/files` | Multipart file upload (MinIO-backed) |
+| POST | `/v1/files` | Multipart file upload (RustFS-backed) |
 | GET | `/v1/files/{token}` | Token-gated file download (Bearer JWT required) |
 | GET | `/v1/audit` | Audit event log |
 | POST | `/v1/workspaces` | Create workspace node |

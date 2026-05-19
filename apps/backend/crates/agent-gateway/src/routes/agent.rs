@@ -1126,7 +1126,7 @@ async fn resolve_and_invoke(
         .invoke(full_tool_name, input, Some(&tenant.0))
         .await?;
 
-    // Phase 4 — ArtifactBridge: materialise any file artifacts into MinIO + workspace.
+    // Phase 4 — ArtifactBridge: materialise any file artifacts into RustFS + workspace.
     if let Some(ref bridge) = state.artifact_bridge
         && let Ok(tool_out) =
             serde_json::from_value::<common::artifact::ToolOutput>(raw_result.clone())

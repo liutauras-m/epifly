@@ -85,3 +85,22 @@ Replace the Postgres + pgvector + MinIO stack with **three purpose-built stores*
 | `S3_BUCKET` | S3 bucket name, default `workspace` |
 | `AWS_ACCESS_KEY_ID` | S3 access key |
 | `AWS_SECRET_ACCESS_KEY` | S3 secret key |
+
+---
+
+## Amendment — 2026-05-19: MinIO replaced by real RustFS
+
+The `S3_ENDPOINT` backend was initially provisioned using a **MinIO** container (`quay.io/minio/minio`) as a placeholder. As of 2026-05-19 the stack runs the real **[RustFS](https://rustfs.com)** server (`rustfs/rustfs:latest`), an Apache-2.0–licensed, Rust-native, 100% S3-compatible distributed object store.
+
+**What changed:**
+- `docker-compose.yml`: image swapped from `quay.io/minio/minio` → `rustfs/rustfs:latest`; `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` replaced by `RUSTFS_ACCESS_KEY`/`RUSTFS_SECRET_KEY`; bucket bootstrap now uses `amazon/aws-cli` (`aws s3 mb`) instead of `mc`.
+- Default credentials changed from `minioadmin` → `rustfsadmin`.
+- A `rustfs-perms` init container was added to `chown -R 10001:10001` the data volume (RustFS runs as UID 10001).
+- `apps/backend/start.sh` healthcheck URL updated from `/minio/health/live` to plain `/`.
+- Default credentials in `state.rs` `init_file_store` updated to `rustfsadmin`.
+
+**What did not change:**
+- Wire protocol: S3 (SigV4). The `object_store` 0.11 crate with `aws` feature requires no modification.
+- On-disk path layout: `workspace/tenants/{tenant_id}/{file_id}/{filename}`.
+- Application API: `POST /v1/files`, `GET /v1/files/{token}`.
+- `S3_ENDPOINT`, `S3_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` env-var names are unchanged.

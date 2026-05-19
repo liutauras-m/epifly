@@ -93,7 +93,7 @@ From root `Cargo.toml [workspace.dependencies]`:
 | `sha2` / `blake3` / `hmac` | 0.10 / 1 / 0.12 | Crypto + cache keys |
 | `schemars` | 0.8 (`derive`, `chrono`) | JSON Schema for tool I/O |
 | `base64` | 0.22 | Image / token encoding |
-| `object_store` | 0.11 (`aws`) | RustFS / S3 / MinIO content store |
+| `object_store` | 0.11 (`aws`) | RustFS / AWS S3 content store |
 | `fastembed` | 5 (optional) | Local embeddings (`local-embeddings` feature) |
 | `openidconnect` | 3 (`reqwest`) | Zitadel OIDC discovery + token verification |
 | `sqlx` | 0.8 (`runtime-tokio`, `postgres`, `chrono`, `uuid`, `migrate`) | TimescaleDB / Postgres client (billing usage events) |
@@ -272,7 +272,7 @@ agent-core/src/
 ├── store/
 │   ├── redb_metadata.rs    # KV (postcard-encoded)
 │   ├── qdrant_vector.rs    # 768-dim cosine
-│   ├── rustfs_content.rs   # object_store (S3/MinIO)
+│   ├── rustfs_content.rs   # object_store (S3 / RustFS)
 │   └── marker.rs
 ├── vector_store/mod.rs
 ├── indexing/
@@ -472,7 +472,7 @@ Each factory implements `CapabilityFactory::supports(manifest) -> bool` and `bui
 | --- | --- | --- |
 | Metadata KV | redb 2 (postcard) | `store/redb_metadata.rs` |
 | Vector ANN | Qdrant 1.x (768-dim cosine) | `store/qdrant_vector.rs` |
-| Object content | RustFS / MinIO / S3 (`object_store` 0.11) | `store/rustfs_content.rs` |
+| Object content | RustFS / AWS S3 (`object_store` 0.11) | `store/rustfs_content.rs` |
 | Local embeddings | fastembed 5 (feature `local-embeddings`) | `indexing/local_embedding_service.rs` |
 | Cross-instance index marker | `store/marker.rs` | |
 
@@ -1074,3 +1074,9 @@ Shell: `telemetry.rs` initialises `tracing_subscriber` for in-process logs only 
 - Web workshop route: `apps/web/src/routes/{+layout.server,+page.server,+page.svelte}.ts`
 - Shell mobile: `apps/browser-shell/src/lib/mobile/{MobileShell.svelte,screens/*,parts/*,chrome/*,stores/*}`
 - Shell native: `apps/browser-shell/src-tauri/src/{lib,chat_stream,device_auth,oidc_auth,recorder,tabs,registration}.rs`
+
+---
+
+## Notes
+
+- Local object storage runs the real [RustFS](https://rustfs.com) server (Apache-2.0, `rustfs/rustfs:latest`) in SNSD mode. MinIO has been removed from the stack. See [ADR 0009 amendment](adr/0009-redb-qdrant-rustfs.md) (2026-05-19).

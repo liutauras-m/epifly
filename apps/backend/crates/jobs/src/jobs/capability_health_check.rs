@@ -22,7 +22,7 @@ impl ScheduledJob for CapabilityHealthCheckJob {
     async fn run(&self, ctx: Arc<JobContext>) -> anyhow::Result<()> {
         // Check RustFS / S3 is reachable (if configured).
         if let Some(endpoint) = &ctx.s3_endpoint {
-            let health_url = format!("{}/minio/health/live", endpoint);
+            let health_url = format!("{}/", endpoint);
             match reqwest::get(&health_url).await {
                 Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 200 => {
                     info!("capability-health-check: storage healthy");

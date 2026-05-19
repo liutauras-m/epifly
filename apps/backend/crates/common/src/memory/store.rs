@@ -62,7 +62,7 @@ pub trait ThreadStore: Send + Sync + 'static {
 /// Persistent workspace node store backed by Postgres.
 ///
 /// Separation of concerns: node metadata + vector embeddings in Postgres;
-/// markdown body in `WorkspaceContentStore` (MinIO).
+/// markdown body in `WorkspaceContentStore` (RustFS).
 #[async_trait]
 pub trait WorkspaceStore: Send + Sync + 'static {
     async fn create_folder(
@@ -156,7 +156,7 @@ pub trait WorkspaceStore: Send + Sync + 'static {
     ) -> anyhow::Result<Vec<WorkspaceNode>>;
 
     /// Store a content snippet and persist its embedding so it can be searched.
-    /// Called after each successful MinIO write in `patch_content`.
+    /// Called after each successful RustFS write in `patch_content`.
     /// `content` is chunked and truncated before indexing.
     async fn index_content(
         &self,
@@ -176,7 +176,7 @@ pub trait WorkspaceStore: Send + Sync + 'static {
     ) -> anyhow::Result<WorkspaceNode>;
 }
 
-/// Reads and writes the markdown body of Conversation nodes from MinIO.
+/// Reads and writes the markdown body of Conversation nodes from RustFS.
 #[async_trait]
 pub trait WorkspaceContentStore: Send + Sync + 'static {
     /// Returns `""` if the object doesn't exist yet (newly created conversation).

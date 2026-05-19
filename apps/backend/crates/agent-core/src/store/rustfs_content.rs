@@ -1,8 +1,7 @@
 //! RustFsContentStore — reads/writes markdown bodies for Conversation nodes.
 //!
 //! Wraps `object_store::ObjectStore` (S3-compatible), pointed at RustFS
-//! via the standard `AWS_*` / `S3_*` env vars.  RustFS exposes the same
-//! S3 API as MinIO, so the logic is identical — only the name changes.
+//! via the standard `AWS_*` / `S3_*` env vars.
 //!
 //! Object keys: `tenants/{tenant_id}/workspaces/{virtual_path}`
 
@@ -30,9 +29,9 @@ impl RustFsContentStore {
         let bucket = std::env::var("S3_BUCKET")
             .unwrap_or_else(|_| "workspace".into());
         let access_key = std::env::var("AWS_ACCESS_KEY_ID")
-            .unwrap_or_else(|_| "minioadmin".into());
+            .unwrap_or_else(|_| "rustfsadmin".into());
         let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY")
-            .unwrap_or_else(|_| "minioadmin".into());
+            .unwrap_or_else(|_| "rustfsadmin".into());
 
         let store = AmazonS3Builder::new()
             .with_endpoint(&endpoint)

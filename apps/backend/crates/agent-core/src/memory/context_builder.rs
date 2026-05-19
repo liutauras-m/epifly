@@ -1,6 +1,6 @@
 /// ContextBuilder — assembles a workspace-scoped system preamble for the agent.
 ///
-/// Walks ancestor folders, loads each folder's CONTEXT.md or README.md from MinIO,
+/// Walks ancestor folders, loads each folder's CONTEXT.md or README.md from RustFS,
 /// then loads the selected conversation body. Concatenates sections with a divider,
 /// truncating via the injected `ContextTruncator` strategy (default: oldest-first).
 use crate::context::tenant::TenantContext;

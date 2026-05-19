@@ -27,7 +27,7 @@
 - **Super-admin Askama UI** under `apps/backend/crates/agent-gateway/templates/`.
 
 ### Infrastructure
-- [docker-compose.yml](docker-compose.yml): Qdrant + RustFS (MinIO) + agent-gateway. **No** Postgres, Redis, Zitadel, Lago.
+- [docker-compose.yml](docker-compose.yml): Qdrant + RustFS + agent-gateway. **No** Postgres, Redis, Zitadel, Lago.
 
 ### Gaps (delta this plan must close)
 1. No OAuth/OIDC; passwordless / social login impossible.

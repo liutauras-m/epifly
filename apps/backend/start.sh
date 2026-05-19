@@ -78,7 +78,7 @@ echo "✅ Qdrant ready"
 
 # ── Wait for RustFS ───────────────────────────────────────────────────────────
 echo "⏳ Waiting for RustFS..."
-until curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1; do sleep 1; done
+until curl -sf http://localhost:9000/ > /dev/null 2>&1; do sleep 1; done
 echo "✅ RustFS ready"
 
 # ── Build agent-gateway (if running full profile) ─────────────────────────────

@@ -175,7 +175,7 @@ In dry-run mode the agent steps through the recorded interaction sequence, but a
 
 | Data | Storage location | Retention |
 |---|---|---|
-| Recorded session events | Encrypted local cache, then uploaded to your organisation's MinIO bucket | Configurable by admin (default: 90 days) |
+| Recorded session events | Encrypted local cache, then uploaded to your organisation's RustFS bucket | Configurable by admin (default: 90 days) |
 | Device token | System keychain (macOS Keychain, Windows Credential Manager, Android Keystore) | Until revoked or expired |
 | Agent chat history | Your organisation's Postgres instance | Configurable by admin |
 | Diagnostic logs | Local app data directory | 7 days rolling |

@@ -28,7 +28,7 @@ use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::task;
-use tracing::instrument;
+use tracing::{instrument, warn};
 use ulid::Ulid;
 
 // ── Table definitions ─────────────────────────────────────────────────────────
@@ -41,7 +41,7 @@ const THREADS: TableDefinition<(&str, &str), &[u8]> =
 const MESSAGES: TableDefinition<(&str, &str, u64), &[u8]> =
     TableDefinition::new("messages");
 
-/// workspace nodes: (tenant_id, node_id) → postcard(WorkspaceNode)
+/// workspace nodes: (tenant_id, node_id) → json(WorkspaceNode)
 const NODES: TableDefinition<(&str, &str), &[u8]> =
     TableDefinition::new("workspace_nodes");
 
@@ -109,6 +109,14 @@ fn ser<T: serde::Serialize>(v: &T) -> anyhow::Result<Vec<u8>> {
 
 fn de<'a, T: serde::Deserialize<'a>>(bytes: &'a [u8]) -> anyhow::Result<T> {
     postcard::from_bytes(bytes).map_err(|e| anyhow::anyhow!("deserialize: {e}"))
+}
+
+fn ser_node(v: &WorkspaceNode) -> anyhow::Result<Vec<u8>> {
+    serde_json::to_vec(v).map_err(|e| anyhow::anyhow!("serialize node: {e}"))
+}
+
+fn de_node(bytes: &[u8]) -> anyhow::Result<WorkspaceNode> {
+    serde_json::from_slice(bytes).map_err(|e| anyhow::anyhow!("deserialize node: {e}"))
 }
 
 // ── ThreadStore ───────────────────────────────────────────────────────────────
@@ -376,7 +384,13 @@ impl WorkspaceStore for RedbMetadataStore {
             let range = tbl.range((prefix, "")..(prefix, "\x7f"))?;
             for item in range {
                 let (_, v) = item?;
-                let node: WorkspaceNode = de(v.value())?;
+                let node = match de_node(v.value()) {
+                    Ok(node) => node,
+                    Err(err) => {
+                        warn!(error = %err, "skipping unreadable workspace node row");
+                        continue;
+                    }
+                };
                 if node.parent_id == parent_id {
                     nodes.push(node);
                 }
@@ -400,7 +414,7 @@ impl WorkspaceStore for RedbMetadataStore {
             let txn = db.begin_read()?;
             let tbl = txn.open_table(NODES)?;
             match tbl.get((tenant.as_str(), node_id.as_str()))? {
-                Some(v) => de(v.value()),
+                Some(v) => de_node(v.value()),
                 None => anyhow::bail!("node {node_id} not found"),
             }
         })
@@ -453,10 +467,11 @@ impl WorkspaceStore for RedbMetadataStore {
             {
                 let mut tbl = txn.open_table(NODES)?;
                 if let Some(v) = tbl.remove((tenant.as_str(), nid.as_str()))? {
-                    let node: WorkspaceNode = de(v.value())?;
-                    drop(v);
-                    let mut idx = txn.open_table(IDX_PATH)?;
-                    let _ = idx.remove((tenant.as_str(), node.virtual_path.as_str()))?;
+                    if let Ok(node) = de_node(v.value()) {
+                        drop(v);
+                        let mut idx = txn.open_table(IDX_PATH)?;
+                        let _ = idx.remove((tenant.as_str(), node.virtual_path.as_str()))?;
+                    }
                 }
             }
             txn.commit()?;
@@ -518,7 +533,13 @@ impl WorkspaceStore for RedbMetadataStore {
             let range = tbl.range((tenant.as_str(), "")..(tenant.as_str(), "\x7f"))?;
             for item in range {
                 let (_, v) = item?;
-                let node: WorkspaceNode = de(v.value())?;
+                let node = match de_node(v.value()) {
+                    Ok(node) => node,
+                    Err(err) => {
+                        warn!(error = %err, "skipping unreadable workspace node row during search");
+                        continue;
+                    }
+                };
                 if node.name.to_lowercase().contains(&q)
                     || node.virtual_path.to_lowercase().contains(&q)
                 {
@@ -582,7 +603,7 @@ impl RedbMetadataStore {
             let txn = db.begin_write()?;
             {
                 let mut tbl = txn.open_table(NODES)?;
-                tbl.insert((tenant.as_str(), nid.as_str()), ser(&node)?.as_slice())?;
+                tbl.insert((tenant.as_str(), nid.as_str()), ser_node(&node)?.as_slice())?;
             }
             {
                 let mut idx = txn.open_table(IDX_PATH)?;
@@ -610,10 +631,10 @@ impl RedbMetadataStore {
                 let v = tbl
                     .get((tenant.as_str(), nid.as_str()))?
                     .ok_or_else(|| anyhow::anyhow!("node {nid} not found"))?;
-                let mut node: WorkspaceNode = de(v.value())?;
+                let mut node = de_node(v.value())?;
                 drop(v);
                 f(&mut node);
-                tbl.insert((tenant.as_str(), nid.as_str()), ser(&node)?.as_slice())?;
+                tbl.insert((tenant.as_str(), nid.as_str()), ser_node(&node)?.as_slice())?;
                 node
             };
             txn.commit()?;

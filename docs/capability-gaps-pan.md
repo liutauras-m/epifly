@@ -261,9 +261,7 @@ scope creep we rejected in PR-1.
 - Postgres RLS for `capability_specs.tenant_scope` (PR-1's SQL `WHERE` is
   sufficient until multi-process gateway scale demands it).
 - Replacing `fastembed` local mode with a hosted embedder — orthogonal.
-- Removing `MINIO_*` / `S3_*` env-var fallbacks in
-  [state.rs](apps/backend/crates/agent-gateway/src/state.rs) (separate
-  cleanup epic).
+- Removing legacy `MINIO_*` env-var references (completed by MinIO→RustFS migration; `RUSTFS_*` env vars are now canonical).
 
 ## 5. Adjacent epic: generic prompt-capability architecture (cross-link, NOT in scope)
 

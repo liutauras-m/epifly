@@ -8,7 +8,7 @@ End-to-end verification of the **ConusAI multitenant agent platform** running in
 
 - Docker compose provisions **Qdrant + RustFS + gateway** (plus Jaeger / OTel in the `observability` profile).
 - Semantic capability search is implemented via **Qdrant** and returns `"source": "vector"` on the fast path.
-- Workspace nodes, audit events, and thread metadata are persisted in **redb** (embedded key-value store at `REDB_PATH`). Content bodies are stored in **RustFS** (S3-compatible MinIO-based store).
+- Workspace nodes, audit events, and thread metadata are persisted in **redb** (embedded key-value store at `REDB_PATH`). Content bodies are stored in **RustFS** (S3-compatible object store — `rustfs/rustfs:latest`).
 - `apps/backend/start-verify.sh` sets `CONUSAI_TEST_MODE=1`, which is useful for auth / admin / browser UI verification on `http://localhost:8088`, but it does **not** exercise redb- or RustFS-backed persistence.
 - Starting the gateway locally in normal mode via `cargo run -p agent-gateway` requires redb path, Qdrant, and S3 env vars; use the Docker gateway on `http://localhost:8080` for full data-plane verification.
 
@@ -30,7 +30,7 @@ The table below reflects the **current workspace code paths**.
 | **Tool embeddings + Qdrant** | ✅ Implemented | Vectors written to Qdrant collection on first search |
 | **Semantic capability search** | ✅ Implemented | `GET /v1/capabilities/search?q=finance` → Qdrant (`source: "vector"`) |
 | **RustFS file storage** | ✅ Implemented | `POST /v1/files` upload (JWT), `GET /v1/files/{token}` download (token-only, no JWT — UUID token is the presigned credential) |
-| **RustFS object storage — MinIO console** | ✅ Browser-Verified | MinIO console login (http://localhost:9001); navigate workspace → tenants → acme; verify file UUIDs, inspect metadata (name, size, last modified); confirm tenant isolation (files only visible in tenant folder). Re-verified 2026-05-19 |
+| **RustFS object storage — console** | ✅ Browser-Verified | RustFS console login (http://localhost:9001); navigate workspace → tenants → acme; verify file UUIDs, inspect metadata (name, size, last modified); confirm tenant isolation (files only visible in tenant folder). Re-verified 2026-05-19 |
 | **WASM capability execution** | ✅ Implemented | wasmtime instantiates `capability.wasm`, calls `ping` → 42 |
 | **Google Workspace capability** | ✅ Implemented | YAML manifest (MCP type, OAuth2 config) |
 | Docker stack (Qdrant + RustFS) | ✅ Strong | Both services are configured in compose and back the gateway data plane |
@@ -65,7 +65,7 @@ The table below reflects the **current workspace code paths**.
 - Phase 7: MCP JSON-RPC — initialize→`{name:conusai-platform}`, tools/list→15 tools, wasm-ping__ping→42 ✅
 - Phase 8: agent loop — `tool_calls_made:1`, invoice-processing__extract_invoice dispatched ✅
 - Phase 9: RustFS file storage — upload→token, download without JWT (token is auth), agent extracts HCY-23256029/PAID/€63.99 ✅ (fixed 2026-05-09: download route moved to public_router, no JWT needed)
-- Phase 9b: MinIO console browser verification — login (minioadmin/minioadmin), navigate workspace → tenants → acme, verify file UUIDs, inspect metadata (name, size, timestamp), confirm tenant isolation ✅ (verified 2026-05-19: S3 path hierarchy matches `workspace/tenants/{tenant_id}/{file_id}/`)
+- Phase 9b: RustFS console browser verification — login (rustfsadmin/rustfsadmin), navigate workspace → tenants → acme, verify file UUIDs, inspect metadata (name, size, timestamp), confirm tenant isolation ✅ (verified 2026-05-19: S3 path hierarchy matches `workspace/tenants/{tenant_id}/{file_id}/`)
 - Phase 10: semantic search — `source:vector`, invoice-processing top result for "finance", vectors in Qdrant ✅
 - Phase 11: WASM execution — `wasm-ping__ping` → `{result:42,runtime:wasmtime}` ✅
 - Phase 12: redb stores workspace/audit/thread metadata, Qdrant holds capability vectors, RustFS holds file objects ✅
@@ -390,7 +390,7 @@ curl -sf -X POST http://localhost:8080/v1/agent/completions \
 
 # Verify in RustFS (S3-compatible)
 docker run --rm --network conusai-platform_default \
-  -e AWS_ACCESS_KEY_ID=minioadmin -e AWS_SECRET_ACCESS_KEY=minioadmin \
+  -e AWS_ACCESS_KEY_ID=rustfsadmin -e AWS_SECRET_ACCESS_KEY=rustfsadmin \
   amazon/aws-cli --endpoint-url http://conusai-rustfs:9000 s3 ls s3://workspace/ --recursive
 ```
 
@@ -400,18 +400,18 @@ docker run --rm --network conusai-platform_default \
 
 ## Phase 9b — RustFS Object Storage Browser Verification ✅ **NEW**
 
-> **Browser-based visual inspection** of MinIO console to verify S3 bucket structure, tenant isolation, and file persistence.
+> **Browser-based visual inspection** of RustFS console to verify S3 bucket structure, tenant isolation, and file persistence.
 
-### 9b.1 Login to MinIO Console
+### 9b.1 Login to RustFS Console
 
 ```
 URL: http://localhost:9001/login
-Username: minioadmin
-Password: minioadmin
+Username: rustfsadmin
+Password: rustfsadmin
 → Redirects to http://localhost:9001/browser
 ```
 
-✅ **Pass**: MinIO console login successful.
+✅ **Pass**: RustFS console login successful.
 
 ### 9b.2 Verify workspace bucket exists
 
@@ -459,12 +459,12 @@ Repeat steps 9b.3–9b.4 for multiple tenant IDs (if applicable). Only files mat
 
 ✅ **Pass**: Tenant isolation enforced — files are stored and accessible only under their corresponding tenant folder.
 
-### 9b.6 Test presigned URL download (via MinIO console)
+### 9b.6 Test presigned URL download (via RustFS console)
 
 In the file detail view:
 - Select **invoice.png**
 - Click **Share** or **Download** button (if available)
-- Verify the file can be downloaded directly from MinIO
+- Verify the file can be downloaded directly from RustFS
 
 Alternatively, use the HTTP download with token:
 ```bash
@@ -534,7 +534,7 @@ curl -sf http://localhost:6333/collections/content \
 ### 12.3 RustFS (object storage)
 ```bash
 docker run --rm --network conusai-platform_default \
-  -e AWS_ACCESS_KEY_ID=minioadmin -e AWS_SECRET_ACCESS_KEY=minioadmin \
+  -e AWS_ACCESS_KEY_ID=rustfsadmin -e AWS_SECRET_ACCESS_KEY=rustfsadmin \
   amazon/aws-cli --endpoint-url http://conusai-rustfs:9000 s3 ls s3://workspace/ --recursive
 # Shows uploaded files under tenants/acme/...
 ```

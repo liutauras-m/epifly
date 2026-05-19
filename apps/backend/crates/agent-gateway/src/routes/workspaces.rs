@@ -130,7 +130,7 @@ pub async fn create(
                 .await
                 .map_err(map_err)?;
 
-            // Write empty .md to MinIO (best-effort; don't fail if MinIO is slow)
+            // Write empty .md to RustFS (best-effort; don't fail if RustFS is slow)
             let _ = state
                 .workspace_content
                 .write(&tenant.tenant_id, &node.virtual_path, "")
@@ -507,14 +507,14 @@ pub async fn delete_node(
     }
     let user = effective_user_id(tenant.user_id.as_deref());
 
-    // Get the node first so we can clean up MinIO content
+    // Get the node first so we can clean up RustFS content
     let node = state
         .workspace_store
         .get_accessible_node(&tenant.tenant_id, user, id)
         .await
         .map_err(map_err)?;
 
-    // Best-effort MinIO cleanup for conversations
+    // Best-effort RustFS cleanup for conversations
     if node.kind == NodeKind::Conversation {
         let _ = state
             .workspace_content

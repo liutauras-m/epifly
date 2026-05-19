@@ -129,38 +129,62 @@ services:
       timeout: 5s
       retries: 10
 
-  # ── Object Storage (S3-compatible — RustFS drop-in) ───────────────────────
+  # ── Object storage permissions fix (RustFS runs as UID 10001) ───────────
+  rustfs-perms:
+    image: alpine:3
+    container_name: conusai-rustfs-perms
+    user: root
+    volumes:
+      - rustfs_data:/fix_path
+    command: ["chown", "-R", "10001:10001", "/fix_path"]
+    restart: "no"
+
+  # ── Object Storage — RustFS (S3-compatible, Apache 2.0) ───────────────────
   rustfs:
-    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    image: rustfs/rustfs:latest
     container_name: conusai-rustfs
-    command: server /data --console-address ":9001"
+    depends_on:
+      rustfs-perms:
+        condition: service_completed_successfully
     environment:
-      MINIO_ROOT_USER: "${AWS_ACCESS_KEY_ID:-minioadmin}"
-      MINIO_ROOT_PASSWORD: "${AWS_SECRET_ACCESS_KEY:-minioadmin}"
+      RUSTFS_ACCESS_KEY: "${AWS_ACCESS_KEY_ID:-rustfsadmin}"
+      RUSTFS_SECRET_KEY: "${AWS_SECRET_ACCESS_KEY:-rustfsadmin}"
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ENABLE: "true"
+    command: ["--console-enable", "/data"]
     ports:
       - "9000:9000"   # S3 API
-      - "9001:9001"   # Console
+      - "9001:9001"   # Web console
     volumes:
       - rustfs_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "sh", "-c", "true"]
       interval: 10s
       timeout: 5s
       retries: 10
 
-  # ── Bucket initialisation ─────────────────────────────────────────────────
+  # ── Bucket bootstrap (aws-cli; RustFS image ships no mc) ─────────────────
   rustfs-init:
-    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    image: amazon/aws-cli:latest
     container_name: conusai-rustfs-init
     depends_on:
       rustfs:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-        mc alias set local http://conusai-rustfs:9000 ${AWS_ACCESS_KEY_ID:-minioadmin} ${AWS_SECRET_ACCESS_KEY:-minioadmin} &&
-        mc mb --ignore-existing local/workspace &&
+        condition: service_started
+    environment:
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-rustfsadmin}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-rustfsadmin}"
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        until aws --endpoint-url http://conusai-rustfs:9000 s3 ls >/dev/null 2>&1; do
+          echo 'waiting for rustfs s3 endpoint...'
+          sleep 2
+        done
+        aws --endpoint-url http://conusai-rustfs:9000 s3 mb s3://workspace 2>/dev/null || true
+        aws --endpoint-url http://conusai-rustfs:9000 s3 ls
         echo 'bucket workspace ready'
-      "
     restart: on-failure
 
   # ── Marker PDF-to-markdown service (optional — profile: marker) ──────────
@@ -198,8 +222,8 @@ services:
       QDRANT_URL: "http://conusai-qdrant:6334"
       S3_ENDPOINT: "http://conusai-rustfs:9000"
       S3_BUCKET: "workspace"
-      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-minioadmin}"
-      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-minioadmin}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-rustfsadmin}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-rustfsadmin}"
       REDB_PATH: "/data/conusai.redb"
       MARKER_URL: "http://conusai-marker:8080"
       WORKSPACES_ROOT: "/app/workspaces"

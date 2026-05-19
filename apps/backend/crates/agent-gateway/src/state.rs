@@ -408,10 +408,10 @@ fn init_file_store() -> Option<Arc<dyn ObjectStore>> {
         .unwrap_or_else(|_| "workspace".into());
 
     let access_key = std::env::var("AWS_ACCESS_KEY_ID")
-        .unwrap_or_else(|_| "minioadmin".into());
+        .unwrap_or_else(|_| "rustfsadmin".into());
 
     let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY")
-        .unwrap_or_else(|_| "minioadmin".into());
+        .unwrap_or_else(|_| "rustfsadmin".into());
 
     match AmazonS3Builder::new()
         .with_endpoint(&endpoint)

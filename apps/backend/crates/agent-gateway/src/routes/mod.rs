@@ -238,7 +238,7 @@ pub fn protected_router(
         .route("/v1/capabilities/search", get(search::search))
         // MCP JSON-RPC 2.0
         .route("/mcp", post(mcp::dispatch))
-        // File storage (MinIO-backed) — upload requires JWT; download is in public_router
+        // File storage (RustFS-backed) — upload requires JWT; download is in public_router
         .route("/v1/files", post(files::upload))
         // ── Audit log ──────────────────────────────────────────────────────
         .route("/v1/audit", get(audit::list_audit))

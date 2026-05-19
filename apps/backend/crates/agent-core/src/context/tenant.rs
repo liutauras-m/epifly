@@ -138,7 +138,7 @@ impl TenantContext {
         common::path_safety::safe_join(&root, rel)
     }
 
-    /// S3 / MinIO key prefix for this tenant.
+    /// S3 / RustFS key prefix for this tenant.
     pub fn storage_prefix(&self) -> String {
         format!("tenants/{}/", &*self.tenant_id)
     }

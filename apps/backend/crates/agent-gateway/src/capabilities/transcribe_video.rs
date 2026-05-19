@@ -34,7 +34,7 @@ impl TranscribeVideoCapability {
         let manifest = ToolManifest {
             name: "transcribe-video".into(),
             version: "0.1.0".into(),
-            description: "Transcribes an audio or video file stored in MinIO via the Whisper API. Returns a task_id immediately; poll GET /v1/tasks/{id} for the result.".into(),
+            description: "Transcribes an audio or video file stored in RustFS via the Whisper API. Returns a task_id immediately; poll GET /v1/tasks/{id} for the result.".into(),
             kind: ToolKind::Native,
             tools: vec![ToolDef {
                 name: "transcribe".into(),

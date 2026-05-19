@@ -1,5 +1,5 @@
 //! Direct invoice extraction — bypasses the agent loop entirely.
-//! POST /ui/extract-invoice: token → MinIO bytes → InvoicePipeline → InvoiceData JSON.
+//! POST /ui/extract-invoice: token → RustFS bytes → InvoicePipeline → InvoiceData JSON.
 
 use crate::state::AppState;
 use crate::ui::session::SessionUser;
@@ -65,7 +65,7 @@ pub async fn ui_extract_invoice(
 
     info!(key = %object_key, "downloading from object store for invoice extraction");
 
-    // Download bytes from MinIO
+    // Download bytes from RustFS
     let os_path = OsPath::from(object_key.as_str());
     let get_result = match store.get(&os_path).await {
         Ok(r) => r,

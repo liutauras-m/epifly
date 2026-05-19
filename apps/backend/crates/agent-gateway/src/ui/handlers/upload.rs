@@ -1,4 +1,4 @@
-//! UI file upload — multipart → MinIO, returns token + filename for the composer chip.
+//! UI file upload — multipart → RustFS, returns token + filename for the composer chip.
 
 use crate::state::AppState;
 use crate::ui::session::SessionUser;

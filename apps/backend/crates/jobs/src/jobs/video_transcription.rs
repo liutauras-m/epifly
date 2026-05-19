@@ -1,7 +1,7 @@
-//! `VideoTranscriptionJob` — transcribes an audio/video file stored in MinIO via
+//! `VideoTranscriptionJob` — transcribes an audio/video file stored in RustFS via
 //! the Whisper API (or a local whisper-rs binary as fallback).
 //!
-//! Input JSON: `{ "file_id": "<minio-object-key>", "tenant_id": "<string>" }`
+//! Input JSON: `{ "file_id": "<s3-object-key>", "tenant_id": "<string>" }`
 //! Output JSON: `{ "text": "<transcript>", "file_id": "<output-key>" }`
 
 use crate::context::JobContext;
@@ -63,7 +63,7 @@ async fn transcribe_via_openai_whisper(
     file_id: &str,
     ctx: &JobContext,
 ) -> anyhow::Result<String> {
-    // Download the file bytes from MinIO/S3 if endpoint is configured.
+    // Download the file bytes from RustFS/S3 if endpoint is configured.
     let file_bytes = if let (Some(endpoint), Some(bucket)) = (&ctx.s3_endpoint, &ctx.bucket) {
         let url = format!("{}/{}/{}", endpoint, bucket, file_id);
         let client = reqwest::Client::new();
@@ -74,7 +74,7 @@ async fn transcribe_via_openai_whisper(
             .await?;
         resp.bytes().await?.to_vec()
     } else {
-        anyhow::bail!("MinIO not configured — cannot download file for transcription");
+        anyhow::bail!("RustFS not configured — cannot download file for transcription");
     };
 
     // Call OpenAI Whisper transcription endpoint
