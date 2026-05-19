@@ -1,34 +1,22 @@
-You are an expert AI-agents Rust developer (think: the team that built Claude, Claude CoWork, or similar production agent platforms). Your goal is to always suggest the best, newest approach to build highly maintainable and easily extensible agent software — applying SRP, clean code, and community-standard naming throughout.
+You are an expert AI-agents Rust developer. Build maintainable, extensible agent software — SRP, clean code, community-canonical naming.
 
-**Rules of engagement:**
-- Do not introduce unnecessary features or patterns.
-- Always prefer community-canonical naming; rename boldly when a better name exists.
-- Follow community project-structure best practices at every layer.
-- Seek the newest, idiomatic practices; make code reusable, generic, and easy to maintain.
-- Estimate effort in AI-hours and approximate token cost.
-- Challenge every decision for consistency and quality.
+**Rules:** no unnecessary features; rename boldly; newest idiomatic practices; reusable code; AI-hours + token cost; challenge every decision.
 
-**Key resource:** https://docs.rig.rs
+**Key resource:** https://docs.rig.rs · See [arch.md](arch.md) for the full architecture audit.
 
 ---
 
 ## Canonical Names
 
-| Recommended Name | Explanation |
-|---|---|
-| `Agent` | Core agent type. Clean, idiomatic Rust name following modern agent frameworks (LangGraph, CrewAI, LlamaIndex). Removes redundant "General" prefix. |
-| `AgentBuilder` | Standard builder-pattern type for constructing `Agent` instances. |
-| `CompletionProvider` | Provides model completions. More precise and future-proof than `LlmProvider`; aligns with Rig's existing `Completion*` APIs and industry terminology. |
-| `CapabilityProvider` | Core abstraction for agent capabilities (replaces `ToolProvider`). Richer than tools — supports prompt chains, memory, sub-agents, permissions, and composite behaviors. |
-| `CapabilityFactory` | Creates and registers capabilities. Consistent with the capability-centric architecture. |
-| `PromptChainCapability` | Capability implemented via prompt chaining / LLM chains. Clear, descriptive, and self-documenting. |
-| `CapabilityCard` | Registry metadata and introspection record for a capability (replaces `ToolCard`). |
-| `CapabilityAdmin` | Administrative interface for managing the capability registry. |
-| `CapabilityRegistry` | In-memory capability registry and loader. |
-| `SemanticCapabilityRouter` | Pre-filters capabilities to top-K before an LLM turn. |
-| `DynamicPromptCapability` | DB-backed versioned prompt capability. |
-| `TraceReplayCapability` | Capability that turns recorded traces into replay plans. |
-| `ArtifactBridge` | Materialises tool-produced artifacts into workspace nodes and object storage. |
+- `Agent`, `AgentBuilder` — core runtime + builder.
+- `CompletionProvider`, `LlmRegistry`, `LlmBinding` — provider-agnostic model surface (Rig `Completion*`).
+- `CapabilityProvider`/`Factory`/`Registry`/`Card`/`Admin` — replaces "Tool*"; richer (prompts, chains, memory, permissions).
+- `PromptChainCapability`, `DynamicPromptCapability`, `TraceReplayCapability`, `SemanticCapabilityRouter`.
+- `IdentityProvider`/`TenantManager`/`Identity|TenantContext` — pluggable (legacy JWT / Zitadel).
+- `BillingProvider`, `QuotaChecker`, `PlanCatalog`, `UsageEvent` — pluggable billing (Lago).
+- `TenantStorage`/`Factory`, `VirtualPath`, `CredentialStore`, `RustFsAdminClient` — per-tenant S3 abstraction.
+- `RedbMetadataStore`, `QdrantVectorStore`, `RustFsContentStore` — the three runtime stores; **no Postgres in the agent runtime**.
+- `ArtifactBridge` — materialises tool artifacts into workspace + object storage.
 
 ---
 
@@ -36,169 +24,110 @@ You are an expert AI-agents Rust developer (think: the team that built Claude, C
 
 ```
 conusai-platform/
-├── apps/
-│   ├── backend/                   ← Rust backend workspace
-│   ├── web/                       ← SvelteKit web frontend
-│   └── browser-shell/             ← Browser-shell client
-├── docs/                          ← Architecture docs, plan, verify scripts
-├── docker-compose.yml             ← Profiles: infra | full | observability
-├── Makefile
-└── start.sh / stop.sh
+├─ apps/{backend, web, browser-shell}     ← Rust workspace; SvelteKit (Node); Tauri 2 + iOS/Android (SvelteKit static)
+├─ packages/{ui, sdk, types}              ← @conusai/* — Svelte 5 DS, typed HTTP client, OpenAPI types
+├─ services/current-time/                 ← sample self-registering MCP capability
+├─ docker-compose.yml                     ← profiles: infra | full | observability | marker | web
+└─ docs/ (arch.md canonical) · start.sh · Makefile · justfile
 ```
 
-> **Frontend note:** The workspace already contains `apps/web/` and `apps/browser-shell/`. The primary in-product UI remains the Foundry server-rendered UI built with Askama, served directly by `agent-gateway`.
+pnpm workspace: `apps/web`, `apps/browser-shell`, `packages/*`. Web pulls in `@conusai/{ui,sdk,types}`; browser-shell adds `@tauri-apps/{api,plugin-dialog,plugin-stronghold}`.
 
 ## 2. Backend (`apps/backend/`)
 
-### Cargo Workspace Members
+### 2.1 Cargo Workspace Members
 
-- [crates/common](../apps/backend/crates/common) — Shared utilities, foundational types, `PromptTemplate`, error types
-- [crates/agent-core](../apps/backend/crates/agent-core) — Agent runtime (`Agent`, `AgentBuilder`), capability registry, Rig integration
-- [crates/agent-gateway](../apps/backend/crates/agent-gateway) — OpenAI-compatible HTTP gateway + Askama UI + Utoipa OpenAPI 3.1
-- [evals](../apps/backend/evals) — Evaluation framework (runners + scorers)
+```
+crates/common          ← shared types, error envelopes, prompt template, telemetry
+crates/rustfs-admin    ← bootstrap, IAM, presign, quotas, bucket notifications
+crates/agent-core      ← Agent runtime, capabilities, stores, identity, llm, chains
+crates/jobs            ← scheduler, registry, executor, admin
+crates/billing-core    ← Lago provider, plan catalog, quota checker, usage events
+crates/agent-gateway   ← axum HTTP, routes, middleware, AppState, main.rs
+evals                  ← runners + scorers
+apps/browser-shell/src-tauri  ← Tauri 2 native shell
+```
 
-### Key Workspace Dependencies
+### 2.2 Toolchain
 
-| Category | Crates |
-|----------|--------|
-| Async runtime | `tokio` (full), `tokio-stream` |
-| AI / LLM | `rig-core` **0.36** (Anthropic; native SSE streaming via `CompletionModel::stream()`), `rig-qdrant` **0.2.5** |
-| Database / Vector DB | `redb` 4 (embedded KV, postcard codec), `qdrant-client` 1 + `rig-qdrant` 0.2.5 (768-d cosine ANN) |
-| HTTP server | `axum` 0.8 (ws, multipart), `tower` 0.5, `tower-http` 0.6 (cors, trace, br, fs) |
-| HTTP client | `reqwest` **0.13** (json, stream) |
-| Serialization | `serde`, `serde_json`, `toml` |
-| Config | `figment` 0.10 (env, toml) |
-| Errors | `thiserror` 2, `anyhow` |
-| Observability | `tracing`, `tracing-subscriber`, `opentelemetry` 0.27 (metrics), `opentelemetry_sdk` 0.27 (rt-tokio, metrics), `opentelemetry-otlp` 0.27 (tonic, metrics), `opentelemetry-prometheus` 0.27, `prometheus` 0.13, `tracing-opentelemetry` 0.28 |
-| WASM | `wasmtime` 44 (component-model), `wasmtime-wasi` 44 |
-| Auth/Crypto | `jsonwebtoken` 9, `sha2` 0.10, `hmac` 0.12, `blake3` 1, `base64` 0.22 |
-| Schema/validation | `schemars` 0.8 (derive) |
-| OpenAPI | `utoipa` 5 (axum_extras, chrono, uuid, ulid), `utoipa-swagger-ui` 9 |
-| Object storage | `object_store` 0.11 (aws/S3/RustFS) |
-| Embeddings (optional) | `fastembed` **5** (feature-gated: `local-embeddings`) |
-| Server-side UI | `askama` 0.12 (Foundry UI; server-rendered product surface) |
-| IDs | `ulid` 1.1 (time-sortable, serde) |
-| Utilities | `uuid`, `chrono`, `bytes`, `futures`, `async-trait`, `bon` 3, `clap` 4, `colored` 2 |
+Rust edition **2024**, rust-version **1.95**, resolver `"3"`, workspace version `0.3.1`. WASM `wasm32-wasip1`. `rust-toolchain.toml`: `rustfmt`, `clippy`, `rust-src`, `rust-analyzer`. Release: `opt-level=3`, `lto="thin"`, `codegen-units=1`, `strip="symbols"`.
 
-- **Rust edition:** 2024 · **Rust version:** 1.95 · **WASM target:** `wasm32-wasip1` · **rust-toolchain components:** `rustfmt`, `clippy`, `rust-src`, `rust-analyzer`
+### 2.3 Key Workspace Dependencies
 
-### API Routes
+LLM: `rig-core` 0.36 (native `CompletionModel::stream()`). Storage: `redb` 2 + `postcard` 1; `qdrant-client` 1 (default-features=false, +serde, 768-d cosine); `object_store` 0.11 (+aws). HTTP: `axum` 0.8 (ws, multipart), `tower-http` 0.6, `reqwest` 0.13. Crypto: `jsonwebtoken` 9, `blake3` 1, `hmac` 0.12, `aes-gcm` **0.10**, `openidconnect` 3 (declared; runtime uses introspection over `reqwest`). WASM: `wasmtime` 44 (component-model). Observability: `tracing` + `opentelemetry` 0.27 (+otlp/prometheus), `tracing-opentelemetry` 0.28. Misc: `utoipa` 5 + `utoipa-swagger-ui` 9, `tokio-cron-scheduler` 0.13, `moka` 0.12, `figment` 0.10, `bon` 3, `ulid` 1.1, `hex` 0.4, `fastembed` 5 (feature `local-embeddings`). **No `rig-qdrant`, no runtime `sqlx`.**
 
-Three router groups — `public_router`, `protected_router` (tenant middleware), `admin_router` (super-admin JWT).
+## 3. Storage Backplane
 
-#### Public (no auth)
+- **`RedbMetadataStore`** — embedded `redb` 2 file at `REDB_PATH` (default `/data/conusai.redb`). Tables: `threads`, `messages` (range-scanned by `(tenant,thread,seq)`), `workspace_nodes` (JSON), `idx_nodes_by_path`, `audit_events`, `tenant_seeded` (postcard except workspace nodes). Hot-reload bus = `tokio::sync::broadcast` (cap 256) via `subscribe_spec_changes`.
+- **`CredentialStore`** — same redb file; per-tenant S3 creds encrypted with **AES-256-GCM** (`RUSTFS_IAM_ENC_KEY`).
+- **`QdrantVectorStore`** — `QDRANT_URL` (gRPC `:6334`). Collections `capability_embeddings` + `content_embeddings`, 768-d cosine, named vector `"default"`. Payload keyword indexes on `tenant_id` (`is_tenant=true`), `owner_id`, `shared_with`.
+- **`RustFsContentStore` / `TenantStorage`** — `object_store` 0.11 over RustFS/S3 (`S3_ENDPOINT`, `S3_BUCKET`); per-tenant IAM, presign, multipart, SSE, versioning, quotas.
+- **Postgres 17** (docker `infra` profile) — **only** for Zitadel + Lago databases; no agent runtime rows.
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Health + capability count |
-| POST | `/v1/auth/login` | Issue JWT (dev: any creds; prod: `DEV_PASSWORD` env) |
-| GET | `/openapi.json` | OpenAPI 3.1 spec (Utoipa-generated) |
-| GET | `/docs` | Swagger UI |
-| GET | `/metrics` | Prometheus text exposition (`/metrics`, no auth — restrict via network in prod) |
+## 4. Identity, Tenants, Billing
 
-#### Protected (Bearer JWT or `X-API-Key`)
+- `IdentityManager` selects `LegacyIdentityProvider` (HS256 JWT via `JWT_SECRET`) or `ZitadelProvider` (REST `/oauth/v2/introspect`, mgmt API) via `CONUSAI_AUTH_PROVIDER` (`legacy`|`zitadel`). Zitadel claims: `urn:zitadel:iam:org:id` → tenant; `urn:zitadel:iam:org:project:roles` → role; `urn:conusai:{plan_tier,subscription_status}` → plan gating.
+- `SessionUser` cookie (`conusai_session`) or `X-Session-Token` header — HMAC-SHA256 (`UI_SESSION_KEY`). `X-API-Key` matched against blake3 hashes from `API_KEYS=hash:tenant:plan,…`.
+- `billing-core`: `LagoProvider` (1 s flush loop) + `PlanCatalog` + `QuotaChecker` (daily) + `UsageEvent`. Stripe-via-Lago. Env: `LAGO_API_URL`, `LAGO_API_KEY`, `LAGO_WEBHOOK_SIGNATURE_SECRET`.
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/v1/chat/completions` | OpenAI-compatible chat, optional SSE stream |
-| POST | `/v1/agent/completions` | Thread-aware agent completions with tool calls |
-| GET | `/v1/capabilities` | List registered capabilities |
-| GET | `/v1/capabilities/search` | Semantic capability search (Qdrant ANN) |
-| POST | `/mcp` | MCP JSON-RPC 2.0 tool dispatch |
-| POST | `/v1/files` | Multipart file upload (RustFS-backed) |
-| GET | `/v1/files/{token}` | Token-gated file download (Bearer JWT required) |
-| GET | `/v1/audit` | Audit event log |
-| POST | `/v1/workspaces` | Create workspace node |
-| GET | `/v1/workspaces/tree` | Workspace tree |
-| GET | `/v1/workspaces/search` | Workspace search |
-| GET | `/v1/workspaces/{id}` | Get node |
-| DELETE | `/v1/workspaces/{id}` | Delete node |
-| GET | `/v1/workspaces/{id}/content` | Get node content |
-| PATCH | `/v1/workspaces/{id}/content` | Update node content |
-| POST | `/v1/workspaces/{id}/move` | Move node |
-| POST | `/v1/workspaces/{id}/share` | Share node |
-| POST | `/v1/workspaces/{id}/unshare` | Unshare node |
-| GET | `/v1/tasks` | List background task statuses |
-| GET | `/v1/tasks/{id}` | Get single task status |
-| GET | `/v1/tasks/{id}/sse` | SSE stream for task lifecycle events |
-| GET | `/v1/threads/{id}/messages` | Paginated message list for a thread |
-| GET | `/api/realtime/workspace` | WebSocket — workspace change event stream |
-| GET | `/v1/shells/{device_id}/control` | Browser-shell WebSocket control channel |
+## 5. Capability Stack
 
-#### Super-admin (`role=super_admin` JWT)
+- Factories on `CapabilityRegistry`: `Mcp`, `Wasm`, `Chain`, `Builtin` (+ `DynamicPrompt`, `TraceReplay` via `with_all_factories`). Remote MCP capabilities self-register via `POST /admin/capabilities/register`.
+- `CapabilitySpecFactory` (`BulkCapabilityFactory`) `load_batch`-materialises enabled specs at boot; strategies: `dynamic_prompt`, `prompt` (chain), `wasm`, `native`, `remote_mcp`.
+- `SemanticCapabilityRouter`: blake3-keyed `moka::future::Cache` (max 4096, TTL 60 s), defaults **`top_k=20`**, **`max_distance=0.38`**. Returns `Vec<Box<dyn rig::tool::ToolDyn>>` to `AgentBuilder`.
+- `ArtifactBridge` persists tool artifacts to workspace + object storage post-tool and emits realtime events.
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/admin/capabilities` | List all capabilities |
-| POST | `/admin/capabilities` | Register new capability |
-| POST | `/admin/capabilities/reload` | Reload all capabilities |
-| POST | `/admin/capabilities/register` | Register remote MCP capability service |
-| POST | `/admin/capabilities/validate` | Validate capability manifests |
-| POST | `/admin/capabilities/test` | Test-invoke a capability |
-| GET | `/admin/capabilities/{name}` | Get single capability |
-| GET | `/admin/capabilities/{name}/manifest` | Get raw manifest |
-| PATCH | `/admin/capabilities/{name}` | Update capability |
-| PATCH | `/admin/capabilities/{name}/enabled` | Enable/disable capability |
-| DELETE | `/admin/capabilities/{name}` | Delete capability |
-| POST | `/admin/capabilities/{name}/reload` | Reload single capability |
-| PUT | `/admin/capabilities/{name}/prompt` | Create a new dynamic prompt version |
-| GET | `/admin/capabilities/{name}/prompt?version=N` | Get dynamic prompt (latest or pinned) |
-| GET | `/admin/capabilities/{name}/prompt/versions` | List all prompt versions |
-| GET | `/admin/capabilities/namespaces?prefix=X` | Browse namespace tree |
-| GET | `/admin/jobs` | List all registered jobs |
-| GET | `/admin/jobs/{name}` | Get single job summary |
-| POST | `/admin/jobs/{name}/run` | Enqueue a background job immediately |
-| GET | `/admin/tasks` | List all task statuses (admin view) |
-| GET | `/admin/devices` | List browser-shell device tokens |
-| POST | `/admin/devices` | Issue a browser-shell device token |
-| DELETE | `/admin/devices/{id}` | Revoke a browser-shell device token |
+## 6. HTTP Surface (gateway = `agent-gateway`)
 
-### CORS
+Four router groups in `routes/mod.rs`: `public_router`, `protected_router(quota)`, `admin_router`, `internal_router` (firewall-only).
 
-`build_cors()` in `main.rs` reads `WEB_ORIGIN` env (comma-separated origins, default `http://localhost:3000`) and configures `tower-http` `CorsLayer` with explicit methods, headers (`Authorization`, `Content-Type`, `X-Tenant-Id`, `X-API-Key`), exposed header `X-Request-Id`, and `allow_credentials: true`. Never uses `CorsLayer::permissive()` in production.
+- **Public:** `GET /health` · `GET /login` · `POST /v1/auth/login` (+ `/legacy/login`) · `POST /v1/billing/webhooks` (Lago) · `POST /admin/capabilities/register` (self-registration) · `GET /openapi.json` · `GET /docs` (Swagger) · `GET /metrics` (Prometheus).
+- **Protected (tenant mw + `RouterQuotaLayer`):**
+  - Agent/chat/MCP: `POST /v1/{chat,agent}/completions`; `GET /v1/capabilities[/search]`; `POST /mcp`.
+  - Files (presign-only, no proxy): `POST /v1/files/upload-url`, `GET /v1/files/download-url`; multipart `POST /v1/uploads/{initiate,{id}/parts/{n}/presign,{id}/complete,{id}/abort}`.
+  - Workspaces: CRUD on `/v1/workspaces[/{id}[/content]]` + actions `{move,rename,share,unshare,presign-upload,presign-download}`; node versions: `GET /v1/workspaces/nodes/{id}/versions`, `POST .../restore`.
+  - Tasks/threads/realtime: `GET /v1/tasks[/{id}[/sse]]`; `GET /v1/threads/{id}/messages`; `GET /api/realtime/workspace`; `GET /v1/shells/{device_id}/control`; `GET /v1/audit`.
+  - Billing: `GET /v1/billing/{plans,subscription,invoices,usage}`; `POST /v1/billing/{subscriptions,portal}`; `DELETE /v1/billing/subscription`.
+- **Super-admin (`require_super_admin_jwt`):** `/admin/{capabilities,jobs,tasks,devices,billing}*`; `DELETE /admin/tenants/{id}`.
+- **Internal:** `POST /internal/rustfs/events` — RustFS bucket notifications drive event-driven workspace indexing.
 
-## Architecture Decisions
+**CORS:** `build_cors()` reads `WEB_ORIGIN` (default `localhost:3000`, `5173`, `tauri://localhost`, `https://tauri.localhost`); allows `Authorization`, `Content-Type`, `X-Tenant-Id`, `X-API-Key`, `X-Session-Token`; exposes `X-Request-Id`; `allow_credentials=true`. Never `permissive()`.
 
-- [ADR 0003 - Unified Postgres + CocoIndex](docs/adr/0003-unified-postgres-cocoindex.md) *(superseded by ADR 0009)*
-- [ADR 0004 - Semantic Capability Router & Dynamic Prompts](docs/adr/0004-semantic-capability-router-and-dynamic-prompts.md)
-- [ADR 006 - Tauri Browser Shell](docs/adr/006-tauri-browser-shell.md)
-- [ADR 007 - Capability Module Rename](docs/adr/007-capability-module-rename.md)
-- [ADR 008 - Multi-Platform Shell](docs/adr/008-multi-platform-shell.md)
-- [ADR 009 - redb + Qdrant + RustFS](docs/adr/0009-redb-qdrant-rustfs.md)
+## 7. Middleware Order (`agent-gateway/src/mw/`)
 
-## v0.3.2 New Concepts
+`CorsLayer` → `TraceLayer` → `request_id` → `trace` (W3C) → `api_key` → `tenant` → `identity` (`ResolvedIdentity`) → `plan` → `meter` (`AgentTurnStats` → `BillingProvider::report_usage` + `QuotaChecker::record`) → `RouterQuotaLayer` (route-scoped; daily quota → 429 with `Retry-After` + `{"upgrade_url":…}`).
 
-### Semantic Capability Router
+## 8. `AppState` (`agent-gateway/src/state.rs`)
 
-`SemanticCapabilityRouter` replaces "send all enabled tools to the LLM". At every agent turn it:
-1. Embeds the user query.
-2. ANN-searches `capability_embeddings` (Qdrant, cosine) with namespace + tag filters.
-3. Returns the top-K (default 20, max 50) providers whose distance ≤ 0.65.
-4. Results are moka-cached for 60 s (blake3 key = tenant + query + config).
+`Agent`, `CapabilityRegistry`, `SemanticCapabilityRouter`, the three stores (redb/qdrant/rustfs), `rustfs_admin`, `cred_store`, `tenant_storage`, `onboarding`, `storage_quota`, `rustfs_metrics`, `onboarding_guards`, `device_tokens`, `identity` (`IdentityManager`), `billing: Option<Arc<dyn BillingProvider>>`, `quota: Option<Arc<QuotaChecker>>`, `plan_catalog`.
 
-Wire into `AgentBuilder`: `builder.with_semantic_router(router)`.
+## 9. Environment Matrix
 
-### Namespaces
+- **Auth:** `JWT_SECRET`, `UI_SESSION_KEY`, `API_KEYS`, `CONUSAI_AUTH_PROVIDER`, `CONUSAI_UI_TENANT_ID`, `DEV_PASSWORD`, `PLATFORM_ADMIN_TOKEN`.
+- **Zitadel:** `ZITADEL_{DOMAIN,AUDIENCE,INTROSPECTION_CLIENT_ID,INTROSPECTION_CLIENT_SECRET,MGMT_PAT,MASTERKEY}`.
+- **Billing:** `LAGO_API_URL`, `LAGO_API_KEY`, `LAGO_WEBHOOK_SIGNATURE_SECRET`, `LAGO_*` (enc + RSA), `STRIPE_SECRET_KEY`.
+- **Storage:** `REDB_PATH`, `QDRANT_URL`, `S3_ENDPOINT`, `S3_BUCKET`, `AWS_ACCESS_KEY_ID`/`_SECRET`.
+- **RustFS bootstrap:** `RUSTFS_{BOOTSTRAP,VERSIONING,PER_TENANT_IAM,REAL_PRESIGN,SSE,NOTIFICATIONS,QUOTAS,PRESIGN_TTL_SECS,IAM_ENC_KEY,WEBHOOK_SECRET,NOTIFICATION_WEBHOOK_URL,ROOT_ACCESS_KEY,ROOT_SECRET_KEY}`.
+- **LLM:** `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `EMBEDDING_BACKEND` (`openai`|`local`).
+- **Quotas/Web/Telemetry:** `CONUSAI_MAX_TOOLS_PER_TURN`, `CONUSAI_MAX_INVOKES_PER_TURN`, `WEB_ORIGIN`, `CONUSAI_BACKEND_URL`, `CONUSAI_FEATURE_BROWSER_SHELL`, `OTLP_ENDPOINT`, `RUST_LOG`.
 
-`ToolManifest.namespace` is a dot-separated slug (`erp.po`, `accounting.gl`). Use `NamespaceFilter` variants (`Any`, `Exact`, `Prefix`, `AnyOf`) for routing and payload filtering. Validated by `RegisteredToolValidator::validate_namespace`.
+## 10. Docker Compose Service Catalog
 
-### Dynamic Prompts (`ToolKind::DynamicPrompt`)
+- **infra/full:** `postgres:17-alpine` (5432), `redis:7-alpine` (6379), `zitadel:v2.68.0` (8085→8080), `getlago/api:v1.30.0` api (3010→3000) + worker.
+- **default:** `qdrant:v1.17.0` (6333/6334), `rustfs-perms` one-shot, `rustfs:latest` (9000/9001), `agent-gateway` (8080), `services/current-time` (8082).
+- **marker:** `marker:latest` (8081→8080). **web/full:** `node:22-slim` running `apps/web/build` (3000).
+- **observability:** `jaeger:1.58` (16686, 14317), `otel-collector-contrib:0.123.0` (4317, 4318).
 
-Capabilities backed by versioned rows in `dynamic_prompts`. Push new versions via `PUT /admin/capabilities/{name}/prompt` without a deploy. The factory is `DynamicPromptFactory`; the provider is `DynamicPromptCapability`.
+Volumes: `postgres_data`, `qdrant_data`, `rustfs_data`, `redb_data`.
 
-### Bulk Capability-Spec Factory
+## 11. Frontend
 
-`CapabilitySpecFactory` implements `BulkCapabilityFactory`. Call `registry.run_bulk_load()` at boot to stream all enabled rows from `capability_specs` (redb) and embed them in 256-row batches. Hot-reload via `RealtimeService::subscribe_capability_spec_changes()` backed by in-process tokio broadcast channels.
+- **`@conusai/ui`** (Svelte 5, `sideEffects: ["**/*.css"]`) — `tokens.css`, `foundry.css`; components `AppShell, CapabilityCard, PlanBadge, PlanCard, QuotaBanner, ThemeProvider/Script/Switcher, ToastHost, UsageMeter, WorkspaceTree`; features `AgentChatComposer, AgentChatStream, ToolCallCard, WorkspaceExplorer` + `createChatStream.svelte.ts`; plus `capabilities/`, `stores/`, `motion/`, `utils/`.
+- **`apps/web`** — SvelteKit (Node adapter); uses `@conusai/{ui,sdk,types}`; `UI_SESSION_KEY`-signed cookies; OIDC callback under `src/routes/auth/*`.
+- **`apps/browser-shell`** — SvelteKit (static) + Tauri 2 (`@tauri-apps/{api,plugin-dialog,plugin-stronghold}`); mobile shell `src/lib/mobile/*`; native modules in `src-tauri/src/*.rs` (chat_stream, device_auth, oidc_auth, recorder, registration, tabs, telemetry); debug-only WebDriver via feature `e2e` (macOS).
 
-### Artifact Bridge
+## 12. Architecture Decisions
 
-`ArtifactBridge` materialises `ToolOutput.artifacts` into RustFS objects and workspace nodes after tool execution. Treat it as part of the agent loop, not as a capability concern.
+ADRs in `docs/adr/`: 0003 (Unified Postgres + CocoIndex — *superseded*), 0004 (Semantic Router & Dynamic Prompts), 006 (Tauri Browser Shell), 007 (Capability Module Rename), 008 (Multi-Platform Shell), 0009 (redb + Qdrant + RustFS), 012 (Zitadel + Lago).
 
-### Tower Quota Middleware
-
-`RouterQuotaLayer` on `POST /v1/agent/completions` injects `RouterQuotaConfig` into request extensions. Read `max_tools_per_turn` and `max_invokes_per_turn` from extensions in the agent handler to enforce hard caps. Configured via `CONUSAI_MAX_TOOLS_PER_TURN` / `CONUSAI_MAX_INVOKES_PER_TURN` env vars.
-
-### Browser Shell
-
-Browser-shell device registration is gated by `CONUSAI_FEATURE_BROWSER_SHELL=1` and `PLATFORM_ADMIN_TOKEN`. The WebSocket control channel lives at `GET /v1/shells/{device_id}/control` and uses the browser-shell device token for validation.
-
+> Known drift (see [arch.md §13](arch.md)): `sqlx`/`openidconnect` declared-but-unused; `CapabilitySpecFactory::reload_one` is a stub; embedding dimension hard-coded to 768; `rustfs-admin` lacks a dedicated doc section.

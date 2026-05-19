@@ -1080,3 +1080,146 @@ Shell: `telemetry.rs` initialises `tracing_subscriber` for in-process logs only 
 ## Notes
 
 - Local object storage runs the real [RustFS](https://rustfs.com) server (Apache-2.0, `rustfs/rustfs:latest`) in SNSD mode. MinIO has been removed from the stack. See [ADR 0009 amendment](adr/0009-redb-qdrant-rustfs.md) (2026-05-19).
+
+---
+
+## 12. Storage Backplane — Deep Dive (2026-05-19 audit)
+
+### 12.1 redb (embedded KV — `crates/agent-core/src/store/redb_metadata.rs`)
+
+`RedbMetadataStore` is a single `redb::Database` file (default `/data/conusai.redb`, overridable via `REDB_PATH`) implementing **all** structured metadata stores in one process:
+
+| Table (`TableDefinition`) | Key | Value | Encoding | Implements |
+| --- | --- | --- | --- | --- |
+| `threads` | `(tenant_id, thread_id)` | `Thread` | postcard | `ThreadStore::create/get` |
+| `messages` | `(tenant_id, thread_id, seq u64)` | `Message` | postcard | `ThreadStore::messages` (range scan) |
+| `workspace_nodes` | `(tenant_id, node_id)` | `WorkspaceNode` | **JSON** (back-compat) | `WorkspaceStore` |
+| `idx_nodes_by_path` | `(tenant_id, virtual_path)` | `node_id (&str)` | utf-8 | virtual-path lookup |
+| `audit_events` | `(tenant_id, ts_micros i64, event_id)` | `AuditEvent` | postcard | `AuditStore` |
+| `tenant_seeded` | `tenant_id` | `u8` | byte flag | onboarding marker |
+
+All mutations run inside one `WriteTransaction` and commit atomically; reads use snapshot `ReadTransaction`. Blocking work is wrapped in `tokio::task::spawn_blocking`. The same `Database` handle is shared with `CredentialStore` (per-tenant S3 creds, AES-256-GCM encrypted via `aes-gcm` 0.10) — redb 2 forbids two `Database` instances on one file.
+
+Hot-reload bus: `tokio::sync::broadcast::Sender<(namespace, tool_name)>` (capacity 256) exposed via `subscribe_spec_changes()` / `notify_spec_change()` — replaces the previous Postgres `LISTEN/NOTIFY` plumbing.
+
+### 12.2 Qdrant (`crates/agent-core/src/store/qdrant_vector.rs`)
+
+Two collections, both **768-dim cosine, named vector `"default"`**, created idempotently on startup:
+
+| Collection | Purpose | Payload schema |
+| --- | --- | --- |
+| `capability_embeddings` | Semantic capability routing (`SemanticCapabilityRouter`) | `capability_id`, `content`, `namespace`, `tags[]`, `metadata` |
+| `content_embeddings` | Workspace content search | `tenant_id`, `owner_id`, `parent_id`, `kind`, `name`, `virtual_path`, `last_modified`, `shared_with[]`, `metadata` |
+
+Payload indexes (created via `CreateFieldIndexCollectionBuilder` + `KeywordIndexParams`): `tenant_id` (`is_tenant=true` → Qdrant multitenant optimisation), `owner_id`, `shared_with` (array keyword). Filters built dynamically by `build_capability_filter(NamespaceFilter, tags[])`.
+
+Test mode: `QdrantVectorStore::noop()` returns empty results without contacting the server. Connection URL via `QDRANT_URL` (default `http://qdrant:6334` — gRPC).
+
+### 12.3 RustFS / S3 — Per-Tenant IAM (`store/tenant_storage.rs` + `store/rustfs_content.rs`)
+
+**No raw `tenants/{id}/...` strings leak into the store layer.** All key construction is centralised in `TenantStorage` / `VirtualPath`. The factory chain is:
+
+```
+TenantStorageFactory (per-tenant clients, cached by tenant_id)
+   └─ uses CredentialStore (redb, AES-256-GCM)
+   └─ uses RustFsAdminClient (root creds, only for provisioning)
+   └─ produces TenantStorage { object_store, bucket, prefix }
+        ├─ WorkspaceStorage   ← content RW
+        ├─ Presign helpers    ← upload/download URLs (real SigV4 via aws-sdk-s3 internals)
+        └─ Quota accounting   ← StorageQuotaService
+
+RustFsContentStore  → WorkspaceContentStore  (adapter for chains/memory)
+TenantOnboardingService → IAM bootstrap + default workspace root + redb marker
+```
+
+Object key layout per tenant: `s3://{bucket}/{tenant_prefix}/workspace/{virtual_path}` (workspace nodes) and `…/uploads/{ulid}/{part_n}` for multipart. Server-side encryption (`RUSTFS_SSE=on`), versioning (`RUSTFS_VERSIONING=on`), bucket-level notifications (`RUSTFS_NOTIFICATIONS=on` → webhook `POST /internal/rustfs/events` on the gateway) and per-tenant quotas (`RUSTFS_QUOTAS=on`) are all bootstrapped declaratively by `rustfs-admin::bootstrap_storage` at process start.
+
+Indexing is **event-driven** (RustFS bucket notifications → `internal/rustfs/events`), no polling watcher.
+
+### 12.4 Postgres (shared infrastructure — NOT the agent runtime)
+
+Despite the workspace dependency on `sqlx`, the **runtime agent stores no rows in Postgres**. Postgres is reserved for two infrastructure consumers, both shipped as docker services on profile `infra` / `full`:
+
+| Consumer | Database | Purpose |
+| --- | --- | --- |
+| Zitadel `v2.68.0` | `zitadel` | OIDC identity, orgs, users, project roles, custom claims (`urn:conusai:plan_tier`, `urn:conusai:subscription_status`). |
+| Lago `v1.30.0` (api + worker) | `lago` | Customer + subscription state, plans, usage events, invoice generation. Stripe optional via `STRIPE_SECRET_KEY`. |
+
+The agent-gateway communicates with both **only over HTTP** (`reqwest`). The `sqlx` dep is currently retained for the eval harness / migration scripts only and is no longer linked into `agent-core` runtime modules.
+
+### 12.5 Auth provider matrix (`mw/identity.rs` + `mw/tenant.rs`)
+
+Selected by `CONUSAI_AUTH_PROVIDER` env (`legacy` default, `zitadel` opt-in):
+
+| Provider | Token | Verification | Tenant id |
+| --- | --- | --- | --- |
+| `LegacyIdentityProvider` | HS256 JWT signed by `JWT_SECRET` | local `jsonwebtoken::decode` | `TenantClaims.tenant_id` |
+| `ZitadelProvider` | Opaque OAuth2 access token | `POST {ZITADEL_DOMAIN}/oauth/v2/introspect` (Basic-auth using `ZITADEL_INTROSPECTION_CLIENT_ID`/`_SECRET`) | `urn:zitadel:iam:org:id` claim (falls back to `sub`) |
+| `SessionUser` (`auth/verifier.rs`) | `<base64(payload)>.<base64(hmac-sha256)>` | `UI_SESSION_KEY` HMAC, constant-time compare | `CONUSAI_UI_TENANT_ID` (`dev` fallback) |
+| `ApiKeyEntry` (`mw/api_key.rs`) | `X-API-Key` header | blake3 hash compared to entries in `API_KEYS` (`hash:tenant:plan,…`) | inline `tenant_id` |
+
+Note: arch.md previously described Zitadel as using `openidconnect` 3 + JWKS cache. The current implementation uses **introspection over reqwest** instead; `openidconnect` is still declared in workspace deps but unused at runtime.
+
+### 12.6 Capability factory chain — current state
+
+`CapabilityRegistry::with_default_factories(llm)` registers, in order: `McpFactory`, `WasmFactory`, `ChainFactory`, `BuiltinFactory`. `with_all_factories` additionally registers `DynamicPromptFactory` and `TraceReplayFactory`. `RemoteMcpCapability` is **not** wired through a factory — it is created on demand by `POST /admin/capabilities/register` and inserted directly into the registry. `CapabilitySpecFactory` is a `BulkCapabilityFactory` invoked once at boot (`load_batch`) and supports hot-reload via `RedbMetadataStore::subscribe_spec_changes()`.
+
+### 12.7 Full route surface (verified against `routes/mod.rs`)
+
+Routes added since previous arch revision (and missing from the route tables in `project-instructions.md`):
+
+- Public: `GET /login`, `POST /v1/auth/legacy/login`, `POST /v1/billing/webhooks`.
+- Internal (network-restricted): `POST /internal/rustfs/events`.
+- Protected file I/O (presign-based, no proxy download):
+  `POST /v1/files/upload-url`, `GET /v1/files/download-url`,
+  `POST /v1/uploads/initiate`, `POST /v1/uploads/{upload_id}/parts/{n}/presign`,
+  `POST /v1/uploads/{upload_id}/complete`, `POST /v1/uploads/{upload_id}/abort`.
+- Protected workspace: `POST /v1/workspaces/{id}/rename`, `POST /v1/workspaces/{id}/presign-upload`, `GET /v1/workspaces/{id}/presign-download`, `GET /v1/workspaces/nodes/{id}/versions`, `POST /v1/workspaces/nodes/{id}/restore`.
+- Protected billing: `GET /v1/billing/plans`, `GET /v1/billing/subscription`, `POST /v1/billing/subscriptions`, `DELETE /v1/billing/subscription`, `POST /v1/billing/portal`, `GET /v1/billing/invoices`, `GET /v1/billing/usage`.
+- Admin billing: `POST /admin/billing/credits`, `POST /admin/billing/cancel/{tenant_id}`, `GET /admin/billing/dashboard`.
+- Admin tenants: `DELETE /admin/tenants/{id}`.
+
+The legacy `GET /v1/files/{token}` UUID download shim has been removed.
+
+### 12.8 Middleware stack (outermost → innermost on the protected router)
+
+`CorsLayer` → `TraceLayer` → `request_id::inject_request_id` → `trace::propagate_trace` (W3C tracecontext) → `api_key::extract_api_key` → `tenant::extract_tenant` → `identity::extract_identity` (Zitadel path) → `plan::enforce_plan` → `meter::record_usage` (post-handler) → `RouterQuotaLayer` (route-scoped, enforces `CONUSAI_MAX_TOOLS_PER_TURN` / `CONUSAI_MAX_INVOKES_PER_TURN` and `QuotaChecker` daily caps with 429 + `Retry-After`).
+
+### 12.9 Workspace members (root `Cargo.toml`) — actual
+
+```
+apps/backend/crates/common
+apps/backend/crates/rustfs-admin          ← NEW, was undocumented
+apps/backend/crates/agent-core
+apps/backend/crates/jobs
+apps/backend/crates/billing-core
+apps/backend/crates/agent-gateway
+apps/backend/evals
+apps/browser-shell/src-tauri
+```
+
+### 12.10 Workspace dependency corrections
+
+| Crate | Documented | Actual root `Cargo.toml` | Note |
+| --- | --- | --- | --- |
+| `redb` | 4 (project-instructions.md) / 2 (arch.md) | **2** | arch.md correct, project-instructions.md was wrong. |
+| `rig-qdrant` | 0.2.5 (project-instructions.md) | _not present_ | Never added; ANN search goes through `qdrant-client` directly. |
+| `aes-gcm` | _undocumented_ | **0.10** | Used by `CredentialStore`. |
+| `openidconnect` | "Zitadel JWKS verification" | 3 (declared, **unused at runtime**) | Provider now uses introspection over reqwest. |
+| `sqlx` | TimescaleDB usage events | declared, **runtime-unused** | Lago owns usage event persistence over HTTP. |
+
+---
+
+## 13. Identified Gaps
+
+1. **Doc/runtime drift on Zitadel:** arch.md §4.4 / §6 still imply `openidconnect`-based JWKS verification. Replace with the introspection-endpoint reality or wire `openidconnect` in `ZitadelProvider` and drop the introspection client.
+2. **`rustfs-admin` crate is undocumented** anywhere in `docs/`. It owns bootstrap, IAM provisioning, presigning, quota and notification wiring — promote it to a first-class section.
+3. **`sqlx` & `openidconnect` are dead workspace deps at runtime.** Either delete them or restore a usage that justifies them. Carrying unused deps inflates the build matrix.
+4. **Route tables in `project-instructions.md` are out of date** (missing presign, upload, billing, internal, rename, versions, restore, billing webhook). Regenerate from `routes/mod.rs` whenever endpoints change.
+5. **`CapabilitySpecFactory::reload_one` is a no-op stub** after the Postgres removal (see `providers/capability_spec.rs`). The boot listener (`main.rs`) wires it up unconditionally; hot-reload silently does nothing. Either re-implement against redb or remove the listener.
+6. **`TraceReplayCapability` ships with a `WorkspaceNodeTraceSource` stub that always returns an error.** Either inject a real `TraceSource` (e.g. backed by `WorkspaceContentStore`) or feature-gate the capability so it is not advertised in `/v1/capabilities`.
+7. **`mw/plan.rs` does not actually clamp `max_tokens` / `max_turns`** — it only validates the plan tier is recognised; clamping is duplicated in each handler. Centralise as the doc-comment in that file already calls out.
+8. **Embeddings dimension is hard-coded to 768** (`qdrant_vector.rs::DIMS`) even when `EMBEDDING_BACKEND=openai` (`text-embedding-3-small` returns 1536). The OpenAI service must request truncated 768-d output or the dim must become configurable per backend.
+9. **`apps/backend/evals` member is listed in `Cargo.toml` but not in §1.2 or §4.1** of arch.md. Document the eval harness layout (`evals/runners`, `evals/scorers`).
+10. **Tauri shell modules** `chat_stream.rs`, `device_auth.rs`, `oidc_auth.rs`, `recorder.rs`, `registration.rs`, `tabs.rs`, `telemetry.rs` are not enumerated in §7.2; the Tauri plugin list there should mirror `src-tauri/Cargo.toml`.
+
