@@ -12,21 +12,22 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@conusai/types": "workspace:*",
     "@conusai/sdk": "workspace:*",
+    "@conusai/types": "workspace:*",
     "@conusai/ui": "workspace:*",
     "@sveltejs/adapter-node": "^5.2.12",
     "@sveltejs/kit": "^2.21.0",
+    "lucide-svelte": "^0.477.0",
     "svelte": "^5.33.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@vitest/ui": "^2.1.9",
     "svelte-check": "^4.2.1",
     "typescript": "^5.7.3",
     "vite": "^6.3.5",
-    "vitest": "^2.1.9",
-    "@vitest/ui": "^2.1.9"
+    "vitest": "^2.1.9"
   },
   "type": "module"
 }
