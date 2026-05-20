@@ -19,14 +19,6 @@ pub async fn open_in_system_browser(url: String) -> Result<(), String> {
     open::that(&url).map_err(|e| format!("failed to open browser: {e}"))
 }
 
-/// PKCE login result returned to the frontend.
-#[derive(serde::Serialize)]
-pub struct PkceCallbackResult {
-    pub code: String,
-    pub state: Option<String>,
-    pub redirect_uri: String,
-}
-
 /// Full PKCE login flow.
 ///
 /// 1. Generates code_verifier + code_challenge

@@ -8,7 +8,7 @@
 /// `mw::tenant::extract_tenant` code path so legacy HMAC/JWT auth is unaffected.
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
-use agent_core::identity::{IdentityContext, IdentityProvider as _};
+use agent_core::identity::IdentityContext;
 use axum::{
     extract::{Request, State},
     middleware::Next,

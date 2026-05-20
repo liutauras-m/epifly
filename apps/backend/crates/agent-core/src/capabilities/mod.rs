@@ -12,7 +12,6 @@ pub mod providers;
 pub mod registry;
 pub mod semantic_router;
 pub mod store;
-pub mod trace_replay;
 pub mod validator;
 pub mod wasm_loader;
 

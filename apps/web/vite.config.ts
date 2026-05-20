@@ -13,6 +13,8 @@ export default defineConfig({
 			'/admin': { target: BACKEND, changeOrigin: true },
 			'/ui': { target: BACKEND, changeOrigin: true },
 			'/swagger-ui': { target: BACKEND, changeOrigin: true },
+			'/docs': { target: BACKEND, changeOrigin: true },
+			'/openapi.json': { target: BACKEND, changeOrigin: true },
 			'/metrics': { target: BACKEND, changeOrigin: true }
 		}
 	},

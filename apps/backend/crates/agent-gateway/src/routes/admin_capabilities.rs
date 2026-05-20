@@ -245,55 +245,6 @@ pub async fn test_invoke(
     }
 }
 
-// ── Dynamic prompt admin ─────────────────────────────────────────────────────
-// These endpoints are stubs — prompt versioning was removed with the Postgres migration.
-// Prompts are now managed via capability.toml chain configs.
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-pub struct VersionQuery {
-    pub version: Option<i32>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-pub struct PromptUpsertRequest {
-    pub model: String,
-    pub user_template: String,
-    pub system_prompt: Option<String>,
-    pub max_tokens: Option<i32>,
-    pub vision: Option<bool>,
-    pub output_schema: Option<serde_json::Value>,
-}
-
-pub async fn upsert_prompt(
-    State(_state): State<Arc<AppState>>,
-    Extension(_tenant): Extension<ResolvedTenant>,
-    Path(_name): Path<String>,
-    Json(_req): Json<PromptUpsertRequest>,
-) -> impl IntoResponse {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        "Dynamic prompt versioning requires capability.toml chain config in the new architecture",
-    )
-}
-
-pub async fn get_prompt(
-    State(_state): State<Arc<AppState>>,
-    Extension(_tenant): Extension<ResolvedTenant>,
-    Path(_name): Path<String>,
-    Query(_q): Query<VersionQuery>,
-) -> impl IntoResponse {
-    StatusCode::NOT_IMPLEMENTED
-}
-
-pub async fn list_prompt_versions(
-    State(_state): State<Arc<AppState>>,
-    Extension(_tenant): Extension<ResolvedTenant>,
-    Path(_name): Path<String>,
-) -> impl IntoResponse {
-    StatusCode::NOT_IMPLEMENTED
-}
 
 pub async fn list_namespaces(
     State(state): State<Arc<AppState>>,

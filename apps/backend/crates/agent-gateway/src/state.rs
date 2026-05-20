@@ -5,13 +5,12 @@ use agent_core::{
     ArtifactBridge, BulkCapabilityFactory, CapabilityAdmin, CapabilityDiscovery,
     CapabilityRegistry, CapabilitySpecFactory, ConversationService, CredentialStore,
     DefaultConversationService, EmbeddingService, LlmRegistry, NamespaceFilter,
-    NoopEmbeddingService, OpenAiEmbeddingService, QdrantVectorStore, RealtimeService,
+    NoopEmbeddingService, QdrantVectorStore, RealtimeService,
     RedbMetadataStore, RustFsContentStore, SemanticCapabilityRouter, SemanticRouterConfig,
     StorageQuotaService, TenantOnboardingService, TenantStorageFactory, build_admin,
-    build_root_store,
 };
 use agent_core::identity::IdentityManager;
-use agent_core::{LegacyIdentityProvider, ZitadelProvider};
+use agent_core::{LegacyIdentityProvider, ZitadelCacheStats, ZitadelProvider};
 use billing_core::{BillingProvider, LagoProvider, PlanCatalog, QuotaChecker};
 use std::sync::Arc as StdArc;
 use common::audit::AuditStore;
@@ -69,6 +68,8 @@ pub struct AppState {
     pub artifact_bridge: Option<Arc<ArtifactBridge>>,
     /// Identity provider (legacy HMAC/JWT or Zitadel OIDC).
     pub identity: StdArc<dyn IdentityManager>,
+    /// Token cache counters when Zitadel is the active provider; None for legacy.
+    pub zitadel_cache_stats: Option<StdArc<ZitadelCacheStats>>,
     /// Billing provider (Lago). None when LAGO_API_KEY not configured.
     pub billing: Option<StdArc<dyn BillingProvider>>,
     /// In-process quota checker.
@@ -108,10 +109,41 @@ impl AppState {
                 .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?,
         );
 
+        // ── Embedding service (must be before Qdrant so dims are known) ─────
+        let embedding_service: Arc<dyn EmbeddingService> = match std::env::var("EMBEDDING_BACKEND")
+            .as_deref()
+        {
+            Ok("local") | Err(_) => {
+                #[cfg(feature = "local-embeddings")]
+                {
+                    let svc = agent_core::LocalEmbeddingService::from_env()?;
+                    info!(
+                        model = svc.model().name(),
+                        dims = svc.dims(),
+                        "embedding service: local fastembed"
+                    );
+                    Arc::new(svc)
+                }
+                #[cfg(not(feature = "local-embeddings"))]
+                {
+                    warn!(
+                        "local-embeddings feature not compiled — vector search disabled. \
+                         Rebuild with --features agent-core/local-embeddings"
+                    );
+                    Arc::new(NoopEmbeddingService)
+                }
+            }
+            Ok(other) => {
+                return Err(common::error::ConusAiError::Config(format!(
+                    "unknown EMBEDDING_BACKEND={other} (supported: local)"
+                )));
+            }
+        };
+
         let qdrant_url = std::env::var("QDRANT_URL")
             .unwrap_or_else(|_| "http://qdrant:6334".into());
         let vector_store = Arc::new(
-            QdrantVectorStore::connect(&qdrant_url)
+            QdrantVectorStore::connect_from_service(&qdrant_url, embedding_service.as_ref())
                 .await
                 .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?,
         );
@@ -153,40 +185,6 @@ impl AppState {
         });
 
         let storage_quota = StorageQuotaService::new(Arc::clone(&tenant_storage));
-
-        let embedding_service: Arc<dyn EmbeddingService> = match std::env::var("EMBEDDING_BACKEND")
-            .as_deref()
-        {
-            Ok("local") => {
-                #[cfg(feature = "local-embeddings")]
-                {
-                    info!("embedding service: local fastembed");
-                    Arc::new(agent_core::LocalEmbeddingService::from_env()?)
-                }
-                #[cfg(not(feature = "local-embeddings"))]
-                {
-                    warn!(
-                        "EMBEDDING_BACKEND=local but feature local-embeddings not compiled — falling back to noop"
-                    );
-                    Arc::new(NoopEmbeddingService)
-                }
-            }
-            Ok("openai") | Err(_) => match OpenAiEmbeddingService::from_env() {
-                Ok(svc) => {
-                    info!("embedding service: OpenAI text-embedding-3-small");
-                    Arc::new(svc)
-                }
-                Err(e) => {
-                    warn!(error = %e, "embedding service unavailable — vector search disabled");
-                    Arc::new(NoopEmbeddingService)
-                }
-            },
-            Ok(other) => {
-                return Err(common::error::ConusAiError::Config(format!(
-                    "unknown EMBEDDING_BACKEND={other}"
-                )));
-            }
-        };
 
         let mut registry_raw = CapabilityRegistry::with_all_factories(Arc::clone(&llm));
         CapabilityDiscovery::from_env().discover_into(&mut registry_raw)?;
@@ -241,21 +239,23 @@ impl AppState {
         // ── Identity provider ─────────────────────────────────────────────
         let auth_provider = std::env::var("CONUSAI_AUTH_PROVIDER")
             .unwrap_or_else(|_| "legacy".into());
-        let identity: StdArc<dyn IdentityManager> = if auth_provider == "zitadel" {
-            match ZitadelProvider::from_env() {
-                Ok(p) => {
-                    info!("identity provider: Zitadel OIDC");
-                    StdArc::new(p) as StdArc<dyn IdentityManager>
+        let (identity, zitadel_cache_stats): (StdArc<dyn IdentityManager>, Option<StdArc<ZitadelCacheStats>>) =
+            if auth_provider == "zitadel" {
+                match ZitadelProvider::from_env() {
+                    Ok(p) => {
+                        info!("identity provider: Zitadel OIDC");
+                        let stats = StdArc::clone(&p.stats);
+                        (StdArc::new(p) as StdArc<dyn IdentityManager>, Some(stats))
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Zitadel provider init failed — falling back to legacy");
+                        (StdArc::new(LegacyIdentityProvider::from_env()) as StdArc<dyn IdentityManager>, None)
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!(error = %e, "Zitadel provider init failed — falling back to legacy");
-                    StdArc::new(LegacyIdentityProvider::from_env()) as StdArc<dyn IdentityManager>
-                }
-            }
-        } else {
-            info!("identity provider: legacy HMAC/JWT");
-            StdArc::new(LegacyIdentityProvider::from_env()) as StdArc<dyn IdentityManager>
-        };
+            } else {
+                info!("identity provider: legacy HMAC/JWT");
+                (StdArc::new(LegacyIdentityProvider::from_env()) as StdArc<dyn IdentityManager>, None)
+            };
 
         // ── Plan catalog ──────────────────────────────────────────────────
         let plan_catalog = StdArc::new(PlanCatalog::load());
@@ -334,6 +334,7 @@ impl AppState {
             capability_spec_factory: Some(capability_spec_factory),
             artifact_bridge,
             identity,
+            zitadel_cache_stats,
             billing,
             quota,
             plan_catalog,
@@ -430,6 +431,7 @@ impl AppState {
             capability_spec_factory: None,
             artifact_bridge: None,
             identity,
+            zitadel_cache_stats: None,
             billing: None,
             quota: None,
             plan_catalog,

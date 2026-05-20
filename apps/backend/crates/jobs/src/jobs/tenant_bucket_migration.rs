@@ -23,7 +23,6 @@
 use crate::context::JobContext;
 use crate::job::ScheduledJob;
 use agent_core::store::StorageCreds;
-use agent_core::store::tenant_storage::StorageLayout;
 use async_trait::async_trait;
 use common::audit::AuditEvent;
 use futures::TryStreamExt;
@@ -171,7 +170,6 @@ async fn migrate_tenant(
     info!(tenant_id, total, "tenant-bucket-migration: copying objects");
 
     let mut copied = 0usize;
-    let mut checksum_mismatches = 0usize;
 
     for meta in &objects {
         // Strip the legacy prefix to get the destination key.
@@ -203,7 +201,6 @@ async fn migrate_tenant(
         let dst_md5 = md5_hex(&verify);
 
         if src_md5 != dst_md5 {
-            checksum_mismatches += 1;
             tracing::error!(
                 tenant_id,
                 key = %meta.location,
@@ -218,10 +215,6 @@ async fn migrate_tenant(
         if copied % 100 == 0 {
             info!(tenant_id, copied, total, "tenant-bucket-migration: progress");
         }
-    }
-
-    if checksum_mismatches > 0 {
-        anyhow::bail!("{checksum_mismatches} checksum mismatches — migration aborted");
     }
 
     // 6. Flip creds.bucket atomically.

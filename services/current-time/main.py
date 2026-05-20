@@ -23,7 +23,7 @@ app = FastAPI(title="current-time MCP service")
 
 TOOL_DEF = {
     "name": "get_current_time",
-    "description": "Returns ISO 8601 timestamp for a given IANA timezone (default UTC).",
+    "description": "Get the current time, date, or clock reading. Returns ISO 8601 timestamp for a given IANA timezone (default UTC). Use this when asked: what time is it, what is the current time, what is today's date, now, current datetime.",
     "inputSchema": {
         "type": "object",
         "properties": {
@@ -97,14 +97,14 @@ MANIFEST = {
     "capability_id": "media.time.current-time",
     "name": "current-time",
     "namespace": "media.time",
-    "description": "Returns current server time with optional IANA timezone support.",
+    "description": "Get the current time, clock, or date. Returns current server time with optional IANA timezone support. Use for: what time is it, current time, now, today's date.",
     "version": "1.0.0",
     "kind": "remote_mcp",
     "endpoint": (os.getenv("SERVICE_URL") or os.getenv("CONUSAI_SERVICE_URL", "http://current-time:8082")) + "/mcp",
     "tools": [
         {
             "name": "get_current_time",
-            "description": "Returns ISO 8601 timestamp for a given IANA timezone (default UTC).",
+            "description": "Get the current time, date, or clock reading. Returns ISO 8601 timestamp for a given IANA timezone (default UTC). Use this when asked: what time is it, what is the current time, what is today's date, now, current datetime.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -126,7 +126,7 @@ MANIFEST = {
 }
 
 
-async def register_with_retry(max_retries: int = 10, delay: float = 3.0) -> None:
+async def register_with_retry(max_retries: int = 25, delay: float = 5.0) -> None:
     # Canonical names: GATEWAY_URL / PLATFORM_ADMIN_TOKEN.
     # CONUSAI_PLATFORM_URL / CONUSAI_PLATFORM_TOKEN kept as one-release fallbacks.
     _conusai_url = os.environ.get("CONUSAI_PLATFORM_URL")

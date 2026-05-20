@@ -1,4 +1,5 @@
 <script lang="ts">
+	import '@conusai/ui/tokens.css';
 	import '@conusai/ui/foundry.css';
 	import { ThemeProvider, LiveAnnouncer } from '@conusai/ui';
 	import { emit } from '@tauri-apps/api/event';

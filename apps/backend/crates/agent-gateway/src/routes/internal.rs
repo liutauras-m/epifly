@@ -55,9 +55,6 @@ struct BucketDetail {
 #[derive(Debug, serde::Deserialize)]
 struct ObjectDetail {
     key: String,
-    size: Option<u64>,
-    #[serde(rename = "eTag")]
-    etag: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]

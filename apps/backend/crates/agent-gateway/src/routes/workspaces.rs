@@ -107,7 +107,7 @@ pub async fn create(
 ) -> Result<Json<WorkspaceNode>, HttpError> {
     if !state
         .rate_limiter
-        .check(&tenant.tenant_id, tenant.plan.rate_limit_rpm())
+        .check(&tenant.tenant_id, tenant.plan.limits().rate_limit_rpm)
     {
         return Err(HttpError::rate_limit(None));
     }
@@ -366,7 +366,7 @@ pub async fn patch_content(
 ) -> Result<Json<WorkspaceNode>, HttpError> {
     if !state
         .rate_limiter
-        .check(&tenant.tenant_id, tenant.plan.rate_limit_rpm())
+        .check(&tenant.tenant_id, tenant.plan.limits().rate_limit_rpm)
     {
         return Err(HttpError::rate_limit(None));
     }
@@ -451,7 +451,7 @@ pub async fn move_node(
 ) -> Result<Json<WorkspaceNode>, HttpError> {
     if !state
         .rate_limiter
-        .check(&tenant.tenant_id, tenant.plan.rate_limit_rpm())
+        .check(&tenant.tenant_id, tenant.plan.limits().rate_limit_rpm)
     {
         return Err(HttpError::rate_limit(None));
     }
@@ -532,7 +532,7 @@ pub async fn rename_node(
     use agent_core::context::tenant::UserRole;
     if !state
         .rate_limiter
-        .check(&tenant.tenant_id, tenant.plan.rate_limit_rpm())
+        .check(&tenant.tenant_id, tenant.plan.limits().rate_limit_rpm)
     {
         return Err(HttpError::rate_limit(None));
     }
@@ -579,7 +579,7 @@ pub async fn share_node(
 ) -> Result<Json<WorkspaceNode>, HttpError> {
     if !state
         .rate_limiter
-        .check(&tenant.tenant_id, tenant.plan.rate_limit_rpm())
+        .check(&tenant.tenant_id, tenant.plan.limits().rate_limit_rpm)
     {
         return Err(HttpError::rate_limit(None));
     }
@@ -613,7 +613,7 @@ pub async fn unshare_node(
 ) -> Result<Json<WorkspaceNode>, HttpError> {
     if !state
         .rate_limiter
-        .check(&tenant.tenant_id, tenant.plan.rate_limit_rpm())
+        .check(&tenant.tenant_id, tenant.plan.limits().rate_limit_rpm)
     {
         return Err(HttpError::rate_limit(None));
     }
@@ -646,7 +646,7 @@ pub async fn delete_node(
 ) -> Result<StatusCode, HttpError> {
     if !state
         .rate_limiter
-        .check(&tenant.tenant_id, tenant.plan.rate_limit_rpm())
+        .check(&tenant.tenant_id, tenant.plan.limits().rate_limit_rpm)
     {
         return Err(HttpError::rate_limit(None));
     }
@@ -716,7 +716,7 @@ pub async fn presign_upload(
 ) -> Result<Json<PresignUploadResponse>, HttpError> {
     if !state
         .rate_limiter
-        .check(&tenant.tenant_id, tenant.plan.rate_limit_rpm())
+        .check(&tenant.tenant_id, tenant.plan.limits().rate_limit_rpm)
     {
         return Err(HttpError::rate_limit(None));
     }

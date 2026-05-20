@@ -4,9 +4,12 @@
 //! - `capability_embeddings`: capability search (tag/namespace payload filters).
 //! - `content_embeddings`: workspace content search (tenant_id payload filter).
 //!
-//! Both use 768-dimensional cosine distance (nomic-embed-text default).
+//! Both use cosine distance. Dimensionality is set at construction time and must
+//! match the active embedding model (`EMBEDDING_DIMS`, default 1024).
 
 use crate::capabilities::namespace::NamespaceFilter;
+use crate::indexing::EMBEDDING_DIMS;
+use crate::indexing::embedding_service::EmbeddingService;
 use chrono::{DateTime, Utc};
 use qdrant_client::{
     Qdrant,
@@ -21,9 +24,24 @@ use serde_json::Value;
 use std::collections::HashMap;
 use tracing::instrument;
 
-const CAP_COLLECTION: &str = "capability_embeddings";
-const CONTENT_COLLECTION: &str = "content_embeddings";
-const DIMS: u64 = 768;
+/// Legacy 768-d collection name (kept as-is for back-compat during migrations).
+const LEGACY_DIMS: u64 = 768;
+
+fn cap_collection(dims: u64) -> String {
+    if dims == LEGACY_DIMS {
+        "capability_embeddings".into()
+    } else {
+        format!("capability_embeddings_d{dims}")
+    }
+}
+
+fn content_collection(dims: u64) -> String {
+    if dims == LEGACY_DIMS {
+        "content_embeddings".into()
+    } else {
+        format!("content_embeddings_d{dims}")
+    }
+}
 
 // ── DTOs (same as old PgVectorStore) ─────────────────────────────────────────
 
@@ -55,33 +73,74 @@ pub struct ContentHit {
 
 pub struct QdrantVectorStore {
     inner: Option<Qdrant>,
+    dims: u64,
 }
 
 impl QdrantVectorStore {
     pub async fn connect(url: &str) -> anyhow::Result<Self> {
+        Self::connect_with_dims(url, EMBEDDING_DIMS as u64).await
+    }
+
+    /// Connect and derive the collection names from the active embedding service's dims.
+    pub async fn connect_from_service(url: &str, svc: &dyn EmbeddingService) -> anyhow::Result<Self> {
+        Self::connect_with_dims(url, svc.dims()).await
+    }
+
+    pub async fn connect_with_dims(url: &str, dims: u64) -> anyhow::Result<Self> {
         let client = Qdrant::from_url(url).build()?;
-        let store = Self { inner: Some(client) };
+        let store = Self { inner: Some(client), dims };
         store.ensure_collections().await?;
         Ok(store)
     }
 
     /// Returns a store that always returns empty results — used in test mode.
     pub fn noop() -> Self {
-        Self { inner: None }
+        Self { inner: None, dims: EMBEDDING_DIMS as u64 }
     }
 
     async fn ensure_collections(&self) -> anyhow::Result<()> {
         let Some(client) = &self.inner else { return Ok(()) };
-        for name in [CAP_COLLECTION, CONTENT_COLLECTION] {
+        let cap_name = cap_collection(self.dims);
+        let content_name = content_collection(self.dims);
+        for name in [cap_name.as_str(), content_name.as_str()] {
             if client.collection_exists(name).await? {
-                // Ensure indexes exist even on pre-existing collections.
-                self.ensure_payload_indexes(client, name).await?;
-                continue;
+                // Verify the collection's vector dimension matches our embedding model.
+                let mut needs_recreate = false;
+                let info = client.collection_info(name).await?;
+                if let Some(config) = info.result.and_then(|r| r.config) {
+                    if let Some(params) = config.params.and_then(|p| p.vectors_config)
+                        .and_then(|vc| vc.config)
+                    {
+                        use qdrant_client::qdrant::vectors_config::Config;
+                        let existing_dim = match params {
+                            Config::Params(vp) => Some(vp.size),
+                            Config::ParamsMap(pm) => pm.map.get("default").map(|p| p.size),
+                        };
+                        if let Some(dim) = existing_dim {
+                            if dim != self.dims {
+                                tracing::warn!(
+                                    collection = name,
+                                    existing_dim = dim,
+                                    expected_dim = self.dims,
+                                    "Qdrant dimension mismatch — dropping and recreating collection"
+                                );
+                                client.delete_collection(name).await?;
+                                needs_recreate = true;
+                            }
+                        }
+                    }
+                }
+                if !needs_recreate {
+                    // Ensure indexes exist even on pre-existing collections.
+                    self.ensure_payload_indexes(client, name).await?;
+                    continue;
+                }
+                // Fall through to create new collection with correct dims.
             }
             let mut vcb = VectorsConfigBuilder::default();
             vcb.add_named_vector_params(
                 "default",
-                VectorParamsBuilder::new(DIMS, Distance::Cosine),
+                VectorParamsBuilder::new(self.dims, Distance::Cosine),
             );
             client
                 .create_collection(
@@ -171,7 +230,8 @@ impl QdrantVectorStore {
 
         let filter = build_capability_filter(namespace, tags);
 
-        let mut req = SearchPointsBuilder::new(CAP_COLLECTION, embedding.to_vec(), limit as u64)
+        let mut req = SearchPointsBuilder::new(cap_collection(self.dims), embedding.to_vec(), limit as u64)
+            .vector_name("default")
             .with_payload(true)
             .params(SearchParamsBuilder::default().exact(false));
         if let Some(f) = filter {
@@ -263,7 +323,7 @@ impl QdrantVectorStore {
         let point = PointStruct::new(deterministic_id(capability_id), vectors, payload);
 
         client
-            .upsert_points(UpsertPointsBuilder::new(CAP_COLLECTION, vec![point]).wait(true))
+            .upsert_points(UpsertPointsBuilder::new(cap_collection(self.dims), vec![point]).wait(true))
             .await?;
         Ok(())
     }
@@ -285,7 +345,8 @@ impl QdrantVectorStore {
 
         let result = client
             .search_points(
-                SearchPointsBuilder::new(CONTENT_COLLECTION, embedding.to_vec(), limit as u64)
+                SearchPointsBuilder::new(content_collection(self.dims), embedding.to_vec(), limit as u64)
+                    .vector_name("default")
                     .filter(filter)
                     .with_payload(true),
             )
@@ -372,7 +433,7 @@ impl QdrantVectorStore {
         let filter = Filter::must(vec![Condition::matches("node_id", doc_id.to_string())]);
         client
             .delete_points(
-                DeletePointsBuilder::new(CONTENT_COLLECTION)
+                DeletePointsBuilder::new(content_collection(self.dims))
                     .points(filter)
                     .wait(true),
             )
@@ -411,7 +472,7 @@ impl QdrantVectorStore {
         let point = PointStruct::new(deterministic_id(chunk_id), vectors, payload);
 
         client
-            .upsert_points(UpsertPointsBuilder::new(CONTENT_COLLECTION, vec![point]).wait(true))
+            .upsert_points(UpsertPointsBuilder::new(content_collection(self.dims), vec![point]).wait(true))
             .await?;
         Ok(())
     }

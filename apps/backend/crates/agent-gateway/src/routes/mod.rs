@@ -117,6 +117,114 @@ impl Modify for SecurityAddon {
 )]
 pub struct ApiDoc;
 
+// ── Static route table (source of truth for CI diff guard) ───────────────────
+
+/// One entry per HTTP route. Used by `--dump-routes` and `make verify-routes-doc`.
+pub struct RouteEntry {
+    pub method: &'static str,
+    pub path: &'static str,
+    pub auth: &'static str,
+    pub router: &'static str,
+}
+
+pub const ROUTE_TABLE: &[RouteEntry] = &[
+    // Public
+    RouteEntry { method: "GET",  path: "/health",                               auth: "none",        router: "public" },
+    RouteEntry { method: "GET",  path: "/login",                                auth: "none",        router: "public" },
+    RouteEntry { method: "POST", path: "/v1/auth/login",                        auth: "none",        router: "public" },
+    RouteEntry { method: "POST", path: "/v1/auth/legacy/login",                 auth: "none",        router: "public" },
+    RouteEntry { method: "POST", path: "/v1/billing/webhooks",                  auth: "hmac-sig",    router: "public" },
+    RouteEntry { method: "POST", path: "/admin/capabilities/register",          auth: "platform-token", router: "public" },
+    RouteEntry { method: "GET",  path: "/openapi.json",                         auth: "none",        router: "public" },
+    RouteEntry { method: "GET",  path: "/docs",                                 auth: "none",        router: "public" },
+    RouteEntry { method: "GET",  path: "/metrics",                              auth: "none",        router: "public" },
+    // Internal (restrict by network in prod)
+    RouteEntry { method: "POST", path: "/internal/rustfs/events",               auth: "none",        router: "internal" },
+    // Protected (bearer/session/api-key + plan enforcement)
+    RouteEntry { method: "POST", path: "/v1/chat/completions",                  auth: "bearer",      router: "protected" },
+    RouteEntry { method: "POST", path: "/v1/agent/completions",                 auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/capabilities",                      auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/capabilities/search",               auth: "bearer",      router: "protected" },
+    RouteEntry { method: "POST", path: "/mcp",                                  auth: "bearer",      router: "protected" },
+    RouteEntry { method: "POST", path: "/v1/files/upload-url",                  auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/files/download-url",                auth: "bearer",      router: "protected" },
+    RouteEntry { method: "POST", path: "/v1/uploads/initiate",                  auth: "bearer",      router: "protected" },
+    RouteEntry { method: "POST", path: "/v1/uploads/{upload_id}/parts/{n}/presign", auth: "bearer",  router: "protected" },
+    RouteEntry { method: "POST", path: "/v1/uploads/{upload_id}/complete",      auth: "bearer",      router: "protected" },
+    RouteEntry { method: "POST", path: "/v1/uploads/{upload_id}/abort",         auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/audit",                             auth: "bearer",      router: "protected" },
+    RouteEntry { method: "POST", path: "/v1/workspaces",                        auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/workspaces/tree",                   auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/workspaces/search",                 auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/workspaces/{id}",                   auth: "bearer",      router: "protected" },
+    RouteEntry { method: "DELETE", path: "/v1/workspaces/{id}",                 auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/workspaces/{id}/content",           auth: "bearer",      router: "protected" },
+    RouteEntry { method: "PATCH", path: "/v1/workspaces/{id}/content",          auth: "bearer",      router: "protected" },
+    RouteEntry { method: "POST", path: "/v1/workspaces/{id}/move",              auth: "bearer",      router: "protected" },
+    RouteEntry { method: "POST", path: "/v1/workspaces/{id}/rename",            auth: "bearer",      router: "protected" },
+    RouteEntry { method: "POST", path: "/v1/workspaces/{id}/share",             auth: "bearer",      router: "protected" },
+    RouteEntry { method: "POST", path: "/v1/workspaces/{id}/unshare",           auth: "bearer",      router: "protected" },
+    RouteEntry { method: "POST", path: "/v1/workspaces/{id}/presign-upload",    auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/workspaces/{id}/presign-download",  auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/workspaces/nodes/{id}/versions",    auth: "bearer",      router: "protected" },
+    RouteEntry { method: "POST", path: "/v1/workspaces/nodes/{id}/restore",     auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/tasks",                             auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/tasks/{id}",                        auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/tasks/{id}/sse",                    auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/threads/{id}/messages",             auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/api/realtime/workspace",               auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/shells/{device_id}/control",        auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/billing/plans",                     auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/billing/subscription",              auth: "bearer",      router: "protected" },
+    RouteEntry { method: "POST", path: "/v1/billing/subscriptions",             auth: "bearer",      router: "protected" },
+    RouteEntry { method: "DELETE", path: "/v1/billing/subscription",            auth: "bearer",      router: "protected" },
+    RouteEntry { method: "POST", path: "/v1/billing/portal",                    auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/billing/invoices",                  auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/billing/usage",                     auth: "bearer",      router: "protected" },
+    // Admin (super_admin JWT required)
+    RouteEntry { method: "GET",  path: "/admin/capabilities",                   auth: "super-admin", router: "admin" },
+    RouteEntry { method: "POST", path: "/admin/capabilities",                   auth: "super-admin", router: "admin" },
+    RouteEntry { method: "POST", path: "/admin/capabilities/reload",            auth: "super-admin", router: "admin" },
+    RouteEntry { method: "POST", path: "/admin/capabilities/validate",          auth: "super-admin", router: "admin" },
+    RouteEntry { method: "POST", path: "/admin/capabilities/test",              auth: "super-admin", router: "admin" },
+    RouteEntry { method: "GET",  path: "/admin/capabilities/{name}",            auth: "super-admin", router: "admin" },
+    RouteEntry { method: "GET",  path: "/admin/capabilities/{name}/manifest",   auth: "super-admin", router: "admin" },
+    RouteEntry { method: "PATCH", path: "/admin/capabilities/{name}",           auth: "super-admin", router: "admin" },
+    RouteEntry { method: "PATCH", path: "/admin/capabilities/{name}/enabled",   auth: "super-admin", router: "admin" },
+    RouteEntry { method: "DELETE", path: "/admin/capabilities/{name}",          auth: "super-admin", router: "admin" },
+    RouteEntry { method: "POST", path: "/admin/capabilities/{name}/reload",     auth: "super-admin", router: "admin" },
+    RouteEntry { method: "GET",  path: "/admin/capabilities/namespaces",        auth: "super-admin", router: "admin" },
+    RouteEntry { method: "GET",  path: "/admin/jobs",                           auth: "super-admin", router: "admin" },
+    RouteEntry { method: "GET",  path: "/admin/jobs/{name}",                    auth: "super-admin", router: "admin" },
+    RouteEntry { method: "POST", path: "/admin/jobs/{name}/run",                auth: "super-admin", router: "admin" },
+    RouteEntry { method: "GET",  path: "/admin/tasks",                          auth: "super-admin", router: "admin" },
+    RouteEntry { method: "POST", path: "/admin/devices",                        auth: "super-admin", router: "admin" },
+    RouteEntry { method: "GET",  path: "/admin/devices",                        auth: "super-admin", router: "admin" },
+    RouteEntry { method: "DELETE", path: "/admin/devices/{id}",                 auth: "super-admin", router: "admin" },
+    RouteEntry { method: "POST", path: "/admin/billing/credits",                auth: "super-admin", router: "admin" },
+    RouteEntry { method: "POST", path: "/admin/billing/cancel/{tenant_id}",     auth: "super-admin", router: "admin" },
+    RouteEntry { method: "GET",  path: "/admin/billing/dashboard",              auth: "super-admin", router: "admin" },
+    RouteEntry { method: "DELETE", path: "/admin/tenants/{id}",                 auth: "super-admin", router: "admin" },
+];
+
+/// Print ROUTE_TABLE as Markdown, grouped by router section.
+pub fn dump_routes_markdown() -> String {
+    let mut out = String::from("# ConusAI Gateway — Route Table\n\n");
+    out.push_str("> Generated by `--dump-routes`. Do not edit manually.\n\n");
+    for section in ["public", "internal", "protected", "admin"] {
+        let rows: Vec<_> = ROUTE_TABLE.iter().filter(|r| r.router == section).collect();
+        if rows.is_empty() { continue; }
+        out.push_str(&format!("## {section}\n\n"));
+        out.push_str("| Method | Path | Auth |\n");
+        out.push_str("|--------|------|------|\n");
+        for r in rows {
+            out.push_str(&format!("| `{}` | `{}` | {} |\n", r.method, r.path, r.auth));
+        }
+        out.push('\n');
+    }
+    out
+}
+
 /// Routes that require no auth (health probe, auth, OpenAPI).
 /// Note: the old `GET /v1/files/{token}` UUID download shim is REMOVED.
 pub fn public_router() -> Router<Arc<AppState>> {
@@ -178,15 +286,6 @@ pub fn admin_router() -> Router<Arc<AppState>> {
         .route(
             "/admin/capabilities/{name}/reload",
             post(admin_capabilities::reload_one),
-        )
-        // Dynamic prompt management
-        .route(
-            "/admin/capabilities/{name}/prompt",
-            put(admin_capabilities::upsert_prompt).get(admin_capabilities::get_prompt),
-        )
-        .route(
-            "/admin/capabilities/{name}/prompt/versions",
-            get(admin_capabilities::list_prompt_versions),
         )
         // Namespace browser
         .route(

@@ -234,9 +234,9 @@ services:
     container_name: conusai-current-time
     restart: unless-stopped
     environment:
-      GATEWAY_URL: "http://conusai-gateway:8080"
+      GATEWAY_URL: "http://host.docker.internal:8080"
       PLATFORM_ADMIN_TOKEN: "${PLATFORM_ADMIN_TOKEN:-}"
-      SERVICE_URL: "http://conusai-current-time:8082"
+      SERVICE_URL: "http://host.docker.internal:8082"
     ports:
       - "8082:8082"
     depends_on:

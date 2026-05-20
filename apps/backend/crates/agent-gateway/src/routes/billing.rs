@@ -6,7 +6,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use billing_core::types::{CheckoutSession, Invoice, Subscription};
+use billing_core::types::{Invoice, Subscription};
 use common::error::HttpError;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

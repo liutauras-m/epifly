@@ -20,7 +20,7 @@ use crate::llm::LlmRegistry;
 use crate::store::qdrant_vector::QdrantVectorStore;
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tracing::{info, warn};
 
 // ── In-memory spec row ────────────────────────────────────────────────────────
@@ -105,17 +105,6 @@ impl CapabilitySpecFactory {
     /// Register a spec programmatically (replaces DB row insertion).
     pub fn add_spec(&mut self, spec: CapabilitySpec) {
         self.specs.push(spec);
-    }
-
-    /// Hot-reload hook — called when a spec change notification arrives.
-    /// In the new architecture this is a no-op; capabilities are managed via TOML files.
-    pub async fn reload_one(
-        &self,
-        _registry: &Arc<Mutex<CapabilityRegistry>>,
-        _namespace: &str,
-        _tool_name: &str,
-    ) -> anyhow::Result<()> {
-        Ok(())
     }
 
     fn spec_to_provider(

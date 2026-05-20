@@ -2,7 +2,6 @@
 use base64::Engine as _; // needed once capture_image() is enabled (Tauri >= 2.2)
 use common::trace::{SessionRecorder, SessionTrace, UserStep};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Manager};
 use ulid::Ulid;
 
 use crate::telemetry;

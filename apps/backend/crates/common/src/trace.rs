@@ -41,8 +41,3 @@ pub trait SessionRecorder: Send + Sync + 'static {
     fn reset(&self);
 }
 
-/// Abstracts "where the trace JSON came from" — workspace node, uploaded file, etc.
-#[async_trait::async_trait]
-pub trait TraceSource: Send + Sync + 'static {
-    async fn load(&self, trace_node_id: &str) -> anyhow::Result<SessionTrace>;
-}

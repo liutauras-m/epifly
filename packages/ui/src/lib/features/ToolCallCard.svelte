@@ -20,6 +20,20 @@
 
   const registry = useCapabilityRendererRegistry();
   const Renderer = $derived(capabilityCard ? registry.get(capabilityCard) : null);
+
+  // Capture elapsed once when status leaves 'running' so the time doesn't drift.
+  let elapsedMs = $state<number | null>(null);
+  $effect(() => {
+    if (status !== 'running' && elapsedMs === null) {
+      elapsedMs = Math.round(performance.now() - startTime);
+    }
+  });
+
+  // Format compound tool name (e.g. "media_time__get_current_time" → "get_current_time")
+  // and replace underscores with spaces for readability.
+  const displayName = $derived(
+    (name.includes('__') ? name.split('__').pop()! : name).replaceAll('_', ' ')
+  );
 </script>
 
 {#if Renderer && capabilityCard}
@@ -28,9 +42,9 @@
   <details class="tool-card" data-status={status}>
     <summary class="tool-head">
       <span class="tool-dot" role="status" aria-label={status}></span>
-      <span class="tool-name">{name}</span>
-      <span class="tool-time" aria-label={status === 'running' ? 'Running' : `${Math.round(performance.now() - startTime)}ms`}>
-        {#if status !== 'running'}{Math.round(performance.now() - startTime)}ms{:else}…{/if}
+      <span class="tool-name">{displayName}</span>
+      <span class="tool-time" aria-label={status === 'running' ? 'Running' : `${elapsedMs}ms`}>
+        {#if status !== 'running'}{elapsedMs}ms{:else}…{/if}
       </span>
     </summary>
     <div class="tool-body">{result || 'running…'}</div>

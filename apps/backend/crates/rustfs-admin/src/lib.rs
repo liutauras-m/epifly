@@ -15,7 +15,7 @@ pub use bucket::sanitize_bucket_name;
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use reqwest::{Client, Method, Response, StatusCode};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::BTreeMap;
 use tracing::{debug, instrument};
 
@@ -68,10 +68,6 @@ impl RustFsAdminClient {
             .trim_start_matches("http://")
             .trim_start_matches("https://")
             .to_string()
-    }
-
-    fn is_https(&self) -> bool {
-        self.endpoint.starts_with("https://")
     }
 
     /// Sign and send an S3 API request (bucket management operations).

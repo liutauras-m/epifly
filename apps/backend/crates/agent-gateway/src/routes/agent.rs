@@ -10,8 +10,7 @@ use crate::mw::meter::AgentTurnStats;
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
 use billing_core::events::{ActionType, UsageEvent};
-use agent_core::ContextBuilder;
-use agent_core::map_rig_error;
+use agent_core::{ContextBuilder, PlanLimits, map_rig_error};
 use axum::{
     Extension, Json,
     extract::State,
@@ -60,20 +59,21 @@ use uuid::Uuid;
 pub async fn agent_completions(
     State(state): State<Arc<AppState>>,
     Extension(tenant): Extension<ResolvedTenant>,
+    Extension(limits): Extension<PlanLimits>,
     Json(req): Json<crate::routes::chat::ChatRequest>,
 ) -> Response {
     if !state
         .rate_limiter
-        .check(&tenant.0.tenant_id, tenant.0.plan.rate_limit_rpm())
+        .check(&tenant.0.tenant_id, limits.rate_limit_rpm)
     {
         warn!("rate limit hit");
         return HttpError::rate_limit(None).into_response();
     }
 
     if req.stream.unwrap_or(false) {
-        stream_agent(state, tenant, req).await.into_response()
+        stream_agent(state, tenant, limits, req).await.into_response()
     } else {
-        match blocking_agent(state, tenant, req).await {
+        match blocking_agent(state, tenant, limits, req).await {
             Ok((v, stats)) => {
                 let mut resp = Json(v).into_response();
                 resp.extensions_mut().insert(stats);
@@ -105,6 +105,7 @@ struct AgentCtx {
 async fn build_ctx(
     state: &Arc<AppState>,
     tenant: &ResolvedTenant,
+    limits: PlanLimits,
     req: &crate::routes::chat::ChatRequest,
 ) -> Result<AgentCtx, HttpError> {
     let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
@@ -119,16 +120,13 @@ async fn build_ctx(
         .unwrap_or("claude-opus-4-7")
         .to_string();
     // Prefer PlanCatalog limits (runtime-configurable) over compiled-in tier defaults.
-    let (catalog_max_tokens, catalog_max_turns) = state
-        .plan_catalog
-        .by_tier(&tenant.0.plan)
-        .map(|p| (p.max_tokens, p.max_turns_per_day.unwrap_or(20) as u64))
-        .unwrap_or_else(|| (tenant.0.plan.max_tokens(), tenant.0.plan.max_turns() as u64));
+    let catalog = state.plan_catalog.by_tier(&tenant.0.plan);
+    let catalog_max_tokens = catalog.map(|p| p.max_tokens).unwrap_or(limits.max_tokens);
+    let catalog_max_turns = catalog
+        .and_then(|p| p.max_turns_per_day)
+        .unwrap_or(limits.max_turns as u64) as usize;
 
-    let max_tokens = req
-        .max_tokens
-        .unwrap_or(4096)
-        .min(catalog_max_tokens);
+    let max_tokens = req.max_tokens.unwrap_or(catalog_max_tokens).min(catalog_max_tokens);
 
     Span::current().record("gen_ai.request.model", model_id.as_str());
 
@@ -136,11 +134,10 @@ async fn build_ctx(
     let thread_store = Arc::clone(&state.thread_store);
 
     // Effective max_rounds: honour request value but cap at plan limit.
-    let plan_max = catalog_max_turns as usize;
     let max_rounds = req
         .max_turns
-        .map(|s| (s as usize).min(plan_max))
-        .unwrap_or(plan_max);
+        .map(|s| (s as usize).min(catalog_max_turns))
+        .unwrap_or(catalog_max_turns);
 
     // Resolve effective thread_id via ConversationService:
     //   1. Explicit `thread_id` on the request always wins.
@@ -373,10 +370,11 @@ async fn build_ctx(
 async fn blocking_agent(
     state: Arc<AppState>,
     tenant: ResolvedTenant,
+    limits: PlanLimits,
     req: crate::routes::chat::ChatRequest,
 ) -> Result<(Value, AgentTurnStats), HttpError> {
     let start = Instant::now();
-    let ctx = build_ctx(&state, &tenant, &req).await?;
+    let ctx = build_ctx(&state, &tenant, limits, &req).await?;
 
     let AgentCtx {
         api_key,
@@ -594,12 +592,13 @@ async fn blocking_agent(
 pub async fn stream_agent(
     state: Arc<AppState>,
     tenant: ResolvedTenant,
+    limits: PlanLimits,
     req: crate::routes::chat::ChatRequest,
 ) -> Sse<ReceiverStream<Result<Event, Infallible>>> {
     let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(128);
 
     tokio::spawn(async move {
-        let ctx = match build_ctx(&state, &tenant, &req).await {
+        let ctx = match build_ctx(&state, &tenant, limits, &req).await {
             Ok(c) => c,
             Err(e) => {
                 let message = e.body.message.as_str();

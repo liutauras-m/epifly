@@ -89,9 +89,6 @@ fastembed = { version = "5" }
 # HMAC (for SigV4 / search helpers)
 hmac         = { version = "0.12" }
 
-# OAuth2 / OIDC (Zitadel integration)
-openidconnect = { version = "3", features = ["reqwest"] }
-
 # Stripe / Lago webhook signature verification
 hex          = { version = "0.4" }
 

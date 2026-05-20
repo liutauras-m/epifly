@@ -42,34 +42,43 @@ pub enum PlanTier {
     Enterprise,
 }
 
+/// Hard limits for a plan tier, resolved once per request and injected as `Extension<PlanLimits>`.
+#[derive(Debug, Clone, Copy)]
+pub struct PlanLimits {
+    pub max_tokens: u64,
+    pub max_turns: u32,
+    pub rate_limit_rpm: u32,
+    /// Max tool definitions sent to the LLM per turn.
+    pub max_tools_per_turn: usize,
+    /// Max tool invocations allowed within a single agent turn.
+    pub max_invokes_per_turn: usize,
+}
+
 impl PlanTier {
-    /// Hard-coded token limit fallback — prefer `PlanCatalog::by_tier` from billing-core.
-    #[deprecated(since = "0.4.0", note = "use PlanCatalog::by_tier for configurable limits")]
-    pub fn max_tokens(&self) -> u64 {
+    /// Resolve the hard-coded per-tier limits.
+    pub fn limits(&self) -> PlanLimits {
         match self {
-            PlanTier::Free => 4_096,
-            PlanTier::Pro => 16_384,
-            PlanTier::Enterprise => 128_000,
-        }
-    }
-
-    /// Hard-coded max turns fallback — prefer `PlanCatalog::by_tier` from billing-core.
-    #[deprecated(since = "0.4.0", note = "use PlanCatalog::by_tier for configurable limits")]
-    pub fn max_turns(&self) -> u32 {
-        match self {
-            PlanTier::Free => 3,
-            PlanTier::Pro => 8,
-            PlanTier::Enterprise => 20,
-        }
-    }
-
-    /// Hard-coded RPM fallback — prefer `PlanCatalog::by_tier` from billing-core.
-    #[deprecated(since = "0.4.0", note = "use PlanCatalog::by_tier for configurable limits")]
-    pub fn rate_limit_rpm(&self) -> u32 {
-        match self {
-            PlanTier::Free => 10,
-            PlanTier::Pro => 60,
-            PlanTier::Enterprise => 600,
+            PlanTier::Free => PlanLimits {
+                max_tokens: 4_096,
+                max_turns: 3,
+                rate_limit_rpm: 10,
+                max_tools_per_turn: 10,
+                max_invokes_per_turn: 5,
+            },
+            PlanTier::Pro => PlanLimits {
+                max_tokens: 16_384,
+                max_turns: 8,
+                rate_limit_rpm: 60,
+                max_tools_per_turn: 25,
+                max_invokes_per_turn: 10,
+            },
+            PlanTier::Enterprise => PlanLimits {
+                max_tokens: 128_000,
+                max_turns: 20,
+                rate_limit_rpm: 600,
+                max_tools_per_turn: 50,
+                max_invokes_per_turn: 25,
+            },
         }
     }
 

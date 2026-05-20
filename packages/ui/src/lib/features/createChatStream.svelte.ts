@@ -83,7 +83,7 @@ export function createChatStream(sdk: ConusSdk, options?: { streamFn?: CustomStr
     }
 
     try {
-      messages = messages.filter(m => m.role !== 'thinking');
+      messages = [...messages.filter(m => m.role !== 'thinking'), { role: 'thinking', text: '' }];
 
       const streamParams: StreamChatParams = {
         message: prompt,
@@ -137,10 +137,11 @@ export function createChatStream(sdk: ConusSdk, options?: { streamFn?: CustomStr
     } catch (e: unknown) {
       messages = messages.filter(m => m.role !== 'thinking');
       if (e instanceof Error && (e.name === 'AbortError' || e.message.includes('aborted'))) {
-        if (messages.at(-1)?.role !== 'ai' || !messages.at(-1)?.text) {
+        // If messages was cleared by newSession(), don't add "Request cancelled." — the session was intentionally reset.
+        if (messages.length > 0 && (messages.at(-1)?.role !== 'ai' || !messages.at(-1)?.text)) {
           messages = [...messages, { role: 'ai', text: 'Request cancelled.' }];
         }
-      } else {
+      } else if (messages.length > 0) {
         messages = [...messages, { role: 'ai', text: `Stream failed: ${e instanceof Error ? e.message : String(e)}` }];
       }
     } finally {

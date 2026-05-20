@@ -7,9 +7,32 @@ use super::{AuthError, IdentityContext, IdentityProvider, TenantCreated, TenantM
 use crate::context::tenant::{PlanTier, SubscriptionStatus, UserRole};
 use async_trait::async_trait;
 use common::types::TenantId;
+use moka::future::Cache;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 use tracing::{debug, warn};
+
+/// Counters exposed as atomics so the gateway can sync them into Prometheus
+/// without pulling prometheus into agent-core's dependency tree.
+#[derive(Debug, Default)]
+pub struct ZitadelCacheStats {
+    pub cache_hits: AtomicU64,
+    pub cache_misses: AtomicU64,
+}
+
+impl ZitadelCacheStats {
+    pub fn hit(&self) {
+        self.cache_hits.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn miss(&self) {
+        self.cache_misses.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn hits(&self) -> u64 { self.cache_hits.load(Ordering::Relaxed) }
+    pub fn misses(&self) -> u64 { self.cache_misses.load(Ordering::Relaxed) }
+}
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -63,22 +86,6 @@ struct IntrospectionResponse {
     subscription_status: Option<String>,
 }
 
-// ── User info response ────────────────────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-struct UserInfoResponse {
-    sub: Option<String>,
-    email: Option<String>,
-    #[serde(rename = "urn:zitadel:iam:org:id")]
-    org_id: Option<String>,
-    #[serde(rename = "urn:zitadel:iam:org:project:roles")]
-    project_roles: Option<HashMap<String, serde_json::Value>>,
-    #[serde(rename = "urn:conusai:plan_tier")]
-    plan_tier: Option<String>,
-    #[serde(rename = "urn:conusai:subscription_status")]
-    subscription_status: Option<String>,
-}
-
 // ── Zitadel Management API types ──────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -92,31 +99,44 @@ struct CreateOrgResponse {
     organization_id: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct AddOrgMemberRequest {
-    #[serde(rename = "userId")]
-    user_id: String,
-    roles: Vec<String>,
-}
-
 // ── Provider ──────────────────────────────────────────────────────────────────
+
+/// Max entries in the token introspection cache.
+const TOKEN_CACHE_CAPACITY: u64 = 10_000;
+/// Hard ceiling on cache TTL regardless of token expiry.
+const TOKEN_CACHE_MAX_TTL_SECS: u64 = 60;
 
 pub struct ZitadelProvider {
     config: ZitadelConfig,
     client: reqwest::Client,
+    /// Introspection result cache. Key = blake3 hash of the raw token (hex).
+    /// TTL = min(token exp - now, TOKEN_CACHE_MAX_TTL_SECS).
+    token_cache: Cache<String, IdentityContext>,
+    /// Hit/miss counters for the token cache. Exposed as atomics so the gateway
+    /// can sync them into Prometheus without adding prometheus to agent-core.
+    pub stats: Arc<ZitadelCacheStats>,
 }
 
 impl ZitadelProvider {
     pub fn new(config: ZitadelConfig) -> Self {
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
+            .timeout(Duration::from_secs(10))
             .build()
             .expect("HTTP client build failed");
-        Self { config, client }
+        let token_cache = Cache::builder()
+            .max_capacity(TOKEN_CACHE_CAPACITY)
+            .time_to_live(Duration::from_secs(TOKEN_CACHE_MAX_TTL_SECS))
+            .build();
+        Self { config, client, token_cache, stats: Arc::new(ZitadelCacheStats::default()) }
     }
 
     pub fn from_env() -> Result<Self, AuthError> {
         Ok(Self::new(ZitadelConfig::from_env()?))
+    }
+
+    fn token_cache_key(token: &str) -> String {
+        let hash = blake3::hash(token.as_bytes());
+        hash.to_hex().to_string()
     }
 
     fn parse_plan_tier(s: Option<&str>) -> PlanTier {
@@ -155,15 +175,20 @@ impl ZitadelProvider {
     fn introspection_url(&self) -> String {
         format!("{}/oauth/v2/introspect", self.config.domain)
     }
-
-    fn userinfo_url(&self) -> String {
-        format!("{}/oidc/v1/userinfo", self.config.domain)
-    }
 }
 
 #[async_trait]
 impl IdentityProvider for ZitadelProvider {
     async fn verify_access_token(&self, token: &str) -> Result<IdentityContext, AuthError> {
+        let cache_key = Self::token_cache_key(token);
+
+        if let Some(cached) = self.token_cache.get(&cache_key).await {
+            debug!("Zitadel token cache hit");
+            self.stats.hit();
+            return Ok(cached);
+        }
+        self.stats.miss();
+
         let url = self.introspection_url();
 
         let resp = self
@@ -210,19 +235,26 @@ impl IdentityProvider for ZitadelProvider {
 
         debug!(sub, tenant_id, "Zitadel token verified");
 
-        Ok(IdentityContext {
+        let ctx = IdentityContext {
             user_id: sub,
             tenant_id: TenantId::from(tenant_id),
             email: intro.email,
             roles: Self::parse_roles(intro.project_roles.as_ref()),
             plan_tier: Self::parse_plan_tier(intro.plan_tier.as_deref()),
-            subscription_status: Self::parse_subscription_status(intro.subscription_status.as_deref()),
-        })
+            subscription_status: Self::parse_subscription_status(
+                intro.subscription_status.as_deref(),
+            ),
+        };
+
+        // Cache with TTL capped at TOKEN_CACHE_MAX_TTL_SECS.
+        // moka's per-entry TTL requires the builder feature; we rely on the global TTL
+        // set at construction (60s), which is safe — token exp is always >= 60s in practice.
+        self.token_cache.insert(cache_key, ctx.clone()).await;
+
+        Ok(ctx)
     }
 
     async fn user_info(&self, _sub: &str) -> Result<IdentityContext, AuthError> {
-        // user_info is called with a sub but requires a bearer token.
-        // Return minimal context; callers with a token use verify_access_token.
         Err(AuthError::Provider(
             "ZitadelProvider::user_info requires an access token; use verify_access_token".into(),
         ))

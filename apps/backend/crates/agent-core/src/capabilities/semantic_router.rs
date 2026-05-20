@@ -465,6 +465,9 @@ mod tests {
 
     #[async_trait]
     impl EmbeddingService for ConstEmbedder {
+        fn model(&self) -> crate::indexing::EmbeddingModel {
+            crate::indexing::EmbeddingModel::MultilingualE5Large
+        }
         async fn embed_query(&self, _text: &str) -> anyhow::Result<Vec<f32>> {
             Ok(self.0.clone())
         }

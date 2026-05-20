@@ -19,13 +19,20 @@
 	let showChat = $state(false);
 	let inputValue = $state('');
 	let sidebarOpen = $state(false);
+	const hour = new Date().getHours();
+	const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
 	let recents = $state<{ id: string; title: string }[]>([]);
 	let messagesEl = $state<HTMLElement | undefined>();
 
 	function onSelectNode(node: WorkspaceNode) {
-		showChat = true;
-		if (node.kind === 'conversation' && node.metadata?.thread_id) {
-			chatStream.loadThread(node.metadata.thread_id as string);
+		if (node.kind === 'conversation') {
+			if (node.metadata?.thread_id) {
+				chatStream.loadThread(node.metadata.thread_id as string);
+				showChat = true;
+			} else {
+				chatStream.newSession();
+				showChat = false;
+			}
 		}
 		goto(`?ws=${node.id}`, { replaceState: true, keepFocus: true, noScroll: true });
 	}
@@ -93,7 +100,7 @@
 			<section class="greeting-screen">
 				<div class="greeting">
 					<img class="sigil" src={favicon} alt="" aria-hidden="true">
-					<h1 class="greeting-text">Good morning, {data.user?.firstName ?? 'there'}</h1>
+					<h1 class="greeting-text">{greeting}, {data.user?.firstName ?? 'there'}</h1>
 				</div>
 				<AgentChatComposer bind:value={inputValue} onsubmit={handleSubmit} onUpload={handleUpload} />
 			</section>

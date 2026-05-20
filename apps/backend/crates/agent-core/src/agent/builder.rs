@@ -54,7 +54,7 @@ impl AgentBuilder {
         let max_tokens = self
             .tenant
             .as_ref()
-            .map(|t| t.plan.max_tokens().min(self.max_tokens))
+            .map(|t| t.plan.limits().max_tokens.min(self.max_tokens))
             .unwrap_or(self.max_tokens);
 
         let inner = client
@@ -115,7 +115,7 @@ impl Agent {
         let max_turns = self
             .tenant
             .as_ref()
-            .map(|t| t.plan.max_turns() as usize)
+            .map(|t| t.plan.limits().max_turns as usize)
             .unwrap_or(10);
 
         if let Some(router) = &self.semantic_router {

@@ -48,15 +48,6 @@ fn dev_fallback_enabled() -> bool {
     std::env::var("RUSTFS_DEV_FALLBACK_ROOT").as_deref() == Ok("on")
 }
 
-fn presign_ttl() -> Duration {
-    let secs: u64 = std::env::var("RUSTFS_PRESIGN_TTL_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(900)
-        .min(3600);
-    Duration::from_secs(secs)
-}
-
 // ── VirtualPath ───────────────────────────────────────────────────────────────
 
 /// Validated, normalized virtual path inside a tenant's logical workspace.
@@ -226,11 +217,6 @@ struct AbortOnDropMultipart {
 impl AbortOnDropMultipart {
     fn new(upload: Box<dyn MultipartUpload>, dest: ObjectPath) -> Self {
         Self { upload: Some(upload), dest }
-    }
-
-    /// Consume the guard without aborting — caller takes ownership to call `.complete()`.
-    fn take(mut self) -> Box<dyn MultipartUpload> {
-        self.upload.take().expect("taken twice")
     }
 }
 

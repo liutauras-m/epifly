@@ -61,8 +61,6 @@ const TENANT_SEEDED: TableDefinition<&str, u8> =
 
 pub struct RedbMetadataStore {
     db: Arc<Database>,
-    /// In-process broadcast for capability-spec hot-reload (replaces PG LISTEN/NOTIFY).
-    spec_tx: tokio::sync::broadcast::Sender<(String, String)>,
 }
 
 impl RedbMetadataStore {
@@ -78,8 +76,7 @@ impl RedbMetadataStore {
     }
 
     fn from_db(db: Database) -> Self {
-        let (spec_tx, _) = tokio::sync::broadcast::channel(256);
-        let store = Self { db: Arc::new(db), spec_tx };
+        let store = Self { db: Arc::new(db) };
         // Ensure all tables exist by opening a write txn on startup.
         if let Ok(txn) = store.db.begin_write() {
             let _ = txn.open_table(THREADS);
@@ -99,17 +96,6 @@ impl RedbMetadataStore {
         Arc::clone(&self.db)
     }
 
-    /// Subscribe to capability-spec change events (namespace, tool_name).
-    /// Replaces PG LISTEN/NOTIFY for hot-reload.
-    pub fn subscribe_spec_changes(
-        &self,
-    ) -> tokio::sync::broadcast::Receiver<(String, String)> {
-        self.spec_tx.subscribe()
-    }
-
-    pub fn notify_spec_change(&self, namespace: &str, tool_name: &str) {
-        let _ = self.spec_tx.send((namespace.to_string(), tool_name.to_string()));
-    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

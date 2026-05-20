@@ -35,14 +35,11 @@ impl CapabilityRegistry {
         r
     }
 
-    /// Like `with_default_factories` but also includes `DynamicPromptFactory` and
-    /// `TraceReplayFactory`.
+    /// Like `with_default_factories` but also includes `DynamicPromptFactory`.
     pub fn with_all_factories(llm: Arc<LlmRegistry>) -> Self {
         let mut r = Self::with_default_factories(Arc::clone(&llm));
         use super::providers::dynamic_prompt::DynamicPromptFactory;
-        use super::trace_replay::TraceReplayFactory;
         r.register_factory(DynamicPromptFactory::new(Arc::clone(&llm)));
-        r.register_factory(TraceReplayFactory::new(Arc::clone(&llm)));
         r
     }
 

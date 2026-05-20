@@ -1,429 +1,608 @@
-# ConusAI Platform — Gap Remediation Plan
+# Workspace Document Context Pipeline — Implementation Plan (v1 locked)
 
-> Source: [arch.md §13 Identified Gaps](arch.md#13-identified-gaps) (2026-05-19 audit).
-> Companion: [project-instructions.md](project-instructions.md).
->
-> This plan is a concrete, file-level, step-by-step remediation for every drift item flagged in the architecture audit. Each phase is independently shippable and gated by a verification checklist.
->
-> **Operating posture: aggressive.** Delete dead code on sight — do not gate removals on "someone might use it later." Default action for every stub, no-op, unused dep, dead route, dead feature flag, dead test fixture, and dead module is **delete in the same PR** that touches the surrounding code. Bugs are fixed, never "tracked." If a feature has no working implementation and no committed consumer, it is removed; if it is removed in error, `git revert` is the recovery path — not perpetual rot.
-
-> **Architectural invariants (apply to every phase).**
-> - `AgentBuilder` is the single composition root. New capabilities, embedding services, identity providers, and trace sources wire in via builder methods (`with_capability_provider`, `with_semantic_router`, `with_identity_provider`, …) — **never** scattered `new()` calls or globals.
-> - Canonical capability surface — `Agent`, `AgentBuilder`, `CapabilityProvider`, `CapabilityFactory`, `CapabilityRegistry`, `SemanticCapabilityRouter`, `DynamicPromptCapability`, `ArtifactBridge` — is preserved verbatim. Rename = breaking change; do not rename in cleanup PRs.
-> - Prefer Rig 0.36 idioms over hand-rolled equivalents: `CompletionModel::stream()`, `rig::embeddings::Embedder`, `rig::embeddings::fastembed::FastEmbed`. Hand-rolled is allowed only when Rig's abstraction hides a required knob (dim, prefix, batch).
-> - Error boundaries: `thiserror` inside crate public APIs, `anyhow` at the binary edge. Do not mix.
-> - Hot paths that take a registry lock prefer `dashmap` or `tokio::sync::RwLock` with fine-grained keys over coarse `Mutex`.
-
-### Effort envelope
-
-- **Total estimate:** 42–55 AI-hours across all phases (implementation + tests + migration runbook + CI hardening + one full verification pass).
-- **LLM-assisted token budget:** ~450k–750k input tokens.
-- **Highest-leverage phases:** **0** (unlocks everything by shrinking surface), **3** (eliminates a correctness + cost class of bugs), **5** (removes a silent correctness bug).
-- **Recommended first PR sequence:** Phase 0 → Phase 3 → Phase 5 → remaining phases in parallel where independent (docs can move alongside code).
+> Companion task: [anytomd-task.md](tasks/anytomd-task.md) — all 4 open decisions locked 2026-05-20.
+> Architecture baseline: [arch.md](arch.md) (audit 2026-05-19)
+> Plan revision: **v2** (2026-05-20) — supersedes prior plan after task lock-in.
 
 ---
 
-## Execution Order at a Glance
+## 0. Mission
 
-| # | Phase | Action | Risk | Touches |
-| - | --- | --- | ---- | ------- |
-| 0 | Dead-code sweep (`cargo machete`, `cargo udeps`, `#[allow(dead_code)]` purge, dead routes, dead Cargo features) | **DELETE** | Low | workspace-wide |
-| 1 | Zitadel verification — lock in introspection, **delete** every JWKS/`openidconnect` reference | DELETE + FIX | Med | `identity/zitadel.rs`, `Cargo.toml`, `arch.md` |
-| 2 | **Delete** dead workspace deps (`sqlx`, `openidconnect`) and add CI guard | DELETE | Low | root `Cargo.toml`, crate manifests |
-| 3 | Fix embedding-dim mismatch bug (Qdrant 768 vs OpenAI 1536) — fail-loud on conflict | FIX | High | `qdrant_vector.rs`, `indexing/*`, migration script |
-| 4 | Fix plan-clamp duplication bug — centralise in `mw/plan.rs`, **delete** ad-hoc clamps | DELETE + FIX | Med | `mw/plan.rs`, every protected handler |
-| 5 | Fix silent-no-op hot-reload bug — implement `reload_one` or **delete** the listener | DELETE-OR-FIX | Med | `providers/capability_spec.rs`, `main.rs` |
-| 6 | Fix `TraceReplayCapability` always-error bug — implement real source or **delete** the capability | DELETE-OR-FIX | Low | `capabilities/trace_replay.rs` |
-| 7 | Document `rustfs-admin` as a first-class crate | DOC | Doc | `arch.md` §4 |
-| 8 | Document `apps/backend/evals` harness | DOC | Doc | `arch.md` §1.2 + §4.1 |
-| 9 | Enumerate Tauri shell modules in arch.md §7.2 | DOC | Doc | `arch.md` §7.2 |
-| 10 | Auto-generate route tables — **delete** the hand-maintained route lists | DELETE + FIX | Doc | `project-instructions.md` §6, helper script |
+**Make every uploaded workspace file usable as live context for the agent, with full versioning and end-to-end tracking.**
 
-Phases 0–6 are **code changes** (delete first, then fix). Phases 7–9 are **doc backfill**; Phase 10 deletes hand-maintained route documentation in favour of generated truth.
+Three concrete promises:
+1. **Ambient context with citations** — every `Agent::prompt` automatically grounds itself in the tenant's relevant workspace content **and the model is contractually told to cite `filename → "heading"` + exact quote**; the LLM does not have to call a tool.
+2. **Versioning** — every ingest produces an immutable, hash-pinned revision; nothing is silently overwritten.
+3. **Full tracking** — every content version is traceable: who uploaded, when, by which extractor version, how many chunks, what sidecar revision, which embedding-model dims, what the agent retrieved on each turn.
+
+Reference user scenario this plan must satisfy end-to-end: [FR-DOC-001](tasks/functional-task.md) — upload 4 MD docs, ask a question spanning all of them, receive an answer with `filename → heading` citations and exact quotes, with no manual capability call.
 
 ---
 
-## Phase 0 — Dead-code sweep (precondition for everything else)
+## 1. v1 Scope (locked)
 
-**Goal:** before any feature work, **delete** dead code so subsequent phases edit a smaller, honest surface.
+| Decision | Locked outcome | Source |
+|---|---|---|
+| Ambient injection | **Always-on** `ContextInjectionHook : rig::agent::PromptHook<M>` in the `AgentBuilder` wrapper, clamped by `PlanLimits` | Task §1 |
+| Extractors in v1 | **Plain text + Markdown only** — `.md`, `.txt`, `.json`, `.yaml`, `.toml`, `.csv` (as plain), and any `text/*` mime. No new crates. | Task §2 |
+| PDF renderer | **Typst** (pure Rust). Pandoc behind future `--features pandoc`. | Task §3 |
+| Rig `VectorStoreIndex` adapter | **Deferred** to a later micro-PR. Custom `ContextRetriever` is sufficient. | Task §4 |
+| Heavy extractors (DOCX/PPTX/XLSX/PDF/OCR/audio) | **Deferred** to Phase 5+. Trait + registry land in v1 so they plug in later with zero refactor. | Task §2 + §4 |
+| Naming | `ContentIngestor` (not `DocumentPipeline`/`ContentIndexer`) | Task §"Plan Status" |
+| Vector store driver | **Existing direct `qdrant-client`** — no `rig-qdrant` in v1 | Task §4 |
 
-### Steps (do all in one PR; revert in pieces if anything regresses)
-
-1. Install + run:
-   ```sh
-   cargo install cargo-machete cargo-udeps
-   cargo machete --with-metadata
-   cargo +nightly udeps --workspace --all-targets
-   ```
-   **Delete** every dep flagged by either tool from the offending `Cargo.toml`. No exceptions for "might use later."
-2. **Delete every `#[allow(dead_code)]`** in `apps/backend/crates/**`. If the compiler then warns, delete the item it points at — do not re-add the allow.
-3. **Delete unused Cargo features.** Audit `[features]` in every crate manifest; remove any feature with no `cfg(feature = "...")` consumer (`rg 'feature = "X"' --type rust`).
-4. **Delete unused public exports.** `cargo public-api --diff-git-checkouts HEAD~30 HEAD` — anything `pub` that has no in-tree call site and is not on a documented public surface (gateway routes, `@conusai/sdk` types) becomes `pub(crate)` or is deleted.
-5. **Delete dead routes / handlers.** Cross-reference `routes/mod.rs` against `agent-gateway/tests/**` and `apps/web/src/lib/server/sdk.ts`. Any handler with zero call sites in tests **and** zero client references is deleted, not preserved.
-6. **Delete commented-out code.** `rg '^\s*//\s*(let|fn|use|impl|struct|pub)\b' apps/backend/crates` — manually review and remove. Git history is the archive.
-7. **Delete `.bak`, `.orig`, `_old.*`, `_deprecated.*` files** from the tree.
-8. **Delete stale test fixtures.** Any file under `tests/fixtures/` or `e2e/fixtures/` not referenced by a live test is deleted.
-9. **Delete dead env vars.** `rg 'env::var\("' apps/backend/crates` — cross-reference against `.env.example` and `docker-compose.yml`; delete vars read by no code or referenced by no deployment.
-10. **Delete stub trait impls that return `unimplemented!()` / `todo!()` / `Err("not implemented")`** unless the consuming phase below promises an implementation in this PR cycle. If no consumer plans to implement, delete the trait, the impl, **and** the consumer chain in one commit.
-11. **Test-scope refinement (do NOT over-delete).** Tests are first-class consumers. An item is dead **only** if it has no reference in any of: `**/*test*/**`, `**/*_test.rs`, `crates/agent-gateway/tests/**`, the `@conusai/sdk` surface, the `apps/web` SDK client, or a documented gateway route. Items used *only* by tests move under `#[cfg(test)]` (or a `pub(crate)` test-only module) instead of being deleted.
-12. **Stale TODO/FIXME sweep.** `make verify-no-commented-code` greps for `// TODO`, `// FIXME`, `// XXX` and fails when `git blame` shows the line is >30 days old without a linked issue URL. Resolve or delete — do not extend the grace period.
-
-### Verification
-
-- `cargo build --workspace --all-targets` clean with `RUSTFLAGS="-D warnings -D dead_code"`.
-- `cargo machete` exit 0.
-- `cargo +nightly udeps --workspace` exit 0.
-- `git diff --stat HEAD~1` shows net-negative LOC.
-- CI re-runs in subsequent PRs treat new `dead_code` / `unused_imports` warnings as errors.
+Total v1 effort: **19–25 AI-hours** across 4 phases (down from 23–29 in the previous draft).
 
 ---
 
-## Phase 1 — Lock in Zitadel introspection, delete JWKS path (Gap #1)
+## 2. Current State (verified 2026-05-20)
 
-**Goal:** make arch.md and runtime agree by **picking one path and deleting the other**. The runtime uses `POST /oauth/v2/introspect`; arch.md historically described local JWKS verification via `openidconnect` 3.
+| Concern | Location | Status |
+|---|---|---|
+| `EmbeddingService` trait + local fastembed | [embedding_service.rs](apps/backend/crates/agent-core/src/indexing/embedding_service.rs) | ✅ already dim-aware (5 models, `dims()`). The "hard-coded 768" claim in the original brief is stale. |
+| `QdrantVectorStore` content collection | [qdrant_vector.rs](apps/backend/crates/agent-core/src/store/qdrant_vector.rs) | ✅ `content_embeddings_dN` exists with payload indexes on `tenant_id` (`is_tenant=true`), `owner_id`, `shared_with`; collection self-heals on dim mismatch. **Nothing populates it today.** |
+| `WorkspaceNode` | [common/src/memory/workspace.rs](apps/backend/crates/common/src/memory/workspace.rs) | ✅ untyped `metadata: serde_json::Value`. We will define a typed shape inside it (additive). |
+| `/v1/workspaces/search?mode=semantic` | [workspaces.rs](apps/backend/crates/agent-gateway/src/routes/workspaces.rs) | ⚠ route exists, but returns empty (nothing indexes). |
+| `/internal/rustfs/events` | gateway internal | ✅ wired; currently no-op for content. |
+| `JobExecutor` | [jobs/src/executor.rs](apps/backend/crates/jobs/src/executor.rs) | ✅ `enqueue(name, json) -> Uuid`. SSE per task. |
+| `ArtifactBridge` | [bridge/artifact_bridge.rs](apps/backend/crates/agent-core/src/bridge/artifact_bridge.rs) | ✅ persists artefacts → `WorkspaceNode` + emits realtime events. **Reused as the sole sidecar publisher.** |
+| `SemanticCapabilityRouter` | [capabilities/semantic_router.rs](apps/backend/crates/agent-core/src/capabilities/semantic_router.rs) | ✅ blake3-keyed moka cache (4096, 60 s). Pattern reused for the retriever. |
+| `AgentBuilder` | [agent/builder.rs](apps/backend/crates/agent-core/src/agent/builder.rs) | ✅ composes `TracingHook` + `PermissionHook`. We add one more hook. |
+| `audit_events` table in redb | [redb_metadata.rs](apps/backend/crates/agent-core/src/store/redb_metadata.rs) | ✅ existing append-only log. Reused as the **versioning + tracking ledger** (no new tables). |
 
-**Decision (final, no debate):** keep introspection, delete every reference to `openidconnect`, JWKS, JWK caches, and JWT-local-verification paths. Introspection is simpler, supports opaque tokens, respects Zitadel revocation, and removes a heavy dep.
+### Gaps closed by this plan
 
-### Steps
-
-1. **Confirm runtime in code** — `apps/backend/crates/agent-core/src/identity/zitadel.rs`:
-   - `ZitadelProvider::verify_token` issues `POST {ZITADEL_DOMAIN}/oauth/v2/introspect` with `application/x-www-form-urlencoded` body `token=<bearer>` and `Authorization: Basic base64(client_id:client_secret)`.
-   - Confirm response is parsed via `IntrospectionResponse { active, sub, exp, "urn:zitadel:iam:org:id", "urn:zitadel:iam:org:project:roles", "urn:conusai:plan_tier", "urn:conusai:subscription_status" }`.
-2. **Delete the JWKS path entirely.** `rg -l 'openidconnect|JwkSet|DecodingKey|jwks' apps/backend/crates` — every match becomes `git rm` (whole file) or a delete-block edit. Remove:
-   - any `JwksCache`, `JwkSetClient`, or `decode_jwt_with_jwks` helper;
-   - the `openidconnect` import block in `zitadel.rs`;
-   - any `fn verify_jwt_local` and its tests.
-3. **Cache introspection results** (new): wrap the call in a `moka::future::Cache<TokenHash, ResolvedIdentity>` with TTL = `min(exp - now, 60s)`.
-   - Key = blake3 of the raw token bytes — never the token itself.
-   - Invalidate on 401 from any downstream call.
-4. **Surface mgmt-API config** — keep `ZITADEL_MGMT_PAT` only for org/user provisioning (`routes/admin_tenants.rs`); never for request-path verification. Delete any other consumer.
-5. **Extract an `IdentityProvider` trait** in `agent-core/src/identity/mod.rs`:
-   ```rust
-   #[async_trait]
-   pub trait IdentityProvider: Send + Sync {
-       async fn verify_token(&self, token: &str) -> Result<ResolvedIdentity, IdentityError>;
-       async fn invalidate(&self, token: &str);
-   }
-   ```
-   `ZitadelProvider` implements it; the gateway holds `Arc<dyn IdentityProvider>` and `AgentBuilder::with_identity_provider(...)` is the only wiring path. This lets tests inject a `MockIdentityProvider` without `wiremock`, and makes future provider swaps (Auth0, Keycloak, local-dev) one-file changes.
-6. **Update arch.md §4.4, §6, §12.5** — replace every "JWKS / `openidconnect`" mention with "introspection over reqwest, cached ≤60 s". Add a table of the four custom claims and where each is consumed.
-7. **Update [project-instructions.md §4](project-instructions.md)** — already correct; verify.
-
-### Verification
-
-- `cargo build -p agent-core -p agent-gateway` clean.
-- Manual: with `CONUSAI_AUTH_PROVIDER=zitadel`, `curl -H "Authorization: Bearer <token>" $GATEWAY/v1/capabilities` returns 200 once, and subsequent identical calls within 60 s show zero new introspection requests in Zitadel logs.
-- Add an integration test under `crates/agent-gateway/tests/identity_zitadel.rs` using `wiremock` to stub `/oauth/v2/introspect` and assert the cache hit/miss counters.
+1. **Content extraction** — none today → `ContentExtractor` trait + `PlainExtractor` + `MarkdownExtractor`.
+2. **Indexing orchestration** — `ContentIngestor` ties extract → chunk → embed → upsert.
+3. **Versioning** — `WorkspaceNode.metadata` gains a typed `ContentIndexState` block; every revision is logged as an `AuditEvent`.
+4. **Ambient retrieval** — `ContextRetriever` + `ContextInjectionHook` wired through `AgentBuilder`.
+5. **Sidecar tracking** — `SidecarSyncEngine` keeps `.md` ↔ original in sync via blake3 hashes.
+6. **Three explicit capabilities** — `workspace.retrieve_context`, `workspace.render_markdown`, `workspace.export_document` via existing `BuiltinFactory`.
 
 ---
 
-## Phase 2 — Delete dead workspace deps (Gap #3)
+## 3. Architecture (lean, SRP, no new crates)
 
-**Goal:** `sqlx` 0.8 and `openidconnect` 3 are declared but linked into nothing after Phase 1. Delete them.
+```
+agent-core/src/
+├── indexing/
+│   ├── embedding_service.rs         # existing — dim-aware
+│   ├── local_embedding_service.rs   # existing
+│   ├── extractor.rs                 # NEW — ContentExtractor trait + ExtractorRegistry
+│   ├── extractors/
+│   │   ├── plain.rs                 # NEW — text/plain, text/csv, json/yaml/toml as text
+│   │   └── markdown.rs              # NEW — MD passthrough + heading harvest
+│   ├── chunker.rs                   # NEW — HeadingAwareChunker (deterministic, dependency-free)
+│   ├── content_ingestor.rs          # NEW — thin orchestrator (idempotent via blake3)
+│   ├── sidecar_sync.rs              # NEW — SidecarSyncEngine state machine
+│   └── content_state.rs             # NEW — typed ContentIndexState serde block on metadata
+├── retrieval/
+│   ├── mod.rs                       # NEW
+│   ├── context_retriever.rs         # NEW — trait + QdrantContextRetriever
+│   └── injection_hook.rs            # NEW — ContextInjectionHook: PromptHook<M>
+├── bridge/
+│   ├── artifact_bridge.rs           # existing — publishes sidecar nodes
+│   └── document_bridge.rs           # NEW (Phase 2) — DocumentRenderer trait + TypstRenderer
+├── capabilities/builtin/
+│   ├── workspace_retrieve.rs        # NEW — workspace.retrieve_context
+│   ├── workspace_render.rs          # NEW — workspace.render_markdown
+│   └── workspace_export.rs          # NEW (Phase 2) — workspace.export_document
+└── store/
+    └── qdrant_vector.rs             # existing — add upsert_content_chunks + search_content + delete_by_node
 
-### Steps
+apps/backend/crates/jobs/src/jobs/
+└── reindex_workspace_node.rs        # NEW — BackgroundJob; calls ContentIngestor
 
-1. **Confirm zero runtime usages:**
-   ```sh
-   rg "use sqlx|sqlx::" apps/backend/crates --type rust
-   rg "use openidconnect|openidconnect::" apps/backend/crates --type rust
-   ```
-   Expected: empty after Phase 1 + the Postgres removal. If anything matches, **delete the matching code first** (it is by definition vestigial), then rerun.
-2. **Delete from root `Cargo.toml`** — remove `sqlx` and `openidconnect` from `[workspace.dependencies]`. Remove every `sqlx = { workspace = true }` / `openidconnect = { workspace = true }` from per-crate manifests.
-3. **Run** `cargo update --workspace && cargo build --workspace --all-targets`. Commit the shrunken `Cargo.lock`.
-4. **`evals` exception** — if `apps/backend/evals` genuinely needs Postgres for benchmark fixtures, declare `sqlx` only inside `apps/backend/evals/Cargo.toml [dev-dependencies]`. **Forbid** runtime crates from picking it up transitively.
-5. **Permanent CI guard:** add a blocking `make verify-no-dead-deps` step that runs `cargo machete` + `cargo +nightly udeps --workspace --all-targets`. Fail the build on any reported unused dep — no allowlist.
+apps/backend/crates/agent-gateway/src/routes/
+└── internal_rustfs.rs               # existing — extend to enqueue reindex on ObjectCreated
+```
 
-### Verification
-
-- `cargo machete` (or `cargo udeps`) returns no warnings about `sqlx` / `openidconnect`.
-- `cargo tree -p agent-core | rg "sqlx|openidconnect"` returns nothing.
-- Update [arch.md §12.10](arch.md#1210-workspace-dependency-corrections) — remove the "declared, runtime-unused" rows.
-
----
-
-## Phase 3 — Standardise on local multilingual embeddings, fix dim mismatch (Gap #8)
-
-**Goal:** today both Qdrant collections are created with `size=768` while the runtime can also be pointed at OpenAI `text-embedding-3-small` (1536-d) — the code silently truncates or fails depending on path. **Decision (final):** drop OpenAI from the embedding hot path entirely and standardise on Qdrant's recommended local multilingual model, `intfloat/multilingual-e5-large` (**1024-d**, 100+ languages, MIT, served via `fastembed-rs`). This removes a network dep, a paid API, and a whole class of multi-tenant data-egress concerns; quality on multilingual workloads beats `text-embedding-3-small` on MIRACL/MTEB. English-only deployments can opt into the lighter `BGESmallENV15` (384-d) but it is not the default.
-
-**Rig integration (mandatory).** Use Rig 0.36's first-class fastembed support — depend on `rig = { version = "0.36", features = ["fastembed"] }` and wrap `rig::embeddings::fastembed::FastEmbed` in a thin `RigEmbeddingService` adapter that implements our `EmbeddingService` trait. This keeps `SemanticCapabilityRouter`, future RAG paths, and any Rig-native agent composition sharing one embedder. Fall back to raw `fastembed-rs` **only** if Rig's `Embedder` abstraction hides the required dim or `"query: " / "passage: "` prefix control — document the reason in the adapter if so.
-
-### Steps
-
-1. **Replace `EMBEDDING_BACKEND` with a single fastembed-backed service.** In `agent-core/src/indexing/embedding_service.rs`:
-   ```rust
-   pub enum EmbeddingModel {
-       /// intfloat/multilingual-e5-large — 1024-d, 100+ languages (DEFAULT).
-       MultilingualE5Large,
-       /// BAAI/bge-small-en-v1.5 — 384-d, English-only opt-in.
-       BgeSmallEnV15,
-   }
-   impl EmbeddingModel {
-       pub fn dims(self) -> u64 { match self { Self::MultilingualE5Large => 1024, Self::BgeSmallEnV15 => 384 } }
-       pub fn fastembed(self) -> fastembed::EmbeddingModel { … }
-   }
-   pub trait EmbeddingService: Send + Sync {
-       fn model(&self) -> EmbeddingModel;
-       fn dims(&self) -> u64 { self.model().dims() }
-       async fn embed(&self, texts: &[String]) -> anyhow::Result<Vec<Vec<f32>>>;
-   }
-   ```
-2. **Honour the E5 prompt convention.** `multilingual-e5-large` is asymmetric: prefix passages with `"passage: "` and queries with `"query: "` before calling `embed`. Centralise this in `FastEmbedService::{embed_documents, embed_query}`; **delete** any call site that goes through a single `embed()` with no role.
-3. **Delete the OpenAI embedding path.** `rg -l 'openai.*embedding|EMBEDDING_BACKEND|OpenAIEmbeddings' apps/backend/crates` → `git rm` the module(s), drop the `openai` embedding feature from `agent-core/Cargo.toml`, remove `OPENAI_API_KEY` consumers in the embedding chain (chat/agent paths keep it). Drop `EMBEDDING_BACKEND` and `OPENAI_EMBEDDING_DIMS` from `.env.example` and `docker-compose.yml`.
-4. **New env knobs (single source of truth):**
-   - `EMBEDDING_MODEL=multilingual-e5-large` (default) | `bge-small-en-v1.5`.
-   - `EMBEDDING_CACHE_DIR=/var/lib/conusai/fastembed` — ONNX weights download location; pre-warmed in the Docker image so first-boot does not stall.
-   - `EMBEDDING_MAX_BATCH=32` — caps tokens-per-batch to keep p99 latency bounded on CPU.
-5. **Qdrant collection bootstrap** (`store/qdrant_vector.rs::ensure_collection`):
-   - Read dims from the active `EmbeddingService` at construction time.
-   - Suffix collection name with dim when it diverges from the legacy 768-d default: `capability_embeddings_d1024`, `content_embeddings_d1024` (and `_d384` for BGE). Keeps existing 768-d deployments addressable for migration.
-   - On startup, if a collection with the wrong dim exists, **fail loudly** with a remediation hint (`re-embed via scripts/reindex.sh --model multilingual-e5-large`); never silently re-create.
-   - Use `Distance::Cosine` (E5 is trained for cosine; do **not** use dot-product).
-6. **Add a re-embed script** `scripts/reindex.sh` that:
-   - Snapshots the source collection.
-   - Re-streams every `WorkspaceNode` and `CapabilityCard` through the new `EmbeddingService` (with the correct `passage: ` prefix).
-   - Writes to the new dim-suffixed collection.
-   - Atomically aliases the new collection (Qdrant `update_aliases`) so search continues uninterrupted.
-7. **Pre-warm in Docker.** `apps/backend/Dockerfile` runs `cargo run -p agent-gateway --bin warm-embeddings` at build time to download and cache the ONNX weights into the image layer — no cold-start network call in production.
-8. **Wire the dim into payload-index creation** (no change — payload indexes are dimension-agnostic).
-
-### Verification
-
-- Unit test in `qdrant_vector.rs` asserting `ensure_collection` refuses to attach to a 768-d legacy collection when service reports 1024.
-- Boot the gateway against an empty Qdrant with `EMBEDDING_MODEL=multilingual-e5-large` (default) — observe `capability_embeddings_d1024` created with `Cosine` distance.
-- Multilingual smoke test: embed `["passage: 人工知能", "passage: artificial intelligence", "passage: dirbtinis intelektas"]`; assert pairwise cosine sim ≥ 0.85.
-- `rg 'openai.*embedding|EMBEDDING_BACKEND' apps/backend/crates` returns nothing.
-- Add the model + dim to `/metrics` (`embedding_dims{model="multilingual-e5-large"}=1024`).
+Every new file has exactly one reason to change. No new crates. No `rig-qdrant`. No `anytomd`/`pdfium`/`ocrs` in v1.
 
 ---
 
-## Phase 4 — Centralise plan clamp in `mw/plan.rs` (Gap #7)
+## 4. Core Contracts
 
-**Goal:** today `mw/plan.rs` only validates the plan tier exists; each handler re-applies `max_tokens` and `max_turns` independently. Move clamping into the middleware so handlers can trust `TenantContext.plan`.
+### 4.1 `ContentExtractor`
 
-### Steps
+```rust
+#[async_trait]
+pub trait ContentExtractor: Send + Sync + 'static {
+    /// e.g. ["text/plain", "text/csv"]; matched by ExtractorRegistry::for_mime.
+    fn supported_mimes(&self) -> &'static [&'static str];
 
-1. **Promote `PlanLimits`** in `agent-core/src/context/tenant.rs`:
-   ```rust
-   pub struct PlanLimits {
-       pub max_tokens: u32,
-       pub max_turns: u32,
-       pub default_alias: &'static str,
-       pub max_tools_per_turn: u32,
-       pub max_invokes_per_turn: u32,
-       pub daily_quota: u64,
-   }
-   impl PlanTier { pub fn limits(self) -> PlanLimits { … } }
-   ```
-2. **In `mw/plan.rs`**:
-   - After resolving `PlanTier` from `IdentityContext`, attach `PlanLimits` to the `Extensions` so handlers extract it via `Extension<PlanLimits>`.
-   - Clamp request-supplied `max_tokens` / `max_turns` before the handler ever sees them (rewrite the JSON body in a `from_request_parts` extractor or in `body_clamp_layer`).
-3. **Remove ad-hoc clamping** from:
-   - `routes/chat.rs` (`min(req.max_tokens.unwrap_or(plan.max_tokens), plan.max_tokens)`)
-   - `routes/agent.rs`
-   - `chains/llm_chain.rs` invocation path
-4. **`RouterQuotaLayer`** (in `mw/router_quota.rs`) reads from `PlanLimits` instead of env vars; env vars become **fallback defaults** only when no `IdentityContext` is attached (internal routes).
-5. Add unit tests under `crates/agent-gateway/tests/plan_clamp.rs` that send `max_tokens=999999` on a Free-tier token and assert the request reaching the handler has `max_tokens=plan.free.max_tokens`.
+    /// Stable identifier recorded with each chunk: "plain@1" / "markdown@1".
+    /// Bumping this number forces a re-extract via the drift-detection job.
+    fn version(&self) -> &'static str;
 
-### Verification
+    /// Pure: bytes + filename + mime → normalised markdown + structured metadata.
+    /// MUST NOT touch storage.
+    async fn extract(&self, input: ExtractInput<'_>) -> anyhow::Result<ExtractedDocument>;
+}
 
-- All chat/agent handlers compile after removing the local clamp.
-- `curl -d '{"max_tokens":99999, "messages":[…]}'` on a Free plan returns 200 with `usage.completion_tokens <= plan_free.max_tokens`.
-- Prometheus counter `plan_clamp_total{tier,parameter}` increments on every clamp.
+pub struct ExtractInput<'a> {
+    pub bytes: &'a [u8],
+    pub filename: &'a str,
+    pub mime: &'a str,
+}
 
----
+pub struct ExtractedDocument {
+    pub markdown: String,
+    pub title: Option<String>,
+    /// page_count / sheet_names / etc — extractor-defined.
+    pub metadata: serde_json::Value,
+    pub language: Option<String>,        // best-effort; None in v1
+    pub extractor_version: String,       // mirrors trait `version()`
+}
+```
 
-## Phase 5 — Fix silent-no-op hot-reload bug (Gap #5)
+`ExtractorRegistry::for_mime(mime) -> Option<Arc<dyn ContentExtractor>>` with a last-resort `PlainExtractor` fallback for any `text/*` not otherwise matched. This is the same dispatch pattern as `CapabilityFactory::supports`.
 
-**Goal:** the boot listener in `agent-gateway/src/main.rs` subscribes to `RedbMetadataStore::subscribe_spec_changes()` and calls `CapabilitySpecFactory::reload_one(namespace, tool)`, but `reload_one` is a no-op stub since the Postgres removal. This is a **silent correctness bug**: admins update specs, the system reports success, nothing reloads.
+### 4.2 `Chunker`
 
-**Decision (final):** implement against redb. **If implementation is deferred for any reason, delete the listener, the broadcast channel, and `subscribe_spec_changes` in the same PR** — a wired no-op is a worse bug than a missing feature.
+```rust
+pub trait Chunker: Send + Sync + 'static {
+    fn version(&self) -> &'static str;   // "heading-aware@1"
+    fn chunk(&self, doc: &ExtractedDocument) -> Vec<DocumentChunk>;
+}
 
-### Steps
+pub struct DocumentChunk {
+    pub index: usize,
+    pub text: String,
+    pub heading_path: Vec<String>,       // ["Q3 Report", "Revenue"]
+    pub char_range: (usize, usize),
+    pub locator: Option<serde_json::Value>,  // page/slide/sheet when extractor provides
+}
+```
 
-1. **Introduce `CapabilityMutationService`** (new, in `agent-core/src/capabilities/mutation.rs`) that owns both the redb mutation **and** the `notify_spec_change` emission. Every admin mutation route calls this service — never the metadata store directly — so it is structurally impossible to add a future mutation path that forgets to notify.
-2. **In `agent-core/src/capabilities/providers/capability_spec.rs`**:
-   - Replace the stub `reload_one` with:
-     ```rust
-     pub async fn reload_one(&self, namespace: &str, tool: &str) -> anyhow::Result<()> {
-         let spec = self.metadata.get_capability_spec(namespace, tool).await?
-             .ok_or_else(|| anyhow!("spec not found: {namespace}/{tool}"))?;
-         let provider = self.materialise(&spec).await?;
-         self.registry.lock().await.replace_provider(namespace, tool, provider);
-         self.metrics.spec_reload_total.with_label_values(&[namespace, "success"]).inc();
-         Ok(())
-     }
-     ```
-   - Add `materialise(&CapabilitySpec)` covering all five strategies: `dynamic_prompt`, `prompt` (chain), `wasm`, `native`, `remote_mcp`.
-   - `CapabilityRegistry::replace_provider` should use `dashmap` or `tokio::sync::RwLock` keyed on `(namespace, tool)` — a coarse `Mutex` over the whole registry will serialise hot-path lookups under reload contention.
-3. **Add an admin endpoint** `POST /admin/capabilities/{namespace}/{tool}/reload` that calls `reload_one` directly — useful for testing, for ops without round-tripping through redb mutation, and as a safe escape hatch if the redb broadcast ever shows latency or ordering issues under contention.
-4. **All admin mutation routes** (`admin_capabilities.rs::{create, update, delete, toggle_enabled}`) go through `CapabilityMutationService` (step 1); the service guarantees `notify_spec_change(namespace, tool)` fires.
-5. **Add a smoke test** under `crates/agent-gateway/tests/spec_reload.rs`:
-   - Create a chain capability via `POST /admin/capabilities`.
-   - Assert `GET /v1/capabilities` lists it within 200 ms (covers redb broadcast latency).
-   - Update its prompt; assert next invocation reflects the new prompt.
+v1 default: **`HeadingAwareChunker`** — splits on `#`/`##` boundaries, then a deterministic ~2 000-char window with ~15 % overlap. No external crate; we can swap in `text-splitter` later behind the trait without disturbing callers.
 
-### Verification
+### 4.3 `ContentIngestor` (thin orchestrator)
 
-- `spec_reload_total{result="success"}` increments on every admin mutation.
-- Removing a capability via `DELETE /admin/capabilities/...` removes it from `/v1/capabilities` without a process restart.
+```rust
+pub struct ContentIngestor {
+    extractors: ExtractorRegistry,
+    chunker: Arc<dyn Chunker>,
+    embedder: Arc<dyn EmbeddingService>,
+    vector_store: Arc<QdrantVectorStore>,
+    workspace_store: Arc<dyn WorkspaceStore>,
+    content_store: Arc<dyn WorkspaceContentStore>,
+    artifact_bridge: Arc<ArtifactBridge>,
+    audit: Arc<dyn AuditSink>,
+    realtime: Arc<RealtimeBus>,
+}
 
-**If hot-reload is deferred:** `git rm` the `subscribe_spec_changes` subscription block in `agent-gateway/src/main.rs`, `git rm` the `notify_spec_change` callers, **and** `git rm` the broadcast channel in `RedbMetadataStore`. Document the removal (not the limitation) in [arch.md §12.6](arch.md). Never leave a listener wired to a no-op.
+impl ContentIngestor {
+    /// Idempotent. Skips work when ContentIndexState matches current bytes + extractor/chunker/embedder versions.
+    pub async fn ingest_node(&self, tenant: &TenantContext, node_id: Ulid, reason: IngestReason)
+        -> anyhow::Result<IngestReport>;
+}
 
----
+pub enum IngestReason { Upload, RustFsEvent, AdminReindex, DriftDetected }
 
-## Phase 6 — Fix `TraceReplayCapability` always-error bug (Gap #6)
+pub struct IngestReport {
+    pub status: IngestStatus,            // Skipped | Reindexed | Created | Failed
+    pub revision: u32,                   // monotonically increases per node
+    pub content_hash: [u8; 32],
+    pub chunk_count: usize,
+    pub sidecar_node_id: Option<Ulid>,
+    pub extractor_version: String,
+    pub chunker_version: String,
+    pub embedder_model: String,
+    pub embedder_dims: u64,
+    pub elapsed_ms: u128,
+}
+```
 
-**Goal:** `WorkspaceNodeTraceSource` in `capabilities/trace_replay.rs` always returns `Err("not implemented")` yet the capability is still registered by `with_all_factories` and advertised via `/v1/capabilities`. This lies to callers — every invocation 500s. **Implement or delete; no third option.**
+The orchestrator **never** invokes the LLM. All Rig usage stays in `AgentBuilder`/`AgentRuntime`.
 
-### Steps
+### 4.4 `ContextRetriever` + `ContextInjectionHook`
 
-1. **Implement `AuditTraceSource`** in `agent-core/src/capabilities/trace_replay.rs`:
-   - Accept `Arc<RedbMetadataStore>` + a `TraceLocator { tenant, thread_id, message_seq_range }`.
-   - Read trace events from the existing `audit_events` table (keyed by `(tenant, ts_micros, event_id)`).
-   - Stream the matching `AuditEvent`s back as a JSON array.
-   - **Delete** the stub `WorkspaceNodeTraceSource` in the same commit. Do not leave both.
-2. **Wire the new source** in `agent-gateway/src/state.rs`: `TraceReplayFactory::new(audit_source)`.
-3. **No Cargo feature flag.** Trace replay is either present and working, or absent. If a deployment forbids replay, gate via runtime config (`CAPABILITY_TRACE_REPLAY_ENABLED=false`) which **also unregisters the capability** from `/v1/capabilities`. Do not advertise capabilities that 500.
-4. **If implementation is deferred:** `git rm capabilities/trace_replay.rs`, remove `TraceReplayFactory` from `with_all_factories`, delete the route registration, delete the SDK type, and delete the UI affordance. Same PR.
+```rust
+#[async_trait]
+pub trait ContextRetriever: Send + Sync + 'static {
+    async fn retrieve(
+        &self,
+        query: &str,
+        tenant: &TenantContext,
+        scope: RetrievalScope,
+        top_k: usize,
+    ) -> anyhow::Result<Vec<RetrievedChunk>>;
+}
 
-### Verification
+pub enum RetrievalScope { Tenant, Node(Ulid), PathPrefix(String), Shared }
 
-- `POST /v1/agent/completions` with `{"capability":"trace_replay","args":{"thread_id":"…","range":[0,10]}}` returns the actual audit events for that thread in order.
-- Negative test: cross-tenant call returns `403`.
+pub struct RetrievedChunk {
+    pub node_id: Ulid,
+    pub virtual_path: String,            // full path, used as citation filename
+    pub filename: String,                // basename of virtual_path, convenience for citation
+    pub heading_path: Vec<String>,       // e.g. ["3. EMEA", "3.2 Performance"]
+    pub text: String,                    // raw chunk text, used verbatim in quotes
+    pub locator: Option<serde_json::Value>,
+    pub distance: f32,
+    pub revision: u32,                   // source node revision at retrieval time
+    pub sidecar_revision: u32,           // for citation + cache invalidation
+}
+```
 
----
+#### 4.4.1 Diversified top-K (FR-DOC-001 requirement)
 
-## Phase 7 — Document `rustfs-admin` as first-class crate (Gap #2)
+Multi-document questions fail if one strong document monopolises the result set. `QdrantContextRetriever` therefore applies a **per-node cap** before truncating to `top_k`:
 
-**Goal:** the `apps/backend/crates/rustfs-admin` crate (bootstrap, IAM, presign, quotas, bucket notifications) is invisible in `docs/`.
+```rust
+pub struct RetrievalParams {
+    pub top_k: usize,           // default 8
+    pub max_per_node: usize,    // default 3 — at most N chunks from any single document
+    pub max_distance: f32,      // default 0.45 — drop noise
+}
+```
 
-### Steps
+Algorithm: oversample (`top_k * 4`) from Qdrant → group by `node_id` → keep the best `max_per_node` per group → flatten back to `top_k` by best distance. Deterministic and cheap; no MMR re-embedding pass needed in v1.
 
-1. **Add `arch.md §4.x — `rustfs-admin`** with:
-   - File tree (`src/{bootstrap,iam,presign,quotas,notifications,error}.rs`).
-   - Public types: `RustFsAdminClient`, `BootstrapPlan`, `IamPolicy`, `BucketNotificationConfig`.
-   - Env vars it consumes (already enumerated in [project-instructions.md §9](project-instructions.md) under "RustFS bootstrap").
-   - Sequence diagram: `RustFsAdminClient::bootstrap_storage` → create root bucket → create per-tenant prefix policy → install bucket notification webhook → seed `tenant_seeded` redb marker.
-2. **Add `arch.md §4.x.1 — Tenant onboarding flow** showing the chain: `TenantOnboardingService` → `RustFsAdminClient::ensure_tenant_iam` → `CredentialStore::put_credentials` (AES-256-GCM).
-3. **Update [project-instructions.md §2.1](project-instructions.md)** — the bullet already lists `crates/rustfs-admin`; expand its trailing comment to `bootstrap · per-tenant IAM · presign · quotas · bucket notifications`.
+#### 4.4.2 Citation-aware preamble (FR-DOC-001 contract)
 
-### Verification
+The hook formats retrieved chunks into a **structured preamble the model is instructed to cite from**. Format is stable so prompt-engineering and evals can pin against it:
 
-- Doc-lint: `markdownlint docs/arch.md` clean.
-- Cross-link: `arch.md §12.3` references the new `§4.x`.
+```text
+<workspace_context>
+You have access to the following excerpts from the user's workspace. When you use any of them, cite them in this exact form:
+  `According to **<filename> → "<heading path>"**: "<exact quote>"`
+Use only information present in these excerpts and the user's message. Do not invent file names or quotes.
 
----
+[1] file: Q3_2026_Financial_Report.md
+    heading: 3. EMEA Performance > 3.2 Performance
+    revision: 4
+    excerpt: |
+      The €2.4M gap versus plan was almost entirely driven by three delayed enterprise renewals in DACH and France…
 
-## Phase 8 — Document `apps/backend/evals` harness (Gap #9)
+[2] file: EMEA_Sales_Deep_Dive.md
+    heading: Key Deal Pipeline Risks
+    revision: 1
+    excerpt: |
+      …three deals flagged as at risk due to procurement delays…
+</workspace_context>
+```
 
-**Goal:** `apps/backend/evals` is a Cargo workspace member but absent from arch.md §1.2 and §4.1.
+The formatter (`format_chunks_as_context`) lives in `retrieval/injection_hook.rs`, is pure, fully unit-testable, and clamps total tokens to `PlanLimits.context_token_budget` by dropping trailing entries (never truncating mid-quote).
 
-### Steps
+Hook (Rig `PromptHook<M>`):
 
-1. **Walk the tree:**
-   ```sh
-   find apps/backend/evals -maxdepth 3 -type d
-   ```
-2. **Add `arch.md §4.x — Eval Harness** documenting `evals/runners/*` (agent harness, chain harness) and `evals/scorers/*` (exact match, BLEU, custom rubric scorers) plus the CLI entry (`cargo run -p evals -- run --suite <name>`).
-3. **Update [project-instructions.md §2.1](project-instructions.md)** — the bullet `evals  ← runners + scorers` is already present; verify it survives the next regen.
+```rust
+impl<M: CompletionModel> PromptHook<M> for ContextInjectionHook {
+    async fn on_completion_call(&self, ctx: &CompletionCallContext<'_, M>) -> HookAction {
+        let budget = self.plan_limits.context_token_budget();   // PlanLimits clamp
+        if budget == 0 { return HookAction::cont(); }
+        let chunks = self.retriever
+            .retrieve(ctx.prompt_text(), &self.tenant, self.scope.clone(), self.top_k)
+            .await
+            .unwrap_or_default();
+        let block = format_chunks_as_context(&chunks, budget);  // truncates to budget
+        if !block.is_empty() {
+            ctx.prepend_preamble(block);
+            self.realtime.emit("context_injected",
+                json!({ "thread_id": self.thread_id, "chunks": chunks_lite(&chunks) }));
+        }
+        HookAction::cont()
+    }
+}
+```
 
-### Verification
+Wired in `AgentBuilder`:
 
-- `cargo run -p evals -- --help` exits 0 and prints the documented subcommands.
+```rust
+AgentBuilder::new(...)
+    .with_context_retriever(retriever, RetrievalScope::Tenant, /*top_k*/ 8)
+    .with_capabilities(semantic_router)
+    .build();
+```
 
----
-
-## Phase 9 — Enumerate Tauri shell modules (Gap #10)
-
-**Goal:** arch.md §7.2 lists the Tauri plugins but not the per-module breakdown of `apps/browser-shell/src-tauri/src/*.rs`.
-
-### Steps
-
-1. Add to `arch.md §7.2`:
-   - `chat_stream.rs` — SSE proxy (`text/event-stream` → Tauri `chat:chunk:<id>` events) so WKWebView buffering does not stall tokens.
-   - `device_auth.rs` — Stronghold-backed `X-Device-Token` rotation.
-   - `oidc_auth.rs` — PKCE flow against Zitadel; opens the system browser via `open` 5.
-   - `recorder.rs` — DOM event capture forwarded over a single injected JS bridge.
-   - `registration.rs` — initial device registration handshake against `/admin/devices/register`.
-   - `tabs.rs` — multi-tab state for the desktop shell.
-   - `telemetry.rs` — opt-in OTLP forwarding to `OTLP_ENDPOINT`.
-   - (debug + macOS only, `e2e` feature) `tauri-plugin-webdriver-automation` 0.1.3 — W3C WebDriver server for WKWebView.
-2. Mirror the list as a sentence in [project-instructions.md §11](project-instructions.md) — already present (`chat_stream, device_auth, oidc_auth, recorder, registration, tabs, telemetry`); keep them aligned.
-
-### Verification
-
-- The bullet list in arch.md is a strict subset of `ls apps/browser-shell/src-tauri/src/*.rs`.
-
----
-
-## Phase 10 — Regenerate route tables from `routes/mod.rs` (Gap #4)
-
-**Goal:** route documentation drifts every time `routes/mod.rs` changes. Automate it.
-
-### Steps
-
-1. **Add `scripts/dump-routes.sh`:**
-   ```sh
-   #!/usr/bin/env bash
-   set -euo pipefail
-   cargo run -p agent-gateway --bin agent-gateway -- --dump-routes > docs/_routes.generated.md
-   ```
-2. **Implement `--dump-routes`** in `agent-gateway/src/main.rs`:
-   - Build all four routers (`public`, `protected(quota)`, `admin`, `internal`) via the existing builders.
-   - Walk `axum::Router::method_routes` (or maintain a static `pub const ROUTES: &[Route]` populated by `#[utoipa::path]` derive).
-   - Print as Markdown grouped by router with method + path + auth requirement.
-3. **CI check** — `make verify-routes-doc` runs the dump and `diff -u docs/_routes.generated.md docs/_routes.expected.md`. Fail on drift.
-4. **Re-render the §6 section of `project-instructions.md`** by including `docs/_routes.generated.md` (or paste-replace on change). The presence/auth/quota columns must match middleware order from [arch.md §12.8](arch.md#128-middleware-stack-outermost--innermost-on-the-protected-router).
-
-### Verification
-
-- After adding any new route, CI fails until `docs/_routes.expected.md` is updated.
-- `curl $GATEWAY/openapi.json | jq '.paths | keys | length'` matches the row count in `_routes.generated.md`.
-
----
-
-## Cross-cutting Tasks
-
-### CI additions (all blocking, no allowlists)
-
-- `cargo machete` — fail on any unused dep (phase 0 + 2).
-- `cargo +nightly udeps --workspace --all-targets` — fail on any unused dep transitively (phase 0 + 2).
-- `RUSTFLAGS="-D warnings -D dead_code -D unused_imports -D unused_variables"` on the main `cargo build` (phase 0).
-- `cargo clippy --workspace --all-targets -- -D warnings -D clippy::todo -D clippy::unimplemented -D clippy::dbg_macro -D clippy::print_stdout` — forbids stubs and debug residue from re-entering the tree.
-- `make verify-routes-doc` — phase 10.
-- `make verify-no-commented-code` — grep for `// TODO`, `// FIXME`, `// XXX` older than 30 days via `git blame`; require a tracked issue link or delete.
-- New integration tests:
-  - `crates/agent-gateway/tests/identity_zitadel.rs` — phase 1.
-  - `crates/agent-gateway/tests/plan_clamp.rs` — phase 4.
-  - `crates/agent-gateway/tests/spec_reload.rs` — phase 5.
-  - `crates/agent-gateway/tests/trace_replay.rs` — phase 6.
-
-### Observability deltas
-
-- New Prometheus counters: `zitadel_introspection_cache_{hits,misses}`, `plan_clamp_total{tier,parameter}`, `spec_reload_total{namespace,result}`, `embedding_dims{backend}`.
-- New tracing spans: `identity.introspect`, `capability.spec.reload`, `embedding.embed{backend,dims}`.
-
-### Migration runbook
-
-1. Phase 3 will require a Qdrant re-embed for any tenant switching backends — schedule maintenance windows. Provide `scripts/reindex.sh` with `--dry-run`.
-2. Phase 2 ships a smaller `Cargo.lock` — communicate to anyone with vendored builds.
-
-### Out of Scope (deliberate)
-
-- ADR 0003 supersession (already historical).
-- Replacing redb with a different KV — orthogonal.
-- Adding new LLM providers — orthogonal.
-- Frontend redesign — covered by separate `ui-plan.md`.
+The query embedding is computed once per turn and shared with `SemanticCapabilityRouter` via a per-turn `OnceCell` cache.
 
 ---
 
-## Definition of Done
+## 5. Versioning & Tracking — the core promise
 
-- Every gap in [arch.md §13](arch.md#13-identified-gaps) is **closed** (code + doc + test) **or deleted** (capability/route/dep removed entirely). "Deferred" is **not** an acceptable outcome — if a gap cannot be closed, its surface area is removed.
-- `docs/arch.md` §13 ends this cycle empty (or is itself deleted as a section).
-- `project-instructions.md` is regenerated from the route dump and is ≤12000 chars.
-- Net LOC delta for the workspace is **negative**.
-- All new or significantly changed public APIs in `agent-core` ship with **doc-tests or unit tests showing composition via `AgentBuilder`** — no `new()`-only examples.
-- `CapabilityProvider` + `CapabilityFactory` contract (lifecycle, error semantics, idempotency expectations, registration via builder) is documented in `docs/capability-authoring-guide.md` so dynamic-prompt / WASM / remote-MCP authors have a stable extension point.
-- CI blocks on: `cargo machete`, `cargo udeps`, `-D warnings -D dead_code`, `clippy::{todo,unimplemented,dbg_macro,print_stdout} = deny`, `make verify-routes-doc`, `make verify-no-commented-code`, and the four new integration suites — every PR, no overrides.
+### 5.1 Typed `ContentIndexState` (lives inside `WorkspaceNode.metadata`)
+
+```rust
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ContentIndexState {
+    pub role: SidecarRole,                       // Original | Sidecar | AuthoredMarkdown | Standalone
+    pub revision: u32,                           // monotonic; increments on every successful ingest
+    pub content_hash: Option<[u8; 32]>,          // blake3 of the file bytes (Original/Authored) or sidecar bytes (Sidecar)
+    pub sidecar_node_id: Option<Ulid>,           // set on Original; points to the .md sibling
+    pub original_node_id: Option<Ulid>,          // set on Sidecar; back-pointer
+    pub sidecar_hash: Option<[u8; 32]>,          // blake3 of the latest sidecar bytes
+    pub derived_from_revision: Option<u32>,      // set on Sidecar: which Original revision produced me
+    pub extractor_version: Option<String>,       // "plain@1"
+    pub chunker_version: Option<String>,         // "heading-aware@1"
+    pub embedder_model: Option<String>,          // "multilingual-e5-large"
+    pub embedder_dims: Option<u64>,              // 1024
+    pub chunk_count: u32,
+    pub indexed_at: Option<DateTime<Utc>>,
+    pub last_status: Option<String>,             // "ok" | "extract_failed: …"
+    pub language: Option<String>,
+}
+```
+
+Additive: existing nodes deserialize with `..Default::default()` — zero migration.
+
+### 5.2 Storage layout (RustFS)
+
+```
+tenant/<tid>/originals/<node_id>/r<rev>/<filename>      # immutable per revision
+tenant/<tid>/sidecars/<node_id>/r<rev>/sidecar.md       # immutable per revision
+```
+
+Keeping per-revision prefixes (instead of overwriting at a single key) buys us:
+- **Point-in-time recovery** — read any past revision.
+- **No torn-write races** — readers never see a half-written file.
+- **Free rollback** — flip `revision` in `ContentIndexState` to a prior `r<rev>`.
+
+Garbage collection is a separate scheduled job (`prune_old_revisions`, defaults: keep last 5 + everything ≤ 30 days). Out of scope for v1; only the layout decision matters now.
+
+### 5.3 Audit ledger — reuse `audit_events` table
+
+For each ingest we append one `AuditEvent` keyed `(tenant, ts_micros, ulid)`:
+
+```jsonc
+{
+  "kind": "content.indexed",
+  "actor": "system|user:<id>|admin:<id>",
+  "tenant_id": "…",
+  "node_id": "…",
+  "revision": 4,
+  "reason": "Upload|RustFsEvent|AdminReindex|DriftDetected",
+  "content_hash": "blake3:…",
+  "sidecar_node_id": "…",
+  "sidecar_revision": 4,
+  "extractor_version": "plain@1",
+  "chunker_version": "heading-aware@1",
+  "embedder_model": "multilingual-e5-large",
+  "embedder_dims": 1024,
+  "chunk_count": 42,
+  "status": "ok",
+  "elapsed_ms": 387
+}
+```
+
+And one `AuditEvent { kind: "content.retrieved", thread_id, query_hash, chunk_refs[], distance_min, distance_max }` per agent turn that injects context.
+
+This satisfies "full tracking" without inventing a new store: it goes through the same `/v1/audit` endpoint admins already use, and is filterable per tenant/node.
+
+### 5.4 Qdrant payload schema (per chunk point)
+
+```jsonc
+{
+  "tenant_id":         "…",      // payload-indexed, is_tenant=true (existing)
+  "owner_id":          "…",      // payload-indexed (existing)
+  "shared_with":       ["…"],    // payload-indexed array (existing)
+  "node_id":           "…",      // NEW payload index (keyword)
+  "virtual_path":      "Clients/Acme/Kickoff.md",
+  "chunk_index":       3,
+  "heading_path":      ["…","…"],
+  "char_range":        [120, 540],
+  "locator":           {...},
+  "revision":          4,         // NEW — used by delete-by-revision purge
+  "extractor_version": "plain@1",
+  "chunker_version":   "heading-aware@1",
+  "embedder_model":    "multilingual-e5-large",
+  "embedder_dims":     1024,
+  "content_hash":      "blake3:…",
+  "indexed_at":        "2026-05-20T…"
+}
+```
+
+New payload indexes: `node_id` (keyword), `revision` (integer). Point ID: `uuid5(namespace=node_id, name=format!("{revision}:{chunk_index}"))` — deterministic, idempotent, supports clean delete-by-old-revision.
+
+### 5.5 Idempotency + drift gates inside `ContentIngestor`
+
+```text
+let original_bytes = content_store.get(node);
+let h = blake3(&original_bytes);
+let state = node.metadata.content_index_state;
+
+if state.content_hash == Some(h)
+   && state.extractor_version == Some(current_extractor.version())
+   && state.chunker_version   == Some(current_chunker.version())
+   && state.embedder_model    == Some(current_embedder.model().name())
+   && state.embedder_dims     == Some(current_embedder.dims())
+{
+    return IngestReport { status: Skipped, .. };
+}
+
+// else: extract → chunk → embed → upsert new points at revision+1 →
+//       delete points where revision < new_revision → publish sidecar via ArtifactBridge →
+//       update ContentIndexState → append AuditEvent.
+```
+
+A re-upload of identical bytes is **free**. An extractor or embedder version bump triggers a clean re-extract on the next ingest call (or the nightly drift job).
+
+### 5.6 Sidecar sync state machine (`SidecarSyncEngine`)
+
+Inputs: `original_hash_changed`, `sidecar_exists`, `sidecar_hash_matches_derived_from_revision`.
+
+| Original changed | Sidecar exists | Hash matches derived | Action |
+|:--:|:--:|:--:|---|
+| no | yes | yes | **Skip** |
+| no | yes | no | **Conflict** → emit realtime `sidecar_conflict`, audit, no destructive change |
+| no | no | — | Create sidecar from original |
+| yes | yes | yes | Regenerate sidecar; `revision += 1`; clean old Qdrant points |
+| yes | yes | no | **Conflict** → same as above |
+| yes | no | — | Create sidecar |
+
+`AuthoredMarkdown` inverts the relationship: the uploaded `.md` **is** the source of truth. The sync engine **short-circuits** for `SidecarRole::AuthoredMarkdown` — no sibling sidecar node is created, no duplication, the node is indexed directly. Any exported PDF/DOCX is materialised by `workspace.export_document` on demand and stored as `derived_from_revision` of the MD node. We never auto-regenerate exports — format choice is the user's.
+
+> FR-DOC-001 path: all four uploaded files are `.md`, so they take the `AuthoredMarkdown` short-circuit — single node per file, single Qdrant point set per file, no sidecar fan-out.
+
+---
+
+## 6. Capabilities (kind = `native`)
+
+| Capability | Tools | Purpose |
+|---|---|---|
+| `workspace.retrieve_context` | `retrieve_context(query, top_k?, node_id?, path_prefix?)` | Explicit RAG; complements ambient injection. |
+| `workspace.render_markdown` | `render_markdown(node_id)` | Returns the sidecar MD; extracts on-the-fly if missing and persists. |
+| `workspace.export_document` | `export_document(node_id, target: "pdf")` | Phase 2; MD → PDF via Typst → new `WorkspaceNode`. |
+
+Registered via the existing `BuiltinFactory` (no new factory). Tenant-scoped exactly like every other native capability; `SemanticCapabilityRouter` decides when they surface to the LLM — they never bloat the catalogue.
+
+---
+
+## 7. End-to-end flow
+
+```
+        ┌── upload via /v1/files | /v1/workspaces (presign) ──┐
+        ▼                                                      │
+RustFS originals/<node>/r<n>/file    →  bucket notification → /internal/rustfs/events
+        │                                                                │
+        │                              JobExecutor::enqueue("reindex_workspace_node", { node_id, reason })
+        ▼                                                                ▼
+WorkspaceStore.put_node(redb)                                  ContentIngestor::ingest_node
+                                                                          │
+                                       hash gate? ── Skipped ─────────────┤
+                                                                          │
+                                       extract → chunk → embed → upsert   │
+                                       publish sidecar via ArtifactBridge │
+                                       update ContentIndexState           │
+                                       append AuditEvent                  │
+                                                                          ▼
+                                                          realtime: node_indexed { node_id, revision }
+
+──── agent turn ────
+POST /v1/agent/completions
+   AgentRuntime → AgentBuilder.prompt
+   ├── ContextInjectionHook   (parallel, uses shared query embedding)
+   │     retrieve top-K → prepend preamble → audit "content.retrieved"
+   └── SemanticCapabilityRouter → top-K capabilities
+   model.complete → SSE chunks → tool_call → … → done
+```
+
+---
+
+## 8. Rig 0.36 alignment
+
+| Rig idiom | This plan |
+|---|---|
+| `rig::agent::PromptHook<M>` for cross-cutting concerns | new `ContextInjectionHook` — composes with existing `TracingHook` + `PermissionHook` |
+| Single `CompletionProvider` source | unchanged — ingestor never instantiates a provider |
+| `rig::tool::ToolDyn` for capabilities | three new `BuiltinFactory` capabilities behind `SemanticCapabilityRouter` |
+| `rig::embeddings::EmbeddingsBuilder` | NOT used — `EmbeddingService` keeps the e5 prefix discipline already in [local_embedding_service.rs](apps/backend/crates/agent-core/src/indexing/local_embedding_service.rs) |
+| `rig::vector_store::VectorStoreIndex` | **Deferred** — easy to add as a single thin adapter when a Rig consumer requires it |
+| `AgentBuilder` composition | one new `with_context_retriever(retriever, scope, top_k)` method; identical pattern to `with_hook` |
+
+No global state. No hidden providers. No bypass of `LlmRegistry` / `SemanticCapabilityRouter` / `ArtifactBridge`. No new top-level abstraction beyond what the task already named.
+
+---
+
+## 9. Phased Roadmap
+
+### Phase 1 — Extraction + indexing foundation · 5–7 AI-h
+
+1. `indexing/extractor.rs` — `ContentExtractor` trait + `ExtractInput` + `ExtractedDocument` + `ExtractorRegistry`.
+2. `indexing/extractors/plain.rs` + `markdown.rs`.
+3. `indexing/chunker.rs` — `HeadingAwareChunker`.
+4. `indexing/content_state.rs` — `ContentIndexState` + `SidecarRole` (additive on `WorkspaceNode.metadata`).
+5. `store/qdrant_vector.rs` — `upsert_content_chunks` + `search_content` + `delete_chunks_for_node_below_revision`; add `node_id` + `revision` payload indexes.
+6. `indexing/content_ingestor.rs` — `ContentIngestor::ingest_node`, idempotent, audit-emitting.
+7. `crates/jobs/src/jobs/reindex_workspace_node.rs` — `BackgroundJob`.
+8. `/internal/rustfs/events` → enqueue job on `ObjectCreated:*` for `originals/**`.
+9. Unit: identical re-upload ⇒ `Skipped`. Integration: upload `.md` ⇒ row in `content_embeddings_d1024`; `ContentIndexState.revision == 1`; one `content.indexed` audit row.
+
+### Phase 2 — Sidecar sync + Markdown export · 4–6 AI-h
+
+1. `indexing/sidecar_sync.rs` — state machine (§5.6).
+2. Use `ArtifactBridge` to materialise sidecar as `WorkspaceNode` (`SidecarRole::Sidecar`).
+3. `bridge/document_bridge.rs` + `TypstRenderer` for MD → PDF.
+4. Capability `workspace.render_markdown` (returns existing sidecar; triggers ingest if absent).
+5. Capability `workspace.export_document` (target=`pdf` only in v1).
+6. Realtime events: `sidecar_created`, `sidecar_updated`, `sidecar_conflict`.
+7. Verify: re-upload changes original ⇒ sidecar revision bumps; editing sidecar manually ⇒ `sidecar_conflict` event + audit, no destructive overwrite.
+
+### Phase 3 — Retrieval wiring (ambient + explicit) · 5–7 AI-h
+
+1. `retrieval/context_retriever.rs` — `ContextRetriever` trait + `QdrantContextRetriever` with moka cache (4096, 60 s, blake3-keyed) mirroring `SemanticCapabilityRouter`; implements diversified top-K (§4.4.1) with `RetrievalParams { top_k, max_per_node, max_distance }`.
+2. `retrieval/injection_hook.rs` — `ContextInjectionHook : PromptHook<M>`, `PlanLimits`-clamped; pure `format_chunks_as_context` formatter producing the citation-contract preamble (§4.4.2); emits `context_injected` realtime + `content.retrieved` audit.
+3. `AgentBuilder::with_context_retriever(retriever, scope, params)`; wire in `AppState::build` with `max_per_node = 3` default.
+4. Per-turn embedding cache shared between hook + `SemanticCapabilityRouter`.
+5. Capability `workspace.retrieve_context` (delegates to retriever; same `RetrievalParams`).
+6. SSE: extend chat stream with `context_injected { chunks: [{node_id, virtual_path, filename, heading_path, distance, revision}] }`.
+7. Verify: tenant with 4 indexed `.md` files (the FR-DOC-001 fixtures), ask the EMEA-shortfall question ⇒ streamed answer contains the exact citation form, cites ≥ 2 distinct files; cross-tenant isolation unit test asserts `tenant_id` filter is mandatory; unit test for `format_chunks_as_context` pins the preamble byte-for-byte.
+
+### Phase 4 — Tracking surface + admin · 5 AI-h
+
+1. `GET /v1/workspaces/{node_id}/index-state` — returns `ContentIndexState` + last 10 audit rows for the node.
+2. `GET /v1/workspaces/{node_id}/revisions` — lists all `r<rev>` revisions from RustFS metadata.
+3. `POST /admin/workspace/{node_id}/reindex`, `POST /admin/workspace/reindex-all` (rate-limited).
+4. Metrics: `content_ingest_total{status,reason}`, `content_ingest_duration_seconds` (SLO: p95 ≤ 8 s/doc so 4-doc batch < 30 s per FR-DOC-001), `context_retrieve_latency_seconds` (SLO: p95 ≤ 250 ms), `context_retrieve_chunks_returned`, `context_retrieve_distinct_nodes` (asserts diversification works).
+5. Nightly cron `extractor_drift_scan` — re-enqueues nodes whose stored versions are older than current.
+6. Web slice (`packages/ui/src/lib/features/`) — `NodeIndexStatus.svelte` showing revision, hash, chunk count, last ingest time (read-only; conflict-resolution UI deferred).
+
+**Total v1 effort: 19–25 AI-hours.**
+
+### Phase 5+ (Deferred, called out so trait surface stays sufficient)
+
+- `extractors/anytomd.rs` — DOCX/PPTX/XLSX/HTML/XML/EPUB.
+- `extractors/pdf.rs` — text-first → `ocrs` → Claude vision (via existing `ContractPipeline`).
+- `extractors/audio.rs` — whisper-rs, behind `--features audio-extract`.
+- `retrieval/rig_index.rs` — `rig::vector_store::VectorStoreIndex` adapter.
+- `PandocRenderer` (feature `pandoc`) for DOCX/ODT/EPUB export targets.
+- `prune_old_revisions` GC job.
+- Conflict-resolution UI (`SidecarConflict.svelte`).
+
+Each is one file, one trait impl. No core refactor.
+
+---
+
+## 10. Acceptance Criteria (v1)
+
+- Uploading `.md` / `.txt` causes a `content_embeddings_d1024` row count increase within ≤ 5 s; `ContentIndexState { revision: 1, content_hash, chunk_count > 0 }`; exactly one `content.indexed` `AuditEvent`.
+- Re-uploading identical bytes ⇒ `IngestStatus::Skipped`; no new Qdrant points; no new audit row (or one row with `status: "skipped"` — pick one and stick to it; recommended: omit).
+- Modifying the original bytes ⇒ `revision` increments by 1; old Qdrant points for `revision < new` are deleted; sidecar revision tracks.
+- Editing only the sidecar `.md` ⇒ `sidecar_conflict` realtime event + audit row; original untouched; Qdrant untouched.
+- Agent turn in a tenant with indexed content ⇒ `context_injected` realtime event with chunk refs; `content.retrieved` audit row with `query_hash` + `chunk_refs`.
+- Cross-tenant query from tenant B never returns chunks owned by tenant A — covered by a unit test that asserts every `search_content` call carries the `tenant_id` filter.
+- `GET /v1/workspaces/{node_id}/index-state` returns the typed state for a tenant member; 403 for others.
+- `workspace.export_document` round-trips `.md` → PDF and creates a new `WorkspaceNode`; PDF opens in standard viewers.
+- `PlanLimits.context_token_budget == 0` ⇒ hook skips injection entirely (free-tier guardrail).
+- **FR-DOC-001 end-to-end** ([tasks/functional-task.md](tasks/functional-task.md)): uploading the four sample `.md` files and asking the EMEA-shortfall question yields a streamed answer that (a) contains ≥ 1 citation matching the exact form `According to **<filename> → "<heading>"**: "<quote>"`, (b) cites at least two distinct files, (c) the quoted text appears verbatim in the corresponding `RetrievedChunk.text`, (d) one `content.retrieved` audit row references chunks from ≥ 2 distinct `node_id`s, (e) end-to-end ingestion of all four files completes in < 30 s (background job), (f) re-uploading any of the four files returns `IngestStatus::Skipped`.
+
+---
+
+## 11. Risks & Mitigations
+
+| Risk | Mitigation |
+|---|---|
+| Ambient injection inflates prompts and bills | `PlanLimits.context_token_budget` clamp + `top_k` cap + per-turn audit makes spend observable. |
+| Identical query repeated across turns embeds twice | moka cache on retriever (blake3 key) + per-turn `OnceCell` shared with `SemanticCapabilityRouter`. |
+| Conflict storm on heavily edited sidecars | State machine is non-destructive; conflicts only surface as events. UI work deferred but never blocks ingestion. |
+| Drift after embedder model change | `embedder_dims` mismatch is already handled by `QdrantVectorStore` (drop & recreate). `embedder_model` mismatch in `ContentIndexState` triggers re-ingest via the nightly drift job. |
+| RustFS event flood (rename, ACL change) | Job is idempotent via hash gate — events that don't change bytes are O(1). Concurrency cap with `tokio::sync::Semaphore(4)` in the job. |
+| Cross-tenant leakage | `tenant_id` payload filter is mandatory in `search_content`; unit test enforces. |
+| Plain extractor mis-detecting binary uploaded as `application/octet-stream` | `PlainExtractor::supported_mimes()` is whitelist-only; non-text mimes return `IngestStatus::Failed { reason: "no_extractor_for_mime" }` without writing junk to Qdrant. |
+| One document monopolises top-K, citations miss other files (breaks FR-DOC-001) | `RetrievalParams.max_per_node = 3` cap + oversample-then-group in `QdrantContextRetriever` (§4.4.1); `context_retrieve_distinct_nodes` metric trips alert if < 2 on multi-doc workspaces. |
+| Model hallucinates filenames or quotes despite preamble | Preamble explicitly forbids invented filenames; eval suite ([apps/backend/evals](apps/backend/evals/)) adds FR-DOC-001 prompt and asserts citation strings are substrings of the injected preamble. |
+
+---
+
+## 12. Documentation Touch-ups
+
+After v1 lands:
+- [arch.md](arch.md) §4.2 — add `indexing/` + `retrieval/` subtrees; mention new payload indexes in §4.7.
+- [project-instructions.md](project-instructions.md) §5 — add `ContentIngestor`, `ContextInjectionHook`; clarify ambient-injection is plan-clamped.
+- New section in [capability-authoring-guide.md](capability-authoring-guide.md) explaining the difference between **infra pipelines** (ingestion) and **capabilities** (LLM-callable tools) using this work as the canonical example.
+
+---
+
+## 13. First PR (≤ 2 AI-h, zero new deps)
+
+Land two files only:
+- `apps/backend/crates/agent-core/src/indexing/extractor.rs` — trait + registry + `PlainExtractor`.
+- `apps/backend/crates/agent-core/src/indexing/chunker.rs` — `HeadingAwareChunker`.
+
+Includes:
+- Documentation comments tying each public item to this plan.
+- Unit tests for `ExtractorRegistry::for_mime` fallback + chunker determinism + heading-path correctness.
+- One-line update to [arch.md](arch.md) §4.2 file tree.
+
+This unblocks `ContentIngestor`, the sidecar engine, retrieval, and `workspace.render_markdown` in subsequent micro-PRs without any refactor.

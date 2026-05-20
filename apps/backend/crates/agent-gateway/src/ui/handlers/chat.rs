@@ -56,7 +56,7 @@ pub async fn ui_stream(
 
     if !state
         .rate_limiter
-        .check(&tenant.0.tenant_id, tenant.0.plan.rate_limit_rpm())
+        .check(&tenant.0.tenant_id, tenant.0.plan.limits().rate_limit_rpm)
     {
         return HttpError::rate_limit(None).into_response();
     }
@@ -102,7 +102,8 @@ pub async fn ui_stream(
         attachment_content,
     };
 
-    agent::stream_agent(state, tenant, req)
+    let limits = tenant.0.plan.limits();
+    agent::stream_agent(state, tenant, limits, req)
         .await
         .into_response()
 }

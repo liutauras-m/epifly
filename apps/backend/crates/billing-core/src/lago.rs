@@ -49,11 +49,6 @@ struct LagoCreateCustomerRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct LagoCreateCustomerResponse {
-    customer: LagoCustomer,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 struct LagoSubscription {
     external_id: Option<String>,
     external_customer_id: String,
@@ -65,11 +60,6 @@ struct LagoSubscription {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct LagoCreateSubscriptionRequest {
-    subscription: LagoSubscription,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct LagoCreateSubscriptionResponse {
     subscription: LagoSubscription,
 }
 

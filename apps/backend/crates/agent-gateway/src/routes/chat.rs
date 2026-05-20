@@ -1,6 +1,6 @@
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
-use agent_core::map_rig_error;
+use agent_core::{PlanLimits, map_rig_error};
 use axum::{
     Extension, Json,
     extract::State,
@@ -92,21 +92,22 @@ pub struct Usage {
 pub async fn completions(
     State(state): State<Arc<AppState>>,
     Extension(tenant): Extension<ResolvedTenant>,
+    Extension(limits): Extension<PlanLimits>,
     Json(req): Json<ChatRequest>,
 ) -> Response {
     // Per-tenant rate limit
     if !state
         .rate_limiter
-        .check(&tenant.0.tenant_id, tenant.0.plan.rate_limit_rpm())
+        .check(&tenant.0.tenant_id, limits.rate_limit_rpm)
     {
         warn!("rate limit hit");
         return HttpError::rate_limit(None).into_response();
     }
 
     if req.stream.unwrap_or(false) {
-        stream_response(tenant, req).await.into_response()
+        stream_response(tenant, limits, req).await.into_response()
     } else {
-        match blocking_response(&state, &tenant, req).await {
+        match blocking_response(&state, &tenant, limits, req).await {
             Ok(r) => r.into_response(),
             Err(e) => e.into_response(),
         }
@@ -117,14 +118,12 @@ pub async fn completions(
 
 async fn blocking_response(
     _state: &Arc<AppState>,
-    tenant: &ResolvedTenant,
+    _tenant: &ResolvedTenant,
+    limits: PlanLimits,
     req: ChatRequest,
 ) -> Result<Json<ChatResponse>, HttpError> {
     let model_id = req.model.as_deref().unwrap_or("claude-opus-4-7");
-    let max_tokens = req
-        .max_tokens
-        .unwrap_or(4096)
-        .min(tenant.0.plan.max_tokens());
+    let max_tokens = req.max_tokens.unwrap_or(limits.max_tokens).min(limits.max_tokens);
 
     info!(
         model = model_id,
@@ -182,7 +181,8 @@ async fn blocking_response(
 // ── Streaming SSE ─────────────────────────────────────────────────────────────
 
 async fn stream_response(
-    tenant: ResolvedTenant,
+    _tenant: ResolvedTenant,
+    limits: PlanLimits,
     req: ChatRequest,
 ) -> Sse<ReceiverStream<Result<Event, Infallible>>> {
     let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(64);
@@ -193,10 +193,7 @@ async fn stream_response(
             .as_deref()
             .unwrap_or("claude-opus-4-7")
             .to_string();
-        let max_tokens = req
-            .max_tokens
-            .unwrap_or(4096)
-            .min(tenant.0.plan.max_tokens());
+        let max_tokens = req.max_tokens.unwrap_or(limits.max_tokens).min(limits.max_tokens);
         let id = format!("chatcmpl-{}", Uuid::new_v4());
         let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
 

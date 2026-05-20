@@ -11,11 +11,12 @@ You are an expert AI-agents Rust developer. Build maintainable, extensible agent
 - `Agent`, `AgentBuilder` — core runtime + builder.
 - `CompletionProvider`, `LlmRegistry`, `LlmBinding` — provider-agnostic model surface (Rig `Completion*`).
 - `CapabilityProvider`/`Factory`/`Registry`/`Card`/`Admin` — replaces "Tool*"; richer (prompts, chains, memory, permissions).
-- `PromptChainCapability`, `DynamicPromptCapability`, `TraceReplayCapability`, `SemanticCapabilityRouter`.
+- `PromptChainCapability`, `DynamicPromptCapability`, `SemanticCapabilityRouter`.
 - `IdentityProvider`/`TenantManager`/`Identity|TenantContext` — pluggable (legacy JWT / Zitadel).
+- `PlanLimits` — resolved once per request via `PlanTier::limits()`, injected as `Extension<PlanLimits>` by `enforce_plan` middleware. Fields: `max_tokens`, `max_turns`, `rate_limit_rpm`, `max_tools_per_turn`, `max_invokes_per_turn`. Handlers must NOT call deprecated `max_tokens()`/`max_turns()`/`rate_limit_rpm()`. `RouterQuotaLayer` reads `max_tools_per_turn`/`max_invokes_per_turn` from `PlanLimits` when present.
 - `BillingProvider`, `QuotaChecker`, `PlanCatalog`, `UsageEvent` — pluggable billing (Lago).
 - `TenantStorage`/`Factory`, `VirtualPath`, `CredentialStore`, `RustFsAdminClient` — per-tenant S3 abstraction.
-- `RedbMetadataStore`, `QdrantVectorStore`, `RustFsContentStore` — the three runtime stores; **no Postgres in the agent runtime**.
+- `RedbMetadataStore`, `QdrantVectorStore`, `RustFsContentStore` — the three runtime stores; **no Postgres in the agent runtime**. Qdrant dim mismatch at boot → collection dropped and recreated (no hard error).
 - `ArtifactBridge` — materialises tool artifacts into workspace + object storage.
 
 ---
@@ -54,13 +55,13 @@ Rust edition **2024**, rust-version **1.95**, resolver `"3"`, workspace version 
 
 ### 2.3 Key Workspace Dependencies
 
-LLM: `rig-core` 0.36 (native `CompletionModel::stream()`). Storage: `redb` 2 + `postcard` 1; `qdrant-client` 1 (default-features=false, +serde, 768-d cosine); `object_store` 0.11 (+aws). HTTP: `axum` 0.8 (ws, multipart), `tower-http` 0.6, `reqwest` 0.13. Crypto: `jsonwebtoken` 9, `blake3` 1, `hmac` 0.12, `aes-gcm` **0.10**, `openidconnect` 3 (declared; runtime uses introspection over `reqwest`). WASM: `wasmtime` 44 (component-model). Observability: `tracing` + `opentelemetry` 0.27 (+otlp/prometheus), `tracing-opentelemetry` 0.28. Misc: `utoipa` 5 + `utoipa-swagger-ui` 9, `tokio-cron-scheduler` 0.13, `moka` 0.12, `figment` 0.10, `bon` 3, `ulid` 1.1, `hex` 0.4, `fastembed` 5 (feature `local-embeddings`). **No `rig-qdrant`, no runtime `sqlx`.**
+LLM: `rig-core` 0.36 (native `CompletionModel::stream()`). Storage: `redb` 2 + `postcard` 1; `qdrant-client` 1 (default-features=false, +serde, **1024-d cosine** via `multilingual-e5-large`); `object_store` 0.11 (+aws). HTTP: `axum` 0.8 (ws, multipart), `tower-http` 0.6, `reqwest` 0.13. Crypto: `jsonwebtoken` 9, `blake3` 1, `hmac` 0.12, `aes-gcm` **0.10**. WASM: `wasmtime` 44 (component-model). Observability: `tracing` + `opentelemetry` 0.27 (+otlp/prometheus), `tracing-opentelemetry` 0.28. Misc: `utoipa` 5 + `utoipa-swagger-ui` 9, `tokio-cron-scheduler` 0.13, `moka` 0.12 (token cache + semantic router cache), `figment` 0.10, `bon` 3, `ulid` 1.1, `hex` 0.4, `fastembed` 5 (feature `local-embeddings`; default model `multilingual-e5-large`). **No `rig-qdrant`, no runtime `sqlx`, no `openidconnect`.**
 
 ## 3. Storage Backplane
 
-- **`RedbMetadataStore`** — embedded `redb` 2 file at `REDB_PATH` (default `/data/conusai.redb`). Tables: `threads`, `messages` (range-scanned by `(tenant,thread,seq)`), `workspace_nodes` (JSON), `idx_nodes_by_path`, `audit_events`, `tenant_seeded` (postcard except workspace nodes). Hot-reload bus = `tokio::sync::broadcast` (cap 256) via `subscribe_spec_changes`.
+- **`RedbMetadataStore`** — embedded `redb` 2 file at `REDB_PATH` (default `/data/conusai.redb`). Tables: `threads`, `messages` (range-scanned by `(tenant,thread,seq)`), `workspace_nodes` (JSON), `idx_nodes_by_path`, `audit_events`, `tenant_seeded` (postcard except workspace nodes).
 - **`CredentialStore`** — same redb file; per-tenant S3 creds encrypted with **AES-256-GCM** (`RUSTFS_IAM_ENC_KEY`).
-- **`QdrantVectorStore`** — `QDRANT_URL` (gRPC `:6334`). Collections `capability_embeddings` + `content_embeddings`, 768-d cosine, named vector `"default"`. Payload keyword indexes on `tenant_id` (`is_tenant=true`), `owner_id`, `shared_with`.
+- **`QdrantVectorStore`** — `QDRANT_URL` (gRPC `:6334`). Collections `capability_embeddings` + `content_embeddings`, **1024-d cosine** (multilingual-e5-large), named vector `"default"`. Dimension mismatch at connect → hard error (no silent failure). Payload keyword indexes on `tenant_id` (`is_tenant=true`), `owner_id`, `shared_with`.
 - **`RustFsContentStore` / `TenantStorage`** — `object_store` 0.11 over RustFS/S3 (`S3_ENDPOINT`, `S3_BUCKET`); per-tenant IAM, presign, multipart, SSE, versioning, quotas.
 - **Postgres 17** (docker `infra` profile) — **only** for Zitadel + Lago databases; no agent runtime rows.
 
@@ -72,7 +73,7 @@ LLM: `rig-core` 0.36 (native `CompletionModel::stream()`). Storage: `redb` 2 + `
 
 ## 5. Capability Stack
 
-- Factories on `CapabilityRegistry`: `Mcp`, `Wasm`, `Chain`, `Builtin` (+ `DynamicPrompt`, `TraceReplay` via `with_all_factories`). Remote MCP capabilities self-register via `POST /admin/capabilities/register`.
+- Factories on `CapabilityRegistry`: `Mcp`, `Wasm`, `Chain`, `Builtin` (+ `DynamicPrompt` via `with_all_factories`). Remote MCP capabilities self-register via `POST /admin/capabilities/register`. **`TraceReplayCapability` deleted** — was always a stub that errored on every call.
 - `CapabilitySpecFactory` (`BulkCapabilityFactory`) `load_batch`-materialises enabled specs at boot; strategies: `dynamic_prompt`, `prompt` (chain), `wasm`, `native`, `remote_mcp`.
 - `SemanticCapabilityRouter`: blake3-keyed `moka::future::Cache` (max 4096, TTL 60 s), defaults **`top_k=20`**, **`max_distance=0.38`**. Returns `Vec<Box<dyn rig::tool::ToolDyn>>` to `AgentBuilder`.
 - `ArtifactBridge` persists tool artifacts to workspace + object storage post-tool and emits realtime events.
@@ -108,7 +109,7 @@ Four router groups in `routes/mod.rs`: `public_router`, `protected_router(quota)
 - **Billing:** `LAGO_API_URL`, `LAGO_API_KEY`, `LAGO_WEBHOOK_SIGNATURE_SECRET`, `LAGO_*` (enc + RSA), `STRIPE_SECRET_KEY`.
 - **Storage:** `REDB_PATH`, `QDRANT_URL`, `S3_ENDPOINT`, `S3_BUCKET`, `AWS_ACCESS_KEY_ID`/`_SECRET`.
 - **RustFS bootstrap:** `RUSTFS_{BOOTSTRAP,VERSIONING,PER_TENANT_IAM,REAL_PRESIGN,SSE,NOTIFICATIONS,QUOTAS,PRESIGN_TTL_SECS,IAM_ENC_KEY,WEBHOOK_SECRET,NOTIFICATION_WEBHOOK_URL,ROOT_ACCESS_KEY,ROOT_SECRET_KEY}`.
-- **LLM:** `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `EMBEDDING_BACKEND` (`openai`|`local`).
+- **LLM:** `ANTHROPIC_API_KEY`, `EMBEDDING_BACKEND` (`local` only; default), `EMBEDDING_LOCAL_MODEL` (`multilingual-e5-large`|`bge-m3`|`nomic-embed-text-v1.5`|`all-minilm-l6-v2`).
 - **Quotas/Web/Telemetry:** `CONUSAI_MAX_TOOLS_PER_TURN`, `CONUSAI_MAX_INVOKES_PER_TURN`, `WEB_ORIGIN`, `CONUSAI_BACKEND_URL`, `CONUSAI_FEATURE_BROWSER_SHELL`, `OTLP_ENDPOINT`, `RUST_LOG`.
 
 ## 10. Docker Compose Service Catalog
@@ -130,4 +131,4 @@ Volumes: `postgres_data`, `qdrant_data`, `rustfs_data`, `redb_data`.
 
 ADRs in `docs/adr/`: 0003 (Unified Postgres + CocoIndex — *superseded*), 0004 (Semantic Router & Dynamic Prompts), 006 (Tauri Browser Shell), 007 (Capability Module Rename), 008 (Multi-Platform Shell), 0009 (redb + Qdrant + RustFS), 012 (Zitadel + Lago).
 
-> Known drift (see [arch.md §13](arch.md)): `sqlx`/`openidconnect` declared-but-unused; `CapabilitySpecFactory::reload_one` is a stub; embedding dimension hard-coded to 768; `rustfs-admin` lacks a dedicated doc section.
+> Known drift: `sqlx` declared-but-unused at runtime (Lago owns usage HTTP). All other previously noted drift items resolved (2026-05-20): `openidconnect` deleted, reload_one stub deleted, dim fixed to 1024, `rustfs-admin`/`evals`/Tauri modules documented in arch.md §13–15, `PlanLimits` tool caps wired to `RouterQuotaLayer`, Qdrant dim mismatch now resets collections.

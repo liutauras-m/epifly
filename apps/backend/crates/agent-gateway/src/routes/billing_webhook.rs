@@ -8,7 +8,6 @@
 /// Idempotency: processed `webhook_id` values are cached for 90 days
 /// in a process-local Moka cache to reject Lago replays.
 use crate::state::AppState;
-use agent_core::identity::TenantManager as _;
 use axum::{
     body::Bytes,
     extract::State,

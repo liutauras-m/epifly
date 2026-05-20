@@ -33,10 +33,17 @@
 <nav
 	class="drawer"
 	class:open
-	aria-label="Navigation drawer"
+	aria-label="Workspace navigation"
 	aria-hidden={!open}
 >
 	<div class="drawer-inner">
+		<div class="drawer-header">
+			<button class="drawer-close" aria-label="Close" onclick={onClose}>
+				<svg viewBox="0 0 24 24" fill="none" width="20" height="20" aria-hidden="true">
+					<path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+				</svg>
+			</button>
+		</div>
 		{@render children()}
 	</div>
 </nav>
@@ -93,5 +100,31 @@
 		overflow-x: hidden;
 		padding-top: env(safe-area-inset-top);
 		padding-bottom: env(safe-area-inset-bottom);
+	}
+
+	.drawer-header {
+		display: flex;
+		justify-content: flex-end;
+		padding: var(--s-2) var(--s-3) 0;
+		flex-shrink: 0;
+	}
+
+	.drawer-close {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
+		border-radius: 50%;
+		border: none;
+		background: transparent;
+		color: var(--ink-3);
+		cursor: pointer;
+		padding: 0;
+	}
+
+	.drawer-close:hover {
+		background: var(--paper-3);
+		color: var(--ink);
 	}
 </style>

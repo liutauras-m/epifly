@@ -7,6 +7,7 @@
 //! Also enforces daily quota limits via `QuotaChecker` for agent/chat routes,
 //! returning 429 with upgrade URL when the plan's daily cap is exceeded.
 
+use agent_core::context::tenant::PlanLimits;
 use axum::{
     body::Body,
     http::{Request, Response, StatusCode, header},
@@ -29,13 +30,11 @@ pub const DEFAULT_MAX_INVOKES_PER_TURN: usize = 10;
 // ── Config ────────────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct RouterQuotaConfig {
     pub max_tools_per_turn: usize,
     pub max_invokes_per_turn: usize,
     /// Optional daily quota enforcer. When set, agent/chat routes check the
     /// per-day turn limit before passing through.
-    #[allow(dead_code)]
     pub quota: Option<Arc<QuotaChecker>>,
     /// URL shown in 429 bodies to direct users to the upgrade page.
     pub upgrade_url: String,
@@ -178,8 +177,20 @@ where
                 }
             }
 
+            // Override tool caps from per-plan limits when available (injected by enforce_plan).
+            let effective_cfg = if let Some(plan_limits) = req.extensions().get::<PlanLimits>().copied() {
+                Arc::new(RouterQuotaConfig {
+                    max_tools_per_turn: plan_limits.max_tools_per_turn,
+                    max_invokes_per_turn: plan_limits.max_invokes_per_turn,
+                    quota: cfg.quota.clone(),
+                    upgrade_url: cfg.upgrade_url.clone(),
+                })
+            } else {
+                Arc::clone(&cfg)
+            };
+
             let (mut parts, body) = req.into_parts();
-            parts.extensions.insert(cfg);
+            parts.extensions.insert(effective_cfg);
             inner.call(Request::from_parts(parts, body)).await
         })
     }
@@ -276,5 +287,73 @@ mod tests {
             .unwrap();
         let body_str = std::str::from_utf8(&body).unwrap();
         assert_eq!(body_str, "tools=42,invokes=7");
+    }
+
+    // ── Per-plan limit override ───────────────────────────────────────────
+
+    /// When `PlanLimits` is in extensions, the middleware overrides the global
+    /// env-var defaults with per-plan tool/invoke caps.
+    #[tokio::test]
+    async fn plan_limits_override_global_defaults() {
+        use agent_core::context::tenant::PlanTier;
+
+        async fn handler(req: axum::extract::Request) -> (StatusCode, String) {
+            let cfg = req.extensions().get::<Arc<RouterQuotaConfig>>().cloned();
+            match cfg {
+                Some(c) => (StatusCode::OK, format!("tools={},invokes={}", c.max_tools_per_turn, c.max_invokes_per_turn)),
+                None => (StatusCode::INTERNAL_SERVER_ERROR, "no config".into()),
+            }
+        }
+
+        // Global defaults that should be overridden by Enterprise PlanLimits.
+        let global_cfg = RouterQuotaConfig {
+            max_tools_per_turn: 99,
+            max_invokes_per_turn: 99,
+            quota: None,
+            upgrade_url: "/billing".into(),
+        };
+
+        let app = Router::new()
+            .route("/test", get(handler))
+            .layer(RouterQuotaLayer::new(global_cfg));
+
+        // Inject Enterprise PlanLimits (50 tools, 25 invokes).
+        let enterprise = PlanTier::Enterprise.limits();
+        let req = axum::http::Request::builder()
+            .uri("/test")
+            .extension(enterprise)
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(std::str::from_utf8(&body).unwrap(), "tools=50,invokes=25");
+    }
+
+    #[tokio::test]
+    async fn free_plan_limits_restrict_tools() {
+        use agent_core::context::tenant::PlanTier;
+
+        async fn handler(req: axum::extract::Request) -> (StatusCode, String) {
+            let cfg = req.extensions().get::<Arc<RouterQuotaConfig>>().cloned().unwrap();
+            (StatusCode::OK, format!("tools={},invokes={}", cfg.max_tools_per_turn, cfg.max_invokes_per_turn))
+        }
+
+        let app = Router::new()
+            .route("/test", get(handler))
+            .layer(RouterQuotaLayer::new(RouterQuotaConfig::default()));
+
+        let free = PlanTier::Free.limits();
+        let req = axum::http::Request::builder()
+            .uri("/test")
+            .extension(free)
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        // Free: 10 tools, 5 invokes — much less than the 25/10 global defaults.
+        assert_eq!(std::str::from_utf8(&body).unwrap(), "tools=10,invokes=5");
     }
 }

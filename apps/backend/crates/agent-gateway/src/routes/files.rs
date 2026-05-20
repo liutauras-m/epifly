@@ -45,7 +45,7 @@ pub async fn presign_upload(
 ) -> Result<Json<PresignUploadResponse>, HttpError> {
     if !state
         .rate_limiter
-        .check(&tenant.0.tenant_id, tenant.0.plan.rate_limit_rpm())
+        .check(&tenant.0.tenant_id, tenant.0.plan.limits().rate_limit_rpm)
     {
         return Err(HttpError::rate_limit(None));
     }

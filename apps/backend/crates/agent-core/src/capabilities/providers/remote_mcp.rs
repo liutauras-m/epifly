@@ -36,10 +36,12 @@ impl CapabilityProvider for RemoteMcpCapability {
         input: &Value,
         _tenant: Option<&TenantContext>,
     ) -> anyhow::Result<Value> {
+        // Strip the "namespace.tool" prefix — MCP servers only know the bare tool name.
+        let bare_name = tool_name.rsplit_once('.').map_or(tool_name, |(_, n)| n);
         let adapter = McpAdapter::new(&self.endpoint)
             .map_err(|e| anyhow::anyhow!("MCP adapter init error: {e}"))?;
         adapter
-            .call_tool(tool_name, input.clone())
+            .call_tool(bare_name, input.clone())
             .await
             .map_err(|e| anyhow::anyhow!("MCP call_tool error: {e}"))
     }

@@ -17,8 +17,6 @@ pub enum BillingEvent {
     SubscriptionUpdated { tenant_id: String },
 }
 
-type BillingSender = broadcast::Sender<BillingEvent>;
-
 /// A single workspace change event published on the broadcast channel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceChangeEvent {
@@ -32,7 +30,6 @@ type TenantSender = broadcast::Sender<WorkspaceChangeEvent>;
 
 pub struct RealtimeService {
     channels: Arc<RwLock<HashMap<String, TenantSender>>>,
-    spec_reload_tx: Arc<RwLock<Option<tokio::sync::mpsc::UnboundedSender<(String, String)>>>>,
     billing_tx: broadcast::Sender<BillingEvent>,
 }
 
@@ -41,7 +38,6 @@ impl RealtimeService {
         let (billing_tx, _) = broadcast::channel(256);
         Arc::new(Self {
             channels: Arc::new(RwLock::new(HashMap::new())),
-            spec_reload_tx: Arc::new(RwLock::new(None)),
             billing_tx,
         })
     }
@@ -65,15 +61,6 @@ impl RealtimeService {
         });
     }
 
-    /// Register a receiver for `(namespace, tool_name)` spec-change events.
-    pub async fn subscribe_capability_spec_changes(
-        &self,
-    ) -> tokio::sync::mpsc::UnboundedReceiver<(String, String)> {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        *self.spec_reload_tx.write().await = Some(tx);
-        rx
-    }
-
     /// Subscribe to workspace changes for `tenant_id`.
     pub async fn subscribe_workspace(
         &self,
@@ -93,14 +80,6 @@ impl RealtimeService {
             let _ = tx.send(event);
         }
     }
-
-    /// Publish a capability spec change.
-    pub async fn publish_spec_change(&self, namespace: String, tool_name: String) {
-        let tx_guard = self.spec_reload_tx.read().await;
-        if let Some(tx) = tx_guard.as_ref() {
-            let _ = tx.send((namespace, tool_name));
-        }
-    }
 }
 
 impl Default for RealtimeService {
@@ -108,7 +87,6 @@ impl Default for RealtimeService {
         let (billing_tx, _) = broadcast::channel(256);
         Self {
             channels: Arc::new(RwLock::new(HashMap::new())),
-            spec_reload_tx: Arc::new(RwLock::new(None)),
             billing_tx,
         }
     }

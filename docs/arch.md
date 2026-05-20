@@ -77,7 +77,7 @@ From root `Cargo.toml [workspace.dependencies]`:
 | `rig-core` | **0.36** | LLM agent framework (providers, hooks, tools, streaming) |
 | `redb` | 2 | Embedded KV metadata store |
 | `postcard` | 1 (`alloc`) | Compact serialization for redb values |
-| `qdrant-client` | 1 (`serde`) | Vector DB client (768-dim cosine) |
+| `qdrant-client` | 1 (`serde`) | Vector DB client (1024-dim cosine, multilingual-e5-large) |
 | `axum` | 0.8 (`ws`, `multipart`) | HTTP framework |
 | `reqwest` | 0.13 (`json`, `stream`, `multipart`) | Outbound HTTP |
 | `tower` / `tower-http` | 0.5 / 0.6 (`cors`, `trace`, `compression-br`, `fs`) | Middleware |
@@ -95,13 +95,11 @@ From root `Cargo.toml [workspace.dependencies]`:
 | `base64` | 0.22 | Image / token encoding |
 | `object_store` | 0.11 (`aws`) | RustFS / AWS S3 content store |
 | `fastembed` | 5 (optional) | Local embeddings (`local-embeddings` feature) |
-| `openidconnect` | 3 (`reqwest`) | Zitadel OIDC discovery + token verification |
-| `sqlx` | 0.8 (`runtime-tokio`, `postgres`, `chrono`, `uuid`, `migrate`) | TimescaleDB / Postgres client (billing usage events) |
 | `hex` | 0.4 | Stripe / Lago webhook signature verification |
 | `colored` | 2 | Coloured CLI output |
 | `uuid` / `ulid` / `chrono` | 1 / 1.1 / 0.4 | IDs + time |
 | `bytes` / `futures` / `async-trait` / `bon` | 1 / 0.3 / 0.1 / 3 | Async + builder ergonomics |
-| `moka` | 0.12 (`future`) | In-process cache (semantic router) |
+| `moka` | 0.12 (`future`) | In-process cache: Zitadel token introspection (10k cap, 60s TTL) + semantic router (4096 cap, 60s TTL) |
 | `clap` | 4 (`derive`) | CLI |
 | `tokio-cron-scheduler` | 0.13 | Job scheduler |
 | `utoipa` + `utoipa-swagger-ui` | 5 / 9 (`axum`) | OpenAPI spec + Swagger UI |
@@ -248,7 +246,6 @@ agent-core/src/
 │   ├── embedding.rs        # capability text → vector for semantic router
 │   ├── executor.rs
 │   ├── semantic_router.rs  # SemanticCapabilityRouter (top-K, moka cache, blake3 keys)
-│   ├── trace_replay.rs     # TraceReplayFactory
 │   ├── store.rs
 │   ├── validator.rs
 │   ├── wasm_loader.rs      # wasmtime 44 component-model loader
@@ -271,15 +268,13 @@ agent-core/src/
 │   └── truncator.rs
 ├── store/
 │   ├── redb_metadata.rs    # KV (postcard-encoded)
-│   ├── qdrant_vector.rs    # 768-dim cosine
+│   ├── qdrant_vector.rs    # 1024-dim cosine (multilingual-e5-large); dim verified at connect
 │   ├── rustfs_content.rs   # object_store (S3 / RustFS)
 │   └── marker.rs
 ├── vector_store/mod.rs
 ├── indexing/
-│   ├── coco_indexer.rs
 │   ├── embedding_service.rs       # EmbeddingService trait
-│   ├── local_embedding_service.rs # fastembed (feature-gated)
-│   └── real_fs_watcher.rs
+│   └── local_embedding_service.rs # fastembed (feature-gated); raw fastembed for query:/passage: prefix control
 ├── prompt/mod.rs            # PromptTemplate
 ├── realtime/mod.rs
 └── bridge/artifact_bridge.rs
@@ -462,7 +457,7 @@ model = "claude-sonnet-4-6"
 5. `CapabilitySpecFactory` — declarative `kind = "capability_spec"` manifests, hot-reloadable via the realtime bus.
 6. `BuiltinFactory` — `fs`, `cargo`, etc.
 
-`with_all_factories` additionally registers `DynamicPromptFactory` and `TraceReplayFactory`.
+`with_all_factories` additionally registers `DynamicPromptFactory`.
 
 Each factory implements `CapabilityFactory::supports(manifest) -> bool` and `build(manifest) -> Arc<dyn CapabilityProvider>`. A `BulkCapabilityFactory` may load many cards in one boot pass (`run_bulk_load`).
 
@@ -471,7 +466,7 @@ Each factory implements `CapabilityFactory::supports(manifest) -> bool` and `bui
 | Concern | Backend | Module |
 | --- | --- | --- |
 | Metadata KV | redb 2 (postcard) | `store/redb_metadata.rs` |
-| Vector ANN | Qdrant 1.x (768-dim cosine) | `store/qdrant_vector.rs` |
+| Vector ANN | Qdrant 1.x (1024-dim cosine, multilingual-e5-large) | `store/qdrant_vector.rs` |
 | Object content | RustFS / AWS S3 (`object_store` 0.11) | `store/rustfs_content.rs` |
 | Local embeddings | fastembed 5 (feature `local-embeddings`) | `indexing/local_embedding_service.rs` |
 | Cross-instance index marker | `store/marker.rs` | |
@@ -617,7 +612,7 @@ Two implementations:
 - `CapabilityRendererRegistry.ts` — pure Map: `register / unregister / get(card)`.
 - `CapabilityRendererRegistry.svelte.ts` — Svelte context wrappers: `provideCapabilityRendererRegistry()` / `useCapabilityRendererRegistry()`.
 
-`apps/web/src/routes/+page.svelte` calls `provideCapabilityRendererRegistry()` at the route root. `apps/browser-shell/src/routes/+page.svelte` registers the `trace.replay` renderer at startup.
+`apps/web/src/routes/+page.svelte` calls `provideCapabilityRendererRegistry()` at the route root. `apps/browser-shell/src/routes/+page.svelte` provides the registry context at the shell layout root.
 
 ### 5.5 Motion primitives
 
@@ -634,7 +629,7 @@ Two implementations:
 All stores follow factory pattern returning a `$state`-backed object plus mutation methods. Notable:
 
 - `createThemeStore({ adapter, defaultTheme })` + `localStorageAdapter` — theme persists across sessions.
-- `createFeatureFlags({ recorder, tabs, traceReplay })` — central flag gate (defined but underused at runtime today).
+- `createFeatureFlags({ recorder, tabs })` — central flag gate (defined but underused at runtime today; `traceReplay` flag removed with the deleted capability).
 - `recentsStore` — recent thread metadata; consumed by `DrawerRecentChats`.
 - `breadcrumbsStore` — current node trail.
 - `modeStore` — `'web' | 'shell'`; lets components branch on host without checking `window.__TAURI__`.
@@ -746,11 +741,10 @@ apps/browser-shell/
 │   ├── app.html
 │   ├── routes/
 │   │   ├── +layout.svelte    # foundry.css + ThemeProvider, mode = 'shell'
-│   │   └── +page.svelte      # registers trace.replay renderer; mounts MobileShell
+│   │   └── +page.svelte      # mounts MobileShell
 │   └── lib/
 │       ├── sdk.ts            # createConusSdk with x-session-token + device-token headers
 │       ├── tauri-stream.ts   # streamChatTauri SSE bridge
-│       ├── TraceReplayCapability.svelte
 │       └── mobile/
 │           ├── MobileShell.svelte
 │           ├── platform/detect.ts          # setPlatformTag (data-platform on <html>)
@@ -882,12 +876,11 @@ The frontend (`src/lib/tauri-stream.ts`) wraps this as `streamChatTauri` returni
 
 ### 7.7 Registration & trace upload (`registration.rs`)
 
-- `register_capability(api_base, device_token)` — POSTs a static manifest declaring capability `trace.replay` (kind `remote_mcp`, with `replay_session` tool taking `{ trace_node_id, dry_run }`) to `/admin/capabilities/register` with `X-Device-Token`. Called in setup hook on startup.
+- `register_capability(api_base, device_token)` — reserved for future capability registration; called in setup hook on startup (currently no-op if no manifest configured).
 - `upload_trace_cmd(trace: SessionTrace)` — multi-step:
   1. Serialize trace → JSON bytes.
   2. POST `/v1/files` (multipart) → `FileToken`.
   3. POST `/v1/workspaces` to create a file workspace node.
-- **Contract drift**: `TraceReplayCapability.svelte` invokes `upload_trace_cmd` with `{ trace_node_id, dry_run }` instead of a `SessionTrace`. See arch.md §9 for stabilization step.
 
 ### 7.8 MobileShell composition
 
@@ -964,7 +957,7 @@ Shell: `telemetry.rs` initialises `tracing_subscriber` for in-process logs only 
 | WASM components (wasmtime 44 component-model) | Implemented | `capabilities/wasm_loader.rs` |
 | MCP adapter | Implemented | `capabilities/mcp_adapter.rs` |
 | Contract / invoice extraction (Claude vision) | Implemented | `chains/{contract,invoice}.rs` |
-| Trace replay capability | Implemented | `capabilities/trace_replay.rs` |
+| Trace replay capability | **Deleted** (2026-05-20) — was a non-functional stub | — |
 | Local embeddings (fastembed) | Feature-gated | `indexing/local_embedding_service.rs` |
 | Qdrant vector store | Implemented | `store/qdrant_vector.rs` |
 | RustFS / S3 object store | Implemented | `store/rustfs_content.rs` |
@@ -1044,13 +1037,11 @@ Shell: `telemetry.rs` initialises `tracing_subscriber` for in-process logs only 
 
 ## 10. Stabilization Backlog
 
-1. Align `TraceReplayCapability.svelte` payload with `upload_trace_cmd` (send full `SessionTrace`).
-2. Implement artifact open/preview action in `screens/ArtifactsScreen.svelte`.
-3. Hydrate `MobileShell.workspaceNodes` so `DrawerRecentChats` resolves recent threads.
-4. Wire capability invoke from `CapabilitiesScreen` into chat composer (prefill + auto-send option).
-5. Re-sync `e2e/shell-macos/*` selectors with current mobile shell DOM.
-6. Promote `featureFlags` to a real runtime gate around trace replay UI.
-7. Lift `apps/web` login action to use `sessionAdapter.issue(...)` so the JWT adapter actually flows.
+1. Implement artifact open/preview action in `screens/ArtifactsScreen.svelte`.
+2. Hydrate `MobileShell.workspaceNodes` so `DrawerRecentChats` resolves recent threads.
+3. Wire capability invoke from `CapabilitiesScreen` into chat composer (prefill + auto-send option).
+4. Re-sync `e2e/shell-macos/*` selectors with current mobile shell DOM.
+5. Lift `apps/web` login action to use `sessionAdapter.issue(...)` so the JWT adapter actually flows.
 
 ---
 
@@ -1059,7 +1050,7 @@ Shell: `telemetry.rs` initialises `tracing_subscriber` for in-process logs only 
 - LLM core: `apps/backend/crates/agent-core/src/llm/{registry,providers/anthropic,streaming,types}.rs`
 - Rig agent: `apps/backend/crates/agent-core/src/agent/{builder,runtime,hooks}.rs`
 - Chains: `apps/backend/crates/agent-core/src/chains/{executor,llm_chain,dynamic_prompt,contract}.rs`
-- Capability registry: `apps/backend/crates/agent-core/src/capabilities/{registry,semantic_router,trace_replay,providers/*}.rs`
+- Capability registry: `apps/backend/crates/agent-core/src/capabilities/{registry,semantic_router,providers/*}.rs`
 - Identity / Zitadel: `apps/backend/crates/agent-core/src/identity/{mod,zitadel,legacy}.rs`
 - Billing: `apps/backend/crates/billing-core/src/{lib,catalog,lago,quota,events,metrics,provider,types,error}.rs`
 - HTTP gateway: `apps/backend/crates/agent-gateway/src/{main,state,routes/*,mw/*,auth/*,capabilities/*}.rs`
@@ -1070,9 +1061,10 @@ Shell: `telemetry.rs` initialises `tracing_subscriber` for in-process logs only 
 - Billing UI: `packages/ui/src/lib/components/{PlanBadge,PlanCard,QuotaBanner,UsageMeter}.svelte`
 - Web session: `apps/web/src/{hooks.server,lib/server/session,lib/server/oidc,lib/server/env}.ts`
 - Web auth routes: `apps/web/src/routes/auth/{+server.ts,callback/+server.ts,logout/+server.ts}`
-- Web account routes: `apps/web/src/routes/account/{+page.{server.ts,svelte},billing/*,usage/*}`
+- Web account: `apps/web/src/routes/account/{+page.{server.ts,svelte},billing/*,usage/*}`
 - Web workshop route: `apps/web/src/routes/{+layout.server,+page.server,+page.svelte}.ts`
 - Shell mobile: `apps/browser-shell/src/lib/mobile/{MobileShell.svelte,screens/*,parts/*,chrome/*,stores/*}`
+- Shell streams: `apps/browser-shell/src/lib/{sdk.ts,tauri-stream.ts}`
 - Shell native: `apps/browser-shell/src-tauri/src/{lib,chat_stream,device_auth,oidc_auth,recorder,tabs,registration}.rs`
 
 ---
@@ -1100,11 +1092,11 @@ Shell: `telemetry.rs` initialises `tracing_subscriber` for in-process logs only 
 
 All mutations run inside one `WriteTransaction` and commit atomically; reads use snapshot `ReadTransaction`. Blocking work is wrapped in `tokio::task::spawn_blocking`. The same `Database` handle is shared with `CredentialStore` (per-tenant S3 creds, AES-256-GCM encrypted via `aes-gcm` 0.10) — redb 2 forbids two `Database` instances on one file.
 
-Hot-reload bus: `tokio::sync::broadcast::Sender<(namespace, tool_name)>` (capacity 256) exposed via `subscribe_spec_changes()` / `notify_spec_change()` — replaces the previous Postgres `LISTEN/NOTIFY` plumbing.
+Realtime bus: `tokio::sync::broadcast` (capacity 256) for workspace change events and billing SSE (`BillingEvent`). Spec hot-reload bus removed (was a no-op stub).
 
 ### 12.2 Qdrant (`crates/agent-core/src/store/qdrant_vector.rs`)
 
-Two collections, both **768-dim cosine, named vector `"default"`**, created idempotently on startup:
+Two collections, both **1024-dim cosine (`multilingual-e5-large`), named vector `"default"`**, created idempotently on startup. Dimension is checked against the running embedding model at connect — mismatch → **drop + recreate** (resets data; prevents silent score corruption):
 
 | Collection | Purpose | Payload schema |
 | --- | --- | --- |
@@ -1138,14 +1130,14 @@ Indexing is **event-driven** (RustFS bucket notifications → `internal/rustfs/e
 
 ### 12.4 Postgres (shared infrastructure — NOT the agent runtime)
 
-Despite the workspace dependency on `sqlx`, the **runtime agent stores no rows in Postgres**. Postgres is reserved for two infrastructure consumers, both shipped as docker services on profile `infra` / `full`:
+The **runtime agent stores no rows in Postgres**. Postgres is reserved for two infrastructure consumers, both shipped as docker services on profile `infra` / `full`:
 
 | Consumer | Database | Purpose |
 | --- | --- | --- |
 | Zitadel `v2.68.0` | `zitadel` | OIDC identity, orgs, users, project roles, custom claims (`urn:conusai:plan_tier`, `urn:conusai:subscription_status`). |
 | Lago `v1.30.0` (api + worker) | `lago` | Customer + subscription state, plans, usage events, invoice generation. Stripe optional via `STRIPE_SECRET_KEY`. |
 
-The agent-gateway communicates with both **only over HTTP** (`reqwest`). The `sqlx` dep is currently retained for the eval harness / migration scripts only and is no longer linked into `agent-core` runtime modules.
+The agent-gateway communicates with both **only over HTTP** (`reqwest`). `sqlx` has been fully removed from the workspace (2026-05-20).
 
 ### 12.5 Auth provider matrix (`mw/identity.rs` + `mw/tenant.rs`)
 
@@ -1158,11 +1150,11 @@ Selected by `CONUSAI_AUTH_PROVIDER` env (`legacy` default, `zitadel` opt-in):
 | `SessionUser` (`auth/verifier.rs`) | `<base64(payload)>.<base64(hmac-sha256)>` | `UI_SESSION_KEY` HMAC, constant-time compare | `CONUSAI_UI_TENANT_ID` (`dev` fallback) |
 | `ApiKeyEntry` (`mw/api_key.rs`) | `X-API-Key` header | blake3 hash compared to entries in `API_KEYS` (`hash:tenant:plan,…`) | inline `tenant_id` |
 
-Note: arch.md previously described Zitadel as using `openidconnect` 3 + JWKS cache. The current implementation uses **introspection over reqwest** instead; `openidconnect` is still declared in workspace deps but unused at runtime.
+Note: `ZitadelProvider` uses **introspection over reqwest** (not JWKS/openidconnect). `openidconnect` was fully removed from the workspace (2026-05-20).
 
 ### 12.6 Capability factory chain — current state
 
-`CapabilityRegistry::with_default_factories(llm)` registers, in order: `McpFactory`, `WasmFactory`, `ChainFactory`, `BuiltinFactory`. `with_all_factories` additionally registers `DynamicPromptFactory` and `TraceReplayFactory`. `RemoteMcpCapability` is **not** wired through a factory — it is created on demand by `POST /admin/capabilities/register` and inserted directly into the registry. `CapabilitySpecFactory` is a `BulkCapabilityFactory` invoked once at boot (`load_batch`) and supports hot-reload via `RedbMetadataStore::subscribe_spec_changes()`.
+`CapabilityRegistry::with_default_factories(llm)` registers, in order: `McpFactory`, `WasmFactory`, `ChainFactory`, `BuiltinFactory`. `with_all_factories` additionally registers `DynamicPromptFactory`. (`TraceReplayFactory` was deleted 2026-05-20 — the capability was a non-functional stub.) `RemoteMcpCapability` is **not** wired through a factory — it is created on demand by `POST /admin/capabilities/register` and inserted directly into the registry. `CapabilitySpecFactory` is a `BulkCapabilityFactory` invoked once at boot (`load_batch`); the hot-reload stub (`reload_one`) and capability-spec-change bus were deleted.
 
 ### 12.7 Full route surface (verified against `routes/mod.rs`)
 
@@ -1183,7 +1175,7 @@ The legacy `GET /v1/files/{token}` UUID download shim has been removed.
 
 ### 12.8 Middleware stack (outermost → innermost on the protected router)
 
-`CorsLayer` → `TraceLayer` → `request_id::inject_request_id` → `trace::propagate_trace` (W3C tracecontext) → `api_key::extract_api_key` → `tenant::extract_tenant` → `identity::extract_identity` (Zitadel path) → `plan::enforce_plan` → `meter::record_usage` (post-handler) → `RouterQuotaLayer` (route-scoped, enforces `CONUSAI_MAX_TOOLS_PER_TURN` / `CONUSAI_MAX_INVOKES_PER_TURN` and `QuotaChecker` daily caps with 429 + `Retry-After`).
+`CorsLayer` → `TraceLayer` → `request_id::inject_request_id` → `trace::propagate_trace` (W3C tracecontext) → `api_key::extract_api_key` → `tenant::extract_tenant` → `identity::extract_identity` (Zitadel path) → `plan::enforce_plan` (inserts `Extension<PlanLimits>`) → `meter::record_usage` (post-handler) → `RouterQuotaLayer` (route-scoped; overrides `max_tools_per_turn` / `max_invokes_per_turn` from `PlanLimits` if present, otherwise falls back to `CONUSAI_MAX_TOOLS_PER_TURN` / `CONUSAI_MAX_INVOKES_PER_TURN` env vars; enforces `QuotaChecker` daily caps with 429 + `Retry-After`).
 
 ### 12.9 Workspace members (root `Cargo.toml`) — actual
 
@@ -1205,21 +1197,146 @@ apps/browser-shell/src-tauri
 | `redb` | 4 (project-instructions.md) / 2 (arch.md) | **2** | arch.md correct, project-instructions.md was wrong. |
 | `rig-qdrant` | 0.2.5 (project-instructions.md) | _not present_ | Never added; ANN search goes through `qdrant-client` directly. |
 | `aes-gcm` | _undocumented_ | **0.10** | Used by `CredentialStore`. |
-| `openidconnect` | "Zitadel JWKS verification" | 3 (declared, **unused at runtime**) | Provider now uses introspection over reqwest. |
-| `sqlx` | TimescaleDB usage events | declared, **runtime-unused** | Lago owns usage event persistence over HTTP. |
+| `openidconnect` | "Zitadel JWKS verification" | _removed_ | Deleted (2026-05-20): `ZitadelProvider` uses introspection via reqwest instead. |
+| `sqlx` | TimescaleDB usage events | _removed_ | Deleted (2026-05-20): Lago owns usage event persistence over HTTP; no Postgres in agent runtime. |
 
 ---
 
-## 13. Identified Gaps
+## 13. `rustfs-admin` Crate
 
-1. **Doc/runtime drift on Zitadel:** arch.md §4.4 / §6 still imply `openidconnect`-based JWKS verification. Replace with the introspection-endpoint reality or wire `openidconnect` in `ZitadelProvider` and drop the introspection client.
-2. **`rustfs-admin` crate is undocumented** anywhere in `docs/`. It owns bootstrap, IAM provisioning, presigning, quota and notification wiring — promote it to a first-class section.
-3. **`sqlx` & `openidconnect` are dead workspace deps at runtime.** Either delete them or restore a usage that justifies them. Carrying unused deps inflates the build matrix.
-4. **Route tables in `project-instructions.md` are out of date** (missing presign, upload, billing, internal, rename, versions, restore, billing webhook). Regenerate from `routes/mod.rs` whenever endpoints change.
-5. **`CapabilitySpecFactory::reload_one` is a no-op stub** after the Postgres removal (see `providers/capability_spec.rs`). The boot listener (`main.rs`) wires it up unconditionally; hot-reload silently does nothing. Either re-implement against redb or remove the listener.
-6. **`TraceReplayCapability` ships with a `WorkspaceNodeTraceSource` stub that always returns an error.** Either inject a real `TraceSource` (e.g. backed by `WorkspaceContentStore`) or feature-gate the capability so it is not advertised in `/v1/capabilities`.
-7. **`mw/plan.rs` does not actually clamp `max_tokens` / `max_turns`** — it only validates the plan tier is recognised; clamping is duplicated in each handler. Centralise as the doc-comment in that file already calls out.
-8. **Embeddings dimension is hard-coded to 768** (`qdrant_vector.rs::DIMS`) even when `EMBEDDING_BACKEND=openai` (`text-embedding-3-small` returns 1536). The OpenAI service must request truncated 768-d output or the dim must become configurable per backend.
-9. **`apps/backend/evals` member is listed in `Cargo.toml` but not in §1.2 or §4.1** of arch.md. Document the eval harness layout (`evals/runners`, `evals/scorers`).
-10. **Tauri shell modules** `chat_stream.rs`, `device_auth.rs`, `oidc_auth.rs`, `recorder.rs`, `registration.rs`, `tabs.rs`, `telemetry.rs` are not enumerated in §7.2; the Tauri plugin list there should mirror `src-tauri/Cargo.toml`.
+`apps/backend/crates/rustfs-admin` — declarative RustFS/S3 bootstrap + per-tenant IAM, presigning, quotas, and bucket notifications.
+
+### 13.1 File tree
+
+```
+crates/rustfs-admin/src/
+├── lib.rs          # RustFsAdminClient, public re-exports
+├── bootstrap.rs    # BootstrapConfig, bootstrap_storage() — idempotent bucket + policy setup
+├── iam.rs          # IamCreds, provision_tenant(), deprovision_tenant()
+├── bucket.rs       # sanitize_bucket_name()
+└── signing.rs      # presign helpers (put / get) over object_store
+```
+
+### 13.2 Public types
+
+| Type | Description |
+| --- | --- |
+| `RustFsAdminClient` | Root-credential HTTP client wrapping RustFS admin API + presign |
+| `BootstrapConfig` | Declarative spec: versioning, per-tenant IAM, SSE, notifications, quotas, presign TTL |
+| `IamCreds` | Per-tenant `{ access_key, secret_key }` |
+| `bootstrap_storage(admin, cfg)` | Idempotent bootstrap; called at gateway startup |
+| `provision_tenant(admin, tenant_id)` | Create IAM user + policy scoped to `tenants/{id}/` prefix |
+| `deprovision_tenant(admin, tenant_id)` | Delete IAM user + policy |
+
+### 13.3 Environment variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `RUSTFS_BOOTSTRAP` | `on` | Run `bootstrap_storage` at startup |
+| `RUSTFS_VERSIONING` | `off` | Enable S3 object versioning on the workspace bucket |
+| `RUSTFS_PER_TENANT_IAM` | `on` | Create per-tenant IAM users via `provision_tenant` |
+| `RUSTFS_REAL_PRESIGN` | `on` | Generate real presigned URLs (off → return direct path) |
+| `RUSTFS_SSE` | `off` | Enable server-side encryption on the bucket |
+| `RUSTFS_NOTIFICATIONS` | `off` | Enable bucket event notifications to `RUSTFS_NOTIFICATION_WEBHOOK_URL` |
+| `RUSTFS_QUOTAS` | `off` | Enable per-tenant storage quotas |
+| `RUSTFS_PRESIGN_TTL_SECS` | `3600` | Presigned URL TTL |
+| `RUSTFS_IAM_ENC_KEY` | — | AES-256-GCM key for encrypting IAM creds in `CredentialStore` |
+| `RUSTFS_WEBHOOK_SECRET` | — | HMAC secret for validating inbound bucket notifications |
+| `RUSTFS_NOTIFICATION_WEBHOOK_URL` | — | URL to receive bucket notifications (e.g. `http://agent-gateway:8080/internal/rustfs/events`) |
+| `RUSTFS_ROOT_ACCESS_KEY` | — | Root access key for admin API |
+| `RUSTFS_ROOT_SECRET_KEY` | — | Root secret key for admin API |
+
+### 13.4 Bootstrap sequence
+
+1. `bootstrap_storage` connects to `S3_ENDPOINT` with root credentials.
+2. Creates `S3_BUCKET` (default `workspace`) if absent; applies versioning policy.
+3. Configures SSE and notification webhook if enabled.
+4. `provision_tenant` is called lazily by `TenantOnboardingService` on first user login.
+
+---
+
+## 14. Evals Harness
+
+`apps/backend/evals` — binary crate (`cargo run -p evals`) for offline quality evaluation of agent pipeline outputs.
+
+### 14.1 File tree
+
+```
+evals/src/
+├── main.rs              # CLI entry (clap: run --suite <name> --dataset <jsonl> --model <id>)
+├── config.rs            # EvalConfig: model, dataset path, pass threshold
+├── report.rs            # EvalReport: per-run metrics + markdown / JSON output
+├── runners/
+│   ├── mod.rs           # run_suite() dispatch: "invoice" | "ocr" | "ocr_quality" | "all"
+│   ├── invoice.rs       # Invoice extraction runner (uses InvoicePipeline from agent-core)
+│   └── ocr_quality.rs   # OCR quality runner (uses Marker output + diff scorer)
+└── scorers/
+    └── mod.rs           # InvoiceScorer (field-level F1, pass threshold 0.8)
+```
+
+### 14.2 Usage
+
+```sh
+# Run invoice extraction suite with default JSONL dataset
+cargo run -p evals -- run --suite invoice --model claude-opus-4-7
+
+# Run OCR quality suite with a custom dataset
+cargo run -p evals -- run --suite ocr_quality --dataset /data/ocr-fixtures.jsonl
+
+# List available suites
+cargo run -p evals -- list
+```
+
+Requires `ANTHROPIC_API_KEY`. Uses `tracing-subscriber` for output.
+
+---
+
+## 15. Tauri Shell Native Modules
+
+`apps/browser-shell/src-tauri/src/` — Rust modules compiled into the Tauri 2 desktop/mobile shell.
+
+### 15.1 Module inventory
+
+| Module | Purpose |
+| --- | --- |
+| `lib.rs` | Tauri app builder: registers all commands, plugin setup, feature-flag gating |
+| `main.rs` | `main()` entry for desktop (calls `lib.rs::run()`) |
+| `chat_stream.rs` | Tauri command `chat_stream` — SSE streaming proxy to `/v1/agent/completions`, emits `chat-chunk` events to the frontend |
+| `device_auth.rs` | Device registration flow: generates a device keypair, calls `POST /v1/shells/{device_id}/register`, stores token in Stronghold |
+| `oidc_auth.rs` | OIDC login: opens system browser to Zitadel auth URL, receives callback on a local listener, exchanges code for tokens, stores in Stronghold |
+| `recorder.rs` | Implements `SessionRecorder` from `common::trace` — records `UserStep` events from the embedded web view; redacts password fields and sensitive regions |
+| `registration.rs` | Platform-agnostic registration helpers shared between `device_auth.rs` and `oidc_auth.rs` |
+| `tabs.rs` | Multi-tab state management for the browser-shell window (keyboard shortcuts, tab switching, close) |
+| `telemetry.rs` | OTel tracer init for the Tauri process; routes spans to `OTLP_ENDPOINT` |
+
+### 15.2 Tauri plugins (from `src-tauri/Cargo.toml`)
+
+- `tauri-plugin-dialog` — native file/directory picker
+- `tauri-plugin-stronghold` — encrypted key-value store (backs OIDC token persistence)
+
+Feature `e2e` (macOS debug only): enables WebDriver for Playwright integration tests.
+
+---
+
+## 16. Identified Gaps
+
+1. ~~**Doc/runtime drift on Zitadel.**~~ `openidconnect` deleted (2026-05-20); §12.10 updated.
+2. ~~**`rustfs-admin` crate is undocumented.**~~ Documented in §13 (2026-05-20).
+3. ~~**`sqlx` & `openidconnect` are dead workspace deps.**~~ Both fully removed (2026-05-20).
+4. **Route tables auto-generation (Phase 10) not yet done.** `scripts/dump-routes.sh` + `--dump-routes` CLI flag + CI diff guard not yet implemented. Route tables in `project-instructions.md` §6 are manually maintained.
+5. ~~**`CapabilitySpecFactory::reload_one` no-op stub + boot listener.**~~ Both deleted (2026-05-20).
+6. ~~**`TraceReplayCapability` / `WorkspaceNodeTraceSource` always errors.**~~ Entire capability deleted (2026-05-20); frontend component removed.
+7. ~~**`mw/plan.rs` does not clamp `max_tokens` / `max_turns`.**~~ Fixed (2026-05-20): `PlanLimits` (with `max_tools_per_turn`, `max_invokes_per_turn`) injected via `Extension<PlanLimits>`; deprecated methods removed; `RouterQuotaLayer` reads per-plan tool caps.
+8. ~~**Embeddings dimension hard-coded to 768.**~~ Fixed (2026-05-20): `multilingual-e5-large` (1024-d); Qdrant dim mismatch now drops+recreates instead of hard-erroring.
+9. ~~**`apps/backend/evals` not documented.**~~ Documented in §14 (2026-05-20).
+10. ~~**Tauri shell modules not enumerated in §7.2.**~~ Documented in §15 (2026-05-20).
+11. ~~**Dead code: `real_fs_watcher.rs`, `coco_indexer.rs` (polling path), stub prompt handlers.**~~ All deleted (2026-05-20); `WorkspaceIndexer` export removed from `agent-core`.
+
+### Remaining plan items (not yet implemented)
+
+- **Phase 10** — `scripts/dump-routes.sh` + `--dump-routes` binary flag + CI diff guard (`make verify-routes-doc`).
+- **CI hardening** — `cargo machete` blocking step; `clippy::todo` / `clippy::unimplemented` = deny.
+- **`spec_reload_total`** Prometheus counter (requires implementing capability hot-reload, not just deleting it).
+- **`scripts/reindex.sh`** — smooth re-embed migration for operators upgrading from old embedding models.
+- **`daily_quota`** field in `PlanLimits` (currently handled by `QuotaChecker` separately; not blocking).
 

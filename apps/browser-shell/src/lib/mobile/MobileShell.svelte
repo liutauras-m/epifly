@@ -293,6 +293,17 @@
 						Artifacts
 					</button>
 				</div>
+
+				<div class="drawer-footer">
+					<button class="drawer-link drawer-signout" aria-label="Sign out" use:tap onclick={() => { drawerStore.close(); handleLogout(); }}>
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="20" height="20">
+							<path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
+							<polyline points="16 17 21 12 16 7"/>
+							<line x1="21" y1="12" x2="9" y2="12"/>
+						</svg>
+						Sign out
+					</button>
+				</div>
 			{/snippet}
 		</MobileDrawer>
 	</div>
@@ -526,6 +537,14 @@
 	}
 
 	.drawer-link:hover { background: var(--paper-3); color: var(--ink); }
+
+	.drawer-footer {
+		border-top: 1px solid var(--rule);
+		margin-top: auto;
+	}
+
+	.drawer-signout { color: var(--danger, #e74c3c); }
+	.drawer-signout:hover { background: var(--paper-3); }
 
 	@media (prefers-reduced-motion: reduce) {
 		.plan-option,

@@ -47,7 +47,7 @@
 <div class="messages" bind:this={messagesEl} role="log" aria-live="polite">
   {#each messages as msg, i (i)}
     {#if msg.role === 'thinking'}
-      <div class="row ai-row">
+      <div class="row ai-row message ai thinking">
         <div class="ai-mark" aria-hidden="true">
           <svg viewBox="0 0 16 16" fill="none" width="16" height="16">
             <circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/>
@@ -62,7 +62,7 @@
       </div>
 
     {:else if msg.role === 'user'}
-      <div class="row user-row">
+      <div class="row user-row message user">
         <div class="user-bubble">{msg.text}</div>
       </div>
 
@@ -85,7 +85,7 @@
       {/if}
 
     {:else}
-      <div class="row ai-row" class:streaming={msg.streaming}>
+      <div class="row ai-row message ai" class:streaming={msg.streaming}>
         <div class="ai-mark" aria-hidden="true">
           <svg viewBox="0 0 16 16" fill="none" width="16" height="16">
             <circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/>

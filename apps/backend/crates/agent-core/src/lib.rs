@@ -31,9 +31,6 @@ pub use capabilities::semantic_router::{
     RouterMetrics, SemanticCapabilityRouter, SemanticRouterConfig,
 };
 pub use capabilities::store::{FilesystemStore, RegisteredToolState, RegisteredToolStore};
-pub use capabilities::trace_replay::{
-    TraceReplayCapability, TraceReplayFactory, WorkspaceNodeTraceSource,
-};
 pub use capabilities::validator::{
     RegisteredToolValidationError, RegisteredToolValidator, ValidationReport,
 };
@@ -42,14 +39,14 @@ pub use chains::extraction::ExtractionPipeline;
 pub use chains::invoice::{InvoiceData, InvoiceLineItem, InvoicePipeline};
 pub use chains::llm_chain::PromptChainCapability;
 pub use context::conversation::{ConversationService, DefaultConversationService};
-pub use context::tenant::{PlanTier, SubscriptionStatus, TenantClaims, TenantContext, UserRole};
+pub use context::tenant::{PlanLimits, PlanTier, SubscriptionStatus, TenantClaims, TenantContext, UserRole};
 pub use identity::{AuthError, IdentityContext, IdentityManager, IdentityProvider, TenantCreated, TenantManager, TenantSummary};
 pub use identity::legacy::LegacyIdentityProvider;
-pub use identity::zitadel::ZitadelProvider;
+pub use identity::zitadel::{ZitadelCacheStats, ZitadelProvider};
 #[cfg(feature = "local-embeddings")]
 pub use indexing::LocalEmbeddingService;
 pub use indexing::{
-    EmbeddingService, NoopEmbeddingService, OpenAiEmbeddingService, WorkspaceIndexer,
+    EmbeddingModel, EmbeddingService, NoopEmbeddingService,
 };
 pub use memory::{ContextBuilder, ContextTruncator, OldestFirstTruncator};
 pub use realtime::{RealtimeService, WorkspaceChangeEvent};

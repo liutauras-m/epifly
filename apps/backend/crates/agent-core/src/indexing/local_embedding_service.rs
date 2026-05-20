@@ -2,66 +2,124 @@
 //!
 //! Enabled only when compiled with `--features agent-core/local-embeddings`.
 //! Activated at runtime via `EMBEDDING_BACKEND=local`.
+//!
+//! Default model: `multilingual-e5-large` (1024-dim).
+//! The multilingual-e5 family requires `query: ` prefix for queries
+//! and `passage: ` prefix for documents to be indexed.
+//!
+//! # Why raw fastembed rather than rig's FastEmbed adapter
+//!
+//! Rig 0.36's `rig::embeddings::fastembed::FastEmbed` hard-wires the embedding
+//! call without prefix injection. Multilingual-E5 requires `"query: "` /
+//! `"passage: "` prefixes for retrieval quality. Using fastembed directly gives
+//! us full control over that prefix, at the cost of not going through the Rig
+//! embedding trait. The Rig adapter is a thin wrapper anyway.
+//!
+//! # Environment variables
+//!
+//! - `EMBEDDING_LOCAL_MODEL`: model name (default `multilingual-e5-large`)
+//! - `EMBEDDING_CACHE_DIR`: directory where ONNX model files are cached
+//!   (default: fastembed's own default, typically `~/.cache/huggingface`)
+//! - `EMBEDDING_MAX_BATCH`: max documents per fastembed batch call (default `256`)
 
+use crate::indexing::embedding_service::EmbeddingModel;
 use crate::indexing::EmbeddingService;
 use async_trait::async_trait;
-use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+use fastembed::{EmbeddingModel as FastEmbedModel, InitOptions, TextEmbedding};
 use tokio::sync::Mutex;
 use tracing::info;
 
-/// Default local model: nomic-embed-text-v1.5 (768 dims, no GPU needed).
-pub const LOCAL_EMBEDDING_DIMS: usize = 768;
-
 pub struct LocalEmbeddingService {
     inner: Mutex<TextEmbedding>,
-    dims: usize,
+    model: EmbeddingModel,
+    /// Prefix to prepend to query strings (e.g. "query: " for e5 models).
+    query_prefix: &'static str,
+    /// Prefix to prepend to document strings (e.g. "passage: " for e5 models).
+    passage_prefix: &'static str,
+    /// Max documents per batch call.
+    max_batch: usize,
 }
 
-impl LocalEmbeddingService {
-    /// Construct with the default model (`nomic-embed-text-v1.5`).
-    pub fn new() -> anyhow::Result<Self> {
-        Self::with_model(EmbeddingModel::NomicEmbedTextV15, LOCAL_EMBEDDING_DIMS)
-    }
+const DEFAULT_MAX_BATCH: usize = 256;
 
-    fn with_model(model: EmbeddingModel, dims: usize) -> anyhow::Result<Self> {
-        let emb = TextEmbedding::try_new(InitOptions::new(model).with_show_download_progress(true))
+impl LocalEmbeddingService {
+    fn build(
+        fe_model: FastEmbedModel,
+        model: EmbeddingModel,
+        query_prefix: &'static str,
+        passage_prefix: &'static str,
+    ) -> anyhow::Result<Self> {
+        let max_batch = std::env::var("EMBEDDING_MAX_BATCH")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_MAX_BATCH);
+
+        let mut opts = InitOptions::new(fe_model).with_show_download_progress(true);
+        if let Ok(cache_dir) = std::env::var("EMBEDDING_CACHE_DIR") {
+            opts = opts.with_cache_dir(cache_dir.into());
+        }
+
+        let emb = TextEmbedding::try_new(opts)
             .map_err(|e| anyhow::anyhow!("failed to init local embedding model: {e}"))?;
         Ok(Self {
             inner: Mutex::new(emb),
-            dims,
+            model,
+            query_prefix,
+            passage_prefix,
+            max_batch,
         })
     }
 
-    /// Construct from `EMBEDDING_LOCAL_MODEL` env var (defaults to `nomic-embed-text-v1.5`).
-    pub fn from_env() -> anyhow::Result<Self> {
-        let model_name = std::env::var("EMBEDDING_LOCAL_MODEL")
-            .unwrap_or_else(|_| "nomic-embed-text-v1.5".into());
-        info!(model = %model_name, "initialising local fastembed model");
-        match model_name.as_str() {
-            "nomic-embed-text-v1.5" => Self::new(),
-            "bge-m3" => Self::with_model(EmbeddingModel::BGEM3, 1024),
-            "all-minilm-l6-v2" => Self::with_model(EmbeddingModel::AllMiniLML6V2, 384),
-            other => anyhow::bail!("unknown local embedding model: {other}"),
+    /// Construct from the typed `EmbeddingModel` enum.
+    pub fn from_model(model: EmbeddingModel) -> anyhow::Result<Self> {
+        info!(model = model.name(), "initialising local fastembed model");
+        match model {
+            EmbeddingModel::MultilingualE5Large => {
+                Self::build(FastEmbedModel::MultilingualE5Large, model, "query: ", "passage: ")
+            }
+            EmbeddingModel::BgeSmallEnV15 => {
+                Self::build(FastEmbedModel::BGESmallENV15, model, "", "")
+            }
+            EmbeddingModel::BgeM3 => {
+                Self::build(FastEmbedModel::BGEM3, model, "", "")
+            }
+            EmbeddingModel::NomicEmbedTextV15 => {
+                Self::build(FastEmbedModel::NomicEmbedTextV15, model, "", "")
+            }
+            EmbeddingModel::AllMiniLML6V2 => {
+                Self::build(FastEmbedModel::AllMiniLML6V2, model, "", "")
+            }
         }
+    }
+
+    /// Construct from env vars (`EMBEDDING_LOCAL_MODEL`).
+    pub fn from_env() -> anyhow::Result<Self> {
+        Self::from_model(EmbeddingModel::from_env())
     }
 }
 
 #[async_trait]
 impl EmbeddingService for LocalEmbeddingService {
+    fn model(&self) -> EmbeddingModel {
+        self.model
+    }
+
     async fn embed_query(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+        let prefixed = format!("{}{text}", self.query_prefix);
         let mut guard = self.inner.lock().await;
         let results = guard
-            .embed(vec![text], None)
+            .embed(vec![prefixed.as_str()], None)
             .map_err(|e| anyhow::anyhow!("fastembed embed_query failed: {e}"))?;
         let embedding: Vec<f32> = results
             .into_iter()
             .next()
             .ok_or_else(|| anyhow::anyhow!("fastembed returned empty result"))?;
-        if embedding.len() != self.dims {
+        let expected = self.model.dims() as usize;
+        if embedding.len() != expected {
             anyhow::bail!(
                 "embedding dim mismatch: got {}, expected {} — model mismatch",
                 embedding.len(),
-                self.dims
+                expected
             );
         }
         Ok(embedding)
@@ -71,19 +129,32 @@ impl EmbeddingService for LocalEmbeddingService {
         if texts.is_empty() {
             return Ok(vec![]);
         }
+        let prefixed: Vec<String> = texts
+            .iter()
+            .map(|t| format!("{}{t}", self.passage_prefix))
+            .collect();
+
+        let mut all_results: Vec<Vec<f32>> = Vec::with_capacity(prefixed.len());
         let mut guard = self.inner.lock().await;
-        let results = guard
-            .embed(texts.as_slice(), None)
-            .map_err(|e| anyhow::anyhow!("fastembed embed_documents failed: {e}"))?;
-        for (i, emb) in results.iter().enumerate() {
-            if emb.len() != self.dims {
+        for chunk in prefixed.chunks(self.max_batch) {
+            let refs: Vec<&str> = chunk.iter().map(|s| s.as_str()).collect();
+            let batch = guard
+                .embed(refs, None)
+                .map_err(|e| anyhow::anyhow!("fastembed embed_documents failed: {e}"))?;
+            all_results.extend(batch);
+        }
+        drop(guard);
+
+        let expected = self.model.dims() as usize;
+        for (i, emb) in all_results.iter().enumerate() {
+            if emb.len() != expected {
                 anyhow::bail!(
                     "embedding[{i}] dim mismatch: got {}, expected {} — model mismatch",
                     emb.len(),
-                    self.dims
+                    expected
                 );
             }
         }
-        Ok(results)
+        Ok(all_results)
     }
 }

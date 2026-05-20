@@ -75,6 +75,12 @@ fn build_cors() -> CorsLayer {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Lightweight flag — no clap dep needed for a single flag.
+    if std::env::args().any(|a| a == "--dump-routes") {
+        print!("{}", routes::dump_routes_markdown());
+        return Ok(());
+    }
+
     let (_telemetry, prom_registry) = common::telemetry::init("agent-gateway", "info");
     let prom_registry = Arc::new(prom_registry);
 
@@ -88,16 +94,25 @@ async fn main() -> Result<()> {
     let loaded = state.registry.lock().unwrap().len();
     info!(capabilities = loaded, "capability registry loaded");
 
+    // ── Set embedding_dims gauge at startup ──────────────────────────────
+    {
+        let model = agent_core::indexing::embedding_service::EmbeddingModel::from_env();
+        rustfs_metrics.set_embedding_dims(model.name(), model.dims() as i64);
+    }
+
     // ── Sync atomic counters into Prometheus (every 30 s) ────────────────
-    // Both TenantStorageFactory and TenantOnboardingService use AtomicU64
-    // counters that we mirror into Prometheus IntCounterVec here.
+    // TenantStorageFactory, TenantOnboardingService, and ZitadelProvider use
+    // AtomicU64 counters that we mirror into Prometheus IntCounterVec here.
     if let Some(m) = state.rustfs_metrics.clone() {
         let factory = state.tenant_storage.clone();
         let onboarding = state.onboarding.clone();
+        let zitadel_stats = state.zitadel_cache_stats.clone();
         tokio::spawn(async move {
             let mut last_fallback = 0u64;
             let mut last_onboarding = 0u64;
             let mut last_marker_failed = 0u64;
+            let mut last_z_hits = 0u64;
+            let mut last_z_misses = 0u64;
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(30)).await;
 
@@ -112,8 +127,6 @@ async fn main() -> Result<()> {
                 if let Some(ref svc) = onboarding {
                     let cur = svc.onboarding_total.load(std::sync::atomic::Ordering::Relaxed);
                     if cur > last_onboarding {
-                        // Attribute all newly counted provisions as "normal" (system tenants
-                        // rarely provision via the onboarding service in practice).
                         m.record_onboarding("normal");
                         last_onboarding = cur;
                     }
@@ -122,6 +135,23 @@ async fn main() -> Result<()> {
                     if cur > last_marker_failed {
                         m.record_onboarding_marker_failed();
                         last_marker_failed = cur;
+                    }
+                }
+
+                if let Some(ref zs) = zitadel_stats {
+                    let hits = zs.hits();
+                    if hits > last_z_hits {
+                        for _ in 0..(hits - last_z_hits) {
+                            m.record_zitadel_cache_hit();
+                        }
+                        last_z_hits = hits;
+                    }
+                    let misses = zs.misses();
+                    if misses > last_z_misses {
+                        for _ in 0..(misses - last_z_misses) {
+                            m.record_zitadel_cache_miss();
+                        }
+                        last_z_misses = misses;
                     }
                 }
             }
@@ -136,24 +166,6 @@ async fn main() -> Result<()> {
         }
     } else {
         info!("RustFS admin not configured — skipping declarative bootstrap");
-    }
-
-    // ── Capability-spec realtime hot-reload ───────────────────────────────
-    if let Some(spec_factory) = state.capability_spec_factory.clone() {
-        let realtime = Arc::clone(&state.realtime_service);
-        let registry = Arc::clone(&state.registry);
-        tokio::spawn(async move {
-            let mut rx = realtime.subscribe_capability_spec_changes().await;
-            while let Some((namespace, tool_name)) = rx.recv().await {
-                if let Err(e) = spec_factory
-                    .reload_one(&registry, &namespace, &tool_name)
-                    .await
-                {
-                    warn!(error = %e, namespace, tool_name, "capability-spec hot-reload failed");
-                }
-            }
-        });
-        info!("capability-spec realtime hot-reload listener started");
     }
 
     // ── Register dynamic capabilities ────────────────────────────────────
@@ -181,7 +193,6 @@ async fn main() -> Result<()> {
 
     // ── Lago plan catalog seeding ────────────────────────────────────────
     if let Some(ref billing) = state.billing {
-        use billing_core::provider::BillingProvider as _;
         if let Err(e) = billing.ensure_plans(&state.plan_catalog).await {
             tracing::warn!(error = %e, "ensure_plans failed — Lago may not be reachable yet");
         } else {

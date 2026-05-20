@@ -4,14 +4,13 @@
 //! For UI `/super-admin/*` routes: reads `SessionUser.role`.
 
 use crate::mw::tenant::ResolvedTenant;
-use crate::ui::session::SessionUser;
 use axum::{
     Extension,
     body::Body,
     extract::Request,
     http::StatusCode,
     middleware::Next,
-    response::{IntoResponse, Response},
+    response::Response,
 };
 
 /// Middleware for API routes (JWT): requires `role = SuperAdmin` in claims.
@@ -27,15 +26,3 @@ pub async fn require_super_admin_jwt(
     Ok(next.run(req).await)
 }
 
-/// Middleware for UI routes (session cookie): requires `role = "super_admin"`.
-#[allow(dead_code)]
-pub async fn require_super_admin_session(
-    user: SessionUser,
-    req: Request<Body>,
-    next: Next,
-) -> Result<Response, impl IntoResponse> {
-    if user.role != "super_admin" {
-        return Err(StatusCode::FORBIDDEN.into_response());
-    }
-    Ok(next.run(req).await)
-}

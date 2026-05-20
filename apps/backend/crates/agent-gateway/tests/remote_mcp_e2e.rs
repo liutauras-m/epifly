@@ -30,11 +30,14 @@ struct ConstEmbedder;
 
 #[async_trait]
 impl EmbeddingService for ConstEmbedder {
+    fn model(&self) -> agent_core::indexing::EmbeddingModel {
+        agent_core::indexing::EmbeddingModel::MultilingualE5Large
+    }
     async fn embed_query(&self, _: &str) -> anyhow::Result<Vec<f32>> {
-        Ok(vec![0.1_f32; 768])
+        Ok(vec![0.1_f32; 1024])
     }
     async fn embed_documents(&self, texts: Vec<String>) -> anyhow::Result<Vec<Vec<f32>>> {
-        Ok(texts.iter().map(|_| vec![0.1_f32; 768]).collect())
+        Ok(texts.iter().map(|_| vec![0.1_f32; 1024]).collect())
     }
 }
 
