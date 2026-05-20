@@ -1,0 +1,1 @@
+{"label": "ocr-invoice-snippets", "input": {"image_path": "/tmp/sample_invoice.png", "capability": "extract.text.ocr_vision"}, "expected": ["invoice", "total"]}

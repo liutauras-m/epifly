@@ -8,6 +8,7 @@ members = [
     "apps/backend/crates/billing-core",
     "apps/backend/crates/agent-gateway",
     "apps/backend/evals",
+    "apps/backend/xtask",
     "apps/browser-shell/src-tauri",
 ]
 
@@ -114,6 +115,12 @@ tokio-cron-scheduler = { version = "0.13" }
 
 # Colored output
 colored      = { version = "2" }
+
+# Glob patterns
+glob         = { version = "0.3" }
+
+# Filesystem watching (hot-reload of capability manifests)
+notify       = { version = "7", features = ["macos_fsevent"] }
 
 
 # OpenAPI documentation

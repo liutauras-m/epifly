@@ -1,6 +1,7 @@
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
-use agent_core::{PlanLimits, map_rig_error};
+use agent_core::{LlmRegistry, PlanLimits, map_rig_error};
+use agent_core::llm::types::LlmRequest;
 use axum::{
     Extension, Json,
     extract::State,
@@ -11,10 +12,9 @@ use axum::{
 };
 use common::error::HttpError;
 use futures::StreamExt;
-use rig::client::ProviderClient;
-use rig::client::completion::CompletionClient;
-use rig::completion::Prompt;
-use rig::providers::anthropic;
+use rig::OneOrMany;
+use rig::completion::Message;
+use rig::message::UserContent;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::convert::Infallible;
@@ -105,9 +105,9 @@ pub async fn completions(
     }
 
     if req.stream.unwrap_or(false) {
-        stream_response(tenant, limits, req).await.into_response()
+        stream_response(Arc::clone(&state.llm), tenant, limits, req).await.into_response()
     } else {
-        match blocking_response(&state, &tenant, limits, req).await {
+        match blocking_response(&state.llm, &tenant, limits, req).await {
             Ok(r) => r.into_response(),
             Err(e) => e.into_response(),
         }
@@ -117,7 +117,7 @@ pub async fn completions(
 // ── Non-streaming ─────────────────────────────────────────────────────────────
 
 async fn blocking_response(
-    _state: &Arc<AppState>,
+    llm: &Arc<LlmRegistry>,
     _tenant: &ResolvedTenant,
     limits: PlanLimits,
     req: ChatRequest,
@@ -132,29 +132,19 @@ async fn blocking_response(
         "chat completion"
     );
 
-    let last_user = req
-        .messages
-        .iter()
-        .rev()
-        .find(|m| m.role == "user")
-        .map(|m| m.content.as_str())
-        .unwrap_or("");
+    let provider = llm
+        .resolve(model_id, None)
+        .map_err(|e| HttpError::internal(e.to_string(), None))?;
 
-    let system = req
-        .messages
-        .iter()
-        .find(|m| m.role == "system")
-        .map(|m| m.content.clone());
+    let messages = chat_messages_to_rig(&req.messages);
+    let llm_req = LlmRequest::builder()
+        .model(model_id.to_string())
+        .messages(messages)
+        .max_tokens(max_tokens as u32)
+        .build();
 
-    let client = anthropic::Client::from_env().expect("ANTHROPIC_API_KEY must be set");
-    let mut builder = client.agent(model_id).max_tokens(max_tokens);
-    if let Some(sys) = system {
-        builder = builder.preamble(&sys);
-    }
-
-    let agent = builder.build();
-    let text = agent
-        .prompt(last_user)
+    let resp = provider
+        .complete(llm_req)
         .await
         .map_err(|e| map_rig_error(e.to_string()))?;
 
@@ -166,14 +156,14 @@ async fn blocking_response(
             index: 0,
             message: ChatMessage {
                 role: "assistant".into(),
-                content: text,
+                content: resp.content,
             },
-            finish_reason: "stop".into(),
+            finish_reason: resp.finish_reason.unwrap_or_else(|| "stop".into()),
         }],
         usage: Usage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
+            prompt_tokens: resp.usage.as_ref().map(|u| u.input_tokens as u64).unwrap_or(0),
+            completion_tokens: resp.usage.as_ref().map(|u| u.output_tokens as u64).unwrap_or(0),
+            total_tokens: resp.usage.map(|u| (u.input_tokens + u.output_tokens) as u64).unwrap_or(0),
         },
     }))
 }
@@ -181,6 +171,7 @@ async fn blocking_response(
 // ── Streaming SSE ─────────────────────────────────────────────────────────────
 
 async fn stream_response(
+    llm: Arc<LlmRegistry>,
     _tenant: ResolvedTenant,
     limits: PlanLimits,
     req: ChatRequest,
@@ -188,104 +179,66 @@ async fn stream_response(
     let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(64);
 
     tokio::spawn(async move {
-        let model_id = req
-            .model
-            .as_deref()
-            .unwrap_or("claude-opus-4-7")
-            .to_string();
+        let model_id = req.model.as_deref().unwrap_or("claude-opus-4-7").to_string();
         let max_tokens = req.max_tokens.unwrap_or(limits.max_tokens).min(limits.max_tokens);
         let id = format!("chatcmpl-{}", Uuid::new_v4());
-        let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
 
-        // Build Anthropic messages (skip system role, send separately)
-        let messages: Vec<Value> = req
-            .messages
-            .iter()
-            .filter(|m| m.role != "system")
-            .map(|m| json!({"role": m.role, "content": m.content}))
-            .collect();
-
-        let mut body = json!({
-            "model": model_id,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "stream": true,
-        });
-        if let Some(sys) = req.messages.iter().find(|m| m.role == "system") {
-            body["system"] = json!(sys.content);
-        }
-
-        let http = reqwest::Client::new();
-        let resp = http
-            .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&body)
-            .send()
-            .await;
-
-        match resp {
+        let provider = match llm.resolve(&model_id, None) {
+            Ok(p) => p,
             Err(e) => {
                 let _ = tx
-                    .send(Ok(
-                        Event::default().data(json!({"error": e.to_string()}).to_string())
-                    ))
+                    .send(Ok(Event::default().data(json!({"error": e.to_string()}).to_string())))
+                    .await;
+                return;
+            }
+        };
+
+        let messages = chat_messages_to_rig(&req.messages);
+        let llm_req = LlmRequest::builder()
+            .model(model_id.clone())
+            .messages(messages)
+            .max_tokens(max_tokens as u32)
+            .build();
+
+        match provider.stream(llm_req).await {
+            Err(e) => {
+                let _ = tx
+                    .send(Ok(Event::default().data(json!({"error": e.to_string()}).to_string())))
                     .await;
             }
-            Ok(response) => {
-                let mut byte_stream = response.bytes_stream();
-                let mut buf = String::new();
-
-                while let Some(chunk) = byte_stream.next().await {
-                    let Ok(bytes) = chunk else { break };
-                    buf.push_str(&String::from_utf8_lossy(&bytes));
-
-                    // SSE events are separated by \n\n
-                    while let Some(pos) = buf.find("\n\n") {
-                        let event_block = buf[..pos].to_string();
-                        buf = buf[pos + 2..].to_string();
-
-                        for line in event_block.lines() {
-                            let Some(data) = line.strip_prefix("data: ") else {
-                                continue;
-                            };
-                            if data == "[DONE]" {
-                                break;
+            Ok(mut stream) => {
+                while let Some(result) = stream.next().await {
+                    match result {
+                        Ok(chunk) => {
+                            if !chunk.delta.is_empty() {
+                                let chunk_json = json!({
+                                    "id": id,
+                                    "object": "chat.completion.chunk",
+                                    "model": model_id,
+                                    "choices": [{ "index": 0, "delta": { "content": chunk.delta }, "finish_reason": null }]
+                                });
+                                let _ = tx
+                                    .send(Ok(Event::default().data(chunk_json.to_string())))
+                                    .await;
                             }
-                            let Ok(ev) = serde_json::from_str::<Value>(data) else {
-                                continue;
-                            };
-
-                            match ev["type"].as_str().unwrap_or("") {
-                                "content_block_delta" => {
-                                    let Some(text) = ev["delta"]["text"].as_str() else {
-                                        continue;
-                                    };
-                                    let chunk_json = json!({
-                                        "id": id,
-                                        "object": "chat.completion.chunk",
-                                        "model": model_id,
-                                        "choices": [{ "index": 0, "delta": { "content": text }, "finish_reason": null }]
-                                    });
-                                    let _ = tx
-                                        .send(Ok(Event::default().data(chunk_json.to_string())))
-                                        .await;
-                                }
-                                "message_stop" => {
-                                    let done_json = json!({
-                                        "id": id,
-                                        "object": "chat.completion.chunk",
-                                        "model": model_id,
-                                        "choices": [{ "index": 0, "delta": {}, "finish_reason": "stop" }]
-                                    });
-                                    let _ = tx
-                                        .send(Ok(Event::default().data(done_json.to_string())))
-                                        .await;
-                                    let _ = tx.send(Ok(Event::default().data("[DONE]"))).await;
-                                }
-                                _ => {}
+                            if chunk.finish_reason.is_some() {
+                                let done_json = json!({
+                                    "id": id,
+                                    "object": "chat.completion.chunk",
+                                    "model": model_id,
+                                    "choices": [{ "index": 0, "delta": {}, "finish_reason": "stop" }]
+                                });
+                                let _ = tx
+                                    .send(Ok(Event::default().data(done_json.to_string())))
+                                    .await;
+                                let _ = tx.send(Ok(Event::default().data("[DONE]"))).await;
                             }
+                        }
+                        Err(e) => {
+                            let _ = tx
+                                .send(Ok(Event::default()
+                                    .data(json!({"error": e.to_string()}).to_string())))
+                                .await;
                         }
                     }
                 }
@@ -294,4 +247,19 @@ async fn stream_response(
     });
 
     Sse::new(ReceiverStream::new(rx))
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Convert `ChatMessage` list (role/content pairs) to Rig completion messages.
+fn chat_messages_to_rig(msgs: &[ChatMessage]) -> Vec<Message> {
+    msgs.iter()
+        .filter_map(|m| match m.role.as_str() {
+            "system" => Some(Message::System { content: m.content.clone() }),
+            "user" => Some(Message::User {
+                content: OneOrMany::one(UserContent::text(m.content.clone())),
+            }),
+            _ => None,
+        })
+        .collect()
 }

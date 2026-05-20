@@ -229,32 +229,31 @@ agent-core/src/
 │       └── anthropic.rs    # AnthropicProvider (wraps rig::providers::anthropic)
 ├── chains/
 │   ├── mod.rs
-│   ├── contract.rs         # ContractPipeline (Claude vision extractor)
-│   ├── extraction.rs
-│   ├── invoice.rs
 │   ├── llm_chain.rs        # PromptChainCapability — TOML-driven LLM chain
 │   ├── dynamic_prompt.rs   # DynamicPromptCapability (manifest-only prompt)
 │   └── executor.rs         # run_chain shared core
+│   (contract.rs, invoice.rs, extraction.rs deleted — replaced by TOML manifests in Phase 3)
 ├── capabilities/
 │   ├── mod.rs
-│   ├── manifest.rs         # ToolManifest + LlmChainConfig
+│   ├── manifest.rs         # ToolManifest v2 + LlmChainConfig
 │   ├── card.rs             # CapabilityCard (manifest + provider + path)
 │   ├── provider.rs         # CapabilityProvider, CapabilityFactory, BulkCapabilityFactory
 │   ├── registry.rs         # CapabilityRegistry (with_default_factories / with_all_factories)
 │   ├── namespace.rs        # NamespaceFilter
-│   ├── discovery.rs        # filesystem discovery of TOML manifests
+│   ├── discovery.rs        # filesystem discovery of TOML manifests + ManifestWatcher
 │   ├── embedding.rs        # capability text → vector for semantic router
-│   ├── executor.rs
-│   ├── semantic_router.rs  # SemanticCapabilityRouter (top-K, moka cache, blake3 keys)
+│   ├── executor.rs         # run_plan (single/parallel_consensus/fallback_cascade)
+│   ├── semantic_router.rs  # SemanticCapabilityRouter (top-K, moka cache, blake3 keys, AttachmentHint)
 │   ├── store.rs
 │   ├── validator.rs
 │   ├── wasm_loader.rs      # wasmtime 44 component-model loader
 │   ├── mcp_adapter.rs      # MCP protocol adapter
 │   ├── admin.rs
 │   ├── providers/
-│   │   ├── builtin.rs / chain.rs / mcp.rs / remote_mcp.rs / wasm.rs
+│   │   ├── chain.rs / mcp.rs / remote_mcp.rs / wasm.rs
+│   │   ├── native_storage.rs  # NativeStorageFactory + focused providers (op-dispatched)
+│   │   ├── job_backed.rs      # JobBackedProvider + JobDispatch trait
 │   │   ├── dynamic_prompt.rs / capability_spec.rs
-│   └── builtin/
 │       ├── card.rs / fs.rs / cargo.rs
 ├── identity/                  # NEW — Zitadel OIDC + legacy provider
 │   ├── mod.rs              # IdentityProvider, TenantManager, IdentityContext, AuthError
@@ -289,7 +288,7 @@ agent-gateway/src/
 ├── state.rs               # AppState (registry, llm, jobs, stores, realtime, job_executor,
 │                          #   capability_spec_factory, billing)
 ├── auth/                  # mod.rs / extractor.rs / verifier.rs — OIDC + legacy JWT verification
-├── capabilities/          # mod.rs / workspace.rs / transcribe_video.rs — runtime-instantiated caps
+├── capabilities/          # mod.rs / job_backed.rs — job-backed capability providers (e.g. transcribe-video)
 ├── mw/                    # tower middleware
 │   ├── mod.rs / admin.rs / api_key.rs / identity.rs / meter.rs / plan.rs
 │   ├── rate_limit.rs / request_id.rs / router_quota.rs / tenant.rs / trace.rs
@@ -391,7 +390,7 @@ Default model: `claude-sonnet-4-6` (`AgentBuilder::default`).
 
 #### 4.4.5 Chains (`chains/executor.rs`)
 
-`run_chain` builds Rig messages directly:
+`run_chain` builds Rig messages and dispatches through `LlmRegistry`:
 
 ```rust
 messages.push(Message::System { content });
@@ -400,15 +399,23 @@ messages.push(Message::User {
 });
 ```
 
-— then resolves the `LlmRegistry` provider for `cfg.model` (alias or model id) and dispatches via `CompletionProvider::complete`. JSON output is auto-parsed; non-JSON is wrapped as `{ "result": text }`.
+— resolves the `LlmRegistry` provider for `cfg.model` (alias or concrete model id) and dispatches via `CompletionProvider::complete`. JSON output is auto-parsed; non-JSON is wrapped as `{ "result": text }`.
 
-`ContractPipeline` (`chains/contract.rs`) bypasses the registry to use Claude vision directly:
+**Domain chain removal (Phase 3):** `contract.rs`, `invoice.rs`, and `extraction.rs` were deleted. Invoice and contract extraction are now **example capabilities** declared as `kind = "chain"` TOML manifests under `apps/backend/capabilities/invoice-processing/` and `apps/backend/capabilities/contract-processing/`. All model calls go through `LlmRegistry`; no code in `agent-core` or `agent-gateway` constructs a `rig::providers::*::Client` directly (enforced by `build.rs` grep guard).
 
-```rust
-UserContent::image_base64(b64, Some(ImageMediaType::PNG), None)
-```
+#### 4.4.6 Orchestration (`capabilities/executor.rs`)
 
-Defaults to model `claude-opus-4-7` and uses `client.completion_model(...)` from `rig::providers::anthropic`.
+`run_plan(steps, registry, llm, tenant)` executes a `Vec<PlanStep>` with three strategies:
+
+| Strategy | Behaviour |
+|---|---|
+| `single` | Invoke one capability; return its result. |
+| `parallel_consensus` | Invoke two capabilities concurrently; `llm_judge` reducer selects best result via `LlmRegistry::resolve("cheap", tenant)`. |
+| `fallback_cascade` | Try primary; on error try fallback; return `{fallback: true}` if both fail. |
+
+`OrchestrationHook` (in `agent/hooks.rs`) implements Rig's `PromptHook` interface. It detects `plan_steps` arrays in tool results, calls `run_plan`, stores results in a buffer (observer pattern — see ADR-0008), and returns `HookAction::Continue`.
+
+#### 4.4.7 Error mapping
 
 #### 4.4.6 Error mapping
 
@@ -455,7 +462,10 @@ model = "claude-sonnet-4-6"
 3. `WasmFactory` — wasmtime 44 component model (`.wasm` modules in `capabilities/`).
 4. `ChainFactory::new(llm)` — instantiates `PromptChainCapability` for any manifest with `kind = "chain"` and a `[chain]` block.
 5. `CapabilitySpecFactory` — declarative `kind = "capability_spec"` manifests, hot-reloadable via the realtime bus.
-6. `BuiltinFactory` — `fs`, `cargo`, etc.
+
+`NativeStorageFactory` is registered separately in `state.rs` (after the default factories) because it captures `Arc<dyn WorkspaceStore>` and `Arc<dyn WorkspaceContentStore>` which are only available at gateway startup. It handles `kind = "native"` manifests and dispatches on `config.op`.
+
+`BuiltinFactory` was removed in Phase 4 of the capabilities refactor. `read_file` / `write_file` are now `storage-read-text` / `storage-write-text` TOML manifests; `run_cargo` is a future `compute.*` capability gated by `CONUSAI_ENABLE_DEV_TOOLS`.
 
 `with_all_factories` additionally registers `DynamicPromptFactory`.
 
@@ -971,7 +981,7 @@ Shell: `telemetry.rs` initialises `tracing_subscriber` for in-process logs only 
 | Billing webhook (Lago HMAC) | Implemented | `routes/billing_webhook.rs` |
 | Capability-spec hot-reload via realtime bus | Implemented | `routes/realtime.rs` + `capabilities/providers/capability_spec.rs` |
 | Remote-MCP capability factory (HTTP-bridged) | Implemented | `capabilities/providers/remote_mcp.rs` |
-| Transcribe-video runtime capability (JobExecutor-backed) | Implemented | `agent-gateway/capabilities/transcribe_video.rs` |
+| Transcribe-video runtime capability (JobExecutor-backed) | Implemented | `agent-gateway/capabilities/job_backed.rs` (`JobBackedProvider::transcribe_video`) |
 
 ### 9.2 Web
 
@@ -1154,7 +1164,7 @@ Note: `ZitadelProvider` uses **introspection over reqwest** (not JWKS/openidconn
 
 ### 12.6 Capability factory chain — current state
 
-`CapabilityRegistry::with_default_factories(llm)` registers, in order: `McpFactory`, `WasmFactory`, `ChainFactory`, `BuiltinFactory`. `with_all_factories` additionally registers `DynamicPromptFactory`. (`TraceReplayFactory` was deleted 2026-05-20 — the capability was a non-functional stub.) `RemoteMcpCapability` is **not** wired through a factory — it is created on demand by `POST /admin/capabilities/register` and inserted directly into the registry. `CapabilitySpecFactory` is a `BulkCapabilityFactory` invoked once at boot (`load_batch`); the hot-reload stub (`reload_one`) and capability-spec-change bus were deleted.
+`CapabilityRegistry::with_default_factories(llm)` registers, in order: `McpFactory`, `WasmFactory`, `ChainFactory`, `CapabilitySpecFactory`. `with_all_factories` additionally registers `DynamicPromptFactory`. `NativeStorageFactory` is registered separately in `state.rs` after the executor builds (it requires `Arc<dyn WorkspaceStore>`). `BuiltinFactory` was removed in Phase 4 (2026-05-20). (`TraceReplayFactory` was deleted 2026-05-20 — the capability was a non-functional stub.) `RemoteMcpCapability` is **not** wired through a factory — it is created on demand by `POST /admin/capabilities/register` and inserted directly into the registry. `CapabilitySpecFactory` is a `BulkCapabilityFactory` invoked once at boot (`load_batch`); the hot-reload stub (`reload_one`) and capability-spec-change bus were deleted.
 
 ### 12.7 Full route surface (verified against `routes/mod.rs`)
 
@@ -1267,9 +1277,12 @@ evals/src/
 ├── config.rs            # EvalConfig: model, dataset path, pass threshold
 ├── report.rs            # EvalReport: per-run metrics + markdown / JSON output
 ├── runners/
-│   ├── mod.rs           # run_suite() dispatch: "invoice" | "ocr" | "ocr_quality" | "all"
-│   ├── invoice.rs       # Invoice extraction runner (uses InvoicePipeline from agent-core)
-│   └── ocr_quality.rs   # OCR quality runner (uses Marker output + diff scorer)
+│   ├── mod.rs           # run_suite() dispatch: "smoke" | "invoice" | "ocr" | "all"
+│   ├── generic.rs       # Generic harness: run_suite_with_override, Scorer enum, extractors
+│   ├── invoice.rs       # Invoice extraction runner (thin wrapper over generic harness)
+│   └── ocr_quality.rs   # OCR quality runner (thin wrapper over generic harness)
+├── suites/
+│   └── smoke.jsonl      # CI smoke suite (invoice + OCR + classify, --scorer field-diff)
 └── scorers/
     └── mod.rs           # InvoiceScorer (field-level F1, pass threshold 0.8)
 ```

@@ -1,0 +1,42 @@
+schema_version = "2.0"
+name        = "extract-ocr-vision"
+version     = "0.1.0"
+namespace   = "extract.text.ocr_vision"
+category    = "extract"
+kind        = "chain"
+description = "Extract text from images and PDFs using Claude's native vision capability."
+tags        = ["ocr", "vision", "text extraction", "image", "pdf"]
+accepts     = ["image/*", "application/pdf"]
+emits       = ["application/json"]
+idempotent  = true
+cost_hint   = "high"
+requires    = []
+search_keywords = ["ocr", "image text", "read image", "extract text", "vision"]
+
+[[tools]]
+name = "extract_text"
+description = "Extract all readable text from an image or PDF using vision. Returns the extracted text and bounding confidence."
+
+[tools.input_schema]
+type = "object"
+required = ["image_path"]
+
+[tools.input_schema.properties.image_path]
+type = "string"
+description = "Workspace-relative path to the image or PDF file"
+
+[tools.input_schema.properties.language_hint]
+type = "string"
+description = "Optional ISO 639-1 language code hint (e.g. 'en', 'de')"
+
+[chain]
+model = "claude-opus-4-7"
+system_prompt = """
+You are an OCR specialist. Extract all text from the provided image or document exactly as it appears.
+Preserve formatting, line breaks, and structure where possible. Return a JSON object with:
+- text: the full extracted text
+- confidence: your confidence level (high/medium/low)
+- language: detected language ISO code
+"""
+prompt_template = "Extract all text from the document at: {{input.image_path}}"
+max_tokens = 4096

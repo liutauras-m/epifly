@@ -60,6 +60,7 @@ moka.workspace        = true
 [dev-dependencies]
 wiremock.workspace = true
 tokio = { version = "1", features = ["full"] }
+tempfile = "3"
 
 [features]
 default          = []

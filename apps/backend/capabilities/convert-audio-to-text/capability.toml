@@ -1,0 +1,36 @@
+schema_version = "2.0"
+name        = "convert-audio-to-text"
+version     = "0.1.0"
+namespace   = "convert.audio_to_text"
+category    = "convert"
+kind        = "native"
+description = "Transcribe audio or video files to text via the Whisper API. Enqueues a background job and returns a task_id immediately."
+tags        = ["audio", "video", "transcription", "whisper", "speech-to-text"]
+accepts     = ["audio/*", "video/*"]
+emits       = ["text/plain"]
+idempotent  = true
+cost_hint   = "medium"
+requires    = []
+search_keywords = ["transcribe", "speech to text", "audio", "video", "whisper", "subtitle"]
+
+[[tools]]
+name = "transcribe"
+description = "Enqueue an audio/video transcription job. Returns task_id immediately; poll GET /v1/tasks/{id} for the completed transcript."
+
+[tools.input_schema]
+type = "object"
+required = ["file_id"]
+
+[tools.input_schema.properties.file_id]
+type = "string"
+description = "Object key returned by POST /v1/files (the download token)"
+
+[tools.input_schema.properties.language]
+type = "string"
+description = "Optional ISO 639-1 language hint for Whisper (e.g. 'en', 'de')"
+
+[config]
+op      = "job"
+backend = "job"
+job_kind = "video-transcription"
+poll_path_template = "/v1/tasks/{id}"

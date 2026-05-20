@@ -1,0 +1,43 @@
+schema_version = "2.0"
+name        = "convert-pdf-to-md"
+version     = "0.1.0"
+namespace   = "convert.document.pdf_to_markdown"
+category    = "convert"
+kind        = "chain"
+description = "Convert a PDF document to Markdown, preserving structure and formatting."
+tags        = ["pdf", "markdown", "conversion", "document"]
+accepts     = ["application/pdf"]
+emits       = ["text/markdown"]
+idempotent  = true
+cost_hint   = "medium"
+requires    = ["extract-ocr-vision"]
+search_keywords = ["pdf to markdown", "convert pdf", "pdf to text", "document conversion"]
+
+[[tools]]
+name = "convert"
+description = "Convert a PDF file to Markdown. Uses vision OCR for scanned pages. Returns markdown_path in the workspace."
+
+[tools.input_schema]
+type = "object"
+required = ["pdf_path"]
+
+[tools.input_schema.properties.pdf_path]
+type = "string"
+description = "Workspace-relative path to the PDF file"
+
+[tools.input_schema.properties.output_path]
+type = "string"
+description = "Optional workspace-relative path for the output Markdown file"
+
+[chain]
+model = "claude-opus-4-7"
+system_prompt = """
+You are a document conversion specialist. Convert the provided PDF content to clean Markdown.
+Preserve headings, lists, tables, and code blocks. Use proper Markdown syntax.
+Return a JSON object with:
+- markdown: the converted Markdown content
+- page_count: number of pages processed
+- output_path: where the file was saved
+"""
+prompt_template = "Convert the PDF at {{input.pdf_path}} to Markdown. Save to {{input.output_path}}."
+max_tokens = 8192

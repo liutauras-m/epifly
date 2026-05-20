@@ -1,0 +1,28 @@
+schema_version = "2.0"
+name        = "storage-ensure-folder"
+version     = "0.1.0"
+namespace   = "storage.object.ensure_folder"
+category    = "storage"
+kind        = "native"
+description = "Create a directory (including all parents) in the tenant workspace if it does not exist."
+tags        = ["storage", "folder", "mkdir", "create"]
+accepts     = ["application/json"]
+emits       = ["application/json"]
+idempotent  = true
+requires    = []
+search_keywords = ["create folder", "mkdir", "ensure directory"]
+
+[[tools]]
+name = "ensure_folder"
+description = "Create the specified directory path (and all parents) in the workspace."
+
+[tools.input_schema]
+type = "object"
+required = ["path"]
+
+[tools.input_schema.properties.path]
+type = "string"
+description = "Workspace-relative directory path to create"
+
+[config]
+op = "ensure_folder"

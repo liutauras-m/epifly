@@ -1,8 +1,19 @@
-name = "ocr-service"
-version = "1.0.0"
-description = "General-purpose OCR for raw unstructured text extraction from any image or scanned document. Returns plain text — no structured fields. For invoices or documents requiring structured output, use invoice-processing instead."
-kind = "chain"
-tags = ["ocr", "vision", "text-extraction", "document", "general-purpose"]
+schema_version = "2.0"
+name        = "ocr-service"
+version     = "1.0.0"
+namespace   = "extract.ocr.vision"
+category    = "extract"
+kind        = "chain"
+description = "General-purpose OCR for raw unstructured text extraction from any image or scanned document using Claude vision. Returns plain text — no structured fields. For invoices requiring structured output, use invoice-processing instead."
+tags        = ["ocr", "vision", "text-extraction", "document", "general-purpose"]
+accepts     = [
+    { mime = "image/*", max_size_mb = 20 },
+    { mime = "application/pdf", max_size_mb = 20 },
+]
+emits       = ["text/plain"]
+idempotent  = true
+cost_hint   = { dollars = 0.02, latency_ms = 3000 }
+requires    = []
 search_keywords = [
     "OCR", "optical character recognition", "extract text", "read text from image",
     "scan document", "handwritten text", "scanned page", "text recognition",
@@ -11,21 +22,27 @@ search_keywords = [
 ]
 
 [[tools]]
-name = "extract_text"
+name        = "extract_text"
 description = "Extract raw plain text from an image or scanned document using Claude vision. Returns unstructured text. Input: image_path — local path or URL. Set preserve_layout=true to keep whitespace structure."
 
 [tools.input_schema]
-type = "object"
+type     = "object"
 required = ["image_path"]
 
 [tools.input_schema.properties.image_path]
-type = "string"
+type        = "string"
 description = "Local path or http/https URL to the image or PDF"
 
 [tools.input_schema.properties.preserve_layout]
-type = "boolean"
-default = false
-description = "Preserve whitespace/column layout in output"
+type        = "boolean"
+default     = false
+description = "Preserve whitespace and column layout in output"
 
-[config]
-default_model = "claude-sonnet-4-6"
+[chain]
+model           = "smart"
+vision          = true
+max_tokens      = 4096
+system_prompt   = "You are an OCR specialist. Extract all visible text from the image accurately, preserving the reading order. Output only the extracted text with no additional commentary."
+prompt_template = """Extract all text visible in the attached image or document.
+{{#if input.preserve_layout}}Preserve the original layout, columns, and whitespace as accurately as possible.{{/if}}
+Return the raw extracted text only — no explanations, no formatting markup, no JSON."""

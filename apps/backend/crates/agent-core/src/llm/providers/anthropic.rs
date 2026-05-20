@@ -197,6 +197,49 @@ impl CompletionProvider for AnthropicProvider {
     }
 }
 
+// ── Agent-building helpers ────────────────────────────────────────────────────
+//
+// These live here (inside src/llm/providers/) so that callers such as
+// `agent/builder.rs` never need to import `rig::providers::` directly —
+// they only import types from this module.
+
+/// Opaque Rig agent type backed by the Anthropic completion model.
+/// Exported so `agent/builder.rs` can hold and call it without importing `rig::providers::`.
+pub type RigAnthropicAgent =
+    rig::agent::Agent<rig::providers::anthropic::completion::CompletionModel>;
+
+impl AnthropicProvider {
+    /// Build a Rig agent with no dynamic tools.
+    pub fn build_agent(
+        &self,
+        model: &str,
+        preamble: &str,
+        max_tokens: u64,
+    ) -> RigAnthropicAgent {
+        self.client
+            .agent(model)
+            .preamble(preamble)
+            .max_tokens(max_tokens)
+            .build()
+    }
+
+    /// Build a Rig agent with a set of dynamic tools (for semantic router).
+    pub fn build_agent_with_tools(
+        &self,
+        model: &str,
+        preamble: &str,
+        max_tokens: u64,
+        tools: Vec<Box<dyn rig::tool::ToolDyn>>,
+    ) -> RigAnthropicAgent {
+        self.client
+            .agent(model)
+            .preamble(preamble)
+            .max_tokens(max_tokens)
+            .tools(tools)
+            .build()
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

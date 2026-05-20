@@ -1,8 +1,19 @@
-name = "invoice-processing"
-version = "1.0.0"
-description = "Structured extraction from invoice documents. Returns typed InvoiceData: invoice_number, date, issuer, billed_to, line items, totals, currency, payment terms, and status. Handles the vision step internally — do not chain ocr-service before this."
-kind = "chain"
-tags = ["invoice", "finance", "accounts-payable", "structured-extraction", "vision", "document"]
+schema_version = "2.0"
+name        = "invoice-processing"
+version     = "1.0.0"
+namespace   = "extract.fields.invoice"
+category    = "extract"
+kind        = "chain"
+description = "Structured extraction from invoice documents. Returns typed InvoiceData JSON: invoice_number, date, issuer, billed_to, line items, totals, currency, payment terms, and status. Call when the user uploads a bill, receipt, purchase order, or asks to process an invoice."
+tags        = ["invoice", "finance", "accounts-payable", "structured-extraction", "vision", "document"]
+accepts     = [
+    { mime = "application/pdf", max_size_mb = 20 },
+    { mime = "image/*", max_size_mb = 20 },
+]
+emits       = ["application/json"]
+idempotent  = true
+cost_hint   = { dollars = 0.05, latency_ms = 4000 }
+requires    = []
 search_keywords = [
     "invoice", "bill", "billing", "facture", "purchase order", "PO",
     "accounts payable", "AP document", "vendor invoice", "supplier invoice",
@@ -11,35 +22,73 @@ search_keywords = [
 ]
 
 [[tools]]
-name = "extract_invoice"
+name        = "extract_invoice"
 description = "Extract complete structured fields from an invoice image or PDF in a single call. Input: image_path — local path or URL (PNG, JPEG, JPG, PDF). Output: InvoiceData JSON with invoice_number, date, issuer, billed_to, line_items, subtotal, tax, total, currency, status."
 
 [tools.input_schema]
-type = "object"
+type     = "object"
 required = ["image_path"]
 
 [tools.input_schema.properties.image_path]
-type = "string"
+type        = "string"
 description = "Absolute local path or http/https URL to the invoice image or PDF"
 
-[tools.input_schema.properties.model]
-type = "string"
-description = "Claude model ID to use (default: claude-opus-4-7)"
-default = "claude-opus-4-7"
-
 [[tools]]
-name = "validate_invoice"
+name        = "validate_invoice"
 description = "Validate previously extracted InvoiceData for completeness and mathematical consistency. Catches missing fields, mismatched totals, and invalid dates. Run after extract_invoice."
 
 [tools.input_schema]
-type = "object"
+type     = "object"
 required = ["invoice_data"]
 
 [tools.input_schema.properties.invoice_data]
-type = "object"
+type        = "object"
 description = "InvoiceData JSON previously returned by extract_invoice"
 
+[chain]
+model           = "smart"
+vision          = true
+max_tokens      = 2048
+system_prompt   = "You are an invoice data extraction specialist. Extract structured data from invoice images with high accuracy. Always respond with valid JSON only."
+prompt_template = """Extract all invoice information from the attached document.
+Return a valid JSON object matching exactly this structure — use null for missing scalar fields, empty array [] for missing arrays:
+{
+  "invoice_number": string|null,
+  "invoice_date": string|null,
+  "due_date": string|null,
+  "issuer_name": string|null,
+  "issuer_address": string|null,
+  "issuer_vat": string|null,
+  "billed_to_name": string|null,
+  "billed_to_company": string|null,
+  "billed_to_address": string|null,
+  "billed_to_email": string|null,
+  "currency": string|null,
+  "subtotal": number|null,
+  "tax_amount": number|null,
+  "total_amount": number|null,
+  "amount_due": number|null,
+  "status": string|null,
+  "line_items": [{"description": string, "quantity": number|null, "unit_price": number|null, "total": number|null}],
+  "notes": string|null,
+  "order_number": string|null
+}
+Respond ONLY with the JSON object, no markdown fences, no explanation."""
+
+[chain.output_schema]
+type     = "object"
+required = ["invoice_number", "line_items"]
+
+[chain.output_schema.properties.invoice_number]
+type = ["string", "null"]
+
+[chain.output_schema.properties.total_amount]
+type = ["number", "null"]
+
+[chain.output_schema.properties.line_items]
+type  = "array"
+items = { type = "object" }
+
 [config]
-default_model = "claude-opus-4-7"
-max_image_size_mb = 20
-supported_formats = ["png", "jpeg", "jpg", "pdf"]
+max_image_size_mb   = 20
+supported_formats   = ["png", "jpeg", "jpg", "pdf"]

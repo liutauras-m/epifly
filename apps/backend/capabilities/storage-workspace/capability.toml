@@ -1,0 +1,42 @@
+schema_version = "2.0"
+name        = "storage-workspace"
+version     = "1.0.0"
+namespace   = "storage.workspace"
+category    = "storage"
+kind        = "native"
+description = "Save documents and list folders in the user's workspace."
+tags        = ["workspace", "files", "storage", "save", "document"]
+emits       = ["application/json"]
+idempotent  = false
+requires    = []
+search_keywords = ["save", "store", "folder", "workspace", "document", "file"]
+
+[[tools]]
+name = "save_document"
+description = "Save text content as a document in a workspace folder. Creates the folder if it doesn't exist. Use this to save files, notes, or any content the user asks to store."
+
+[tools.input_schema]
+type = "object"
+required = ["folder_name", "filename", "content"]
+
+[tools.input_schema.properties.folder_name]
+type = "string"
+description = "Name of the top-level workspace folder (e.g. 'Research', 'Projects')"
+
+[tools.input_schema.properties.filename]
+type = "string"
+description = "Document filename without extension (e.g. 'meeting-notes'). A .md extension will be added."
+
+[tools.input_schema.properties.content]
+type = "string"
+description = "Markdown content to save in the document"
+
+[[tools]]
+name = "list_folders"
+description = "List all top-level workspace folders available to the user."
+
+[tools.input_schema]
+type = "object"
+
+[config]
+op = "workspace"

@@ -169,6 +169,13 @@ impl CapabilitySpecFactory {
             tenant_scope: spec.tenant_scope.clone(),
             enabled: true,
             search_keywords: vec![],
+            schema_version: "1.0".into(),
+            category: None,
+            accepts: vec![],
+            emits: vec![],
+            idempotent: true,
+            cost_hint: None,
+            requires: vec![],
         };
         let card = CapabilityCard::new(manifest.clone(), source_dir);
 
@@ -304,6 +311,13 @@ mod tests {
             tenant_scope: vec![],
             enabled: true,
             search_keywords: vec![],
+            schema_version: "2.0".into(),
+            category: None,
+            accepts: vec![],
+            emits: vec![],
+            idempotent: true,
+            cost_hint: None,
+            requires: vec![],
         }
     }
 

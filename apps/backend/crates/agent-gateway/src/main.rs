@@ -168,22 +168,6 @@ async fn main() -> Result<()> {
         info!("RustFS admin not configured — skipping declarative bootstrap");
     }
 
-    // ── Register dynamic capabilities ────────────────────────────────────
-    {
-        use agent_core::capabilities::provider::CapabilityProvider;
-        use capabilities::transcribe_video::TranscribeVideoCapability;
-        let provider: Arc<dyn CapabilityProvider> = Arc::new(TranscribeVideoCapability::new(
-            Arc::clone(&state.job_executor),
-        ));
-        let card = agent_core::capabilities::card::CapabilityCard::new(
-            provider.manifest().clone(),
-            std::path::PathBuf::from("runtime"),
-        )
-        .with_provider(Arc::clone(&provider));
-        state.registry.lock().unwrap().register(card);
-        info!("TranscribeVideoCapability registered");
-    }
-
     // ── LLM registry verification ────────────────────────────────────────
     if let Err(e) = agent_core::llm::verify_llm_providers(&state.llm).await {
         tracing::warn!(error = %e, "LLM registry verification failed");

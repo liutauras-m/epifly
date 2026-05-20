@@ -42,6 +42,7 @@ async-recursion        = { version = "1" }
 url                    = { version = "2" }
 moka.workspace         = true
 blake3.workspace       = true
+notify.workspace       = true
 
 [dev-dependencies]
 proptest.workspace = true

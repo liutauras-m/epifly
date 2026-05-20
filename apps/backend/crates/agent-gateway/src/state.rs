@@ -4,8 +4,8 @@ use agent_core::llm::providers::anthropic::AnthropicProvider;
 use agent_core::{
     ArtifactBridge, BulkCapabilityFactory, CapabilityAdmin, CapabilityDiscovery,
     CapabilityRegistry, CapabilitySpecFactory, ConversationService, CredentialStore,
-    DefaultConversationService, EmbeddingService, LlmRegistry, NamespaceFilter,
-    NoopEmbeddingService, QdrantVectorStore, RealtimeService,
+    DefaultConversationService, EmbeddingService, LlmRegistry, ManifestWatcher, NamespaceFilter,
+    NativeStorageFactory, NoopEmbeddingService, QdrantVectorStore, RealtimeService,
     RedbMetadataStore, RustFsContentStore, SemanticCapabilityRouter, SemanticRouterConfig,
     StorageQuotaService, TenantOnboardingService, TenantStorageFactory, build_admin,
 };
@@ -20,6 +20,7 @@ use common::memory::{
 };
 use jobs::jobs::{AuditLogCleanupJob, CapabilityHealthCheckJob, LagoReconcileJob, RustFsKeyRotationJob, TenantBucketMigrationJob, VideoTranscriptionJob};
 use jobs::{JobAdmin, JobContext, JobExecutor, JobRegistry};
+use crate::capabilities::job_backed::transcribe_video_provider;
 use object_store::aws::AmazonS3Builder;
 use object_store::ObjectStore;
 use rustfs_admin::RustFsAdminClient;
@@ -68,6 +69,8 @@ pub struct AppState {
     pub artifact_bridge: Option<Arc<ArtifactBridge>>,
     /// Identity provider (legacy HMAC/JWT or Zitadel OIDC).
     pub identity: StdArc<dyn IdentityManager>,
+    /// Hot-reload watcher for capability TOML manifests. Kept alive for the process lifetime.
+    pub manifest_watcher: Option<ManifestWatcher>,
     /// Token cache counters when Zitadel is the active provider; None for legacy.
     pub zitadel_cache_stats: Option<StdArc<ZitadelCacheStats>>,
     /// Billing provider (Lago). None when LAGO_API_KEY not configured.
@@ -187,6 +190,12 @@ impl AppState {
         let storage_quota = StorageQuotaService::new(Arc::clone(&tenant_storage));
 
         let mut registry_raw = CapabilityRegistry::with_all_factories(Arc::clone(&llm));
+        // NativeStorageFactory handles ToolKind::Native manifests (storage-workspace,
+        // storage-read-text, storage-write-text) loaded from the capabilities directory.
+        registry_raw.register_factory(NativeStorageFactory::new(
+            Arc::clone(&workspace_store),
+            Arc::clone(&workspace_content),
+        ));
         CapabilityDiscovery::from_env().discover_into(&mut registry_raw)?;
 
         let capability_spec_factory = Arc::new(CapabilitySpecFactory::new(
@@ -199,17 +208,6 @@ impl AppState {
             Err(e) => warn!(error = %e, "capability-spec bulk load failed; continuing startup"),
         }
 
-        // Register the workspace built-in capability before building the registry Arc.
-        {
-            use crate::capabilities::workspace::WorkspaceProvider;
-            let ws_card = WorkspaceProvider::new(
-                Arc::clone(&workspace_store),
-                Arc::clone(&workspace_content),
-            )
-            .into_card();
-            registry_raw.register(ws_card);
-        }
-
         let registry = Arc::new(Mutex::new(registry_raw));
 
         let router_cfg = SemanticRouterConfig {
@@ -218,7 +216,7 @@ impl AppState {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(20),
             namespace: NamespaceFilter::Any,
-            include_always: vec!["workspace".into()],
+            include_always: vec!["storage-workspace".into()],
             ..Default::default()
         };
         let semantic_router = SemanticCapabilityRouter::new(
@@ -304,6 +302,28 @@ impl AppState {
 
         let realtime_service = RealtimeService::new();
 
+        // Register job-backed capabilities that need Arc<JobExecutor>.
+        {
+            use agent_core::capabilities::provider::CapabilityProvider;
+            let provider: Arc<dyn CapabilityProvider> = Arc::new(
+                transcribe_video_provider(&job_executor),
+            );
+            registry.lock().unwrap().register_provider(provider);
+            info!("transcribe-video capability registered");
+        }
+
+        // Start hot-reload watcher (250 ms debounce, non-fatal if notify unavailable).
+        let manifest_watcher = match ManifestWatcher::start(Arc::clone(&registry), Some(Arc::clone(&realtime_service))) {
+            Ok(w) => {
+                info!("manifest hot-reload watcher started");
+                Some(w)
+            }
+            Err(e) => {
+                warn!(error = %e, "manifest watcher unavailable — hot-reload disabled");
+                None
+            }
+        };
+
         Ok(Self {
             registry,
             rate_limiter: RateLimiter::new(),
@@ -334,6 +354,7 @@ impl AppState {
             capability_spec_factory: Some(capability_spec_factory),
             artifact_bridge,
             identity,
+            manifest_watcher,
             zitadel_cache_stats,
             billing,
             quota,
@@ -348,13 +369,18 @@ impl AppState {
         info!("CONUSAI_TEST_MODE=1 — using in-memory stores (no Qdrant / RustFS)");
 
         let llm = Arc::new(build_llm_registry());
-        let mut registry = CapabilityRegistry::with_default_factories(Arc::clone(&llm));
-        CapabilityDiscovery::from_env().discover_into(&mut registry)?;
-
         let thread_store: Arc<dyn ThreadStore> = Arc::new(InMemoryThreadStore::new());
         let workspace_store: Arc<dyn WorkspaceStore> = Arc::new(InMemoryWorkspaceStore::new());
         let workspace_content: Arc<dyn WorkspaceContentStore> =
             Arc::new(InMemoryWorkspaceContent::new());
+
+        let mut registry = CapabilityRegistry::with_default_factories(Arc::clone(&llm));
+        registry.register_factory(NativeStorageFactory::new(
+            Arc::clone(&workspace_store),
+            Arc::clone(&workspace_content),
+        ));
+        CapabilityDiscovery::from_env().discover_into(&mut registry)?;
+
         let conversation_service: Arc<dyn ConversationService> =
             Arc::new(DefaultConversationService {
                 thread_store: Arc::clone(&thread_store),
@@ -362,17 +388,6 @@ impl AppState {
             });
 
         let audit_store: Arc<dyn AuditStore> = Arc::new(InMemoryAuditStore::new());
-
-        // Register workspace capability before building the registry Arc.
-        {
-            use crate::capabilities::workspace::WorkspaceProvider;
-            let ws_card = WorkspaceProvider::new(
-                Arc::clone(&workspace_store),
-                Arc::clone(&workspace_content),
-            )
-            .into_card();
-            registry.register(ws_card);
-        }
 
         let registry = Arc::new(Mutex::new(registry));
         let tool_admin = Arc::new(build_admin(Arc::clone(&registry), Arc::clone(&audit_store)));
@@ -384,7 +399,7 @@ impl AppState {
             Arc::clone(&vector_store),
             Arc::clone(&embedding_service),
             SemanticRouterConfig {
-                include_always: vec!["workspace".into()],
+                include_always: vec!["storage-workspace".into()],
                 ..Default::default()
             },
         );
@@ -431,6 +446,7 @@ impl AppState {
             capability_spec_factory: None,
             artifact_bridge: None,
             identity,
+            manifest_watcher: None,
             zitadel_cache_stats: None,
             billing: None,
             quota: None,

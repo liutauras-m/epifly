@@ -1,0 +1,3 @@
+{"label": "invoice-basic", "input": {"image_path": "invoice.png", "capability": "extract.fields.invoice"}, "expected": {"invoice_number": "HCY-23256029", "status": "PAID", "currency": "EUR", "total_amount": 63.99}}
+{"label": "ocr-basic", "input": {"image_path": "invoice.png", "capability": "extract.text.ocr_vision"}, "expected": ["HCY-23256029", "Hostinger", "63.99"]}
+{"label": "classify-invoice", "input": {"file_path": "invoice.png", "capability": "sense.classification.document_type"}, "expected": {"document_type": "invoice"}}

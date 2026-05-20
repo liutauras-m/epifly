@@ -1,0 +1,31 @@
+schema_version = "2.0"
+name        = "storage-write-text"
+version     = "1.0.0"
+namespace   = "storage.fs.write"
+category    = "storage"
+kind        = "native"
+description = "Write text content to a file in the tenant workspace filesystem."
+tags        = ["storage", "files", "write", "filesystem"]
+emits       = ["application/json"]
+idempotent  = false
+requires    = []
+search_keywords = ["write", "save", "file", "create", "text"]
+
+[[tools]]
+name = "write_file"
+description = "Write text content to a file path within the tenant workspace. Creates parent directories as needed."
+
+[tools.input_schema]
+type = "object"
+required = ["path", "content"]
+
+[tools.input_schema.properties.path]
+type = "string"
+description = "Relative file path within the tenant workspace"
+
+[tools.input_schema.properties.content]
+type = "string"
+description = "Text content to write"
+
+[config]
+op = "write_text"

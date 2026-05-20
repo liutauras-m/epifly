@@ -1,0 +1,38 @@
+schema_version = "2.0"
+name        = "sense-classify-document"
+version     = "0.1.0"
+namespace   = "sense.classification.document_type"
+category    = "sense"
+kind        = "chain"
+description = "Classify a document as invoice, contract, purchase order, receipt, or other."
+tags        = ["classification", "document type", "categorize", "detect"]
+accepts     = ["application/pdf", "image/*", "text/plain"]
+emits       = ["application/json"]
+idempotent  = true
+cost_hint   = "low"
+requires    = []
+search_keywords = ["classify document", "document type", "invoice or contract", "categorize file"]
+
+[[tools]]
+name = "classify"
+description = "Classify a document by type. Returns document_type, confidence, and reasoning."
+
+[tools.input_schema]
+type = "object"
+required = ["file_path"]
+
+[tools.input_schema.properties.file_path]
+type = "string"
+description = "Workspace-relative path to the document"
+
+[chain]
+model = "claude-haiku-4-5-20251001"
+system_prompt = """
+You are a document classification specialist. Analyze the document and classify it.
+Return a JSON object with:
+- document_type: one of [invoice, contract, purchase_order, receipt, report, letter, form, other]
+- confidence: high | medium | low
+- reasoning: brief explanation (1-2 sentences)
+"""
+prompt_template = "Classify the document at: {{input.file_path}}"
+max_tokens = 512

@@ -1,0 +1,32 @@
+schema_version = "2.0"
+name        = "transcribe-video"
+version     = "0.1.0"
+namespace   = "convert.audio_to_text"
+category    = "convert"
+kind        = "native"
+# Registered programmatically in state.rs (requires Arc<JobExecutor> from the jobs crate).
+# The TOML declares the contract; the provider is wired at startup.
+enabled     = false
+description = "Transcribes an audio or video file stored in RustFS via the Whisper API. Returns a task_id immediately; poll GET /v1/tasks/{id} for the result."
+tags        = ["audio", "video", "transcription", "whisper", "convert"]
+accepts     = ["audio/*", "video/*"]
+emits       = ["application/json"]
+idempotent  = true
+requires    = []
+search_keywords = ["transcribe", "audio", "video", "speech", "whisper"]
+
+[[tools]]
+name = "transcribe"
+description = "Enqueue a video/audio transcription job. Returns task_id and queued status immediately."
+
+[tools.input_schema]
+type = "object"
+required = ["file_id"]
+
+[tools.input_schema.properties.file_id]
+type = "string"
+description = "Object key returned by POST /v1/files (the download token)"
+
+[config]
+backend  = "job"
+job_kind = "video-transcription"

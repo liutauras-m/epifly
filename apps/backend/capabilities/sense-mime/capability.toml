@@ -1,0 +1,29 @@
+schema_version = "2.0"
+name        = "sense-mime"
+version     = "0.1.0"
+namespace   = "sense.detection.mime_type"
+category    = "sense"
+kind        = "wasm"
+description = "Detect the MIME type of a file by inspecting its magic bytes — no LLM required."
+tags        = ["mime", "file type", "detection", "magic bytes"]
+accepts     = ["*/*"]
+emits       = ["application/json"]
+idempotent  = true
+cost_hint   = "low"
+requires    = []
+search_keywords = ["mime type", "file type", "detect format", "magic bytes", "content type"]
+
+[[tools]]
+name = "detect_mime"
+description = "Detect the MIME type of a workspace file by inspecting its content. Returns mime_type and confidence."
+
+[tools.input_schema]
+type = "object"
+required = ["path"]
+
+[tools.input_schema.properties.path]
+type = "string"
+description = "Workspace-relative path to the file"
+
+[config]
+wasm_module = "mime_detect.wasm"

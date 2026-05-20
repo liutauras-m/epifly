@@ -9,6 +9,7 @@ pub mod mcp;
 pub mod memory;
 pub mod metrics;
 pub mod path_safety;
+pub mod path_template;
 pub mod prompt;
 pub mod telemetry;
 pub mod trace;

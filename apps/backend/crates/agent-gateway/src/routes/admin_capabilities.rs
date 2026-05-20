@@ -372,6 +372,13 @@ pub async fn register_capability(
             tenant_scope: req.tenant_scope.clone(),
             enabled: true,
             search_keywords: vec![],
+            schema_version: "1.0".into(),
+            category: None,
+            accepts: vec![],
+            emits: vec![],
+            idempotent: true,
+            cost_hint: None,
+            requires: vec![],
         };
 
         // Upsert embedding for semantic routing.

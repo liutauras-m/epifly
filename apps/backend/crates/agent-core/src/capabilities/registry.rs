@@ -24,14 +24,11 @@ impl CapabilityRegistry {
     }
 
     pub fn with_default_factories(llm: Arc<LlmRegistry>) -> Self {
-        use super::providers::{
-            builtin::BuiltinFactory, chain::ChainFactory, mcp::McpFactory, wasm::WasmFactory,
-        };
+        use super::providers::{chain::ChainFactory, mcp::McpFactory, wasm::WasmFactory};
         let mut r = Self::new();
         r.register_factory(McpFactory);
         r.register_factory(WasmFactory);
         r.register_factory(ChainFactory::new(Arc::clone(&llm)));
-        r.register_factory(BuiltinFactory);
         r
     }
 
@@ -330,6 +327,13 @@ mod tests {
             tenant_scope: vec![],
             enabled: true,
             search_keywords: vec![],
+            schema_version: "2.0".into(),
+            category: None,
+            accepts: vec![],
+            emits: vec![],
+            idempotent: true,
+            cost_hint: None,
+            requires: vec![],
         };
         CapabilityCard::new(manifest, std::path::PathBuf::from("/tmp"))
     }
@@ -394,6 +398,13 @@ mod tests {
             tenant_scope: vec![],
             enabled: true,
             search_keywords: vec![],
+            schema_version: "2.0".into(),
+            category: None,
+            accepts: vec![],
+            emits: vec![],
+            idempotent: true,
+            cost_hint: None,
+            requires: vec![],
         };
         CapabilityCard::new(manifest, std::path::PathBuf::from("/tmp"))
     }
@@ -458,6 +469,13 @@ mod tests {
             tenant_scope: scope,
             enabled: true,
             search_keywords: vec![],
+            schema_version: "2.0".into(),
+            category: None,
+            accepts: vec![],
+            emits: vec![],
+            idempotent: true,
+            cost_hint: None,
+            requires: vec![],
         };
         CapabilityCard::new(manifest, std::path::PathBuf::from("/tmp"))
     }

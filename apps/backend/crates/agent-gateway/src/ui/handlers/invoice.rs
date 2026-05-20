@@ -1,9 +1,12 @@
 //! Direct invoice extraction — bypasses the agent loop entirely.
-//! POST /ui/extract-invoice: object_key → RustFS bytes → InvoicePipeline → InvoiceData JSON.
+//! POST /ui/extract-invoice: object_key → RustFS bytes → capability registry → InvoiceData JSON.
+//!
+//! Delegates extraction to the `invoice-processing` capability via `ToolExecutor` so that
+//! all model calls go through `LlmRegistry` — no direct Anthropic client construction here.
 
 use crate::state::AppState;
 use crate::ui::session::SessionUser;
-use agent_core::chains::invoice::InvoicePipeline;
+use agent_core::capabilities::executor::ToolExecutor;
 use axum::{
     Json,
     extract::State,
@@ -12,7 +15,7 @@ use axum::{
 };
 use object_store::{ObjectStore, path::Path as OsPath};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::{info, instrument};
 
@@ -54,15 +57,29 @@ pub async fn ui_extract_invoice(
         Ok(r) => r,
         Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("storage get: {e}")),
     };
-    let bytes = match get_result.bytes().await {
+    let object_bytes = match get_result.bytes().await {
         Ok(b) => b,
         Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("storage read: {e}")),
     };
 
-    info!(bytes = bytes.len(), "running InvoicePipeline::extract_from_bytes");
+    // Write bytes to a temp file so the chain executor can read it via image_path.
+    let tmp_path = std::env::temp_dir().join(format!("conusai-invoice-{}.bin", uuid::Uuid::new_v4()));
+    if let Err(e) = std::fs::write(&tmp_path, &object_bytes) {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("temp write: {e}"));
+    }
 
-    let chain = InvoicePipeline::new();
-    match chain.extract_from_bytes(&bytes).await {
+    info!(bytes = object_bytes.len(), "invoking invoice-processing capability");
+
+    let input = json!({ "image_path": tmp_path.to_string_lossy() });
+    let registry = state.registry.lock().unwrap();
+    let result: Result<Value, _> =
+        ToolExecutor::invoke(&registry, "invoice-processing", "extract_invoice", &input, Some(&tenant))
+            .await;
+
+    // Clean up temp file regardless of outcome.
+    let _ = std::fs::remove_file(&tmp_path);
+
+    match result {
         Ok(data) => (StatusCode::OK, Json(data)).into_response(),
         Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, &format!("extraction failed: {e}")),
     }

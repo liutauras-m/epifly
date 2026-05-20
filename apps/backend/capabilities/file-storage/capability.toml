@@ -1,8 +1,14 @@
-name = "file-storage"
-version = "0.1.0"
+schema_version = "2.0"
+name        = "file-storage"
+version     = "0.1.0"
+namespace   = "storage.object"
+category    = "storage"
 description = "S3-compatible object storage (RustFS/AWS S3). Upload, download, list, delete objects and generate presigned URLs."
-kind = "mcp"
-tags = ["storage", "s3", "files", "upload", "download"]
+kind        = "mcp"
+tags        = ["storage", "s3", "files", "upload", "download"]
+accepts     = [{ mime = "*" }]
+emits       = ["application/json"]
+idempotent  = false
 search_keywords = [
     "upload file", "download file", "store file", "save file", "object storage",
     "S3", "RustFS", "bucket", "presigned URL", "file access", "file sharing",

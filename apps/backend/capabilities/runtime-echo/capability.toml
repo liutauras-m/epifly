@@ -1,8 +1,14 @@
-name = "runtime-echo"
-version = "0.1.0"
+schema_version = "2.0"
+name        = "runtime-echo"
+version     = "0.1.0"
+namespace   = "compute.debug.echo"
+category    = "compute"
+kind        = "chain"
 description = "Echo tool that repeats a message back. Used for testing and debugging the agent pipeline."
-kind = "chain"
-tags = ["echo", "runtime", "test", "debug"]
+tags        = ["echo", "runtime", "test", "debug"]
+emits       = ["application/json"]
+idempotent  = true
+requires    = []
 search_keywords = ["echo", "repeat", "test", "ping", "debug message"]
 
 [[tools]]

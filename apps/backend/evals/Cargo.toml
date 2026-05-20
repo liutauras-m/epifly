@@ -12,10 +12,7 @@ name = "evals"
 path = "src/main.rs"
 
 [dependencies]
-common     = { path = "../crates/common" }
-agent-core = { path = "../crates/agent-core" }
 tokio.workspace      = true
-rig-core.workspace   = true
 serde.workspace      = true
 serde_json.workspace = true
 reqwest.workspace    = true

@@ -1,5 +1,4 @@
 pub mod admin;
-pub mod builtin;
 pub mod card;
 pub mod discovery;
 pub mod embedding;
@@ -14,5 +13,3 @@ pub mod semantic_router;
 pub mod store;
 pub mod validator;
 pub mod wasm_loader;
-
-pub use builtin::card::builtin_tool_card;

@@ -1,10 +1,9 @@
 use crate::agent::hooks::TracingHook;
 use crate::capabilities::semantic_router::SemanticCapabilityRouter;
 use crate::context::tenant::TenantContext;
-use rig::client::ProviderClient;
-use rig::client::completion::CompletionClient;
+use crate::llm::LlmRegistry;
+use crate::llm::providers::anthropic::{AnthropicProvider, RigAnthropicAgent};
 use rig::completion::Prompt;
-use rig::providers::anthropic;
 use std::sync::Arc;
 use tracing::{info, instrument};
 
@@ -50,21 +49,18 @@ impl AgentBuilder {
     }
 
     pub fn build(self) -> Agent {
-        let client = anthropic::Client::from_env();
+        let provider = AnthropicProvider::from_env()
+            .expect("ANTHROPIC_API_KEY must be set");
         let max_tokens = self
             .tenant
             .as_ref()
             .map(|t| t.plan.limits().max_tokens.min(self.max_tokens))
             .unwrap_or(self.max_tokens);
 
-        let inner = client
-            .expect("ANTHROPIC_API_KEY must be set")
-            .agent(&self.model)
-            .preamble(&self.preamble)
-            .max_tokens(max_tokens)
-            .build();
+        let inner = provider.build_agent(&self.model, &self.preamble, max_tokens);
 
         Agent {
+            provider: Arc::new(provider),
             inner,
             tenant: self.tenant,
             semantic_router: self.semantic_router,
@@ -88,7 +84,9 @@ impl AgentBuilder {
 }
 
 pub struct Agent {
-    inner: rig::agent::Agent<rig::providers::anthropic::completion::CompletionModel>,
+    /// Owned Anthropic provider — avoids re-constructing from env on each prompt.
+    provider: Arc<AnthropicProvider>,
+    inner: RigAnthropicAgent,
     pub tenant: Option<TenantContext>,
     /// If set, tool definitions for each turn are resolved via semantic routing.
     pub semantic_router: Option<Arc<SemanticCapabilityRouter>>,
@@ -124,15 +122,12 @@ impl Agent {
                 .await
                 .map_err(common::error::ConusAiError::Other)?;
 
-            let client = anthropic::Client::from_env()
-                .map_err(|e| common::error::ConusAiError::Other(e.into()))?;
-
-            let routed_agent = client
-                .agent(&self.model)
-                .preamble(&self.preamble)
-                .max_tokens(self.max_tokens)
-                .tools(tools)
-                .build();
+            let routed_agent = self.provider.build_agent_with_tools(
+                &self.model,
+                &self.preamble,
+                self.max_tokens,
+                tools,
+            );
 
             return routed_agent
                 .prompt(text)
@@ -150,6 +145,11 @@ impl Agent {
             .map_err(|e| common::error::ConusAiError::Other(e.into()))
     }
 }
+
+// Allow `AgentBuilder::new(llm_registry)` as a future migration path.
+// Today the builder constructs from env; LlmRegistry integration is Phase 2.3 work.
+#[allow(dead_code)]
+pub(crate) fn _registry_hint(_llm: Arc<LlmRegistry>) {}
 
 impl Default for AgentBuilder {
     fn default() -> Self {

@@ -1,0 +1,54 @@
+schema_version = "2.0"
+name        = "plan-on-upload"
+version     = "1.0.0"
+namespace   = "plan.on_upload"
+category    = "plan"
+kind        = "native"
+description = "Per-tenant upload policy: returns the plan steps to execute after a file is uploaded. Invoked automatically by the upload handler when present. Admins can customise the steps array to pin a different pipeline (e.g. OCR + classify + file in Inbox)."
+tags        = ["plan", "upload", "pipeline", "policy", "on-upload"]
+emits       = ["application/json"]
+idempotent  = true
+requires    = []
+search_keywords = ["on upload", "upload policy", "post upload", "pipeline trigger"]
+
+[[tools]]
+name        = "plan"
+description = "Return the ordered list of capability steps to run after an upload. Input: { object_key, filename, content_type, size }. Output: array of PlanStep objects."
+
+[tools.input_schema]
+type = "object"
+
+[tools.input_schema.properties.object_key]
+type = "string"
+
+[tools.input_schema.properties.filename]
+type = "string"
+
+[tools.input_schema.properties.content_type]
+type = "string"
+
+[tools.input_schema.properties.size]
+type = "integer"
+
+[config]
+op = "plan"
+
+# Default pipeline: OCR → classify document type.
+# Admins: replace or extend these steps to pin a custom upload pipeline.
+# Each step maps to a CapabilityProvider registered in the registry.
+# strategy: "single" | "parallel_consensus" | "fallback_cascade"
+[[config.steps]]
+capability = "extract.text.ocr_vision"
+tool       = "ocr"
+strategy   = "single"
+
+[config.steps.input]
+image_path = "{object_key}"
+
+[[config.steps]]
+capability = "sense.classification.document_type"
+tool       = "classify"
+strategy   = "single"
+
+[config.steps.input]
+text = ""

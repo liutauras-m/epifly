@@ -142,3 +142,26 @@ impl JobExecutor {
         });
     }
 }
+
+// ── JobDispatch adapter ───────────────────────────────────────────────────────
+
+/// Wraps `Arc<JobExecutor>` so it satisfies `agent_core::JobDispatch`.
+///
+/// Use `JobExecutor::into_dispatcher` to create one. This avoids implementing
+/// the trait directly on `JobExecutor` (which would need `self: &Arc<Self>`).
+struct JobDispatchAdapter(Arc<JobExecutor>);
+
+#[async_trait::async_trait]
+impl agent_core::JobDispatch for JobDispatchAdapter {
+    async fn enqueue(&self, job_type: &str, payload: serde_json::Value) -> anyhow::Result<String> {
+        let uuid = self.0.enqueue(job_type, payload).await?;
+        Ok(uuid.to_string())
+    }
+}
+
+impl JobExecutor {
+    /// Wrap this executor in an `Arc<dyn JobDispatch>` for use with `JobBackedProvider`.
+    pub fn into_dispatcher(self: &Arc<Self>) -> Arc<dyn agent_core::JobDispatch> {
+        Arc::new(JobDispatchAdapter(Arc::clone(self)))
+    }
+}

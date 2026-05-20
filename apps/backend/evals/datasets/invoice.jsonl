@@ -1,1 +1,0 @@
-{"image_path": "invoice.png", "expected": {"invoice_number": "HCY-23256029", "invoice_date": "Mar 21, 2026", "issuer_name": "Hostinger International Ltd.", "billed_to_name": "Liutauras Medziunas", "billed_to_company": "Conus AI", "billed_to_email": "info@conusai.com", "currency": "EUR", "total_amount": 63.99, "amount_due": 0.00, "status": "PAID", "order_number": "hb_29211250"}}

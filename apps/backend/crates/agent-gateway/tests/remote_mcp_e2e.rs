@@ -72,6 +72,13 @@ fn register_remote_mcp(
         tenant_scope: scope,
         enabled: true,
         search_keywords: vec![],
+        schema_version: "2.0".into(),
+        category: None,
+        accepts: vec![],
+        emits: vec![],
+        idempotent: true,
+        cost_hint: None,
+        requires: vec![],
     };
     let card = CapabilityCard::new(manifest.clone(), std::path::PathBuf::from("."));
     let provider = RemoteMcpCapability::new(manifest, endpoint.to_string());

@@ -569,6 +569,112 @@ The whole flow from `POST /admin/capabilities/register` response to "tool availa
 
 ---
 
+## Manifest schema v2 fields (required for new capabilities)
+
+All new capabilities must declare `schema_version = "2.0"` and the fields below.
+Existing v1 manifests are still loaded but emit a deprecation warning at boot.
+
+### Mandatory v2 fields
+
+| Field | Type | Description |
+|---|---|---|
+| `schema_version` | string | `"2.0"` for new manifests. |
+| `namespace` | string | Dot-separated slug from the taxonomy table, e.g. `"extract.fields.invoice"`. See [`docs/capabilities/taxonomy.md`](./taxonomy.md). |
+| `category` | string | Taxonomy root: `storage`, `compute`, `sense`, `extract`, `convert`, `compose`, `deliver`, or `plan`. |
+
+### Recommended v2 fields
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `accepts` | `[{mime, max_size_mb?}]` | `[]` | MIME globs this capability accepts. Required for `extract`, `convert`, `sense` categories. Powers the router's attachment post-filter. |
+| `emits` | `[string]` | `[]` | MIME types produced as output artifacts. Used by planner for chaining suggestions. |
+| `idempotent` | bool | `true` | Set `false` for write operations — prevents the planner from running them in `parallel_consensus`. |
+| `cost_hint` | `{tokens?, dollars?, latency_ms?}` | `null` | Cost estimate for planner ranking. `dollars` takes precedence; falls back to `tokens` then `latency_ms`. |
+| `requires` | `[string]` | `[]` | Capability names that must be registered for this capability to function. Gateway warns at load time if any are missing. |
+
+### Taxonomy rule
+
+Every capability namespace must be listed in [`docs/capabilities/taxonomy.md`](./taxonomy.md)
+and `category` must match the namespace root. Running `cargo xtask capabilities lint`
+enforces this — it must pass before merge.
+
+### Full v2 TOML example
+
+```toml
+schema_version = "2.0"
+name           = "extract-fields-invoice"
+version        = "1.0.0"
+namespace      = "extract.fields.invoice"
+category       = "extract"
+kind           = "chain"
+description    = "Extract structured fields from invoice PDFs and images. Returns typed InvoiceData JSON. Call when the user uploads a bill, receipt, or purchase order."
+tags           = ["invoice", "finance", "extraction", "vision"]
+accepts        = [
+    { mime = "application/pdf" },
+    { mime = "image/*", max_size_mb = 20 },
+]
+emits          = ["application/json"]
+idempotent     = true
+cost_hint      = { dollars = 0.05, latency_ms = 4000 }
+requires       = []
+search_keywords = ["invoice", "bill", "receipt", "purchase order", "vendor invoice"]
+
+[[tools]]
+name        = "extract_invoice"
+description = "Extract complete structured fields from an invoice image or PDF. Input: image_path. Output: InvoiceData JSON."
+
+[tools.input_schema]
+type     = "object"
+required = ["image_path"]
+
+[tools.input_schema.properties.image_path]
+type        = "string"
+description = "Local path or URL to invoice image or PDF"
+
+[chain]
+model           = "smart"
+vision          = true
+max_tokens      = 2048
+system_prompt   = "You are an invoice data extraction specialist. Extract structured data with high accuracy. Always respond with valid JSON only."
+prompt_template = "Extract all invoice information from the attached document. Return a valid JSON object with fields: invoice_number, invoice_date, due_date, issuer_name, issuer_address, billed_to_name, billed_to_company, currency, subtotal, tax_amount, total_amount, status, line_items. Use null for missing scalar fields, [] for missing arrays."
+```
+
+### Path template render context (`storage.*` capabilities)
+
+Storage capabilities that use `[native] template = "..."` have access to these variables:
+
+| Variable | Example value | Description |
+|---|---|---|
+| `{tenant_id}` | `acme-corp` | Current tenant ID |
+| `{user_id}` | `alice` | Owner user ID (`__dev__` when absent) |
+| `{thread_id}` | `thread-abc123` | Active chat thread ID (may be empty) |
+| `{mime}` | `application/pdf` | Full MIME type of the uploaded file |
+| `{mime_category}` | `application` | MIME category (the part before `/`) |
+| `{original_name}` | `invoice.pdf` | Original filename (with extension) |
+| `{now:%Y/%m/%d}` | `2026/05/20` | Current UTC date, strftime-formatted |
+
+**Worked example per variable** — given tenant `acme-corp`, user `alice`, file `invoice.pdf` (`application/pdf`), uploaded on 2026-05-20:
+
+| Template | Rendered result |
+|---|---|
+| `uploads/{tenant_id}/inbox` | `uploads/acme-corp/inbox` |
+| `users/{user_id}/uploads` | `users/alice/uploads` |
+| `{tenant_id}/{now:%Y/%m/%d}` | `acme-corp/2026/05/20` |
+| `{mime_category}/{original_name}` | `application/invoice.pdf` |
+| `{tenant_id}/{user_id}/{now:%Y-%m-%d}/{original_name}` | `acme-corp/alice/2026-05-20/invoice.pdf` |
+
+The basic template engine supports only `{var}` and `{now:%fmt}` syntax. Complex Jinja2
+expressions require `template_engine = "jinja"` (see taxonomy docs for details).
+
+### Planner contract
+
+When `plan.orchestrate` is installed, your capability may receive calls from the planner.
+The planner sees your `name`, `description`, `accepts`, `emits`, and `cost_hint`. Write
+descriptions from the planner's perspective: *"Call this when the input is a PDF and the
+goal is to extract structured fields"* — not just *"processes documents"*.
+
+---
+
 ## Real example: `current-time` service
 
 Source: [`services/current-time/main.py`](../services/current-time/main.py)

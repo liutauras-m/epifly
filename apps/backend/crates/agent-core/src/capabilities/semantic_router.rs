@@ -29,9 +29,89 @@ use common::metrics;
 use rig::completion::ToolDefinition;
 use rig::tool::{ToolDyn, ToolError};
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{Span, instrument};
+
+// ── AttachmentHint ────────────────────────────────────────────────────────────
+
+/// Set of MIME types present in the current turn's attachments.
+///
+/// When provided to `select()` / `tool_definitions()`, the router post-filters
+/// ANN hits to only those capabilities whose `accepts` list contains at least one
+/// glob that matches one of the hint MIME types.  Capabilities with an empty
+/// `accepts` list are always kept (they don't declare any MIME restriction).
+///
+/// The optional `cost_bias` field (`"cheap"` / `"standard"` / `"premium"`) is
+/// included in the cache key (Phase 2.1a) so planners can request cost-aware
+/// routing without polluting unbiased queries' cached results.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AttachmentHint {
+    /// Sorted, deduplicated MIME types (e.g. `["application/pdf", "image/png"]`).
+    mimes: BTreeSet<String>,
+    /// Optional cost tier bias for planner-aware ranking (`"cheap"` / `"standard"` / `"premium"`).
+    pub cost_bias: Option<String>,
+}
+
+impl AttachmentHint {
+    pub fn new(mimes: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            mimes: mimes.into_iter().map(|m| m.into()).collect(),
+            cost_bias: None,
+        }
+    }
+
+    /// Attach a cost-bias to an existing hint (builder-style).
+    pub fn with_cost_bias(mut self, bias: impl Into<String>) -> Self {
+        self.cost_bias = Some(bias.into());
+        self
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.mimes.is_empty()
+    }
+
+    /// Returns `true` when at least one `accepts` glob matches one attachment MIME.
+    pub fn matches_any(&self, accepts: &[crate::capabilities::manifest::AcceptSpec]) -> bool {
+        if accepts.is_empty() {
+            return true; // no restriction declared
+        }
+        for accept in accepts {
+            let pattern = &accept.mime;
+            for mime in &self.mimes {
+                if mime_matches(pattern, mime) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Stable bytes for cache key hashing (includes cost_bias so biased queries
+    /// don't collide with unbiased ones in the moka cache).
+    fn cache_bytes(&self) -> Vec<u8> {
+        let mut out = self.mimes.iter().cloned().collect::<Vec<_>>().join(",").into_bytes();
+        if let Some(bias) = &self.cost_bias {
+            out.push(b'\x01');
+            out.extend_from_slice(bias.as_bytes());
+        }
+        out
+    }
+}
+
+/// Match a MIME glob pattern (`image/*`, `*`, `application/pdf`) against a concrete MIME.
+fn mime_matches(pattern: &str, mime: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    if let Some(prefix) = pattern.strip_suffix("/*") {
+        // e.g. "image/*" matches "image/png"
+        return mime.starts_with(&format!("{prefix}/"));
+    }
+    // Exact match (case-insensitive per RFC 2045).
+    pattern.eq_ignore_ascii_case(mime)
+}
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -120,7 +200,7 @@ impl SemanticCapabilityRouter {
 
     // ── Cache helpers ─────────────────────────────────────────────────────
 
-    fn cache_key(&self, tenant_id: &str, query: &str) -> [u8; 32] {
+    fn cache_key(&self, tenant_id: &str, query: &str, hint: &AttachmentHint) -> [u8; 32] {
         let mut h = blake3::Hasher::new();
         h.update(tenant_id.as_bytes());
         h.update(b"\x00");
@@ -135,24 +215,41 @@ impl SemanticCapabilityRouter {
             h.update(t.as_bytes());
             h.update(b",");
         }
+        // Include attachment hint in cache key.
+        h.update(b"\xff");
+        h.update(&hint.cache_bytes());
         *h.finalize().as_bytes()
     }
 
     // ── Core API ──────────────────────────────────────────────────────────
 
     /// Resolve top-K capability names for `query` (may use cache).
-    #[instrument(skip(self, tenant), fields(
-        tenant_id = tenant.map(|t| t.tenant_id.as_str()).unwrap_or(""),
-        top_k = tracing::field::Empty,
-        cache_hit = tracing::field::Empty,
-    ))]
+    ///
+    /// `hint` — optional set of attachment MIME types.  When provided, ANN hits
+    /// whose `accepts` list doesn't contain any matching glob are dropped.
+    /// Capabilities with an empty `accepts` list are always kept.
     pub async fn select(
         &self,
         query: &str,
         tenant: Option<&TenantContext>,
     ) -> anyhow::Result<Vec<Arc<dyn CapabilityProvider>>> {
+        self.select_with_hint(query, tenant, &AttachmentHint::default()).await
+    }
+
+    /// Like `select` but with an explicit [`AttachmentHint`] for MIME post-filtering.
+    #[instrument(skip(self, tenant, hint), fields(
+        tenant_id = tenant.map(|t| t.tenant_id.as_str()).unwrap_or(""),
+        top_k = tracing::field::Empty,
+        cache_hit = tracing::field::Empty,
+    ))]
+    pub async fn select_with_hint(
+        &self,
+        query: &str,
+        tenant: Option<&TenantContext>,
+        hint: &AttachmentHint,
+    ) -> anyhow::Result<Vec<Arc<dyn CapabilityProvider>>> {
         let tenant_id = tenant.map(|t| t.tenant_id.as_str()).unwrap_or("");
-        let key = self.cache_key(tenant_id, query);
+        let key = self.cache_key(tenant_id, query, hint);
 
         let cached = self.cache.get(&key).await;
         if let Some(result) = cached {
@@ -202,6 +299,17 @@ impl SemanticCapabilityRouter {
             .map(|h| h.capability_id)
             .collect();
 
+        // Post-filter by AttachmentHint (skip if hint is empty — no attachments).
+        if !hint.is_empty() {
+            let registry = self.registry.lock().unwrap();
+            cap_names.retain(|name| {
+                registry
+                    .get(name)
+                    .map(|card| hint.matches_any(&card.manifest.accepts))
+                    .unwrap_or(true) // unknown capability — keep it
+            });
+        }
+
         // Enforce tenant_scope — filter out capabilities not visible to this tenant.
         if let Some(t) = tenant {
             let registry = self.registry.lock().unwrap();
@@ -250,15 +358,25 @@ impl SemanticCapabilityRouter {
         query: &str,
         tenant: Option<&TenantContext>,
     ) -> anyhow::Result<Vec<Value>> {
+        self.tool_definitions_with_hint(query, tenant, &AttachmentHint::default()).await
+    }
+
+    /// Like `tool_definitions` but with an explicit `AttachmentHint`.
+    pub async fn tool_definitions_with_hint(
+        &self,
+        query: &str,
+        tenant: Option<&TenantContext>,
+        hint: &AttachmentHint,
+    ) -> anyhow::Result<Vec<Value>> {
         let tenant_id = tenant.map(|t| t.tenant_id.as_str()).unwrap_or("");
-        let key = self.cache_key(tenant_id, query);
+        let key = self.cache_key(tenant_id, query, hint);
 
         if let Some(result) = self.cache.get(&key).await {
             return Ok(result.tool_defs.clone());
         }
 
-        // Populate cache via select() which also builds tool_defs.
-        let _ = self.select(query, tenant).await?;
+        // Populate cache via select_with_hint() which also builds tool_defs.
+        let _ = self.select_with_hint(query, tenant, hint).await?;
 
         // Now the cache should be populated; fall back to empty if not.
         Ok(self
@@ -278,7 +396,17 @@ impl SemanticCapabilityRouter {
         query: &str,
         tenant: Option<&TenantContext>,
     ) -> anyhow::Result<Vec<Box<dyn ToolDyn>>> {
-        let defs = self.tool_definitions(query, tenant).await?;
+        self.rig_tools_for_prompt_with_hint(query, tenant, &AttachmentHint::default()).await
+    }
+
+    /// Like `rig_tools_for_prompt` but with an explicit `AttachmentHint`.
+    pub async fn rig_tools_for_prompt_with_hint(
+        self: &Arc<Self>,
+        query: &str,
+        tenant: Option<&TenantContext>,
+        hint: &AttachmentHint,
+    ) -> anyhow::Result<Vec<Box<dyn ToolDyn>>> {
+        let defs = self.tool_definitions_with_hint(query, tenant, hint).await?;
         let tenant = tenant.cloned();
 
         let tools: Vec<Box<dyn ToolDyn>> = defs
@@ -673,6 +801,13 @@ mod tests {
                 tenant_scope: vec![],
                 enabled: true,
                 search_keywords: vec![],
+                schema_version: "2.0".into(),
+                category: None,
+                accepts: vec![],
+                emits: vec![],
+                idempotent: true,
+                cost_hint: None,
+                requires: vec![],
             };
             let card = crate::capabilities::card::CapabilityCard::new(
                 manifest.clone(),
@@ -730,12 +865,56 @@ mod tests {
     #[test]
     fn cache_key_is_deterministic() {
         let router = make_router(vec![]);
-        let k1 = router.cache_key("t1", "invoice");
-        let k2 = router.cache_key("t1", "invoice");
+        let hint = AttachmentHint::default();
+        let k1 = router.cache_key("t1", "invoice", &hint);
+        let k2 = router.cache_key("t1", "invoice", &hint);
         assert_eq!(k1, k2);
-        let k3 = router.cache_key("t1", "receipt");
+        let k3 = router.cache_key("t1", "receipt", &hint);
         assert_ne!(k1, k3);
-        let k4 = router.cache_key("t2", "invoice");
+        let k4 = router.cache_key("t2", "invoice", &hint);
         assert_ne!(k1, k4);
+    }
+
+    // ── AttachmentHint ────────────────────────────────────────────────────
+
+    #[test]
+    fn attachment_hint_mime_glob_matching() {
+        use crate::capabilities::manifest::AcceptSpec;
+        let hint = AttachmentHint::new(["image/png", "application/pdf"]);
+        let accepts = vec![
+            AcceptSpec { mime: "image/*".into(), max_size_mb: Some(20) },
+        ];
+        assert!(hint.matches_any(&accepts), "image/* should match image/png");
+
+        let accepts_pdf = vec![
+            AcceptSpec { mime: "application/pdf".into(), max_size_mb: None },
+        ];
+        assert!(hint.matches_any(&accepts_pdf), "application/pdf exact match");
+
+        let accepts_none = vec![
+            AcceptSpec { mime: "text/plain".into(), max_size_mb: None },
+        ];
+        assert!(!hint.matches_any(&accepts_none), "text/plain should not match image or pdf");
+
+        // Empty accepts = no restriction, always passes
+        assert!(hint.matches_any(&[]), "empty accepts = always match");
+    }
+
+    #[test]
+    fn attachment_hint_wildcard_star() {
+        use crate::capabilities::manifest::AcceptSpec;
+        let hint = AttachmentHint::new(["video/mp4"]);
+        let accepts = vec![AcceptSpec { mime: "*".into(), max_size_mb: None }];
+        assert!(hint.matches_any(&accepts), "wildcard * matches anything");
+    }
+
+    #[test]
+    fn cache_key_differs_with_hint() {
+        let router = make_router(vec![]);
+        let empty = AttachmentHint::default();
+        let with_pdf = AttachmentHint::new(["application/pdf"]);
+        let k1 = router.cache_key("t1", "invoice", &empty);
+        let k2 = router.cache_key("t1", "invoice", &with_pdf);
+        assert_ne!(k1, k2, "different hints should produce different cache keys");
     }
 }

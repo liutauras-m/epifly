@@ -13,30 +13,29 @@ pub mod store;
 pub mod vector_store;
 
 pub use agent::builder::{Agent, AgentBuilder};
-pub use agent::hooks::{PermissionHook, TracingHook};
+pub use agent::hooks::{OrchestrationHook, PermissionHook, TracingHook};
 pub use agent::runtime::map_rig_error;
 pub use bridge::ArtifactBridge;
 pub use capabilities::admin::{
     AdminLimits, CapabilityAdmin, CapabilitySummary, CreateCapabilityRequest, TestInvokeRequest,
     TestInvokeResponse, UpdateCapabilityRequest, build_admin,
 };
-pub use capabilities::builtin_tool_card;
+pub use capabilities::providers::native_storage::NativeStorageFactory;
+pub use capabilities::providers::job_backed::{JobBackedProvider, JobDispatch};
 pub use capabilities::card::CapabilityCard;
-pub use capabilities::discovery::CapabilityDiscovery;
+pub use capabilities::discovery::{CapabilityDiscovery, ManifestWatcher};
 pub use capabilities::namespace::NamespaceFilter;
 pub use capabilities::provider::{BulkCapabilityFactory, CapabilityFactory};
 pub use capabilities::providers::capability_spec::CapabilitySpecFactory;
+pub use capabilities::executor::{PlanStep, StepResult, run_plan};
 pub use capabilities::registry::CapabilityRegistry;
 pub use capabilities::semantic_router::{
-    RouterMetrics, SemanticCapabilityRouter, SemanticRouterConfig,
+    AttachmentHint, RouterMetrics, SemanticCapabilityRouter, SemanticRouterConfig,
 };
 pub use capabilities::store::{FilesystemStore, RegisteredToolState, RegisteredToolStore};
 pub use capabilities::validator::{
     RegisteredToolValidationError, RegisteredToolValidator, ValidationReport,
 };
-pub use chains::contract::{ContractData, ContractParty, ContractPipeline};
-pub use chains::extraction::ExtractionPipeline;
-pub use chains::invoice::{InvoiceData, InvoiceLineItem, InvoicePipeline};
 pub use chains::llm_chain::PromptChainCapability;
 pub use context::conversation::{ConversationService, DefaultConversationService};
 pub use context::tenant::{PlanLimits, PlanTier, SubscriptionStatus, TenantClaims, TenantContext, UserRole};
