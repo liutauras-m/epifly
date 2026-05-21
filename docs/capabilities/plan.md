@@ -318,7 +318,10 @@ net during the migration window and is deleted at the end of Phase 7.
 - [ ] **7.1** Update [`capabilities-arch.md`](capabilities-arch.md) §5.6 —
       replace the 15-row table with the 3-row table (workspace, fs, file-storage).
 - [ ] **7.2** Update [`how-to-add-a-domain.md`](how-to-add-a-domain.md) with
-      the new "multi-tool native via `[[config.tools]]`" pattern.
+      the new "multi-tool native via purpose-built providers in
+      `native_storage.rs` (dispatch on `tool_name` in `invoke()`)" pattern.
+      The `ToolManifest` schema is unchanged — only standard `[[tools]]`
+      blocks are used; no `[[config.tools]]` extension.
 - [ ] **7.3** Add a one-line ADR addendum to
       [`adr/0007-everything-is-a-capability.md`](../adr/0007-everything-is-a-capability.md):
       *"Capabilities are *domain-level*. One capability ≡ one coherent
@@ -328,8 +331,8 @@ net during the migration window and is deleted at the end of Phase 7.
 ### Phase 8 — New `code-project` capability (≈ 2 h, additive)
 
 > Lands **after** the storage refactor is merged so the two changes don't
-> intermix. Uses the exact same patterns (`MultiOpProvider` if native, rich
-> `search_keywords`, single domain card).
+> intermix. Uses the exact same patterns (purpose-built provider if ever
+> promoted to native, rich `search_keywords`, single domain card).
 
 **Why a new capability and not just `storage-fs`.** "Scaffold a Svelte app"
 and "save my notes" are categorically different intents. A dedicated
@@ -458,7 +461,7 @@ caps we don't yet have.
 | Hard-coded references to old `name` in tests, fixtures, or e2e scripts              | Phase 0.1 + 4.1 scan; `git grep -E 'storage-(put|read-text|write-text|move|delete|…)'` must return only docs/plan refs. |
 | Persisted PlanStep blobs in `capability_specs` referencing old names                | Phase 0.1 query; if non-zero, write a one-off SQL migration mapping old → new.                                |
 | `list_folders` ambiguity (workspace vs filesystem) confuses the LLM                  | Rename the fs variant to `list_paths` (Phase 2.2); keep workspace `list_folders` as the canonical phrase.     |
-| MultiOpProvider double-builds inner providers each call                              | Build once in factory `create()`, store in `HashMap` for the cap's lifetime — same lifecycle as today.        |
+| Provider re-instantiated on every call adds latency                                  | Build the two purpose-built providers once in `NativeStorageFactory::create()`; they live for the cap's lifetime — same lifecycle as today. |
 | Router cache returns stale top-K for cached prompts                                  | Moka cache key includes capability set hash; `replace()` invalidates implicitly. Force-clear on boot.         |
 
 ### 4.2 Naming conflict resolution
@@ -481,10 +484,12 @@ a new code path, doesn't remove the old one).
 
 ## 5. Effort & success criteria
 
-**Effort** *(revised 2026-05-21 after dropping `MultiOpProvider` + materialise tool)*:
+**Effort** *(revised 2026-05-21 after dropping `MultiOpProvider` + materialise tool; +Phase 9 hosting)*:
 - Phases 0–7 (storage consolidation): **3 AI-hours**, ≈ 65 k tokens.
   (1 h provider extraction + 1 h manifests + 0.5 h tests + 0.5 h verification/docs.)
 - Phase 8 (`code-project` + `ArtifactBridge` prefix override): **2.5 AI-hours**, ≈ 45 k tokens. Separate PR.
+- Phase 9 (`host_project` static hosting + `ArtifactBridge` metadata handler): **1.5 AI-hours**, ≈ 25 k tokens. Separate PR after Phase 8.
+- **Total** end-to-end: **7 AI-hours**, ≈ 135 k tokens.
 
 **Success criteria — storage consolidation (Phases 0–7)**:
 
@@ -635,3 +640,75 @@ strictly dominates any legacy card's embedding for any historical query.
    accepts `parent_node_id` but the current `materialise()` does not use it
    when computing `virtual_path`. Phase 8.A.3 plumbs that through so
    scaffold trees can attach under a chosen parent folder node.
+6. **Long-term hygiene.** `StorageWorkspaceProvider` + `StorageFsProvider`
+   are a natural fit for a future `providers/builtin.rs` module (as hinted
+   in project-instructions). Moving them there is a clean ~1-hour follow-up
+   after this refactor lands — not blocking.
+
+---
+
+## Phase 9 — `code-project.host_project` (static hosting) (≈ 1.5 h, additive)
+
+> Lands **after** Phase 8. Adds one new chain tool to the existing
+> `code-project` capability so users can scaffold + host static frontends
+> (SvelteKit `adapter-static`, Vite, Next.js export, plain HTML) in a single
+> chat turn. Zero new factories, zero subprocess execution — reuses
+> `ArtifactBridge` + `file-storage` MCP (RustFS presign).
+
+**Why static-first.** Dynamic hosting (Node/Python/Rust servers) requires
+sandboxing + resource caps we don't yet have. A future `code-shell`
+capability (job-isolated) is the right vehicle for that. Static hosting
+delivers immediate user value with zero security surface expansion.
+
+- [ ] **9.1** Add a `host_project(target_path, framework_hint?)` tool to
+      `apps/backend/capabilities/code-project/capability.toml`:
+      - `model = "smart"`, `cost_hint = "medium"`, `idempotent = false`.
+      - Chain reads the project (via existing `read_project`), detects
+        static-export support from `package.json` / `vite.config` /
+        `svelte.config`, and returns `ToolOutput`:
+        ```json
+        {
+          "content": "Built and hosted SvelteKit app under projects/dashboard",
+          "artifacts": [ /* build outputs as base64 */ ],
+          "metadata": {
+            "hosting_type": "static",
+            "root_path": "projects/dashboard",
+            "index_file": "index.html",
+            "framework": "sveltekit"
+          }
+        }
+        ```
+      - If framework is dynamic-only, returns `hosting_type = "unsupported"`
+        with a clear message pointing at the future `code-shell` capability.
+- [ ] **9.2** Extend `search_keywords` on `code-project` with: `host`,
+      `deploy`, `publish`, `preview`, `serve`, `live url`, `share app`,
+      `static site`, `make it public`.
+- [ ] **9.3** Tiny extension to `ArtifactBridge::process_if_artifacts`
+      (~3 lines): when `metadata.hosting_type == "static"`, after
+      materialising the artifacts, call the existing `file-storage` MCP
+      `presigned_url` tool to mint a long-lived GET URL for
+      `<root_path>/<index_file>` and attach `public_url` to the returned
+      metadata. TTL via `RUSTFS_PRESIGN_TTL_SECS` (default 1 year).
+- [ ] **9.4** UI: the agent loop streams the `public_url` back as a clickable
+      card (re-uses the existing artifact card renderer in `apps/web`).
+- [ ] **9.5** Integration test: chat prompt "scaffold a SvelteKit app under
+      projects/demo-host and host it" must (a) materialise the project tree,
+      (b) return a `metadata.public_url` reachable over HTTPS (HTTP in local
+      dev), (c) the URL serves the built `index.html`.
+- [ ] **9.6** Update [`capabilities-arch.md`](capabilities-arch.md): add a
+      one-paragraph note under the `code` taxonomy entry describing
+      static-first hosting via `ArtifactBridge` + RustFS presign, and
+      flagging dynamic hosting as deferred to `code-shell`.
+
+**Success criteria — hosting (Phase 9)**:
+
+10. "scaffold + host" prompt returns a live HTTPS URL in the same chat turn,
+    10/10 runs for SvelteKit / Vite-React / plain HTML projects.
+11. URL is tenant-scoped (jailed under tenant prefix), respects `PlanLimits`
+    and per-tenant IAM, and survives gateway restart (RustFS-backed).
+12. Router picks `code-project.host_project` (not `storage-fs` or
+    `file-storage`) for hosting prompts, 10/10 runs.
+
+**Out of scope for Phase 9**: subprocess execution, dev-server lifecycle,
+port allocation, custom domains. All belong to the future `code-shell` /
+`hosting` domain capabilities.
