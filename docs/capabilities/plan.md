@@ -16,6 +16,29 @@
 > new domain rather than scattering scaffold/edit/patch across `storage-fs`.
 >
 > **Architecture reference.** [`docs/capabilities/capabilities-arch.md`](capabilities-arch.md).
+>
+> **Revision 2026-05-21 (post-review).** Three canonical-drift fixes applied:
+>
+> 1. **No new abstraction.** The earlier `MultiOpProvider` wrapper +
+>    `[[config.tools]]` manifest extension are dropped. Instead we
+>    hand-write two purpose-built providers (`StorageWorkspaceProvider`,
+>    `StorageFsProvider`) inside the existing
+>    [`NativeStorageFactory`](../../apps/backend/crates/agent-core/src/capabilities/providers/native_storage.rs)
+>    that each dispatch on `tool_name` in `invoke()`. The `ToolManifest`
+>    schema is **unchanged** — only the standard `[[tools]]` blocks are used.
+>    *(The earlier review draft referenced a `BuiltinFactory` in
+>    `providers/builtin.rs`; that file does not exist in this repo — the real
+>    home is `native_storage.rs`. Substance of the critique is adopted; the
+>    location is corrected.)*
+> 2. **`ArtifactBridge` owns materialisation.** Phase 8.A no longer adds a
+>    `materialise_workspace_tree` tool. Instead, `scaffold_project` / `edit_file`
+>    / `apply_patch` return a canonical `ToolOutput { content, artifacts: […] }`
+>    where each generated file is one `Artifact { name, mime_type, data }`.
+>    The existing [`ArtifactBridge`](../../apps/backend/crates/agent-core/src/bridge/artifact_bridge.rs)
+>    already uploads to RustFS and writes to `WorkspaceContentStore` post-invoke —
+>    no capability code touches workspace materialisation.
+> 3. **Tightened effort.** Storage consolidation now 3 AI-hours (was 4–5);
+>    `code-project` now 2.5 AI-hours (was 2).
 
 ---
 
@@ -111,49 +134,63 @@ no Rust logic needs to be rewritten.
 > kind of confusion — the LLM frequently picks the wrong primitive. Two
 > distinct mental models = two embeddings.
 
-### 2.2 Multi-tool dispatch in `NativeStorageFactory`
+### 2.2 Multi-tool dispatch — two purpose-built providers, no new abstraction
 
-A capability with multiple tools needs *one* `CapabilityProvider` whose
-`invoke(tool_name, …)` switches on `tool_name`. We introduce a small
-**`MultiOpProvider`** wrapper that owns a `HashMap<&'static str, Arc<dyn
-CapabilityProvider>>` and routes by tool name. No existing provider needs
-to be rewritten — they all already accept a tool name and key off it.
+A capability with multiple tools is just one `CapabilityProvider` whose
+`invoke(tool_name, …)` switches on `tool_name`. We add **two purpose-built
+providers** directly inside
+[`native_storage.rs`](../../apps/backend/crates/agent-core/src/capabilities/providers/native_storage.rs)
+and have `NativeStorageFactory::create()` instantiate them by matching
+`manifest.name`. No wrapper, no `HashMap`, no manifest schema extension.
 
 ```rust
-pub struct MultiOpProvider {
+pub struct StorageWorkspaceProvider {
     manifest: ToolManifest,
-    by_tool: HashMap<String, Arc<dyn CapabilityProvider>>,
+    // shared deps: WorkspaceStore, WorkspaceContentStore, tenant root
 }
 
 #[async_trait]
-impl CapabilityProvider for MultiOpProvider {
+impl CapabilityProvider for StorageWorkspaceProvider {
     fn manifest(&self) -> &ToolManifest { &self.manifest }
     async fn invoke(&self, tool_name: &str, input: &Value, tenant: Option<&TenantContext>)
         -> anyhow::Result<Value>
     {
-        let inner = self.by_tool.get(tool_name)
-            .ok_or_else(|| anyhow::anyhow!("unknown tool '{tool_name}' for '{}'", self.manifest.name))?;
-        inner.invoke(tool_name, input, tenant).await
+        match tool_name {
+            "save_document"       => self.save_document(input, tenant).await,
+            "list_folders"        => self.list_folders(input, tenant).await,
+            "show_tree"           => self.show_tree(input, tenant).await,
+            "find_by_name"        => self.find_by_name(input, tenant).await,
+            "create_folder"       => self.create_folder(input, tenant).await,
+            "ensure_folder"       => self.ensure_folder(input, tenant).await,
+            "ensure_date_folder"  => self.ensure_date_folder(input, tenant).await,
+            "move_node"           => self.move_node(input, tenant).await,
+            "delete_node"         => self.delete_node(input, tenant).await,
+            "bulk_delete"         => self.bulk_delete(input, tenant).await,
+            "tag_object"          => self.tag_object(input, tenant).await,
+            other => anyhow::bail!("unknown tool '{other}' for storage-workspace"),
+        }
     }
+}
+
+pub struct StorageFsProvider { /* mirror, 5 arms */ }
+```
+
+Each arm calls a free function that wraps the exact existing logic from the
+legacy per-op providers (e.g. `save_document` arm calls the body currently
+living in `WorkspaceNativeProvider`). Behaviour is byte-identical.
+
+Factory dispatch becomes a two-line addition:
+
+```rust
+match manifest.name.as_str() {
+    "storage-workspace" => Ok(Arc::new(StorageWorkspaceProvider::new(card, deps))),
+    "storage-fs"        => Ok(Arc::new(StorageFsProvider::new(card, deps))),
+    _ => /* existing single-op match on config.op for any remaining legacy caps */,
 }
 ```
 
-The factory builds it by reading a `[[config.tools]]` table from the manifest:
-
-```toml
-[[config.tools]]
-name = "save_document"
-op   = "workspace"
-
-[[config.tools]]
-name = "show_tree"
-op   = "show_tree"
-# … one per tool …
-```
-
-Backward compatibility: when `[[config.tools]]` is absent the factory falls
-through to the legacy single-op `[config] op = "…"` branch — every existing
-capability keeps working unchanged during the migration.
+The legacy `[config] op = …` branch stays in place purely as a rollback safety
+net during the migration window and is deleted at the end of Phase 7.
 
 ---
 
@@ -169,23 +206,24 @@ capability keeps working unchanged during the migration.
       and store the output to baseline assertions before/after.
 - [ ] **0.3** `git checkout -b refactor/storage-capabilities-consolidation`.
 
-### Phase 1 — Multi-op factory support (≈ 1 h, code-only, no behaviour change)
+### Phase 1 — Two purpose-built providers (≈ 1 h, code-only, no behaviour change)
 
 - [ ] **1.1** In
       [`native_storage.rs`](../../apps/backend/crates/agent-core/src/capabilities/providers/native_storage.rs):
-      add `MultiOpProvider` (struct + `CapabilityProvider` impl) right above
-      the existing factory.
-- [ ] **1.2** Extend `NativeStorageFactory::create()`:
-      - If `manifest.config["tools"]` is an array, build a `MultiOpProvider`
-        by calling the existing per-op factory branch for each entry. Reuse
-        the `match op { … }` block — extract it into a helper
-        `create_single_op(card.clone(), op)` so both paths share code.
-      - Else fall through to the existing `match op` branch (unchanged).
-- [ ] **1.3** Add a unit test
-      `multi_op_provider_routes_by_tool_name` in `native_storage.rs` tests
-      module that builds a manifest with two tools, two ops, and asserts both
-      `invoke()` paths return correctly.
-- [ ] **1.4** `cargo build -p agent-core` — green.
+      extract every legacy per-op `invoke()` body into free `async fn`s
+      (`save_document(…)`, `show_tree(…)`, `read_text(…)`, …) that take the
+      shared deps as parameters. Pure mechanical extraction.
+- [ ] **1.2** Add `StorageWorkspaceProvider` and `StorageFsProvider` structs
+      with `CapabilityProvider` impls whose `invoke()` matches on `tool_name`
+      and delegates to the extracted free functions (see §2.2).
+- [ ] **1.3** Extend `NativeStorageFactory::create()` to match on
+      `manifest.name` first; fall through to the existing single-op `match op`
+      branch for any legacy capability still on disk during the migration.
+- [ ] **1.4** Unit test `storage_workspace_dispatches_all_eleven_tools` and
+      `storage_fs_dispatches_all_five_tools` that build the manifest, register
+      it in an isolated `CapabilityRegistry`, and assert each tool's `invoke()`
+      path returns the expected shape.
+- [ ] **1.5** `cargo build -p agent-core` — green.
 
 ### Phase 2 — Author consolidated manifests (≈ 1 h, additive only)
 
@@ -197,29 +235,16 @@ capability keeps working unchanged during the migration.
 
 - [ ] **2.1** Create
       `apps/backend/capabilities/storage-workspace/capability.toml.new` with
-      `[[tools]]` × 11 (see appendix A.1) and `[[config.tools]]` mapping every
-      tool to its op:
-      - `save_document` → `workspace`
-      - `list_folders` → `workspace` (the existing `WorkspaceNativeProvider`
-        already handles both tools)
-      - `show_tree` → `show_tree`
-      - `find_by_name` → `find_by_name`
-      - `create_folder` → `create_folder`
-      - `ensure_folder` → `ensure_folder`
-      - `ensure_date_folder` → `ensure_date_folder`
-      - `move_node` → `move_node`
-      - `delete_node` → `delete_node`
-      - `bulk_delete` → `bulk_delete`
-      - `tag_object` → `tag_object`
+      `[[tools]]` × 11 (see appendix A.1). **No `[[config.tools]]` table** —
+      the manifest stays vanilla; provider dispatch is by tool name in Rust.
+      Tools: `save_document`, `list_folders`, `show_tree`, `find_by_name`,
+      `create_folder`, `ensure_folder`, `ensure_date_folder`, `move_node`,
+      `delete_node`, `bulk_delete`, `tag_object`.
 - [ ] **2.2** Create
       `apps/backend/capabilities/storage-fs/capability.toml` with `[[tools]]`
-      × 5 (see appendix A.2) and `[[config.tools]]`:
-      - `read_file` → `read_text`
-      - `write_file` → `write_text`
-      - `put_object` → `put_object`
-      - `move_object` → `move_object`
-      - `list_paths` → `list_folders` *(internal op name unchanged; tool name
-        changes to disambiguate from workspace `list_folders`)*
+      × 5 (see appendix A.2). Tools: `read_file`, `write_file`, `put_object`,
+      `move_object`, `list_paths` *(renamed from `list_folders` to disambiguate
+      from the workspace tool; see §4.2)*.
 - [ ] **2.3** Write rich `description`, `tags`, and `search_keywords` blocks
       that union the keywords from every legacy capability — the embedding
       must dominate ANN recall for every previous query (see appendix A.3 for
@@ -361,38 +386,60 @@ collapse N writes into one audited call later.
       `native_storage.rs` that atomically writes a file tree in one
       auditable call. Drops scaffold tool-call count from ~10 to 1.
 
-#### 8.A Filesystem vs. WorkspaceStore — making scaffolds visible in the UI
+#### 8.A Filesystem vs. WorkspaceStore — `ArtifactBridge` owns materialisation
 
 The platform has **two layers**:
 
-- **Filesystem** under `<tenant_workspace_root>/…` — where bytes live.
-  `storage-fs.write_file` always writes here via
-  [`safe_join`](../../apps/backend/crates/agent-core/src/capabilities/providers/native_storage.rs#L57)
-  — paths are jailed to the tenant root, no escape possible. ✅
-- **WorkspaceStore** — DB-tracked nodes (ULIDs, folders, named documents)
-  that the **UI workspace tree displays**. `storage-workspace.*` operates here.
+- **Filesystem / object store** — where bytes live.
+- **WorkspaceStore + WorkspaceContentStore** — DB-tracked nodes that the UI
+  workspace tree displays.
 
-`storage-fs.write_file` writes bytes **without** creating WorkspaceStore
-nodes. If `scaffold_project` issues 30 `storage-fs.write_file` calls, the
-files land on disk correctly but the **UI workspace tree shows nothing**.
+The canonical bridge between them is
+[`ArtifactBridge`](../../apps/backend/crates/agent-core/src/bridge/artifact_bridge.rs)
+(see also [`common::artifact::ToolOutput`](../../apps/backend/crates/common/src/artifact.rs)).
+After every `CapabilityProvider::invoke()` the gateway calls
+`ArtifactBridge::process_if_artifacts()`, which:
 
-**Decision: bake a `materialise_workspace_tree` step into `scaffold_project`.**
+1. Uploads each `Artifact { name, mime_type, data }` to the object store.
+2. Writes indexable text (`text/*`, `application/pdf`, `application/json`) to
+   `WorkspaceContentStore` — which is what the UI tree reads.
 
-- [ ] **8.A.1** Add a tool `code-project.materialise_workspace_tree(target_path, parent_node_id?)`
-      \u2014 walks the filesystem subtree at `<workspace_root>/target_path`,
-      creates a workspace folder node at `parent_node_id` (default: root),
-      and registers each discovered file/directory as a child node via the
-      existing `WorkspaceStore` + `WorkspaceContentStore` APIs already wired
-      into `NativeStorageFactory`. Idempotent: re-running updates content
-      hashes without duplicating nodes.
-- [ ] **8.A.2** Have `scaffold_project`'s output schema include a
-      `materialise = true` flag (default), so the agent loop appends a final
-      `materialise_workspace_tree` call automatically.
-- [ ] **8.A.3** Document the two-layer model in [`capabilities-arch.md`](capabilities-arch.md):
-      `storage-fs` = bytes only; `storage-workspace` / `code-project` =
-      bytes **and** UI-visible nodes.
-- [ ] **8.A.4** Mirror the same materialise step in `edit_file` /
-      `apply_patch` so post-edit content hashes are kept in sync.
+**Capabilities do not materialise. They return artifacts. `ArtifactBridge`
+materialises.** This is a strict ownership rule in `arch.md`.
+
+**Decision: `scaffold_project` / `edit_file` / `apply_patch` return
+`ToolOutput.artifacts` and let `ArtifactBridge` do the rest.**
+
+- [ ] **8.A.1** `scaffold_project`'s chain output schema returns:
+      ```json
+      {
+        "content": "Scaffolded SvelteKit app under projects/demo-app (12 files).",
+        "artifacts": [
+          { "name": "projects/demo-app/package.json",
+            "mime_type": "application/json",
+            "data": "<base64>" },
+          { "name": "projects/demo-app/src/routes/+page.svelte",
+            "mime_type": "text/plain",
+            "data": "<base64>" }
+          // … one Artifact per generated file
+        ]
+      }
+      ```
+      The chain emits `content` as base64 (already the `Artifact` convention).
+- [ ] **8.A.2** `edit_file` and `apply_patch` return a single-element
+      `artifacts` array with the updated file. `ArtifactBridge` upserts via
+      `WorkspaceContentStore.write(tenant, virtual_path, text)`, which is
+      idempotent on `(tenant, path)`.
+- [ ] **8.A.3** Tiny extension to `ArtifactBridge` (separate small PR): allow
+      the caller to override the virtual path prefix so artifacts produced by
+      `code-project` land at `/<artifact.name>` (the raw project path) rather
+      than the default `/outputs/<tool_name>/<artifact.name>`. One-line
+      addition to `materialise()`; preserves existing callers' behaviour.
+- [ ] **8.A.4** Document the rule in [`capabilities-arch.md`](capabilities-arch.md):
+      *“Capabilities never write workspace nodes directly. They return
+      `ToolOutput.artifacts`; `ArtifactBridge` is the sole writer.”*
+- [ ] **8.A.5** Drop the previously proposed `materialise_workspace_tree`
+      tool from `code-project` — it is redundant with `ArtifactBridge`.
 
 **Out of scope for Phase 8** (deliberately): running `pnpm install` /
 `pnpm dev` or any subprocess. The platform remains a file-and-LLM
@@ -434,9 +481,10 @@ a new code path, doesn't remove the old one).
 
 ## 5. Effort & success criteria
 
-**Effort**:
-- Phases 0–7 (storage consolidation): 4–5 hours focused work; ≈ 100 k tokens.
-- Phase 8 (`code-project`): +2 hours; ≈ 40 k tokens. Lands as a separate PR.
+**Effort** *(revised 2026-05-21 after dropping `MultiOpProvider` + materialise tool)*:
+- Phases 0–7 (storage consolidation): **3 AI-hours**, ≈ 65 k tokens.
+  (1 h provider extraction + 1 h manifests + 0.5 h tests + 0.5 h verification/docs.)
+- Phase 8 (`code-project` + `ArtifactBridge` prefix override): **2.5 AI-hours**, ≈ 45 k tokens. Separate PR.
 
 **Success criteria — storage consolidation (Phases 0–7)**:
 
@@ -509,19 +557,9 @@ description = "Render a Markdown tree of folders and files under parent_id (or r
 
 # … 8 more [[tools]] blocks, one per legacy capability …
 
-[[config.tools]]
-name = "save_document"
-op   = "workspace"
-
-[[config.tools]]
-name = "list_folders"
-op   = "workspace"
-
-[[config.tools]]
-name = "show_tree"
-op   = "show_tree"
-
-# … and so on …
+# NOTE: No [[config.tools]] table. Provider dispatch lives in
+# `StorageWorkspaceProvider::invoke()` (see §2.2). The manifest stays vanilla
+# — `ToolManifest` schema is unchanged.
 ```
 
 ### A.2 `storage-fs/capability.toml`
@@ -567,27 +605,11 @@ name = "move_object"
 [[tools]]
 name = "list_paths"
 description = "List files and directories under a path prefix in the workspace root."
-# (config op remains list_folders for backward compatibility)
+# (Renamed from legacy `list_folders` to disambiguate from
+# `storage-workspace.list_folders`.)
 
-[[config.tools]]
-name = "read_file"
-op   = "read_text"
-
-[[config.tools]]
-name = "write_file"
-op   = "write_text"
-
-[[config.tools]]
-name = "put_object"
-op   = "put_object"
-
-[[config.tools]]
-name = "move_object"
-op   = "move_object"
-
-[[config.tools]]
-name = "list_paths"
-op   = "list_folders"
+# NOTE: No [[config.tools]] table. Provider dispatch lives in
+# `StorageFsProvider::invoke()` (see §2.2).
 ```
 
 ### A.3 Search-keyword unions
@@ -609,3 +631,7 @@ strictly dominates any legacy card's embedding for any historical query.
 3. **`plan-orchestrate` model selection** — unchanged.
 4. **Future**: introduce a `kind = "toolkit"` synonym for `native` when the
    capability has > 5 tools, purely for documentation clarity.
+5. **`ArtifactBridge` `parent_node_id` plumbing.** `process_if_artifacts`
+   accepts `parent_node_id` but the current `materialise()` does not use it
+   when computing `virtual_path`. Phase 8.A.3 plumbs that through so
+   scaffold trees can attach under a chosen parent folder node.
