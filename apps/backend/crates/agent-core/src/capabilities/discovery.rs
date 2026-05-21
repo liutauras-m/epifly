@@ -73,8 +73,8 @@ impl ManifestWatcher {
         // Channel carries the parent directory of a changed capability.toml.
         let (tx, rx) = std::sync::mpsc::channel::<PathBuf>();
 
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
-            match res {
+        let mut watcher =
+            notify::recommended_watcher(move |res: notify::Result<Event>| match res {
                 Ok(event) => {
                     if !matches!(
                         event.kind,
@@ -83,16 +83,15 @@ impl ManifestWatcher {
                         return;
                     }
                     for path in &event.paths {
-                        if path.file_name() == Some(std::ffi::OsStr::new("capability.toml")) {
-                            if let Some(cap_dir) = path.parent().map(|p| p.to_path_buf()) {
-                                let _ = tx.send(cap_dir);
-                            }
+                        if path.file_name() == Some(std::ffi::OsStr::new("capability.toml"))
+                            && let Some(cap_dir) = path.parent().map(|p| p.to_path_buf())
+                        {
+                            let _ = tx.send(cap_dir);
                         }
                     }
                 }
                 Err(e) => warn!(error = %e, "manifest watcher error"),
-            }
-        })?;
+            })?;
 
         for dir in &dirs {
             if dir.exists() {
@@ -129,22 +128,21 @@ impl ManifestWatcher {
                 };
 
                 // Emit capability.reloaded on the realtime bus (system channel).
-                if reloaded {
-                    if let Some(rt) = realtime.as_ref() {
-                        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                            let rt = Arc::clone(rt);
-                            let name = cap_name.clone();
-                            handle.spawn(async move {
-                                rt.publish_workspace_change(WorkspaceChangeEvent {
-                                    op: "capability.reloaded".into(),
-                                    tenant_id: "__system__".into(),
-                                    node_id: name,
-                                    kind: "capability".into(),
-                                })
-                                .await;
-                            });
-                        }
-                    }
+                if reloaded
+                    && let Some(rt) = realtime.as_ref()
+                    && let Ok(handle) = tokio::runtime::Handle::try_current()
+                {
+                    let rt = Arc::clone(rt);
+                    let name = cap_name.clone();
+                    handle.spawn(async move {
+                        rt.publish_workspace_change(WorkspaceChangeEvent {
+                            op: "capability.reloaded".into(),
+                            tenant_id: "__system__".into(),
+                            node_id: name,
+                            kind: "capability".into(),
+                        })
+                        .await;
+                    });
                 }
             }
         });

@@ -45,12 +45,11 @@ pub struct IdentityContext {
 
 impl IdentityContext {
     /// Convert to a `TenantContext` for back-compat with existing middleware.
-    pub fn into_tenant_context(self, workspace_root: impl Into<std::path::PathBuf>) -> TenantContext {
-        let role = self
-            .roles
-            .first()
-            .cloned()
-            .unwrap_or(UserRole::User);
+    pub fn into_tenant_context(
+        self,
+        workspace_root: impl Into<std::path::PathBuf>,
+    ) -> TenantContext {
+        let role = self.roles.first().cloned().unwrap_or(UserRole::User);
         let mut ctx = TenantContext::new(
             self.tenant_id,
             Some(self.user_id),

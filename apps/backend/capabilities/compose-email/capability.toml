@@ -1,0 +1,87 @@
+schema_version = "2.0"
+name        = "compose-email"
+version     = "1.0.0"
+namespace   = "compose.email"
+category    = "compose"
+kind        = "chain"
+description = "Compose a professional email from structured context. Supports outreach, follow-up, summary, and notification email types. Generates subject line, greeting, body, and sign-off. Can reference extracted data (e.g. CV shortlist, invoice details) to personalise the message."
+tags        = ["compose", "email", "draft", "outreach", "notification", "communication"]
+accepts     = [
+    { mime = "application/json", max_size_mb = 1 },
+    { mime = "text/plain", max_size_mb = 1 },
+]
+emits       = ["text/plain"]
+idempotent  = true
+cost_hint   = { dollars = 0.01, latency_ms = 2000 }
+requires    = []
+search_keywords = [
+    "compose email", "write email", "draft email", "send email",
+    "outreach email", "follow-up email", "notification email",
+    "email template", "email draft", "generate email", "email subject",
+    "contact candidate", "invoice email", "summary email",
+]
+
+[[tools]]
+name        = "compose_email"
+description = "Compose a professional email. Input: purpose (e.g. 'outreach to top candidate', 'invoice summary for accounting'), context (relevant data like CV details, invoice fields, or extracted facts), recipient_name (optional), sender_name (optional), tone ('professional' | 'friendly' | 'formal', default 'professional'). Output: { subject: string, body: string, to_suggestion: string|null }."
+
+[tools.input_schema]
+type     = "object"
+required = ["purpose", "context"]
+
+[tools.input_schema.properties.purpose]
+type        = "string"
+description = "The goal of this email (e.g. 'outreach to best CV candidate', 'forward invoice to accounting', 'incident notification to operations team')"
+
+[tools.input_schema.properties.context]
+description = "Relevant data or extracted information to include in the email (string or object)"
+
+[tools.input_schema.properties.recipient_name]
+type        = "string"
+description = "Recipient name for personalisation (optional)"
+
+[tools.input_schema.properties.sender_name]
+type        = "string"
+description = "Sender name for the sign-off (optional)"
+
+[tools.input_schema.properties.tone]
+type        = "string"
+enum        = ["professional", "friendly", "formal"]
+description = "Email tone (default: professional)"
+
+[chain]
+model           = "smart"
+vision          = false
+max_tokens      = 1024
+system_prompt   = "You are an expert business communication specialist. You write clear, professional emails that are concise, action-oriented, and appropriate for business contexts. Always include a subject line. Never use filler phrases like 'I hope this finds you well'."
+prompt_template = """Compose a professional email for the following purpose.
+
+Purpose: {{input.purpose}}
+Tone: {{input.tone}}
+{{#if input.recipient_name}}Recipient: {{input.recipient_name}}{{/if}}
+{{#if input.sender_name}}Sender: {{input.sender_name}}{{/if}}
+
+Relevant context:
+{{input.context}}
+
+Return a JSON object:
+{
+  "subject": "<compelling, specific subject line>",
+  "body": "<full email body with greeting, paragraphs, and sign-off>",
+  "to_suggestion": "<suggested recipient email format if inferrable, else null>"
+}
+
+Respond ONLY with the JSON object, no markdown fences."""
+
+[chain.output_schema]
+type     = "object"
+required = ["subject", "body"]
+
+[chain.output_schema.properties.subject]
+type = "string"
+
+[chain.output_schema.properties.body]
+type = "string"
+
+[chain.output_schema.properties.to_suggestion]
+type = ["string", "null"]

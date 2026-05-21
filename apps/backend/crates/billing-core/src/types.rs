@@ -1,20 +1,15 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SubscriptionStatus {
+    #[default]
     Active,
     Trialing,
     PastDue,
     Canceled,
     Incomplete,
-}
-
-impl Default for SubscriptionStatus {
-    fn default() -> Self {
-        Self::Active
-    }
 }
 
 impl std::fmt::Display for SubscriptionStatus {

@@ -65,11 +65,16 @@ pub struct AppState {
     pub realtime_service: Arc<RealtimeService>,
     pub semantic_router: Arc<SemanticCapabilityRouter>,
     pub router_quota: RouterQuotaConfig,
+    /// Kept alive so the bulk-loaded capability cards stay registered after boot;
+    /// readers should go through `state.registry` rather than this field.
+    #[allow(dead_code)]
     pub capability_spec_factory: Option<Arc<CapabilitySpecFactory>>,
     pub artifact_bridge: Option<Arc<ArtifactBridge>>,
     /// Identity provider (legacy HMAC/JWT or Zitadel OIDC).
     pub identity: StdArc<dyn IdentityManager>,
-    /// Hot-reload watcher for capability TOML manifests. Kept alive for the process lifetime.
+    /// Hot-reload watcher for capability TOML manifests. Kept alive for the process lifetime —
+    /// dropping it stops the notify thread that drives manifest hot-reload.
+    #[allow(dead_code)]
     pub manifest_watcher: Option<ManifestWatcher>,
     /// Token cache counters when Zitadel is the active provider; None for legacy.
     pub zitadel_cache_stats: Option<StdArc<ZitadelCacheStats>>,
@@ -535,7 +540,29 @@ fn build_llm_registry() -> LlmRegistry {
         provider: "anthropic".into(),
         model: "claude-haiku-4-5".into(),
     };
-    let aliases = HashMap::new();
+
+    // Canonical aliases consumed by chain TOML manifests + plan.orchestrate.
+    // Override via env (e.g. `LLM_ALIAS_SMART=claude-opus-4-7`) for cost tuning.
+    let alias_specs: &[(&str, &str, &str)] = &[
+        ("smart", "anthropic", "claude-sonnet-4-6"),
+        ("opus", "anthropic", "claude-opus-4-7"),
+        ("haiku", "anthropic", "claude-haiku-4-5"),
+        ("fast", "anthropic", "claude-haiku-4-5"),
+        ("cheap", "anthropic", "claude-haiku-4-5"),
+    ];
+    let mut aliases: HashMap<String, LlmBinding> = HashMap::new();
+    for (alias, provider, default_model) in alias_specs {
+        let env_key = format!("LLM_ALIAS_{}", alias.to_uppercase());
+        let model = std::env::var(&env_key).unwrap_or_else(|_| (*default_model).to_string());
+        aliases.insert(
+            (*alias).to_string(),
+            LlmBinding {
+                provider: (*provider).to_string(),
+                model,
+            },
+        );
+    }
+
     LlmRegistry::new(providers, aliases, default_binding)
 }
 

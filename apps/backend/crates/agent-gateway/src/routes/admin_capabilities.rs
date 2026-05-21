@@ -58,7 +58,6 @@ pub struct CapabilityRegisterRequest {
     pub tools: Vec<ToolDefJson>,
     #[serde(default)]
     pub tenant_scope: Vec<String>,
-    #[allow(dead_code)]
     #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default)]
@@ -370,7 +369,7 @@ pub async fn register_capability(
             namespace: Some(req.namespace.clone()),
             chain: None,
             tenant_scope: req.tenant_scope.clone(),
-            enabled: true,
+            enabled: req.enabled,
             search_keywords: vec![],
             schema_version: "1.0".into(),
             category: None,

@@ -50,11 +50,11 @@ pub async fn handle_webhook(
         .unwrap_or("");
 
     // Verify signature if billing is configured.
-    if let Some(billing) = &state.billing {
-        if let Err(e) = billing.verify_webhook(&body, signature) {
-            warn!(error = %e, "webhook signature verification failed");
-            return StatusCode::UNAUTHORIZED.into_response();
-        }
+    if let Some(billing) = &state.billing
+        && let Err(e) = billing.verify_webhook(&body, signature)
+    {
+        warn!(error = %e, "webhook signature verification failed");
+        return StatusCode::UNAUTHORIZED.into_response();
     }
 
     let payload: WebhookPayload = match serde_json::from_slice(&body) {
@@ -88,11 +88,11 @@ pub async fn handle_webhook(
             warn!("invoice payment failed — dunning initiated");
         }
         "customer.usage.threshold_reached" => {
-            if let Some(obj) = &payload.object {
-                if let Some(customer_id) = obj.get("external_id").and_then(|v| v.as_str()) {
-                    // Push SSE quota warning to the affected tenant.
-                    state.realtime_service.broadcast_quota_warning(customer_id).await;
-                }
+            if let Some(obj) = &payload.object
+                && let Some(customer_id) = obj.get("external_id").and_then(|v| v.as_str())
+            {
+                // Push SSE quota warning to the affected tenant.
+                state.realtime_service.broadcast_quota_warning(customer_id).await;
             }
         }
         other => {

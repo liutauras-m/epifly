@@ -20,15 +20,14 @@ impl ScheduledJob for CapabilityHealthCheckJob {
     }
 
     async fn run(&self, ctx: Arc<JobContext>) -> anyhow::Result<()> {
-        // Check RustFS / S3 is reachable (if configured).
+        // Check RustFS / S3 is reachable (if configured). Any HTTP response —
+        // including 401/403 from anonymous bucket-root access — means the
+        // service is up; only a transport-level error counts as unreachable.
         if let Some(endpoint) = &ctx.s3_endpoint {
             let health_url = format!("{}/", endpoint);
             match reqwest::get(&health_url).await {
-                Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 200 => {
-                    info!("capability-health-check: storage healthy");
-                }
                 Ok(resp) => {
-                    warn!(status = %resp.status(), "capability-health-check: storage unhealthy");
+                    info!(status = %resp.status(), "capability-health-check: storage healthy");
                 }
                 Err(e) => {
                     warn!(error = %e, "capability-health-check: storage unreachable");

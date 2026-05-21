@@ -212,7 +212,7 @@ async fn migrate_tenant(
         }
 
         copied += 1;
-        if copied % 100 == 0 {
+        if copied.is_multiple_of(100) {
             info!(tenant_id, copied, total, "tenant-bucket-migration: progress");
         }
     }

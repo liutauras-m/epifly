@@ -52,8 +52,8 @@ impl CapabilityProvider for ReadTextProvider {
         let rel = input["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
-        let full = safe_join(Path::new(&workspace_root), rel)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let full =
+            safe_join(Path::new(&workspace_root), rel).map_err(|e| anyhow::anyhow!("{e}"))?;
         let content = tokio::fs::read_to_string(&full)
             .await
             .map_err(|e| anyhow::anyhow!("read_file {rel}: {e}"))?;
@@ -96,8 +96,8 @@ impl CapabilityProvider for WriteTextProvider {
         let content = input["content"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: content"))?;
-        let full = safe_join(Path::new(&workspace_root), rel)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let full =
+            safe_join(Path::new(&workspace_root), rel).map_err(|e| anyhow::anyhow!("{e}"))?;
         if let Some(parent) = full.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
@@ -126,7 +126,11 @@ impl WorkspaceNativeProvider {
         workspace_store: Arc<dyn WorkspaceStore>,
         workspace_content: Arc<dyn WorkspaceContentStore>,
     ) -> Self {
-        Self { manifest, workspace_store, workspace_content }
+        Self {
+            manifest,
+            workspace_store,
+            workspace_content,
+        }
     }
 }
 
@@ -142,10 +146,14 @@ impl CapabilityProvider for WorkspaceNativeProvider {
         input: &Value,
         tenant: Option<&TenantContext>,
     ) -> anyhow::Result<Value> {
-        let tenant = tenant
-            .ok_or_else(|| anyhow::anyhow!("workspace tools require tenant context"))?;
+        let tenant =
+            tenant.ok_or_else(|| anyhow::anyhow!("workspace tools require tenant context"))?;
         let tenant_id = tenant.tenant_id.as_str();
-        let user_id = tenant.user_id.as_ref().map(|u| u.as_str()).unwrap_or("__dev__");
+        let user_id = tenant
+            .user_id
+            .as_ref()
+            .map(|u| u.as_str())
+            .unwrap_or("__dev__");
 
         match tool_name {
             "save_document" => self.save_document(input, tenant_id, user_id).await,
@@ -189,9 +197,10 @@ impl WorkspaceNativeProvider {
             .await
             .unwrap_or_default();
 
-        let folder = if let Some(f) = folders.iter().find(|n| {
-            n.kind == NodeKind::Folder && n.name.eq_ignore_ascii_case(folder_name)
-        }) {
+        let folder = if let Some(f) = folders
+            .iter()
+            .find(|n| n.kind == NodeKind::Folder && n.name.eq_ignore_ascii_case(folder_name))
+        {
             f.clone()
         } else {
             self.workspace_store
@@ -271,8 +280,8 @@ impl CapabilityProvider for PutObjectProvider {
         let rel = input["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
-        let full = safe_join(Path::new(&workspace_root), rel)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let full =
+            safe_join(Path::new(&workspace_root), rel).map_err(|e| anyhow::anyhow!("{e}"))?;
         if let Some(parent) = full.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
@@ -328,8 +337,7 @@ impl CapabilityProvider for ListFoldersProvider {
         let base = if prefix == "." {
             Path::new(&workspace_root).to_path_buf()
         } else {
-            safe_join(Path::new(&workspace_root), prefix)
-                .map_err(|e| anyhow::anyhow!("{e}"))?
+            safe_join(Path::new(&workspace_root), prefix).map_err(|e| anyhow::anyhow!("{e}"))?
         };
         let mut entries = Vec::new();
         let mut rd = tokio::fs::read_dir(&base)
@@ -378,8 +386,8 @@ impl CapabilityProvider for EnsureFolderProvider {
         let rel = input["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
-        let full = safe_join(Path::new(&workspace_root), rel)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let full =
+            safe_join(Path::new(&workspace_root), rel).map_err(|e| anyhow::anyhow!("{e}"))?;
         tokio::fs::create_dir_all(&full)
             .await
             .map_err(|e| anyhow::anyhow!("ensure_folder {rel}: {e}"))?;
@@ -463,10 +471,9 @@ impl CapabilityProvider for MoveObjectProvider {
         let to = input["to"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: to"))?;
-        let src = safe_join(Path::new(&workspace_root), from)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let dst = safe_join(Path::new(&workspace_root), to)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let src =
+            safe_join(Path::new(&workspace_root), from).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let dst = safe_join(Path::new(&workspace_root), to).map_err(|e| anyhow::anyhow!("{e}"))?;
         if let Some(parent) = dst.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
@@ -563,7 +570,10 @@ pub struct StaticPlanProvider {
 impl StaticPlanProvider {
     pub fn new(manifest: ToolManifest) -> Self {
         let steps_json = manifest.config["steps"].clone();
-        Self { manifest, steps_json }
+        Self {
+            manifest,
+            steps_json,
+        }
     }
 }
 
@@ -586,6 +596,654 @@ impl CapabilityProvider for StaticPlanProvider {
     }
 }
 
+// ── MoveNodeProvider ──────────────────────────────────────────────────────────
+
+/// Moves a workspace node (folder or conversation) to a new parent in the
+/// workspace tree. Distinct from `MoveObjectProvider`, which moves files on
+/// disk via `tokio::fs::rename`. This provider operates on the
+/// `WorkspaceStore` so the UI tree reflects the change.
+pub struct MoveNodeProvider {
+    manifest: ToolManifest,
+    workspace_store: Arc<dyn WorkspaceStore>,
+}
+
+impl MoveNodeProvider {
+    pub fn new(manifest: ToolManifest, workspace_store: Arc<dyn WorkspaceStore>) -> Self {
+        Self {
+            manifest,
+            workspace_store,
+        }
+    }
+}
+
+#[async_trait]
+impl CapabilityProvider for MoveNodeProvider {
+    fn manifest(&self) -> &ToolManifest {
+        &self.manifest
+    }
+
+    async fn invoke(
+        &self,
+        tool_name: &str,
+        input: &Value,
+        tenant: Option<&TenantContext>,
+    ) -> anyhow::Result<Value> {
+        if tool_name != "move_node" && tool_name != "relocate" {
+            anyhow::bail!("unknown tool: {tool_name}");
+        }
+        let tenant =
+            tenant.ok_or_else(|| anyhow::anyhow!("move_node requires tenant context"))?;
+        let tenant_id = tenant.tenant_id.as_str();
+        let user_id = tenant
+            .user_id
+            .as_ref()
+            .map(|u| u.as_str())
+            .unwrap_or("__dev__");
+
+        // Resolve target node: prefer explicit `id`, fall back to `name` lookup.
+        let id_str = if let Some(s) = input["id"]
+            .as_str()
+            .or_else(|| input["node_id"].as_str())
+        {
+            s.to_string()
+        } else if let Some(name) = input["name"].as_str() {
+            let hits = self
+                .workspace_store
+                .search_nodes(tenant_id, user_id, name, 5)
+                .await
+                .map_err(|e| anyhow::anyhow!("search for '{name}': {e}"))?;
+            let chosen = hits
+                .iter()
+                .find(|n| n.name.eq_ignore_ascii_case(name))
+                .cloned()
+                .or_else(|| hits.into_iter().next())
+                .ok_or_else(|| anyhow::anyhow!("no workspace node matches name '{name}'"))?;
+            chosen.id.to_string()
+        } else {
+            anyhow::bail!("move_node requires either `id` (or `node_id`) or `name`");
+        };
+
+        let ulid: ulid::Ulid = id_str
+            .parse()
+            .map_err(|e| anyhow::anyhow!("invalid node id '{id_str}': {e}"))?;
+
+        // Resolve new parent: explicit ULID, parent name lookup, or null (move to root).
+        let new_parent_id: Option<ulid::Ulid> = if let Some(s) = input["new_parent_id"]
+            .as_str()
+            .or_else(|| input["parent_id"].as_str())
+        {
+            if s.is_empty() {
+                None
+            } else {
+                Some(s.parse().map_err(|e| {
+                    anyhow::anyhow!("invalid parent ulid '{s}': {e}")
+                })?)
+            }
+        } else if let Some(parent_name) = input["new_parent_name"]
+            .as_str()
+            .or_else(|| input["parent_name"].as_str())
+        {
+            let hits = self
+                .workspace_store
+                .search_nodes(tenant_id, user_id, parent_name, 5)
+                .await
+                .map_err(|e| anyhow::anyhow!("search for parent '{parent_name}': {e}"))?;
+            let chosen = hits
+                .iter()
+                .find(|n| {
+                    n.kind == NodeKind::Folder && n.name.eq_ignore_ascii_case(parent_name)
+                })
+                .cloned()
+                .or_else(|| hits.into_iter().find(|n| n.kind == NodeKind::Folder))
+                .ok_or_else(|| {
+                    anyhow::anyhow!("no folder matches parent name '{parent_name}'")
+                })?;
+            Some(chosen.id)
+        } else {
+            None
+        };
+
+        let moved = self
+            .workspace_store
+            .move_node(tenant_id, user_id, ulid, new_parent_id, None)
+            .await
+            .map_err(|e| anyhow::anyhow!("move_node {ulid}: {e}"))?;
+
+        Ok(json!({
+            "status": "moved",
+            "id": moved.id.to_string(),
+            "name": moved.name,
+            "virtual_path": moved.virtual_path,
+            "parent_id": moved.parent_id.map(|p| p.to_string()),
+        }))
+    }
+}
+
+// ── CreateFolderProvider ──────────────────────────────────────────────────────
+
+/// Creates an empty folder in the tenant's workspace tree. Unlike
+/// `EnsureFolderProvider` (filesystem mkdir), this writes to the
+/// `WorkspaceStore` so the folder shows up in the UI tree and the
+/// `/v1/workspaces/tree` endpoint.
+pub struct CreateFolderProvider {
+    manifest: ToolManifest,
+    workspace_store: Arc<dyn WorkspaceStore>,
+}
+
+impl CreateFolderProvider {
+    pub fn new(manifest: ToolManifest, workspace_store: Arc<dyn WorkspaceStore>) -> Self {
+        Self {
+            manifest,
+            workspace_store,
+        }
+    }
+}
+
+#[async_trait]
+impl CapabilityProvider for CreateFolderProvider {
+    fn manifest(&self) -> &ToolManifest {
+        &self.manifest
+    }
+
+    async fn invoke(
+        &self,
+        tool_name: &str,
+        input: &Value,
+        tenant: Option<&TenantContext>,
+    ) -> anyhow::Result<Value> {
+        if tool_name != "create_folder" && tool_name != "new_folder" {
+            anyhow::bail!("unknown tool: {tool_name}");
+        }
+        let tenant =
+            tenant.ok_or_else(|| anyhow::anyhow!("create_folder requires tenant context"))?;
+        let tenant_id = tenant.tenant_id.as_str();
+        let user_id = tenant
+            .user_id
+            .as_ref()
+            .map(|u| u.as_str())
+            .unwrap_or("__dev__");
+
+        let name = input["name"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing required field: name"))?
+            .trim();
+        if name.is_empty() {
+            anyhow::bail!("name must not be empty");
+        }
+
+        // Optional parent — accept ULID or null to mean "at the root".
+        let parent_id: Option<ulid::Ulid> = match input.get("parent_id") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) if s.is_empty() => None,
+            Some(Value::String(s)) => Some(s.parse().map_err(|e| {
+                anyhow::anyhow!("invalid parent_id '{s}': {e}")
+            })?),
+            Some(other) => anyhow::bail!("parent_id must be a string ULID, got {other:?}"),
+        };
+
+        let folder = self
+            .workspace_store
+            .create_folder(tenant_id, user_id, parent_id, name)
+            .await
+            .map_err(|e| anyhow::anyhow!("create_folder '{name}': {e}"))?;
+
+        Ok(json!({
+            "status": "created",
+            "id": folder.id.to_string(),
+            "name": folder.name,
+            "virtual_path": folder.virtual_path,
+            "parent_id": folder.parent_id.map(|p| p.to_string()),
+        }))
+    }
+}
+
+// ── DeleteNodeProvider ────────────────────────────────────────────────────────
+
+/// Deletes a workspace node (folder or conversation) by ULID or by name.
+/// When `name` is supplied, the provider first searches the user's accessible
+/// nodes and resolves the ULID before issuing the delete. This is the path
+/// the LLM uses — it doesn't have a human-name → ULID lookup otherwise.
+pub struct DeleteNodeProvider {
+    manifest: ToolManifest,
+    workspace_store: Arc<dyn WorkspaceStore>,
+}
+
+impl DeleteNodeProvider {
+    pub fn new(manifest: ToolManifest, workspace_store: Arc<dyn WorkspaceStore>) -> Self {
+        Self {
+            manifest,
+            workspace_store,
+        }
+    }
+}
+
+#[async_trait]
+impl CapabilityProvider for DeleteNodeProvider {
+    fn manifest(&self) -> &ToolManifest {
+        &self.manifest
+    }
+
+    async fn invoke(
+        &self,
+        tool_name: &str,
+        input: &Value,
+        tenant: Option<&TenantContext>,
+    ) -> anyhow::Result<Value> {
+        if tool_name != "delete_node" && tool_name != "delete" && tool_name != "remove" {
+            anyhow::bail!("unknown tool: {tool_name}");
+        }
+        let tenant = tenant
+            .ok_or_else(|| anyhow::anyhow!("delete_node requires tenant context"))?;
+        let tenant_id = tenant.tenant_id.as_str();
+        let user_id = tenant
+            .user_id
+            .as_ref()
+            .map(|u| u.as_str())
+            .unwrap_or("__dev__");
+
+        // Resolve target ULID: prefer explicit `id`, fall back to `name` lookup.
+        let id_str = if let Some(s) = input["id"].as_str() {
+            s.to_string()
+        } else if let Some(name) = input["name"].as_str() {
+            let hits = self
+                .workspace_store
+                .search_nodes(tenant_id, user_id, name, 5)
+                .await
+                .map_err(|e| anyhow::anyhow!("search for '{name}': {e}"))?;
+            // Prefer an exact case-insensitive name match; fall back to top hit.
+            let exact = hits
+                .iter()
+                .find(|n| n.name.eq_ignore_ascii_case(name))
+                .cloned();
+            let chosen = exact.or_else(|| hits.into_iter().next()).ok_or_else(|| {
+                anyhow::anyhow!("no workspace node matches name '{name}'")
+            })?;
+            chosen.id.to_string()
+        } else {
+            anyhow::bail!("delete_node requires either `id` or `name`");
+        };
+
+        let ulid: ulid::Ulid = id_str
+            .parse()
+            .map_err(|e| anyhow::anyhow!("invalid node id '{id_str}': {e}"))?;
+
+        self.workspace_store
+            .delete_node(tenant_id, user_id, ulid)
+            .await
+            .map_err(|e| anyhow::anyhow!("delete_node {ulid}: {e}"))?;
+
+        Ok(json!({
+            "status": "deleted",
+            "id": id_str,
+        }))
+    }
+}
+
+// ── FindByNameProvider ────────────────────────────────────────────────────────
+
+/// Resolves a human-readable name to a workspace node ULID. Returns the top
+/// match (exact name preferred, then the highest-ranked hit from
+/// `search_nodes`). Used by the agent to chain "find X" → "move/delete X".
+pub struct FindByNameProvider {
+    manifest: ToolManifest,
+    workspace_store: Arc<dyn WorkspaceStore>,
+}
+
+impl FindByNameProvider {
+    pub fn new(manifest: ToolManifest, workspace_store: Arc<dyn WorkspaceStore>) -> Self {
+        Self {
+            manifest,
+            workspace_store,
+        }
+    }
+}
+
+#[async_trait]
+impl CapabilityProvider for FindByNameProvider {
+    fn manifest(&self) -> &ToolManifest {
+        &self.manifest
+    }
+
+    async fn invoke(
+        &self,
+        tool_name: &str,
+        input: &Value,
+        tenant: Option<&TenantContext>,
+    ) -> anyhow::Result<Value> {
+        if tool_name != "find_by_name" && tool_name != "find" && tool_name != "lookup" {
+            anyhow::bail!("unknown tool: {tool_name}");
+        }
+        let tenant = tenant
+            .ok_or_else(|| anyhow::anyhow!("find_by_name requires tenant context"))?;
+        let tenant_id = tenant.tenant_id.as_str();
+        let user_id = tenant
+            .user_id
+            .as_ref()
+            .map(|u| u.as_str())
+            .unwrap_or("__dev__");
+
+        let name = input["name"]
+            .as_str()
+            .or_else(|| input["query"].as_str())
+            .ok_or_else(|| anyhow::anyhow!("missing required field: name"))?;
+        let limit = input["limit"]
+            .as_u64()
+            .filter(|n| *n > 0 && *n <= 50)
+            .unwrap_or(10) as usize;
+
+        let hits = self
+            .workspace_store
+            .search_nodes(tenant_id, user_id, name, limit)
+            .await
+            .map_err(|e| anyhow::anyhow!("search '{name}': {e}"))?;
+
+        if hits.is_empty() {
+            return Ok(json!({ "found": false, "matches": [] }));
+        }
+
+        // Score exact name matches highest.
+        let mut scored: Vec<(usize, &common::memory::workspace::WorkspaceNode)> = hits
+            .iter()
+            .map(|n| {
+                let score = if n.name.eq_ignore_ascii_case(name) {
+                    1000
+                } else if n.name.to_lowercase().contains(&name.to_lowercase()) {
+                    100
+                } else {
+                    1
+                };
+                (score, n)
+            })
+            .collect();
+        scored.sort_by_key(|(s, _)| std::cmp::Reverse(*s));
+
+        let best = scored[0].1;
+        let matches: Vec<Value> = hits
+            .iter()
+            .map(|n| {
+                json!({
+                    "id": n.id.to_string(),
+                    "name": n.name,
+                    "kind": format!("{:?}", n.kind).to_lowercase(),
+                    "virtual_path": n.virtual_path,
+                    "parent_id": n.parent_id.map(|p| p.to_string()),
+                })
+            })
+            .collect();
+
+        Ok(json!({
+            "found": true,
+            "best_match": {
+                "id": best.id.to_string(),
+                "name": best.name,
+                "kind": format!("{:?}", best.kind).to_lowercase(),
+                "virtual_path": best.virtual_path,
+                "parent_id": best.parent_id.map(|p| p.to_string()),
+            },
+            "matches": matches,
+        }))
+    }
+}
+
+// ── ShowTreeProvider ──────────────────────────────────────────────────────────
+
+/// Returns a formatted Markdown tree of the user's accessible workspace nodes.
+/// Optionally scoped to a `parent_id`; otherwise lists from the root.
+pub struct ShowTreeProvider {
+    manifest: ToolManifest,
+    workspace_store: Arc<dyn WorkspaceStore>,
+}
+
+impl ShowTreeProvider {
+    pub fn new(manifest: ToolManifest, workspace_store: Arc<dyn WorkspaceStore>) -> Self {
+        Self {
+            manifest,
+            workspace_store,
+        }
+    }
+}
+
+#[async_trait]
+impl CapabilityProvider for ShowTreeProvider {
+    fn manifest(&self) -> &ToolManifest {
+        &self.manifest
+    }
+
+    async fn invoke(
+        &self,
+        tool_name: &str,
+        input: &Value,
+        tenant: Option<&TenantContext>,
+    ) -> anyhow::Result<Value> {
+        if tool_name != "show_tree" && tool_name != "tree" && tool_name != "show" {
+            anyhow::bail!("unknown tool: {tool_name}");
+        }
+        let tenant = tenant
+            .ok_or_else(|| anyhow::anyhow!("show_tree requires tenant context"))?;
+        let tenant_id = tenant.tenant_id.as_str();
+        let user_id = tenant
+            .user_id
+            .as_ref()
+            .map(|u| u.as_str())
+            .unwrap_or("__dev__");
+
+        let root_id: Option<ulid::Ulid> = input["parent_id"]
+            .as_str()
+            .and_then(|s| s.parse().ok());
+        // Depth cap prevents unbounded recursion on pathological trees.
+        let max_depth = input["depth"].as_u64().unwrap_or(2).min(5) as usize;
+
+        let mut buf = String::new();
+        let mut count = 0_usize;
+        self.render_subtree(
+            tenant_id,
+            user_id,
+            root_id,
+            0,
+            max_depth,
+            &mut buf,
+            &mut count,
+        )
+        .await?;
+
+        if buf.is_empty() {
+            buf.push_str("_(workspace is empty)_");
+        }
+
+        Ok(json!({
+            "tree": buf,
+            "node_count": count,
+        }))
+    }
+}
+
+impl ShowTreeProvider {
+    async fn render_subtree(
+        &self,
+        tenant_id: &str,
+        user_id: &str,
+        parent: Option<ulid::Ulid>,
+        depth: usize,
+        max_depth: usize,
+        out: &mut String,
+        count: &mut usize,
+    ) -> anyhow::Result<()> {
+        if depth > max_depth {
+            return Ok(());
+        }
+        let children = self
+            .workspace_store
+            .list_accessible_children(tenant_id, user_id, parent)
+            .await
+            .unwrap_or_default();
+
+        for child in children {
+            *count += 1;
+            let indent = "  ".repeat(depth);
+            let icon = match child.kind {
+                NodeKind::Folder => "📁",
+                NodeKind::Conversation => "📄",
+                _ => "•",
+            };
+            out.push_str(&format!("{indent}- {icon} {}\n", child.name));
+            if child.kind == NodeKind::Folder {
+                Box::pin(self.render_subtree(
+                    tenant_id,
+                    user_id,
+                    Some(child.id),
+                    depth + 1,
+                    max_depth,
+                    out,
+                    count,
+                ))
+                .await?;
+            }
+        }
+        Ok(())
+    }
+}
+
+// ── BulkDeleteProvider ────────────────────────────────────────────────────────
+
+/// Deletes every direct (or recursive) child of a workspace folder in one tool
+/// call. Used for "delete all files in X" prompts so the agent doesn't have to
+/// chain N `delete_node` calls and run out of model rounds.
+///
+/// Safety: requires either `parent_id` or `parent_name` — there is no "delete
+/// everything in the workspace" mode. The caller can pass `kind: "conversation"`
+/// to limit the operation to files only and preserve sub-folders, or `kind: "all"`
+/// to wipe everything beneath the target.
+pub struct BulkDeleteProvider {
+    manifest: ToolManifest,
+    workspace_store: Arc<dyn WorkspaceStore>,
+}
+
+impl BulkDeleteProvider {
+    pub fn new(manifest: ToolManifest, workspace_store: Arc<dyn WorkspaceStore>) -> Self {
+        Self {
+            manifest,
+            workspace_store,
+        }
+    }
+}
+
+#[async_trait]
+impl CapabilityProvider for BulkDeleteProvider {
+    fn manifest(&self) -> &ToolManifest {
+        &self.manifest
+    }
+
+    async fn invoke(
+        &self,
+        tool_name: &str,
+        input: &Value,
+        tenant: Option<&TenantContext>,
+    ) -> anyhow::Result<Value> {
+        if tool_name != "bulk_delete"
+            && tool_name != "delete_all"
+            && tool_name != "empty_folder"
+        {
+            anyhow::bail!("unknown tool: {tool_name}");
+        }
+        let tenant =
+            tenant.ok_or_else(|| anyhow::anyhow!("bulk_delete requires tenant context"))?;
+        let tenant_id = tenant.tenant_id.as_str();
+        let user_id = tenant
+            .user_id
+            .as_ref()
+            .map(|u| u.as_str())
+            .unwrap_or("__dev__");
+
+        // Resolve parent folder: explicit ULID or name lookup.
+        let parent_id: ulid::Ulid = if let Some(s) = input["parent_id"]
+            .as_str()
+            .or_else(|| input["folder_id"].as_str())
+        {
+            s.parse()
+                .map_err(|e| anyhow::anyhow!("invalid parent_id '{s}': {e}"))?
+        } else if let Some(name) = input["parent_name"]
+            .as_str()
+            .or_else(|| input["folder_name"].as_str())
+        {
+            let hits = self
+                .workspace_store
+                .search_nodes(tenant_id, user_id, name, 5)
+                .await
+                .map_err(|e| anyhow::anyhow!("search for parent '{name}': {e}"))?;
+            let chosen = hits
+                .iter()
+                .find(|n| {
+                    n.kind == NodeKind::Folder && n.name.eq_ignore_ascii_case(name)
+                })
+                .cloned()
+                .or_else(|| hits.into_iter().find(|n| n.kind == NodeKind::Folder))
+                .ok_or_else(|| anyhow::anyhow!("no folder matches name '{name}'"))?;
+            chosen.id
+        } else {
+            anyhow::bail!("bulk_delete requires either `parent_id` or `parent_name`");
+        };
+
+        // Filter scope: "all" (default), "conversation" (files only), "folder".
+        let kind_filter = input["kind"].as_str().unwrap_or("all").to_ascii_lowercase();
+
+        let children = self
+            .workspace_store
+            .list_accessible_children(tenant_id, user_id, Some(parent_id))
+            .await
+            .unwrap_or_default();
+
+        let mut deleted_ids: Vec<String> = Vec::new();
+        let mut deleted_names: Vec<String> = Vec::new();
+        let mut errors: Vec<Value> = Vec::new();
+        let mut skipped: Vec<Value> = Vec::new();
+
+        for child in children {
+            let should_delete = match kind_filter.as_str() {
+                "all" | "*" => true,
+                "conversation" | "file" | "files" => child.kind == NodeKind::Conversation,
+                "folder" | "folders" => child.kind == NodeKind::Folder,
+                _ => true,
+            };
+            if !should_delete {
+                skipped.push(json!({
+                    "id": child.id.to_string(),
+                    "name": child.name,
+                    "reason": format!("kind {:?} excluded by filter '{}'", child.kind, kind_filter),
+                }));
+                continue;
+            }
+            match self
+                .workspace_store
+                .delete_node(tenant_id, user_id, child.id)
+                .await
+            {
+                Ok(()) => {
+                    deleted_ids.push(child.id.to_string());
+                    deleted_names.push(child.name);
+                }
+                Err(e) => {
+                    errors.push(json!({
+                        "id": child.id.to_string(),
+                        "name": child.name,
+                        "error": e.to_string(),
+                    }));
+                }
+            }
+        }
+
+        Ok(json!({
+            "status": if errors.is_empty() { "ok" } else { "partial" },
+            "parent_id": parent_id.to_string(),
+            "kind_filter": kind_filter,
+            "deleted_count": deleted_ids.len(),
+            "deleted_ids": deleted_ids,
+            "deleted_names": deleted_names,
+            "skipped": skipped,
+            "errors": errors,
+        }))
+    }
+}
+
 // ── NativeStorageFactory ──────────────────────────────────────────────────────
 
 /// Factory for `ToolKind::Native` capabilities.
@@ -601,6 +1259,12 @@ impl CapabilityProvider for StaticPlanProvider {
 /// - `"move_object"` → `MoveObjectProvider` (rename within workspace)
 /// - `"tag_object"` → `TagObjectProvider` (write `.meta.json` sidecar)
 /// - `"plan"` → `StaticPlanProvider` (returns `config.steps` array for orchestration)
+/// - `"delete_node"` → `DeleteNodeProvider` (delete a workspace node by id or name)
+/// - `"find_by_name"` → `FindByNameProvider` (resolve a name to a ULID + matches)
+/// - `"show_tree"` → `ShowTreeProvider` (Markdown tree of workspace nodes)
+/// - `"create_folder"` → `CreateFolderProvider` (empty workspace folder)
+/// - `"move_node"` → `MoveNodeProvider` (move a workspace tree node by id or name)
+/// - `"bulk_delete"` → `BulkDeleteProvider` (delete every child of a folder in one call)
 pub struct NativeStorageFactory {
     workspace_store: Arc<dyn WorkspaceStore>,
     workspace_content: Arc<dyn WorkspaceContentStore>,
@@ -611,7 +1275,10 @@ impl NativeStorageFactory {
         workspace_store: Arc<dyn WorkspaceStore>,
         workspace_content: Arc<dyn WorkspaceContentStore>,
     ) -> Self {
-        Self { workspace_store, workspace_content }
+        Self {
+            workspace_store,
+            workspace_content,
+        }
     }
 }
 
@@ -640,6 +1307,30 @@ impl CapabilityFactory for NativeStorageFactory {
             "move_object" => Ok(Arc::new(MoveObjectProvider::new(card.manifest))),
             "tag_object" => Ok(Arc::new(TagObjectProvider::new(card.manifest))),
             "plan" => Ok(Arc::new(StaticPlanProvider::new(card.manifest))),
+            "delete_node" | "delete" | "remove" => Ok(Arc::new(DeleteNodeProvider::new(
+                card.manifest,
+                Arc::clone(&self.workspace_store),
+            ))),
+            "find_by_name" | "find" | "lookup" => Ok(Arc::new(FindByNameProvider::new(
+                card.manifest,
+                Arc::clone(&self.workspace_store),
+            ))),
+            "show_tree" | "tree" | "show" => Ok(Arc::new(ShowTreeProvider::new(
+                card.manifest,
+                Arc::clone(&self.workspace_store),
+            ))),
+            "create_folder" | "new_folder" => Ok(Arc::new(CreateFolderProvider::new(
+                card.manifest,
+                Arc::clone(&self.workspace_store),
+            ))),
+            "move_node" | "relocate" => Ok(Arc::new(MoveNodeProvider::new(
+                card.manifest,
+                Arc::clone(&self.workspace_store),
+            ))),
+            "bulk_delete" | "delete_all" | "empty_folder" => Ok(Arc::new(BulkDeleteProvider::new(
+                card.manifest,
+                Arc::clone(&self.workspace_store),
+            ))),
             other => anyhow::bail!(
                 "NativeStorageFactory: unknown op={other:?} for capability '{}'",
                 card.manifest.name

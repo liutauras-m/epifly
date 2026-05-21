@@ -210,12 +210,7 @@ pub type RigAnthropicAgent =
 
 impl AnthropicProvider {
     /// Build a Rig agent with no dynamic tools.
-    pub fn build_agent(
-        &self,
-        model: &str,
-        preamble: &str,
-        max_tokens: u64,
-    ) -> RigAnthropicAgent {
+    pub fn build_agent(&self, model: &str, preamble: &str, max_tokens: u64) -> RigAnthropicAgent {
         self.client
             .agent(model)
             .preamble(preamble)

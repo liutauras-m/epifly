@@ -1,0 +1,86 @@
+schema_version = "2.0"
+name        = "compose-report-json"
+version     = "1.0.0"
+namespace   = "compose.report_json"
+category    = "compose"
+kind        = "chain"
+description = "Compose a structured JSON report from extracted data, ready for downstream systems (ERP, CRM, claims processing). Normalises field names to snake_case, fills required schema fields, and adds metadata envelope (report_id, created_at, schema_version). Use when the output will be consumed by a machine rather than a human."
+tags        = ["compose", "report", "json", "structured", "machine-readable", "api"]
+accepts     = [
+    { mime = "application/json", max_size_mb = 1 },
+    { mime = "text/plain", max_size_mb = 1 },
+]
+emits       = ["application/json"]
+idempotent  = true
+cost_hint   = { dollars = 0.01, latency_ms = 2000 }
+requires    = []
+search_keywords = [
+    "compose json", "structured report", "json output", "machine readable",
+    "system report", "api report", "claims report", "structured data output",
+    "normalise fields", "json schema", "export json",
+]
+
+[[tools]]
+name        = "compose_report_json"
+description = "Compose a structured JSON report from extracted data. Input: data (extracted fields object), report_type (e.g. 'medical_claim', 'invoice', 'incident'), schema_hint (optional JSON schema the output should conform to). Output: JSON report object with metadata envelope."
+
+[tools.input_schema]
+type     = "object"
+required = ["data"]
+
+[tools.input_schema.properties.data]
+type        = "object"
+description = "Extracted data fields to normalise into a report"
+
+[tools.input_schema.properties.report_type]
+type        = "string"
+description = "Type of report to compose (e.g. 'medical_claim', 'invoice', 'cv', 'incident')"
+
+[tools.input_schema.properties.schema_hint]
+type        = "object"
+description = "Optional JSON Schema the output should conform to"
+
+[chain]
+model           = "smart"
+vision          = false
+max_tokens      = 2048
+system_prompt   = "You are a data normalisation specialist. You receive raw extracted data and produce clean, standardised JSON reports for downstream system consumption. Always include a metadata envelope. Respond ONLY with valid JSON — no markdown fences, no explanation."
+prompt_template = """Compose a structured JSON report from the following extracted data.
+
+Report type: {{input.report_type}}
+{{#if input.schema_hint}}Output schema hint: {{input.schema_hint}}{{/if}}
+
+Input data:
+{{input.data}}
+
+Return a JSON object with this envelope:
+{
+  "metadata": {
+    "report_type": "{{input.report_type}}",
+    "schema_version": "1.0",
+    "created_at": "<ISO 8601 timestamp>",
+    "source": "compose.report_json"
+  },
+  "data": { <normalised fields matching the report type> },
+  "validation": {
+    "completeness_pct": <0-100>,
+    "missing_required_fields": [<list of missing field names>],
+    "warnings": [<list of data quality warnings>]
+  }
+}
+
+Use snake_case for all field names. Respond ONLY with the JSON object."""
+
+[chain.output_schema]
+type     = "object"
+required = ["metadata", "data"]
+
+[chain.output_schema.properties.metadata]
+type     = "object"
+required = ["report_type", "schema_version"]
+
+[chain.output_schema.properties.data]
+type = "object"
+
+[chain.output_schema.properties.validation]
+type = "object"

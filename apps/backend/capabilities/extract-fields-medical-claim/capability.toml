@@ -1,0 +1,144 @@
+schema_version = "2.0"
+name        = "extract-fields-medical-claim"
+version     = "1.0.0"
+namespace   = "extract.fields.medical_claim"
+category    = "extract"
+kind        = "chain"
+description = "Structured extraction from medical claim forms and supporting documents. Returns MedicalClaimData JSON: patient details, provider information, procedure codes (CPT/ICD), diagnosis codes, service dates, billed amounts, and claim type. Call when the user uploads a medical claim form, EOB, CMS-1500, UB-04, or asks to process a health insurance claim."
+tags        = ["medical", "claim", "healthcare", "insurance", "structured-extraction", "vision", "document", "CPT", "ICD"]
+accepts     = [
+    { mime = "application/pdf", max_size_mb = 20 },
+    { mime = "image/*", max_size_mb = 20 },
+]
+emits       = ["application/json"]
+idempotent  = true
+cost_hint   = { dollars = 0.05, latency_ms = 5000 }
+requires    = []
+search_keywords = [
+    "medical claim", "health claim", "insurance claim", "claim form",
+    "CMS-1500", "UB-04", "EOB", "explanation of benefits",
+    "CPT code", "ICD code", "procedure code", "diagnosis code",
+    "patient details", "provider", "billed amount", "healthcare",
+    "extract claim", "parse claim", "process claim", "claim processing",
+    "medical billing", "health insurance", "reimbursement",
+]
+
+[[tools]]
+name        = "extract_medical_claim"
+description = "Extract complete structured fields from a medical claim form, EOB, or supporting healthcare document. Input: image_path — local path or URL (PNG, JPEG, JPG, PDF). Output: MedicalClaimData JSON with patient, provider, procedures, diagnoses, dates, amounts, and claim_type."
+
+[tools.input_schema]
+type     = "object"
+required = ["image_path"]
+
+[tools.input_schema.properties.image_path]
+type        = "string"
+description = "Absolute local path or http/https URL to the medical claim document or image"
+
+[[tools]]
+name        = "validate_medical_claim"
+description = "Validate a MedicalClaimData object for completeness, code validity, and internal consistency. Checks required fields, CPT/ICD code format, and amount totals. Input: claim_data (MedicalClaimData JSON from extract_medical_claim). Output: { valid, errors, warnings, completeness_pct }."
+
+[tools.input_schema]
+type     = "object"
+required = ["claim_data"]
+
+[tools.input_schema.properties.claim_data]
+type        = "object"
+description = "MedicalClaimData JSON previously returned by extract_medical_claim"
+
+[chain]
+model           = "smart"
+vision          = true
+max_tokens      = 3000
+system_prompt   = "You are a medical claims processing specialist with expertise in CMS-1500, UB-04, and EOB forms. Extract structured data from medical claim documents with high accuracy. Always respond with valid JSON only. Use null for missing scalar fields, empty arrays [] for missing lists."
+prompt_template = """Extract all medical claim information from the attached document.
+Return a valid JSON object matching exactly this structure:
+{
+  "claim_type": "CMS-1500" | "UB-04" | "EOB" | "other" | null,
+  "claim_number": string|null,
+  "service_date_from": string|null,
+  "service_date_to": string|null,
+  "submission_date": string|null,
+
+  "patient": {
+    "name": string|null,
+    "date_of_birth": string|null,
+    "member_id": string|null,
+    "group_number": string|null,
+    "address": string|null,
+    "relationship_to_insured": string|null
+  },
+
+  "insured": {
+    "name": string|null,
+    "id_number": string|null,
+    "date_of_birth": string|null,
+    "employer_name": string|null
+  },
+
+  "provider": {
+    "name": string|null,
+    "npi": string|null,
+    "address": string|null,
+    "phone": string|null,
+    "tax_id": string|null,
+    "specialty": string|null
+  },
+
+  "diagnosis_codes": [
+    { "code": string, "description": string|null, "system": "ICD-10" | "ICD-9" | null }
+  ],
+
+  "procedures": [
+    {
+      "cpt_code": string|null,
+      "description": string|null,
+      "service_date": string|null,
+      "quantity": number|null,
+      "charge_amount": number|null,
+      "allowed_amount": number|null,
+      "paid_amount": number|null,
+      "patient_responsibility": number|null,
+      "modifier": string|null
+    }
+  ],
+
+  "totals": {
+    "total_charges": number|null,
+    "total_allowed": number|null,
+    "total_paid": number|null,
+    "deductible_applied": number|null,
+    "copay": number|null,
+    "coinsurance": number|null,
+    "patient_total_responsibility": number|null
+  },
+
+  "payer": {
+    "name": string|null,
+    "claim_number": string|null,
+    "processed_date": string|null
+  },
+
+  "notes": string|null
+}
+Respond ONLY with the JSON object, no markdown fences, no explanation."""
+
+[chain.output_schema]
+type     = "object"
+required = ["patient", "procedures"]
+
+[chain.output_schema.properties.patient]
+type     = "object"
+required = ["name"]
+
+[chain.output_schema.properties.procedures]
+type  = "array"
+items = { type = "object" }
+
+[chain.output_schema.properties.claim_type]
+type = ["string", "null"]
+
+[config]
+max_document_size_mb = 20
+supported_formats    = ["png", "jpeg", "jpg", "pdf"]

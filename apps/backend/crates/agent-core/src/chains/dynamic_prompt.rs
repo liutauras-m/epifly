@@ -12,7 +12,7 @@ use crate::llm::LlmRegistry;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::sync::Arc;
-use tracing::{instrument};
+use tracing::instrument;
 
 pub struct DynamicPromptCapability {
     manifest: ToolManifest,
@@ -43,7 +43,12 @@ impl DynamicPromptCapability {
             .chain
             .as_ref()
             .map(|c| Arc::new(c.clone()))
-            .ok_or_else(|| anyhow::anyhow!("DynamicPromptCapability '{}' has no chain config in manifest", self.manifest.name))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "DynamicPromptCapability '{}' has no chain config in manifest",
+                    self.manifest.name
+                )
+            })
     }
 }
 

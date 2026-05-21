@@ -19,6 +19,7 @@
 		chatStream: {
 			messages: any[];
 			toolCards: Map<string, any>;
+			toolCardsList?: Array<[string, any]>;
 			inFlight: boolean;
 			send: (p: string, opts?: any) => void;
 			newSession: () => void;
@@ -158,6 +159,7 @@
 			<AgentChatStream
 				messages={chatStream.messages}
 				toolCards={chatStream.toolCards}
+				toolCardsList={chatStream.toolCardsList}
 				inFlight={chatStream.inFlight}
 				bind:messagesEl
 			/>

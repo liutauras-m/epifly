@@ -22,16 +22,12 @@ pub struct EvalSample {
 
 /// Scoring strategy for a single sample.
 pub enum Scorer {
-    /// Compare JSON fields listed in `fields`. Each matching field scores 1/n.
-    JsonFields(Vec<String>),
     /// Exact JSON equality between extracted and expected.
     Exact,
     /// Field-by-field diff: auto-discover all keys in `expected` and score each present+matching key.
     FieldDiff,
     /// Check that each string in `snippets` appears (case-insensitive) in the text output.
     Snippets,
-    /// Always pass with score 1.0 (for smoke-test suites).
-    AlwaysPass,
     /// Use a gateway LLM call (haiku) to judge the output against the expected.
     LlmJudge,
 }
@@ -62,21 +58,8 @@ impl std::str::FromStr for ScorerKind {
 ///
 /// * `prompt_fn` — builds the user message from an `EvalSample`.
 /// * `extract_fn` — extracts a scoreable `Value` from the raw gateway JSON response.
-/// * `scorer` — determines how `extracted` vs `sample.expected` is scored.
+/// * `default_scorer` — the suite's default scoring strategy.
 /// * `scorer_override` — when `Some`, replaces the suite's default scorer (from `--scorer` CLI flag).
-pub async fn run_suite(
-    dataset: Option<PathBuf>,
-    default_dataset: &str,
-    model: &str,
-    prompt_fn: impl Fn(&EvalSample) -> String,
-    extract_fn: impl Fn(&Value) -> Value,
-    scorer: Scorer,
-    suite_label: &str,
-) -> Result<()> {
-    run_suite_with_override(dataset, default_dataset, model, prompt_fn, extract_fn, scorer, suite_label, None).await
-}
-
-/// Like `run_suite` but accepts a `ScorerKind` override from the CLI `--scorer` flag.
 pub async fn run_suite_with_override(
     dataset: Option<PathBuf>,
     default_dataset: &str,
@@ -292,28 +275,6 @@ fn score(scorer: &Scorer, extracted: &Value, expected: &Value) -> ScorerResult {
                 details: if diffs.is_empty() { "all fields match".into() } else { diffs.join("; ") },
             }
         }
-        Scorer::JsonFields(fields) => {
-            let mut hits = 0usize;
-            let mut misses = Vec::new();
-            for field in fields {
-                match (expected.get(field), extracted.get(field)) {
-                    (Some(e), Some(g)) if values_match(e, g) => hits += 1,
-                    (None, _) => hits += 1,
-                    _ => misses.push(field.clone()),
-                }
-            }
-            let n = fields.len();
-            let score = if n == 0 { 1.0 } else { hits as f64 / n as f64 };
-            ScorerResult {
-                score,
-                passed: score >= 0.8,
-                details: if misses.is_empty() {
-                    "all fields match".into()
-                } else {
-                    format!("mismatches: {}", misses.join(", "))
-                },
-            }
-        }
         Scorer::Snippets => {
             let text = extracted.as_str().unwrap_or("").to_lowercase();
             let snippets = expected
@@ -336,11 +297,6 @@ fn score(scorer: &Scorer, extracted: &Value, expected: &Value) -> ScorerResult {
                 details: format!("{}/{} snippets found", hits, snippets.len()),
             }
         }
-        Scorer::AlwaysPass => ScorerResult {
-            score: 1.0,
-            passed: true,
-            details: "smoke pass".into(),
-        },
         Scorer::LlmJudge => score(&Scorer::FieldDiff, extracted, expected),
     }
 }

@@ -1,0 +1,44 @@
+schema_version = "2.0"
+name        = "storage-bulk-delete"
+version     = "0.1.0"
+namespace   = "storage.node.bulk_delete"
+category    = "storage"
+kind        = "native"
+description = "Delete every child of a workspace folder in a single tool call. Use this AFTER the user explicitly confirms a destructive request (e.g. 'delete all files in X'). Prefer this over calling `storage-delete` repeatedly — bulk_delete is atomic from the agent's perspective and won't run out of tool-call rounds on large folders."
+tags        = ["storage", "delete", "bulk", "workspace", "destructive", "confirmation-required"]
+accepts     = ["application/json"]
+emits       = ["application/json"]
+idempotent  = false
+requires    = []
+search_keywords = [
+  "delete all files",
+  "delete all",
+  "empty folder",
+  "wipe folder",
+  "clear folder",
+  "bulk delete",
+  "remove everything in folder",
+]
+
+[[tools]]
+name = "bulk_delete"
+description = "Delete every child node under a folder in one call. Provide either `parent_id` (ULID) or `parent_name` (human-readable folder name). Set `kind` to `\"conversation\"` (files only), `\"folder\"` (sub-folders only), or `\"all\"` (default, everything). Returns `{deleted_count, deleted_names[], errors[]}`. SAFETY: this is destructive — only call after the user has explicitly confirmed."
+
+[tools.input_schema]
+type = "object"
+
+[tools.input_schema.properties.parent_id]
+type = "string"
+description = "ULID of the target folder whose children will be deleted. Mutually exclusive with `parent_name`."
+
+[tools.input_schema.properties.parent_name]
+type = "string"
+description = "Human-readable name of the target folder (e.g. \"Drafts\"). Used when the ULID is not known."
+
+[tools.input_schema.properties.kind]
+type = "string"
+description = "Filter: `\"all\"` (default), `\"conversation\"` for files only, or `\"folder\"` for sub-folders only."
+enum = ["all", "conversation", "file", "files", "folder", "folders"]
+
+[config]
+op = "bulk_delete"

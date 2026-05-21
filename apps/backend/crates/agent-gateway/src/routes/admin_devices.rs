@@ -156,7 +156,7 @@ pub async fn list_devices(
             last_seen: t.last_seen,
         })
         .collect();
-    result.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    result.sort_by_key(|d| std::cmp::Reverse(d.created_at));
     Ok(Json(result))
 }
 

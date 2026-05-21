@@ -41,7 +41,10 @@ pub struct OnboardingOptions {
 
 impl Default for OnboardingOptions {
     fn default() -> Self {
-        Self { kind: TenantKind::Normal, root_name: None }
+        Self {
+            kind: TenantKind::Normal,
+            root_name: None,
+        }
     }
 }
 
@@ -139,7 +142,10 @@ impl TenantOnboardingService {
         }
 
         // 5. Create the protected root workspace folder (parent_id = None).
-        let name = opts.root_name.as_deref().unwrap_or(DEFAULT_TENANT_ROOT_NAME);
+        let name = opts
+            .root_name
+            .as_deref()
+            .unwrap_or(DEFAULT_TENANT_ROOT_NAME);
         self.workspace_store
             .create_protected_root_folder(tenant_id, owner_id, name)
             .await
@@ -163,7 +169,12 @@ impl TenantOnboardingService {
             .map_err(OnboardingError::Store)?;
 
         self.onboarding_total.fetch_add(1, Ordering::Relaxed);
-        tracing::info!(tenant_id, owner_id, kind = opts.kind.as_str(), "tenant provisioned");
+        tracing::info!(
+            tenant_id,
+            owner_id,
+            kind = opts.kind.as_str(),
+            "tenant provisioned"
+        );
         Ok(())
     }
 }

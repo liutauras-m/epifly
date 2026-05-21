@@ -1,0 +1,140 @@
+schema_version = "2.0"
+name        = "extract-fields-incident"
+version     = "1.0.0"
+namespace   = "extract.fields.incident"
+category    = "extract"
+kind        = "chain"
+description = "Structured extraction from incident reports, safety forms, and related documents. Returns IncidentData JSON: incident type, date/time, location, parties involved, description, severity, root cause, injuries, property damage, immediate actions taken, and recommended follow-up. Call when the user uploads an incident report, accident form, near-miss report, or asks to process a safety or operations incident."
+tags        = ["incident", "safety", "operations", "report", "structured-extraction", "vision", "document"]
+accepts     = [
+    { mime = "application/pdf", max_size_mb = 20 },
+    { mime = "image/*", max_size_mb = 20 },
+]
+emits       = ["application/json"]
+idempotent  = true
+cost_hint   = { dollars = 0.05, latency_ms = 5000 }
+requires    = []
+search_keywords = [
+    "incident report", "accident report", "safety report", "near miss",
+    "workplace incident", "injury report", "property damage",
+    "root cause analysis", "corrective action", "OSHA",
+    "extract incident", "parse incident report", "process incident",
+    "operations incident", "security incident", "severity",
+    "follow-up actions", "incident management",
+]
+
+[[tools]]
+name        = "extract_incident"
+description = "Extract complete structured fields from an incident report or accident form. Input: image_path — local path or URL (PNG, JPEG, JPG, PDF). Output: IncidentData JSON with type, severity, location, parties, description, root_cause, injuries, damage, actions_taken, and recommended_follow_up."
+
+[tools.input_schema]
+type     = "object"
+required = ["image_path"]
+
+[tools.input_schema.properties.image_path]
+type        = "string"
+description = "Absolute local path or http/https URL to the incident report document or image"
+
+[[tools]]
+name        = "assess_severity"
+description = "Assess the severity level of an extracted IncidentData and suggest priority actions. Input: incident_data (IncidentData from extract_incident). Output: { severity_level: 'critical'|'high'|'medium'|'low', immediate_actions: [string], follow_up_by_days: number, notify_roles: [string], regulatory_reporting_required: boolean }."
+
+[tools.input_schema]
+type     = "object"
+required = ["incident_data"]
+
+[tools.input_schema.properties.incident_data]
+type        = "object"
+description = "IncidentData JSON previously returned by extract_incident"
+
+[chain]
+model           = "smart"
+vision          = true
+max_tokens      = 3000
+system_prompt   = "You are a safety and operations specialist with expertise in incident management, root cause analysis, and regulatory compliance. Extract structured data from incident reports with high accuracy. Always respond with valid JSON only. Use null for missing scalar fields, empty arrays [] for missing lists."
+prompt_template = """Extract all incident information from the attached document or image.
+Return a valid JSON object matching exactly this structure:
+{
+  "incident_type": string|null,
+  "incident_date": string|null,
+  "incident_time": string|null,
+  "reported_date": string|null,
+  "report_number": string|null,
+
+  "location": {
+    "site": string|null,
+    "address": string|null,
+    "specific_location": string|null,
+    "department": string|null
+  },
+
+  "severity": "critical" | "high" | "medium" | "low" | null,
+  "status": "open" | "under_investigation" | "closed" | null,
+
+  "description": string|null,
+  "immediate_cause": string|null,
+  "root_cause": string|null,
+  "contributing_factors": [string],
+
+  "parties_involved": [
+    {
+      "name": string|null,
+      "role": string|null,
+      "employee_id": string|null,
+      "contact": string|null
+    }
+  ],
+
+  "witnesses": [
+    { "name": string|null, "contact": string|null }
+  ],
+
+  "injuries": [
+    {
+      "person": string|null,
+      "type": string|null,
+      "severity": string|null,
+      "medical_treatment": string|null
+    }
+  ],
+
+  "property_damage": {
+    "description": string|null,
+    "estimated_cost": number|null,
+    "currency": string|null
+  },
+
+  "actions_taken": [string],
+  "recommended_follow_up": [
+    {
+      "action": string,
+      "responsible_party": string|null,
+      "due_date": string|null,
+      "priority": "urgent" | "high" | "medium" | "low" | null
+    }
+  ],
+
+  "regulatory_reporting_required": boolean|null,
+  "regulatory_bodies": [string],
+  "investigator": string|null,
+  "notes": string|null
+}
+Respond ONLY with the JSON object, no markdown fences, no explanation."""
+
+[chain.output_schema]
+type     = "object"
+required = ["description", "parties_involved"]
+
+[chain.output_schema.properties.description]
+type = ["string", "null"]
+
+[chain.output_schema.properties.parties_involved]
+type  = "array"
+items = { type = "object" }
+
+[chain.output_schema.properties.severity]
+type = ["string", "null"]
+
+[config]
+max_document_size_mb = 20
+supported_formats    = ["png", "jpeg", "jpg", "pdf"]

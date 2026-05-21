@@ -1,0 +1,33 @@
+schema_version = "2.0"
+name        = "storage-show-tree"
+version     = "0.1.0"
+namespace   = "storage.tree.show"
+category    = "storage"
+kind        = "native"
+description = "Render a Markdown tree of the user's accessible workspace nodes. Use this to summarise the workspace in a single tool call."
+tags        = ["storage", "tree", "list", "summary", "workspace"]
+accepts     = ["application/json"]
+emits       = ["application/json"]
+idempotent  = true
+requires    = []
+search_keywords = ["tree", "show workspace", "summarise", "list everything", "outline"]
+
+[[tools]]
+name = "show_tree"
+description = "Return a Markdown-formatted tree of folders and files under `parent_id` (or the root if omitted). Depth is capped to keep responses small."
+
+[tools.input_schema]
+type = "object"
+
+[tools.input_schema.properties.parent_id]
+type = "string"
+description = "Root ULID to render from. Omit to render from the user's workspace root."
+
+[tools.input_schema.properties.depth]
+type = "integer"
+description = "Maximum recursion depth (1–5, default 2)."
+minimum = 1
+maximum = 5
+
+[config]
+op = "show_tree"

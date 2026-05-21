@@ -1,0 +1,34 @@
+schema_version = "2.0"
+name        = "storage-find-by-name"
+version     = "0.1.0"
+namespace   = "storage.node.find_by_name"
+category    = "storage"
+kind        = "native"
+description = "Resolve a human-readable workspace node name to its ULID. Returns the best match and a ranked list of candidates."
+tags        = ["storage", "find", "lookup", "search", "workspace"]
+accepts     = ["application/json"]
+emits       = ["application/json"]
+idempotent  = true
+requires    = []
+search_keywords = ["find", "lookup", "resolve name", "search workspace", "name to id"]
+
+[[tools]]
+name = "find_by_name"
+description = "Find one or more workspace nodes by name. Returns `{found, best_match, matches[]}` where `best_match.id` is the ULID you can pass to `delete_node` / `move_node`."
+
+[tools.input_schema]
+type = "object"
+required = ["name"]
+
+[tools.input_schema.properties.name]
+type = "string"
+description = "Name (or partial name) to search for. Case-insensitive."
+
+[tools.input_schema.properties.limit]
+type = "integer"
+description = "Maximum number of matches to return (1–50, default 10)."
+minimum = 1
+maximum = 50
+
+[config]
+op = "find_by_name"

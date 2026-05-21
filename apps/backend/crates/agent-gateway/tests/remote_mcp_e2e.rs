@@ -254,3 +254,51 @@ async fn invalidate_all_flushes_cache_after_reload() {
     // Verify the test completes in well under the 5s budget.
     let _ = tokio::time::timeout(Duration::from_secs(5), async {}).await;
 }
+
+/// Regression: capability names containing dots (e.g. `media.time.get_current_time`)
+/// must be invokable via the sanitised name the gateway exposes through `tools/list`
+/// (where `.` → `_`). Without the dot-restore fallback in the lookup path the
+/// `tools/call` would return "Tool not found" even though the same name appeared
+/// in `tools/list`. See `agent-gateway/src/routes/mcp.rs::handle_tools_call`.
+#[tokio::test]
+async fn dotted_capability_name_resolves_via_sanitized_lookup() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/mcp"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": { "content": "tick", "artifacts": [], "metadata": {} }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let registry = Arc::new(Mutex::new(CapabilityRegistry::new()));
+    {
+        let mut reg = registry.lock().unwrap();
+        register_remote_mcp(
+            &mut reg,
+            "media.time.get_current_time", // dotted name as produced by /admin/capabilities/register
+            "get_current_time",
+            &format!("{}/mcp", mock_server.uri()),
+            vec![],
+        );
+    }
+    let router = SemanticCapabilityRouter::new(
+        Arc::clone(&registry),
+        Arc::new(QdrantVectorStore::noop()),
+        Arc::new(ConstEmbedder) as Arc<dyn EmbeddingService>,
+        SemanticRouterConfig::default(),
+    );
+
+    // The LLM / MCP client echoes the sanitised name with `_` instead of `.`.
+    let sanitised = "media_time_get_current_time__get_current_time";
+    let result = router
+        .invoke(sanitised, &json!({}), Some(&make_tenant("acme")))
+        .await
+        .expect("invoke must resolve dotted capability via _→. fallback");
+
+    assert_eq!(result["content"], "tick");
+    mock_server.verify().await;
+}

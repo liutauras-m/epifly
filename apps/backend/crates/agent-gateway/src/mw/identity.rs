@@ -19,7 +19,12 @@ use std::sync::Arc;
 use tracing::warn;
 
 /// Extension key for the full `IdentityContext` (Zitadel mode only).
+///
+/// Handlers can extract this via `Extension<ResolvedIdentity>` when they need
+/// claims beyond the tenant id; nothing reads it yet but the middleware always
+/// populates it so future handlers can opt in without changing the pipeline.
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct ResolvedIdentity(pub IdentityContext);
 
 pub async fn extract_identity(

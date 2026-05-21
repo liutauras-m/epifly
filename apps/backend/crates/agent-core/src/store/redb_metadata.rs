@@ -34,28 +34,22 @@ use ulid::Ulid;
 // ── Table definitions ─────────────────────────────────────────────────────────
 
 /// threads table: (tenant_id, thread_id) → postcard(Thread)
-const THREADS: TableDefinition<(&str, &str), &[u8]> =
-    TableDefinition::new("threads");
+const THREADS: TableDefinition<(&str, &str), &[u8]> = TableDefinition::new("threads");
 
 /// messages table: (tenant_id, thread_id, seq) → postcard(Message)
-const MESSAGES: TableDefinition<(&str, &str, u64), &[u8]> =
-    TableDefinition::new("messages");
+const MESSAGES: TableDefinition<(&str, &str, u64), &[u8]> = TableDefinition::new("messages");
 
 /// workspace nodes: (tenant_id, node_id) → json(WorkspaceNode)
-const NODES: TableDefinition<(&str, &str), &[u8]> =
-    TableDefinition::new("workspace_nodes");
+const NODES: TableDefinition<(&str, &str), &[u8]> = TableDefinition::new("workspace_nodes");
 
 /// path index: (tenant_id, virtual_path) → node_id
-const IDX_PATH: TableDefinition<(&str, &str), &str> =
-    TableDefinition::new("idx_nodes_by_path");
+const IDX_PATH: TableDefinition<(&str, &str), &str> = TableDefinition::new("idx_nodes_by_path");
 
 /// audit events: (tenant_id, ts_micros, event_id) → postcard(AuditEvent)
-const AUDIT: TableDefinition<(&str, i64, &str), &[u8]> =
-    TableDefinition::new("audit_events");
+const AUDIT: TableDefinition<(&str, i64, &str), &[u8]> = TableDefinition::new("audit_events");
 
 /// tenant seeding flags: tenant_id → bool (stored as 1-byte)
-const TENANT_SEEDED: TableDefinition<&str, u8> =
-    TableDefinition::new("tenant_seeded");
+const TENANT_SEEDED: TableDefinition<&str, u8> = TableDefinition::new("tenant_seeded");
 
 // ── Store ─────────────────────────────────────────────────────────────────────
 
@@ -70,8 +64,7 @@ impl RedbMetadataStore {
     }
 
     pub fn in_memory() -> anyhow::Result<Arc<Self>> {
-        let db = Database::builder()
-            .create_with_backend(redb::backends::InMemoryBackend::new())?;
+        let db = Database::builder().create_with_backend(redb::backends::InMemoryBackend::new())?;
         Ok(Arc::new(Self::from_db(db)))
     }
 
@@ -95,7 +88,6 @@ impl RedbMetadataStore {
     pub fn db(&self) -> Arc<Database> {
         Arc::clone(&self.db)
     }
-
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -193,8 +185,7 @@ impl ThreadStore for RedbMetadataStore {
             let tbl = txn.open_table(MESSAGES)?;
             let mut msgs = Vec::new();
             let range = tbl.range(
-                (tenant.as_str(), tid.as_str(), 0)
-                    ..=(tenant.as_str(), tid.as_str(), u64::MAX),
+                (tenant.as_str(), tid.as_str(), 0)..=(tenant.as_str(), tid.as_str(), u64::MAX),
             )?;
             for item in range {
                 let (_, v) = item?;
@@ -220,8 +211,7 @@ impl ThreadStore for RedbMetadataStore {
                 let tbl = txn.open_table(MESSAGES)?;
                 let mut count = 0u64;
                 if let Ok(range) = tbl.range(
-                    (tenant.as_str(), tid.as_str(), 0)
-                        ..=(tenant.as_str(), tid.as_str(), u64::MAX),
+                    (tenant.as_str(), tid.as_str(), 0)..=(tenant.as_str(), tid.as_str(), u64::MAX),
                 ) {
                     count = range.count() as u64;
                 }
@@ -237,15 +227,14 @@ impl ThreadStore for RedbMetadataStore {
             // Bump thread metadata.
             {
                 let mut tbl = txn.open_table(THREADS)?;
-                let existing = tbl.get((tenant.as_str(), tid.as_str()))?.map(|v| v.value().to_vec());
+                let existing = tbl
+                    .get((tenant.as_str(), tid.as_str()))?
+                    .map(|v| v.value().to_vec());
                 if let Some(bytes) = existing {
                     let mut t: Thread = de(&bytes)?;
                     t.last_active = Utc::now();
                     t.message_count += 1;
-                    tbl.insert(
-                        (tenant.as_str(), tid.as_str()),
-                        ser(&t)?.as_slice(),
-                    )?;
+                    tbl.insert((tenant.as_str(), tid.as_str()), ser(&t)?.as_slice())?;
                 }
             }
             txn.commit()?;
@@ -272,7 +261,7 @@ impl ThreadStore for RedbMetadataStore {
                 let (_, v) = item?;
                 threads.push(de::<Thread>(v.value())?);
             }
-            threads.sort_by(|a, b| b.last_active.cmp(&a.last_active));
+            threads.sort_by_key(|t| std::cmp::Reverse(t.last_active));
             threads.truncate(limit);
             Ok(threads)
         })
@@ -314,14 +303,13 @@ impl RedbMetadataStore {
             let txn = db.begin_write()?;
             {
                 let mut tbl = txn.open_table(THREADS)?;
-                let existing = tbl.get((tenant.as_str(), tid.as_str()))?.map(|v| v.value().to_vec());
+                let existing = tbl
+                    .get((tenant.as_str(), tid.as_str()))?
+                    .map(|v| v.value().to_vec());
                 if let Some(bytes) = existing {
                     let mut t: Thread = de(&bytes)?;
                     f(&mut t);
-                    tbl.insert(
-                        (tenant.as_str(), tid.as_str()),
-                        ser(&t)?.as_slice(),
-                    )?;
+                    tbl.insert((tenant.as_str(), tid.as_str()), ser(&t)?.as_slice())?;
                 }
             }
             txn.commit()?;
@@ -360,7 +348,8 @@ impl WorkspaceStore for RedbMetadataStore {
         validate_name(name, NodeKind::Conversation)?;
         let parent_path = self.get_node_path(tenant_id, parent_id).await?;
         let virtual_path = join_virtual_path(parent_path.as_deref(), name);
-        let node = WorkspaceNode::new_conversation(tenant_id, owner_id, parent_id, name, &virtual_path);
+        let node =
+            WorkspaceNode::new_conversation(tenant_id, owner_id, parent_id, name, &virtual_path);
         self.insert_node(node.clone()).await?;
         Ok(node)
     }
@@ -425,7 +414,9 @@ impl WorkspaceStore for RedbMetadataStore {
         node_id: Ulid,
     ) -> anyhow::Result<Vec<WorkspaceNode>> {
         let mut ancestors = Vec::new();
-        let mut current = self.get_accessible_node(tenant_id, user_id, node_id).await?;
+        let mut current = self
+            .get_accessible_node(tenant_id, user_id, node_id)
+            .await?;
         while let Some(pid) = current.parent_id {
             current = self.get_accessible_node(tenant_id, user_id, pid).await?;
             ancestors.insert(0, current.clone());
@@ -441,7 +432,9 @@ impl WorkspaceStore for RedbMetadataStore {
         new_parent: Option<Ulid>,
         _new_parent_path: Option<&str>,
     ) -> anyhow::Result<WorkspaceNode> {
-        let mut node = self.get_accessible_node(tenant_id, user_id, node_id).await?;
+        let mut node = self
+            .get_accessible_node(tenant_id, user_id, node_id)
+            .await?;
         let parent_path = self.get_node_path(tenant_id, new_parent).await?;
         node.parent_id = new_parent;
         node.virtual_path = join_virtual_path(parent_path.as_deref(), &node.name);
@@ -489,7 +482,9 @@ impl WorkspaceStore for RedbMetadataStore {
         node_id: Ulid,
         new_name: String,
     ) -> anyhow::Result<WorkspaceNode> {
-        let node = self.get_accessible_node(tenant_id, user_id, node_id).await?;
+        let node = self
+            .get_accessible_node(tenant_id, user_id, node_id)
+            .await?;
         validate_name(&new_name, node.kind)?;
         let tenant = tenant_id.to_string();
         let nid = node_id.to_string();
@@ -849,14 +844,13 @@ impl AuditStore for RedbMetadataStore {
             let txn = db.begin_read()?;
             let tbl = txn.open_table(AUDIT)?;
             let mut events: Vec<AuditEvent> = Vec::new();
-            let range = tbl.range(
-                (tenant.as_str(), i64::MIN, "")..(tenant.as_str(), i64::MAX, "\x7f"),
-            )?;
+            let range =
+                tbl.range((tenant.as_str(), i64::MIN, "")..(tenant.as_str(), i64::MAX, "\x7f"))?;
             for item in range {
                 let (_, v) = item?;
                 events.push(de(v.value())?);
             }
-            events.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+            events.sort_by_key(|e| std::cmp::Reverse(e.timestamp));
             events.truncate(limit);
             Ok(events)
         })
@@ -865,10 +859,7 @@ impl AuditStore for RedbMetadataStore {
         .map_err(|e: anyhow::Error| common::error::ConusAiError::Storage(e.to_string()))
     }
 
-    async fn prune_before(
-        &self,
-        before: chrono::DateTime<Utc>,
-    ) -> CResult<u64> {
+    async fn prune_before(&self, before: chrono::DateTime<Utc>) -> CResult<u64> {
         let cutoff = before.timestamp_micros();
         let db = Arc::clone(&self.db);
         task::spawn_blocking(move || -> anyhow::Result<u64> {

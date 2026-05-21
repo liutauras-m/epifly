@@ -10,5 +10,4 @@ pub mod tenant;
 pub mod trace;
 
 pub use rate_limit::RateLimiter;
-#[allow(unused_imports)]
 pub use router_quota::{RouterQuotaConfig, RouterQuotaLayer};

@@ -20,16 +20,27 @@
   let {
     messages,
     toolCards,
+    toolCardsList,
     invoiceResults = new Map(),
     inFlight = false,
     messagesEl = $bindable<HTMLElement | undefined>(),
   }: {
     messages: ChatMessage[];
     toolCards: Map<string, ToolCardEntry>;
+    // Optional pre-flattened array — emitted by `createChatStream` to bypass
+    // the Map-in-prop reactivity gap in Svelte 5 (see comment in
+    // `createChatStream.svelte.ts → api.toolCardsList`). When present, the
+    // template iterates this instead of the Map.
+    toolCardsList?: Array<[string, ToolCardEntry]>;
     invoiceResults?: Map<string, unknown>;
     inFlight?: boolean;
     messagesEl?: HTMLElement;
   } = $props();
+
+  // Prefer the explicit list when the caller provides one.
+  const cards = $derived(
+    toolCardsList ?? Array.from(toolCards?.entries() ?? []),
+  );
 
   function scrollToBottom() {
     messagesEl?.scrollTo({ top: messagesEl.scrollHeight, behavior: 'smooth' });
@@ -38,7 +49,7 @@
   $effect(() => {
     // Re-run whenever messages or toolCards change.
     void messages.length;
-    void toolCards.size;
+    void cards.length;
     // Use RAF so the DOM has painted new content before measuring scrollHeight.
     requestAnimationFrame(() => scrollToBottom());
   });
@@ -106,7 +117,7 @@
     {/if}
   {/each}
 
-  {#each [...toolCards.entries()] as [id, card] (id)}
+  {#each cards as [id, card] (id)}
     <div class="row tool-row">
       <ToolCallCard {id} name={card.name} status={card.status} result={card.result} startTime={card.startTime} />
     </div>

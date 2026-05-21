@@ -146,7 +146,7 @@ where
                 if is_agent_route {
                     if let Some(ResolvedTenant(ctx)) = req.extensions().get::<ResolvedTenant>() {
                         let decision = quota
-                            .check(&ctx.tenant_id.to_string(), &ctx.plan, &ActionType::AgentTurn, 1)
+                            .check(&ctx.tenant_id, &ctx.plan, &ActionType::AgentTurn, 1)
                             .await;
                         if !decision.allowed {
                             let plan_tier = format!("{}", ctx.plan);

@@ -1,0 +1,39 @@
+schema_version = "2.0"
+name        = "storage-workspace-move"
+version     = "0.1.0"
+namespace   = "storage.node.move"
+category    = "storage"
+kind        = "native"
+description = "Move (re-parent) a workspace node in the user's tree. Use this when the user asks to move a file or folder into another folder by name. Prefer this over `storage-move`, which only renames files on the filesystem and does NOT update the workspace tree."
+tags        = ["storage", "move", "workspace", "tree", "relocate"]
+accepts     = ["application/json"]
+emits       = ["application/json"]
+idempotent  = false
+requires    = []
+search_keywords = ["move file to folder", "move folder", "relocate node", "reparent", "drag to folder"]
+
+[[tools]]
+name = "move_node"
+description = "Move a workspace node (folder or conversation) under a new parent. Accept either `id` (ULID) or `name` for the target, plus either `new_parent_id` (ULID) or `new_parent_name` for the destination folder. Use null/omit `new_parent_id` to move to the workspace root."
+
+[tools.input_schema]
+type = "object"
+
+[tools.input_schema.properties.id]
+type = "string"
+description = "ULID of the node to move. Mutually exclusive with `name`."
+
+[tools.input_schema.properties.name]
+type = "string"
+description = "Human-readable name of the node to move (e.g. \"meeting.md\" or \"Drafts\")."
+
+[tools.input_schema.properties.new_parent_id]
+type = "string"
+description = "ULID of the destination folder. Omit or pass null to move to the workspace root."
+
+[tools.input_schema.properties.new_parent_name]
+type = "string"
+description = "Human-readable name of the destination folder (e.g. \"Archive\"). Used when the ULID is not known."
+
+[config]
+op = "move_node"

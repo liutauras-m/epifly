@@ -129,7 +129,9 @@ impl CapabilitySpecFactory {
                     .or_else(|| spec.payload["user_template"].as_str())
                     .unwrap_or("{{input}}")
                     .to_string();
-                let system_prompt = spec.payload["system_prompt"].as_str().map(|s| s.to_string());
+                let system_prompt = spec.payload["system_prompt"]
+                    .as_str()
+                    .map(|s| s.to_string());
                 let max_tokens = spec.payload["max_tokens"].as_u64().unwrap_or(1024) as u32;
                 let vision = spec.payload["vision"].as_bool().unwrap_or(false);
                 let output_schema = spec.payload.get("output_schema").cloned();
@@ -180,9 +182,10 @@ impl CapabilitySpecFactory {
         let card = CapabilityCard::new(manifest.clone(), source_dir);
 
         let provider: Arc<dyn CapabilityProvider> = match kind {
-            ToolKind::DynamicPrompt => {
-                Arc::new(DynamicPromptCapability::new(manifest, Arc::clone(&self.llm)))
-            }
+            ToolKind::DynamicPrompt => Arc::new(DynamicPromptCapability::new(
+                manifest,
+                Arc::clone(&self.llm),
+            )),
             ToolKind::Chain => {
                 Arc::new(PromptChainCapability::new(manifest, Arc::clone(&self.llm))?)
             }
@@ -223,16 +226,23 @@ impl BulkCapabilityFactory for CapabilitySpecFactory {
             return Ok(0);
         }
 
-        info!(count = self.specs.len(), "CapabilitySpecFactory::load_batch starting");
+        info!(
+            count = self.specs.len(),
+            "CapabilitySpecFactory::load_batch starting"
+        );
 
-        let texts: Vec<String> = self.specs.iter().map(|s| {
-            format!(
-                "Tool: {}\nDescription: {}\nNamespace: {}",
-                qualified_cap_name(&s.namespace, &s.tool_name),
-                s.description,
-                s.namespace,
-            )
-        }).collect();
+        let texts: Vec<String> = self
+            .specs
+            .iter()
+            .map(|s| {
+                format!(
+                    "Tool: {}\nDescription: {}\nNamespace: {}",
+                    qualified_cap_name(&s.namespace, &s.tool_name),
+                    s.description,
+                    s.namespace,
+                )
+            })
+            .collect();
 
         let embeddings = match self.embedder.embed_documents(texts.clone()).await {
             Ok(e) => e,
@@ -337,7 +347,10 @@ mod tests {
             manifest: make_native_manifest("cap.tool"),
             payload: serde_json::json!({"result": {"answer": 42}}),
         };
-        let out = provider.invoke("cap.tool", &serde_json::json!({}), None).await.unwrap();
+        let out = provider
+            .invoke("cap.tool", &serde_json::json!({}), None)
+            .await
+            .unwrap();
         assert_eq!(out, serde_json::json!({"answer": 42}));
     }
 

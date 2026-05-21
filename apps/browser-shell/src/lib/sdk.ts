@@ -65,3 +65,12 @@ export const sdk = createConusSdk({
   baseUrl: API_BASE,
   tokenProvider: tauriTokenProvider,
 });
+
+// E2E hook — exposes the SDK to Appium test code so capability-tour specs can
+// drive `sdk.workspaces.*` from inside the WebView (real WebKit fetch + the
+// `x-session-token` header). Guarded behind a build-time flag so production
+// bundles never include it. Set `VITE_E2E_EXPOSE_SDK=1` in `.env.local` or the
+// CI build env to enable.
+if (typeof window !== 'undefined' && import.meta.env.VITE_E2E_EXPOSE_SDK) {
+  (window as { __conusaiSdk?: typeof sdk }).__conusaiSdk = sdk;
+}

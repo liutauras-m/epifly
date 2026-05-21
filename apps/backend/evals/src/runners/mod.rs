@@ -5,17 +5,13 @@ pub mod generic;
 
 pub use generic::ScorerKind;
 
-pub async fn run_suite(suite: &str, dataset: Option<PathBuf>, model: &str) -> Result<()> {
-    run_suite_with_scorer(suite, dataset, model, ScorerKind::Default).await
-}
-
 pub async fn run_suite_with_scorer(
     suite: &str,
     dataset: Option<PathBuf>,
     model: &str,
     scorer: ScorerKind,
 ) -> Result<()> {
-    use generic::{EvalSample, Scorer, json_content_extractor, text_content_extractor, run_suite_with_override};
+    use generic::{Scorer, json_content_extractor, text_content_extractor, run_suite_with_override};
 
     match suite {
         "invoice" => {

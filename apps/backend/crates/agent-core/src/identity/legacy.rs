@@ -3,8 +3,8 @@
 use super::{AuthError, IdentityContext, TenantCreated, TenantManager, TenantSummary};
 use crate::context::tenant::{PlanTier, SubscriptionStatus, TenantClaims, UserRole};
 use crate::identity::IdentityProvider;
-use common::types::TenantId;
 use async_trait::async_trait;
+use common::types::TenantId;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 
 pub struct LegacyIdentityProvider {

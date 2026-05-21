@@ -2,7 +2,7 @@ use crate::mw::RouterQuotaLayer;
 use crate::state::AppState;
 use axum::{
     Router,
-    routing::{delete, get, patch, post, put},
+    routing::{delete, get, patch, post},
 };
 use std::sync::Arc;
 use utoipa::Modify;

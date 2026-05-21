@@ -67,11 +67,33 @@ struct CapabilityToml {
     chain: Option<toml::Value>,
 }
 
-#[derive(Deserialize)]
+/// Mirrors the runtime `AcceptSpec` deserialization — accepts both bare strings
+/// (`accepts = ["application/pdf"]`) and full objects
+/// (`accepts = [{ mime = "application/pdf", max_size_mb = 20 }]`).
+#[derive(Debug)]
 struct AcceptEntry {
     mime: String,
     #[allow(dead_code)]
     max_size_mb: Option<u32>,
+}
+
+impl<'de> serde::Deserialize<'de> for AcceptEntry {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Form {
+            Bare(String),
+            Full {
+                mime: String,
+                #[serde(default)]
+                max_size_mb: Option<u32>,
+            },
+        }
+        Ok(match Form::deserialize(d)? {
+            Form::Bare(mime) => AcceptEntry { mime, max_size_mb: None },
+            Form::Full { mime, max_size_mb } => AcceptEntry { mime, max_size_mb },
+        })
+    }
 }
 
 // ── Lint ──────────────────────────────────────────────────────────────────────
@@ -194,12 +216,13 @@ fn lint_one(path: &Path) -> (usize, usize) {
         }
 
         // category (if present) must match the namespace root.
-        if let Some(cat) = cap.category.as_deref() {
-            if !cat.is_empty() && cat != root {
-                warn(&format!(
-                    "category `{cat}` does not match namespace root `{root}` (consider aligning them)"
-                ));
-            }
+        if let Some(cat) = cap.category.as_deref()
+            && !cat.is_empty()
+            && cat != root
+        {
+            warn(&format!(
+                "category `{cat}` does not match namespace root `{root}` (consider aligning them)"
+            ));
         }
     }
 

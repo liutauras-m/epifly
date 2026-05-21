@@ -15,36 +15,49 @@ use agent_core::{
     capabilities::discovery::CapabilityDiscovery,
     capabilities::manifest::ToolKind,
     context::tenant::TenantContext,
+    llm::{LlmBinding, LlmRegistry},
 };
+use std::collections::HashMap;
 use common::memory::{InMemoryWorkspaceContent, InMemoryWorkspaceStore, WorkspaceStore, WorkspaceContentStore};
 use std::sync::Arc;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 fn capabilities_dir() -> std::path::PathBuf {
-    // When run via `cargo test -p agent-gateway`, the working directory is the
-    // workspace root (apps/backend). Fall back to relative path heuristics.
-    let candidates = [
-        "capabilities",
-        "apps/backend/capabilities",
-        "../../capabilities",
-    ];
-    for c in &candidates {
-        let p = std::path::Path::new(c);
-        if p.exists() {
-            return p.to_path_buf();
-        }
-    }
-    std::path::PathBuf::from("capabilities")
+    // `cargo test` sets CARGO_MANIFEST_DIR to this crate's directory at
+    // both compile time and runtime, so we can walk up to the per-project
+    // `capabilities/` regardless of the caller's working directory.
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest
+        .ancestors()
+        .find_map(|a| {
+            let candidate = a.join("capabilities");
+            if candidate.is_dir() { Some(candidate) } else { None }
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("capabilities"))
 }
 
 fn build_test_registry() -> CapabilityRegistry {
     let ws_store: Arc<dyn WorkspaceStore> = Arc::new(InMemoryWorkspaceStore::new());
     let ws_content: Arc<dyn WorkspaceContentStore> = Arc::new(InMemoryWorkspaceContent::new());
-    let factory = NativeStorageFactory::new(Arc::clone(&ws_store), Arc::clone(&ws_content));
 
-    let mut reg = CapabilityRegistry::new();
-    reg.add_factory(Arc::new(factory));
+    // Mirror the production wiring so chain manifests (e.g. invoice-processing)
+    // also resolve to a provider. The registry has no real LLM provider —
+    // chain factories only need it for `Arc::clone`, not for invocation in
+    // these registration tests.
+    let llm = Arc::new(LlmRegistry::new(
+        HashMap::new(),
+        HashMap::new(),
+        LlmBinding {
+            provider: "anthropic".into(),
+            model: "claude-haiku-4-5".into(),
+        },
+    ));
+    let mut reg = CapabilityRegistry::with_default_factories(Arc::clone(&llm));
+    reg.register_factory(NativeStorageFactory::new(
+        Arc::clone(&ws_store),
+        Arc::clone(&ws_content),
+    ));
 
     let dir = capabilities_dir();
     if dir.exists() {
@@ -55,7 +68,12 @@ fn build_test_registry() -> CapabilityRegistry {
 }
 
 fn dev_tenant() -> TenantContext {
-    TenantContext::new("test-tenant", Some("dev-user".into()), PlanTier::Free, "/tmp/conusai-test-ws")
+    TenantContext::new(
+        "test-tenant",
+        Some::<String>("dev-user".into()),
+        PlanTier::Free,
+        "/tmp/conusai-test-ws",
+    )
 }
 
 // ── Phase 3.5 — Invoice capability is loaded and correctly described ──────────
@@ -72,7 +90,8 @@ fn invoice_capability_is_registered() {
         capabilities_dir()
     );
 
-    let manifest = provider.unwrap().manifest();
+    let provider = provider.unwrap();
+    let manifest = provider.manifest();
     assert_eq!(manifest.namespace.as_deref(), Some("extract.fields.invoice"),
         "manifest namespace should be extract.fields.invoice");
     assert_eq!(manifest.category.as_deref(), Some("extract"),
@@ -159,7 +178,7 @@ async fn storage_ensure_folder_creates_directory() {
     let factory = NativeStorageFactory::new(Arc::clone(&ws_store), Arc::clone(&ws_content));
 
     let mut reg = CapabilityRegistry::new();
-    reg.add_factory(Arc::new(factory));
+    reg.register_factory(factory);
 
     let dir = capabilities_dir();
     if dir.exists() {
@@ -193,7 +212,7 @@ async fn storage_write_text_creates_file() {
     let factory = NativeStorageFactory::new(Arc::clone(&ws_store), Arc::clone(&ws_content));
 
     let mut reg = CapabilityRegistry::new();
-    reg.add_factory(Arc::new(factory));
+    reg.register_factory(factory);
 
     let dir = capabilities_dir();
     if dir.exists() {

@@ -674,7 +674,7 @@ impl RustFsAdminClient {
             let t = resp.text().await.unwrap_or_default();
             bail!("get_object_version {key}?{version_id} failed: {s} — {t}");
         }
-        Ok(resp.bytes().await.context("read object version bytes")?)
+        resp.bytes().await.context("read object version bytes")
     }
 
     /// PUT bucket default encryption (SSE-S3 AES256).

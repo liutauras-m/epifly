@@ -104,7 +104,9 @@ impl CredentialStore {
         })
         .await??;
 
-        self.cache.insert(tenant_id.to_string(), creds.clone()).await;
+        self.cache
+            .insert(tenant_id.to_string(), creds.clone())
+            .await;
         Ok(())
     }
 

@@ -1,0 +1,97 @@
+schema_version = "2.0"
+name        = "plan-orchestrate"
+version     = "1.0.0"
+namespace   = "plan.orchestrate"
+category    = "plan"
+kind        = "chain"
+description = "Meta-capability: chooses and runs the optimal multi-step capability pipeline for a given request. Given a user intent plus optional attachment MIMEs, it selects a strategy (single / parallel_consensus / fallback_cascade), sequences capabilities from the registered registry, and emits an ordered PlanStep array for the executor. Install as an always-include capability for any agent that may handle mixed-MIME attachments."
+tags        = ["plan", "orchestrate", "pipeline", "router", "meta", "multi-step"]
+emits       = ["application/json"]
+idempotent  = true
+cost_hint   = { dollars = 0.005, latency_ms = 800 }
+requires    = []
+search_keywords = [
+    "orchestrate", "plan", "pipeline", "multi-step", "sequence",
+    "chain capabilities", "route by mime", "strategy", "parallel",
+    "fallback", "auto-route", "choose tools", "select capabilities",
+]
+
+[[tools]]
+name        = "orchestrate"
+description = "Plan and execute a multi-step capability pipeline for the current request. Input: intent (user intent string), mimes (list of attachment MIME types, may be empty), available_capabilities (list of capability namespaces the router returned). Output: ExecutedPlanResult with steps_run, artifacts produced, and final_summary."
+
+[tools.input_schema]
+type     = "object"
+required = ["intent"]
+
+[tools.input_schema.properties.intent]
+type        = "string"
+description = "The user's request or goal in plain language"
+
+[tools.input_schema.properties.mimes]
+type        = "array"
+description = "MIME types of any attached files in this turn (e.g. [\"application/pdf\", \"image/jpeg\"])"
+items       = { type = "string" }
+
+[tools.input_schema.properties.available_capabilities]
+type        = "array"
+description = "Namespaces of capabilities the semantic router selected for this turn"
+items       = { type = "string" }
+
+[[tools]]
+name        = "route_by_mime"
+description = "Given a list of MIME types, return the ordered capability pipeline that should process them. Useful for upload handlers that need to decide post-processing steps. Input: mimes. Output: array of { namespace, tool, strategy }."
+
+[tools.input_schema]
+type     = "object"
+required = ["mimes"]
+
+[tools.input_schema.properties.mimes]
+type        = "array"
+description = "MIME types to route"
+items       = { type = "string" }
+
+[chain]
+model           = "smart"
+vision          = false
+max_tokens      = 1024
+system_prompt   = """You are a capability orchestrator for the ConusAI platform. Your role is to plan optimal multi-step pipelines given a user intent and available capabilities.
+
+Available strategies:
+- "single": one capability handles the request end-to-end
+- "parallel_consensus": run multiple capabilities in parallel and merge results (use for OCR when both vision and tesseract are available)
+- "fallback_cascade": try capabilities in order, use first successful result
+
+Always prefer the cheapest strategy that satisfies the intent. Respond ONLY with valid JSON."""
+
+prompt_template = """User intent: {{input.intent}}
+Attachment MIMEs: {{input.mimes}}
+Available capabilities: {{input.available_capabilities}}
+
+Plan the optimal capability pipeline. Return a JSON object:
+{
+  "strategy": "single" | "parallel_consensus" | "fallback_cascade",
+  "steps": [
+    {
+      "capability": "<namespace>",
+      "tool": "<tool_name>",
+      "strategy": "single",
+      "reason": "<why this step>"
+    }
+  ],
+  "rationale": "<brief explanation of the chosen strategy>"
+}
+
+Only include capabilities that are listed in available_capabilities. If none match, return { "strategy": "single", "steps": [], "rationale": "no matching capabilities" }."""
+
+[chain.output_schema]
+type     = "object"
+required = ["strategy", "steps"]
+
+[chain.output_schema.properties.strategy]
+type = "string"
+enum = ["single", "parallel_consensus", "fallback_cascade"]
+
+[chain.output_schema.properties.steps]
+type  = "array"
+items = { type = "object" }

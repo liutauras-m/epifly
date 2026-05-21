@@ -23,6 +23,15 @@ export type CustomStreamFn = (params: StreamChatParams) => AsyncGenerator<ChatSt
 export function createChatStream(sdk: ConusSdk, options?: { streamFn?: CustomStreamFn }) {
   let messages = $state<ChatMessage[]>([]);
   let toolCards = $state(new Map<string, ToolCardEntry>());
+  // KNOWN BUG (2026-05-21): a `$state` Map exposed via the plain-object getter
+  // below doesn't propagate `Map.set` mutations reactively to child component
+  // templates (`{#each [...toolCards.entries()]}` in <AgentChatStream> never
+  // re-runs even when the source-side `.size` becomes ≥ 1).  We bump
+  // `toolCardsVersion` to give consumers a tracked $state read in the same
+  // expression, AND we also publish a pre-flattened `toolCardsList` array.
+  // Neither alone is sufficient — keep both until the underlying tracking
+  // gap is resolved.  Tracked under §17 in docs/verify/verify-ios.md.
+  let toolCardsVersion = $state(0);
   let inFlight = $state(false);
   let activeThreadId = $state<string | null>(null);
   let controller: AbortController | null = null;
@@ -36,7 +45,8 @@ export function createChatStream(sdk: ConusSdk, options?: { streamFn?: CustomStr
   function newSession() {
     abort();
     messages = [];
-    toolCards = new Map();
+    toolCards.clear();
+    toolCardsVersion++;
     activeThreadId = null;
   }
 
@@ -50,7 +60,6 @@ export function createChatStream(sdk: ConusSdk, options?: { streamFn?: CustomStr
     const signal = controller.signal;
 
     messages = [...messages, { role: 'user', text: prompt }];
-    const newToolCards = new Map(toolCards);
 
     let aiIdx = -1;
     let wordAccum = '';
@@ -108,17 +117,33 @@ export function createChatStream(sdk: ConusSdk, options?: { streamFn?: CustomStr
           wordAccum += delta.content;
           scheduleFlush();
         } else if (delta.kind === 'tool_start') {
-          newToolCards.set(delta.id, { name: delta.name, status: 'running', result: '', startTime: performance.now() });
-          toolCards = new Map(newToolCards);
+          const next = new Map(toolCards);
+          next.set(delta.id, {
+            name: delta.name,
+            status: 'running',
+            result: '',
+            startTime: performance.now(),
+          });
+          toolCards = next;
+          toolCardsVersion++;
           aiIdx = -1;
         } else if (delta.kind === 'tool_result') {
-          const card = newToolCards.get(delta.tool_use_id);
+          const card = toolCards.get(delta.tool_use_id);
           if (card) {
             let isError = false;
-            try { const o = JSON.parse(delta.result); if (o?.error || o?.status === 'error') isError = true; } catch {}
+            try {
+              const o = JSON.parse(delta.result);
+              if (o?.error || o?.status === 'error') isError = true;
+            } catch {}
             if (delta.result.startsWith('Error:')) isError = true;
-            newToolCards.set(delta.tool_use_id, { ...card, status: isError ? 'error' : 'success', result: delta.result });
-            toolCards = new Map(newToolCards);
+            const next = new Map(toolCards);
+            next.set(delta.tool_use_id, {
+              ...card,
+              status: isError ? 'error' : 'success',
+              result: delta.result,
+            });
+            toolCards = next;
+            toolCardsVersion++;
           }
           messages = [...messages.filter(m => m.role !== 'thinking'), { role: 'thinking', text: '' }];
           aiIdx = -1;
@@ -168,9 +193,22 @@ export function createChatStream(sdk: ConusSdk, options?: { streamFn?: CustomStr
     finally { inFlight = false; }
   }
 
-  return {
+  // Expose the closed-over $state via getters that touch a version counter
+  // in the SAME reactive scope. The trick is to also expose `toolCardsList`
+  // — a plain array derived from the Map — so consumers can iterate without
+  // crossing the plain-object factory boundary that breaks Map prop tracking
+  // (observed 2026-05-21: `Map.set` updated `.size` on the source side but
+  // `{#each [...toolCards.entries()]}` in `<AgentChatStream>` never re-ran).
+  const api = {
     get messages() { return messages; },
-    get toolCards() { return toolCards; },
+    get toolCards() {
+      void toolCardsVersion;
+      return toolCards;
+    },
+    get toolCardsList(): Array<[string, ToolCardEntry]> {
+      void toolCardsVersion;
+      return Array.from(toolCards.entries());
+    },
     get inFlight() { return inFlight; },
     get activeThreadId() { return activeThreadId; },
     send,
@@ -178,4 +216,5 @@ export function createChatStream(sdk: ConusSdk, options?: { streamFn?: CustomStr
     newSession,
     abort,
   };
+  return api;
 }

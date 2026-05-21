@@ -5,8 +5,8 @@ use crate::context::tenant::TenantContext;
 use crate::llm::LlmRegistry;
 use crate::llm::types::LlmRequest;
 use crate::realtime::{RealtimeService, WorkspaceChangeEvent};
-use rig::completion::Message;
 use common::metrics;
+use rig::completion::Message;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -234,7 +234,8 @@ pub async fn run_plan(
                             reg.get_provider(&step.capability)
                         };
                         match provider {
-                            Some(p) => p.invoke(&step.tool, &step.input, tenant.as_ref())
+                            Some(p) => p
+                                .invoke(&step.tool, &step.input, tenant.as_ref())
                                 .await
                                 .map_err(|e| e.to_string()),
                             None => Err(format!("no provider for '{}'", step.capability)),
@@ -294,10 +295,16 @@ fn validate_step(
         .ok_or_else(|| format!("unknown capability '{capability}'"))?;
 
     if !card.manifest.tools.iter().any(|t| t.name == tool) {
-        return Err(format!("unknown tool '{tool}' for capability '{capability}'"));
+        return Err(format!(
+            "unknown tool '{tool}' for capability '{capability}'"
+        ));
     }
 
-    let cost_hint_class = card.manifest.cost_hint.as_ref().map(|h| h.bucket().to_string());
+    let cost_hint_class = card
+        .manifest
+        .cost_hint
+        .as_ref()
+        .map(|h| h.bucket().to_string());
     Ok(cost_hint_class)
 }
 
@@ -323,7 +330,8 @@ async fn run_parallel_consensus(
 
     match (r1, r2) {
         (Ok(a), Ok(b)) => {
-            if a.to_string() == b.to_string() {
+            // Compare by value rather than allocating two String representations.
+            if a == b {
                 Ok(a)
             } else {
                 // Results differ — ask cheap LLM to pick the better one.
@@ -347,9 +355,7 @@ async fn llm_judge_consensus(
     b: &Value,
     tenant: Option<&TenantContext>,
 ) -> Result<Value, String> {
-    let provider = llm
-        .resolve("cheap", tenant)
-        .map_err(|e| e.to_string())?;
+    let provider = llm.resolve("cheap", tenant).map_err(|e| e.to_string())?;
 
     let prompt = format!(
         "Two agents produced different results for the same task. Choose the more accurate result.\n\

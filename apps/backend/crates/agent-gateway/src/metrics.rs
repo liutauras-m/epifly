@@ -23,8 +23,6 @@ pub struct RustFsMetrics {
     pub zitadel_cache_hits_total: IntCounter,
     /// Zitadel token introspection cache misses.
     pub zitadel_cache_misses_total: IntCounter,
-    /// Requests where a plan-tier cap was applied, labeled by tier and parameter name.
-    pub plan_clamp_total: IntCounterVec,
     /// Active embedding model dimensionality, labeled by model name.
     pub embedding_dims: IntGaugeVec,
 }
@@ -64,15 +62,6 @@ impl RustFsMetrics {
         )
         .unwrap();
 
-        let plan_clamp_total = IntCounterVec::new(
-            Opts::new(
-                "plan_clamp_total",
-                "Requests where a plan-tier hard cap was applied to a parameter",
-            ),
-            &["tier", "parameter"],
-        )
-        .unwrap();
-
         let embedding_dims = IntGaugeVec::new(
             Opts::new(
                 "embedding_dims",
@@ -87,7 +76,6 @@ impl RustFsMetrics {
         let _ = registry.register(Box::new(tenant_onboarding_marker_failed_total.clone()));
         let _ = registry.register(Box::new(zitadel_cache_hits_total.clone()));
         let _ = registry.register(Box::new(zitadel_cache_misses_total.clone()));
-        let _ = registry.register(Box::new(plan_clamp_total.clone()));
         let _ = registry.register(Box::new(embedding_dims.clone()));
 
         Arc::new(Self {
@@ -96,7 +84,6 @@ impl RustFsMetrics {
             tenant_onboarding_marker_failed_total,
             zitadel_cache_hits_total,
             zitadel_cache_misses_total,
-            plan_clamp_total,
             embedding_dims,
         })
     }
@@ -119,10 +106,6 @@ impl RustFsMetrics {
 
     pub fn record_zitadel_cache_miss(&self) {
         self.zitadel_cache_misses_total.inc();
-    }
-
-    pub fn record_plan_clamp(&self, tier: &str, parameter: &str) {
-        self.plan_clamp_total.with_label_values(&[tier, parameter]).inc();
     }
 
     pub fn set_embedding_dims(&self, model: &str, dims: i64) {

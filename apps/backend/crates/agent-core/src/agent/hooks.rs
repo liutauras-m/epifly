@@ -150,7 +150,9 @@ impl<M: CompletionModel> PromptHook<M> for PermissionHook {
             let cap_prefix = tool.split("__").next().unwrap_or("");
 
             // Block recursive plan.orchestrate (plan_orchestrate after dot→_ sanitise).
-            if deny_orchestrate && (cap_prefix == "plan_orchestrate" || cap_prefix == "plan.orchestrate") {
+            if deny_orchestrate
+                && (cap_prefix == "plan_orchestrate" || cap_prefix == "plan.orchestrate")
+            {
                 warn!(tool_name = %tool, "PermissionHook: recursive plan.orchestrate denied");
                 return ToolCallHookAction::skip(
                     "Recursive orchestration (plan.orchestrate inside a plan) is not permitted."

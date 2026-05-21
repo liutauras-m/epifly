@@ -29,21 +29,100 @@ fn default_max_tokens() -> u32 {
 }
 
 /// Declares an acceptable attachment MIME type with optional size limit.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// In TOML manifests this accepts either a bare MIME string —
+/// `accepts = ["application/json"]` — or an object with a size cap —
+/// `accepts = [{ mime = "application/pdf", max_size_mb = 20 }]`.
+#[derive(Debug, Clone, Serialize)]
 pub struct AcceptSpec {
     /// MIME glob, e.g. `"application/pdf"`, `"image/*"`, `"*"`.
     pub mime: String,
     /// Maximum file size in megabytes (absent = no limit).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_size_mb: Option<u32>,
 }
 
+impl<'de> Deserialize<'de> for AcceptSpec {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Form {
+            Bare(String),
+            Full {
+                mime: String,
+                #[serde(default)]
+                max_size_mb: Option<u32>,
+            },
+        }
+        Ok(match Form::deserialize(d)? {
+            Form::Bare(mime) => AcceptSpec {
+                mime,
+                max_size_mb: None,
+            },
+            Form::Full { mime, max_size_mb } => AcceptSpec { mime, max_size_mb },
+        })
+    }
+}
+
 /// Rough cost tier for planner ranking. All fields optional.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+///
+/// In TOML manifests this accepts either a bare bucket label —
+/// `cost_hint = "low"` (also `"cheap"`, `"medium"`, `"standard"`, `"high"`, `"premium"`)
+/// — or a full object — `cost_hint = { dollars = 0.05, latency_ms = 4000 }`.
+/// Bare labels are mapped to representative `dollars` values so the existing
+/// `bucket()` logic remains the single source of truth.
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct CostHint {
     pub tokens: Option<u64>,
     pub dollars: Option<f32>,
     pub latency_ms: Option<u64>,
+}
+
+impl<'de> Deserialize<'de> for CostHint {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Form {
+            Bare(String),
+            Full {
+                #[serde(default)]
+                tokens: Option<u64>,
+                #[serde(default)]
+                dollars: Option<f32>,
+                #[serde(default)]
+                latency_ms: Option<u64>,
+            },
+        }
+        Ok(match Form::deserialize(d)? {
+            Form::Bare(label) => {
+                // Bucket label → representative dollars so `bucket()` still works.
+                let dollars = match label.to_ascii_lowercase().as_str() {
+                    "low" | "cheap" => Some(0.005),
+                    "medium" | "standard" => Some(0.05),
+                    "high" | "premium" => Some(0.50),
+                    _ => {
+                        return Err(serde::de::Error::custom(format!(
+                            "cost_hint string must be one of low/cheap/medium/standard/high/premium, got {label:?}"
+                        )));
+                    }
+                };
+                CostHint {
+                    tokens: None,
+                    dollars,
+                    latency_ms: None,
+                }
+            }
+            Form::Full {
+                tokens,
+                dollars,
+                latency_ms,
+            } => CostHint {
+                tokens,
+                dollars,
+                latency_ms,
+            },
+        })
+    }
 }
 
 impl CostHint {
@@ -93,7 +172,6 @@ pub struct ToolManifest {
     pub search_keywords: Vec<String>,
 
     // ── v2 fields (all optional for backwards compatibility) ──────────────────
-
     /// Schema version: `"1.0"` (legacy) or `"2.0"` (current). Loader accepts both.
     #[serde(default = "default_schema_version")]
     pub schema_version: String,
@@ -201,5 +279,80 @@ impl ToolManifest {
             parts.push(format!("COST:{}", hint.bucket()));
         }
         parts.join("\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Both bare-string and full-object forms must parse and route to the same
+    // bucket so existing manifests don't have to migrate.
+    #[test]
+    fn cost_hint_accepts_bare_bucket_labels() {
+        #[derive(Deserialize)]
+        struct W {
+            cost_hint: CostHint,
+        }
+        let low: W = toml::from_str(r#"cost_hint = "low""#).unwrap();
+        assert_eq!(low.cost_hint.bucket(), "cheap");
+        let med: W = toml::from_str(r#"cost_hint = "medium""#).unwrap();
+        assert_eq!(med.cost_hint.bucket(), "standard");
+        let high: W = toml::from_str(r#"cost_hint = "high""#).unwrap();
+        assert_eq!(high.cost_hint.bucket(), "premium");
+        // Aliases
+        let cheap: W = toml::from_str(r#"cost_hint = "cheap""#).unwrap();
+        assert_eq!(cheap.cost_hint.bucket(), "cheap");
+        let premium: W = toml::from_str(r#"cost_hint = "premium""#).unwrap();
+        assert_eq!(premium.cost_hint.bucket(), "premium");
+    }
+
+    #[test]
+    fn cost_hint_accepts_full_object() {
+        #[derive(Deserialize)]
+        struct W {
+            cost_hint: CostHint,
+        }
+        let w: W = toml::from_str(r#"cost_hint = { dollars = 0.05, latency_ms = 4000 }"#).unwrap();
+        assert_eq!(w.cost_hint.dollars, Some(0.05));
+        assert_eq!(w.cost_hint.latency_ms, Some(4000));
+        assert_eq!(w.cost_hint.bucket(), "standard");
+    }
+
+    #[test]
+    fn cost_hint_rejects_unknown_label() {
+        #[derive(Debug, Deserialize)]
+        struct W {
+            #[allow(dead_code)]
+            cost_hint: CostHint,
+        }
+        let err = toml::from_str::<W>(r#"cost_hint = "exorbitant""#).unwrap_err();
+        assert!(
+            err.to_string().contains("cost_hint string must be one of"),
+            "got: {err}"
+        );
+    }
+
+    // Mirrors the AcceptSpec untagged-enum fix — accepts both bare strings
+    // and full objects in TOML manifests.
+    #[test]
+    fn accept_spec_accepts_bare_and_object_forms() {
+        #[derive(Deserialize)]
+        struct W {
+            accepts: Vec<AcceptSpec>,
+        }
+        let w: W = toml::from_str(
+            r#"
+            accepts = [
+              "application/pdf",
+              { mime = "image/*", max_size_mb = 20 },
+            ]
+            "#,
+        )
+        .unwrap();
+        assert_eq!(w.accepts[0].mime, "application/pdf");
+        assert_eq!(w.accepts[0].max_size_mb, None);
+        assert_eq!(w.accepts[1].mime, "image/*");
+        assert_eq!(w.accepts[1].max_size_mb, Some(20));
     }
 }

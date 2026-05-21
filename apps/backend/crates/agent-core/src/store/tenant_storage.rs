@@ -18,9 +18,7 @@ use common::audit::{AuditEvent, AuditStore};
 use moka::future::Cache;
 use object_store::{
     MultipartUpload, ObjectMeta, ObjectStore, PutOptions, PutPayload, PutResult,
-    aws::AmazonS3Builder,
-    path::Path as ObjectPath,
-    signer::Signer,
+    aws::AmazonS3Builder, path::Path as ObjectPath, signer::Signer,
 };
 use reqwest::Method;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -65,7 +63,9 @@ impl VirtualPath {
             ));
         }
         if input.is_empty() {
-            return Err(StorageError::InvalidPath("virtual path must not be empty".into()));
+            return Err(StorageError::InvalidPath(
+                "virtual path must not be empty".into(),
+            ));
         }
         if input.starts_with('/') || (input.len() >= 2 && input.chars().nth(1) == Some(':')) {
             return Err(StorageError::InvalidPath(
@@ -170,10 +170,7 @@ pub trait WorkspaceStorage: Send + Sync {
 
     async fn get_object(&self, path: &VirtualPath) -> Result<Bytes, StorageError>;
 
-    async fn list_objects(
-        &self,
-        prefix: &VirtualPath,
-    ) -> Result<Vec<ObjectMeta>, StorageError>;
+    async fn list_objects(&self, prefix: &VirtualPath) -> Result<Vec<ObjectMeta>, StorageError>;
 
     async fn delete_object(&self, path: &VirtualPath) -> Result<(), StorageError>;
 
@@ -216,7 +213,10 @@ struct AbortOnDropMultipart {
 
 impl AbortOnDropMultipart {
     fn new(upload: Box<dyn MultipartUpload>, dest: ObjectPath) -> Self {
-        Self { upload: Some(upload), dest }
+        Self {
+            upload: Some(upload),
+            dest,
+        }
     }
 }
 
@@ -277,7 +277,12 @@ impl<'a> StagedUploadFinalizer<'a> {
         }
 
         // Complete the upload.
-        let put_result = guard.upload.as_mut().expect("guard not taken").complete().await?;
+        let put_result = guard
+            .upload
+            .as_mut()
+            .expect("guard not taken")
+            .complete()
+            .await?;
 
         // Disarm the guard so drop() won't abort the now-completed upload.
         std::mem::forget(guard);
@@ -322,9 +327,7 @@ impl TenantStorage {
             StorageLayout::LegacyPrefix { tenant_id } => {
                 ObjectPath::from(format!("tenants/{tenant_id}/workspaces/{}", vp.as_str()))
             }
-            StorageLayout::Modern => {
-                ObjectPath::from(format!("workspaces/{}", vp.as_str()))
-            }
+            StorageLayout::Modern => ObjectPath::from(format!("workspaces/{}", vp.as_str())),
         }
     }
 
@@ -337,17 +340,17 @@ impl TenantStorage {
             StorageLayout::LegacyPrefix { tenant_id } => ObjectPath::from(format!(
                 "tenants/{tenant_id}/uploads/tmp/{upload_id}/{safe_filename}"
             )),
-            StorageLayout::Modern => ObjectPath::from(format!(
-                "uploads/tmp/{upload_id}/{safe_filename}"
-            )),
+            StorageLayout::Modern => {
+                ObjectPath::from(format!("uploads/tmp/{upload_id}/{safe_filename}"))
+            }
         }
     }
 
     fn upload_staging_prefix(&self, upload_id: &str) -> ObjectPath {
         match &self.layout {
-            StorageLayout::LegacyPrefix { tenant_id } => ObjectPath::from(format!(
-                "tenants/{tenant_id}/uploads/tmp/{upload_id}/"
-            )),
+            StorageLayout::LegacyPrefix { tenant_id } => {
+                ObjectPath::from(format!("tenants/{tenant_id}/uploads/tmp/{upload_id}/"))
+            }
             StorageLayout::Modern => ObjectPath::from(format!("uploads/tmp/{upload_id}/")),
         }
     }
@@ -394,8 +397,17 @@ impl TenantStorage {
             object_store::Attribute::Metadata("tenant-id".into()),
             self.tenant_id.clone().into(),
         );
-        let result = self.client.put_opts(&key, PutPayload::from(body), opts).await?;
-        self.emit_audit("storage.put", vp.as_str(), bytes_len, result.e_tag.as_deref(), "ok");
+        let result = self
+            .client
+            .put_opts(&key, PutPayload::from(body), opts)
+            .await?;
+        self.emit_audit(
+            "storage.put",
+            vp.as_str(),
+            bytes_len,
+            result.e_tag.as_deref(),
+            "ok",
+        );
         Ok(result)
     }
 
@@ -485,7 +497,13 @@ impl TenantStorage {
         _parts: &[CompletedPart],
         dest: &VirtualPath,
     ) -> Result<FinalizeResult, StorageError> {
-        let result = StagedUploadFinalizer { storage: self, upload_id, dest }.run().await;
+        let result = StagedUploadFinalizer {
+            storage: self,
+            upload_id,
+            dest,
+        }
+        .run()
+        .await;
         match &result {
             Ok(r) => self.emit_audit(
                 "storage.finalize",
@@ -500,7 +518,14 @@ impl TenantStorage {
     }
 
     /// Fire-and-forget audit event for a successful mutating storage op.
-    fn emit_audit(&self, op: &str, virtual_path: &str, bytes: u64, etag: Option<&str>, result: &str) {
+    fn emit_audit(
+        &self,
+        op: &str,
+        virtual_path: &str,
+        bytes: u64,
+        etag: Option<&str>,
+        result: &str,
+    ) {
         let event = AuditEvent::new(&self.tenant_id, op)
             .with_status(result)
             .with_metadata(serde_json::json!({
@@ -609,7 +634,9 @@ impl TenantStorage {
             creds,
             bucket: Arc::from(bucket),
             endpoint: Arc::from(endpoint),
-            layout: StorageLayout::LegacyPrefix { tenant_id: tenant_id.to_owned() },
+            layout: StorageLayout::LegacyPrefix {
+                tenant_id: tenant_id.to_owned(),
+            },
             audit: Arc::new(InMemoryAuditStore::new()),
         })
     }
@@ -657,7 +684,8 @@ impl WorkspaceStorage for TenantStorage {
         ttl: Duration,
         content_disposition: Option<&str>,
     ) -> Result<Url, StorageError> {
-        self.presign_workspace_get(path, ttl, content_disposition).await
+        self.presign_workspace_get(path, ttl, content_disposition)
+            .await
     }
 
     fn root_path(&self) -> VirtualPath {
@@ -712,7 +740,9 @@ impl TenantStorageFactory {
             (StorageLayout::Modern, Arc::from(per_bucket.as_str()))
         } else {
             (
-                StorageLayout::LegacyPrefix { tenant_id: tenant_id.to_owned() },
+                StorageLayout::LegacyPrefix {
+                    tenant_id: tenant_id.to_owned(),
+                },
                 Arc::clone(&self.bucket),
             )
         };
@@ -723,7 +753,9 @@ impl TenantStorageFactory {
             cached
         } else {
             let store = self.build_client(&creds, &bucket)?;
-            self.client_cache.insert(cache_key, Arc::clone(&store)).await;
+            self.client_cache
+                .insert(cache_key, Arc::clone(&store))
+                .await;
             store
         };
 
@@ -742,9 +774,7 @@ impl TenantStorageFactory {
         match self.creds_store.load(tenant_id).await {
             Ok(Some(c)) => Ok(c),
             Ok(None) => match self.mode {
-                TenantStorageMode::PerTenantIamRequired => {
-                    Err(StorageError::MissingTenantCreds)
-                }
+                TenantStorageMode::PerTenantIamRequired => Err(StorageError::MissingTenantCreds),
                 TenantStorageMode::PerTenantIamWithDevFallback => {
                     self.fallback_count.fetch_add(1, Ordering::Relaxed);
                     warn!(
@@ -755,9 +785,7 @@ impl TenantStorageFactory {
                 }
             },
             Err(e) => match self.mode {
-                TenantStorageMode::PerTenantIamRequired => {
-                    Err(StorageError::Internal(e))
-                }
+                TenantStorageMode::PerTenantIamRequired => Err(StorageError::Internal(e)),
                 TenantStorageMode::PerTenantIamWithDevFallback => {
                     self.fallback_count.fetch_add(1, Ordering::Relaxed);
                     warn!(tenant_id, error = %e, "DEV FALLBACK: cred load failed");
@@ -867,8 +895,8 @@ pub fn build_root_store() -> anyhow::Result<Arc<dyn ObjectStore>> {
 /// Bytes quota per plan tier (None = unlimited).
 pub fn plan_quota_bytes(plan: &PlanTier) -> Option<u64> {
     match plan {
-        PlanTier::Free => Some(1 * 1024 * 1024 * 1024),        // 1 GiB
-        PlanTier::Pro => Some(100 * 1024 * 1024 * 1024),        // 100 GiB
+        PlanTier::Free => Some(1024 * 1024 * 1024), // 1 GiB
+        PlanTier::Pro => Some(100 * 1024 * 1024 * 1024), // 100 GiB
         PlanTier::Enterprise => None,
     }
 }
@@ -968,7 +996,9 @@ mod tests {
             creds: mock_creds(),
             bucket: Arc::from("workspace"),
             endpoint: Arc::from("http://localhost:9000"),
-            layout: StorageLayout::LegacyPrefix { tenant_id: tenant_id.to_owned() },
+            layout: StorageLayout::LegacyPrefix {
+                tenant_id: tenant_id.to_owned(),
+            },
             audit: noop_audit(),
         }
     }
@@ -992,15 +1022,22 @@ mod storage_tests {
     use super::*;
 
     fn make_storage(tenant_id: &str) -> TenantStorage {
-        use object_store::memory::InMemory;
         use common::memory::InMemoryAuditStore;
+        use object_store::memory::InMemory;
         TenantStorage {
             tenant_id: tenant_id.to_owned(),
             client: Arc::new(InMemory::new()),
-            creds: StorageCreds { access_key: "t".into(), secret_key: "t".into(), created_at: 0, bucket: None },
+            creds: StorageCreds {
+                access_key: "t".into(),
+                secret_key: "t".into(),
+                created_at: 0,
+                bucket: None,
+            },
             bucket: Arc::from("workspace"),
             endpoint: Arc::from("http://localhost:9000"),
-            layout: StorageLayout::LegacyPrefix { tenant_id: tenant_id.to_owned() },
+            layout: StorageLayout::LegacyPrefix {
+                tenant_id: tenant_id.to_owned(),
+            },
             audit: Arc::new(InMemoryAuditStore::new()),
         }
     }
@@ -1011,7 +1048,10 @@ mod storage_tests {
         let vp = VirtualPath::parse("docs/note.md").unwrap();
         let payload = Bytes::from("hello world");
 
-        storage.put_workspace_object(&vp, payload.clone(), "text/markdown").await.unwrap();
+        storage
+            .put_workspace_object(&vp, payload.clone(), "text/markdown")
+            .await
+            .unwrap();
         let got = storage.get_workspace_object(&vp).await.unwrap();
         assert_eq!(got, payload);
     }
@@ -1021,7 +1061,10 @@ mod storage_tests {
         let storage = make_storage("t2");
         let vp = VirtualPath::parse("file.md").unwrap();
 
-        storage.put_workspace_object(&vp, Bytes::from("data"), "text/plain").await.unwrap();
+        storage
+            .put_workspace_object(&vp, Bytes::from("data"), "text/plain")
+            .await
+            .unwrap();
         storage.delete_workspace_object(&vp).await.unwrap();
         let result = storage.get_workspace_object(&vp).await;
         assert!(matches!(result, Err(StorageError::NotFound)));
@@ -1029,8 +1072,8 @@ mod storage_tests {
 
     #[tokio::test]
     async fn cross_tenant_isolation_in_memory() {
-        use object_store::memory::InMemory;
         use common::memory::InMemoryAuditStore;
+        use object_store::memory::InMemory;
 
         // Two tenants with the SAME InMemory store (simulating shared bucket).
         let shared_client: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
@@ -1039,10 +1082,17 @@ mod storage_tests {
         let make = |tid: &str| TenantStorage {
             tenant_id: tid.to_owned(),
             client: Arc::clone(&shared_client),
-            creds: StorageCreds { access_key: "x".into(), secret_key: "x".into(), created_at: 0, bucket: None },
+            creds: StorageCreds {
+                access_key: "x".into(),
+                secret_key: "x".into(),
+                created_at: 0,
+                bucket: None,
+            },
             bucket: Arc::from("workspace"),
             endpoint: Arc::from("http://localhost:9000"),
-            layout: StorageLayout::LegacyPrefix { tenant_id: tid.to_owned() },
+            layout: StorageLayout::LegacyPrefix {
+                tenant_id: tid.to_owned(),
+            },
             audit: Arc::clone(&audit),
         };
 
@@ -1050,7 +1100,9 @@ mod storage_tests {
         let sb = make("tenant-b");
         let vp = VirtualPath::parse("secret.md").unwrap();
 
-        sa.put_workspace_object(&vp, Bytes::from("A's secret"), "text/plain").await.unwrap();
+        sa.put_workspace_object(&vp, Bytes::from("A's secret"), "text/plain")
+            .await
+            .unwrap();
 
         // B's get uses B's layout key (tenants/tenant-b/workspaces/secret.md)
         // which is a different object key — returns NotFound, not A's data.
@@ -1085,17 +1137,24 @@ mod storage_tests {
 
     #[tokio::test]
     async fn finalize_round_trip_via_staging() {
-        use object_store::{memory::InMemory, path::Path as ObjectPath};
         use common::memory::InMemoryAuditStore;
+        use object_store::{memory::InMemory, path::Path as ObjectPath};
 
         let client = Arc::new(InMemory::new());
         let storage = TenantStorage {
             tenant_id: "t3".into(),
             client: Arc::clone(&client) as Arc<dyn ObjectStore>,
-            creds: StorageCreds { access_key: "t".into(), secret_key: "t".into(), created_at: 0, bucket: None },
+            creds: StorageCreds {
+                access_key: "t".into(),
+                secret_key: "t".into(),
+                created_at: 0,
+                bucket: None,
+            },
             bucket: Arc::from("workspace"),
             endpoint: Arc::from("http://localhost:9000"),
-            layout: StorageLayout::LegacyPrefix { tenant_id: "t3".into() },
+            layout: StorageLayout::LegacyPrefix {
+                tenant_id: "t3".into(),
+            },
             audit: Arc::new(InMemoryAuditStore::new()),
         };
 
@@ -1106,12 +1165,18 @@ mod storage_tests {
         client.put(&part_key, payload.clone().into()).await.unwrap();
 
         let dest = VirtualPath::parse("docs/result.bin").unwrap();
-        let result = storage.finalize_staged_upload(upload_id, &[], &dest).await.unwrap();
+        let result = storage
+            .finalize_staged_upload(upload_id, &[], &dest)
+            .await
+            .unwrap();
 
         assert_eq!(result.size_bytes, payload.len() as u64);
 
         // The staging part must have been cleaned up.
-        assert!(client.get(&part_key).await.is_err(), "staging part must be deleted after finalize");
+        assert!(
+            client.get(&part_key).await.is_err(),
+            "staging part must be deleted after finalize"
+        );
 
         // The destination object must exist.
         let got = storage.get_workspace_object(&dest).await.unwrap();

@@ -112,17 +112,32 @@ async fn handle_tools_call(
 
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
-    // Tool names are formatted as `capability_name__tool_name`
+    // Tool names are formatted as `capability_name__tool_name`.
+    // `tool_definitions_from_manifest` sanitises capability names by replacing
+    // `.` → `_` so they satisfy Anthropic's tool-name constraint. When the
+    // caller echoes the sanitised name back, we need the inverse fallback to
+    // resolve the original (dotted) registry key. Mirrors the lookup logic in
+    // `SemanticCapabilityRouter::invoke`.
     let (cap_name, tool_name) = name.split_once("__").ok_or_else(|| JsonRpcError {
         code: -32602,
         message: format!("Invalid tool name '{name}': expected capability__tool"),
         data: None,
     })?;
 
-    // Get provider Arc under a short-lived lock
+    // Get provider Arc under a short-lived lock; resolve sanitised name to
+    // the original by scanning the registry when the exact lookup misses.
     let provider = {
         let registry = state.registry.lock().unwrap();
-        registry.get_provider(cap_name)
+        let resolved_name = registry
+            .get(cap_name)
+            .map(|c| c.manifest.name.clone())
+            .or_else(|| {
+                registry
+                    .all()
+                    .find(|c| c.manifest.name.replace('.', "_") == cap_name)
+                    .map(|c| c.manifest.name.clone())
+            });
+        resolved_name.and_then(|n| registry.get_provider(&n))
     }
     .ok_or_else(|| JsonRpcError {
         code: -32602,

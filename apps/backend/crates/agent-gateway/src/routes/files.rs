@@ -25,6 +25,9 @@ fn presign_ttl() -> Duration {
 #[derive(Deserialize)]
 pub struct PresignUploadBody {
     pub virtual_path: String,
+    /// Accepted for forward compatibility — currently ignored by the presigner;
+    /// clients SHOULD send the same Content-Type when PUT-ing.
+    #[allow(dead_code)]
     pub content_type: Option<String>,
     pub size_bytes: u64,
 }

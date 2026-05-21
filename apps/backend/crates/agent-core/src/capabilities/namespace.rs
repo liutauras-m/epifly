@@ -29,7 +29,6 @@ impl NamespaceFilter {
             NamespaceFilter::AnyOf(filters) => filters.iter().any(|f| f.matches(ns)),
         }
     }
-
 }
 
 #[cfg(test)]

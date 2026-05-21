@@ -33,20 +33,20 @@ pub async fn ui_download(
     };
 
     // If a session is present, verify the object key belongs to that tenant.
-    if let Some(session_value) = jar.get(COOKIE_NAME).map(|c| c.value().to_string()) {
-        if let Some(u) = verify_session(&session_value) {
-            let tc = u.tenant_context();
-            let owned = if let Some(factory) = state.tenant_storage.as_ref() {
-                match factory.for_tenant(tc.tenant_id.as_str()).await {
-                    Ok(storage) => storage.owns_object_key(&q.key),
-                    Err(_) => false,
-                }
-            } else {
-                false
-            };
-            if !owned {
-                return err(StatusCode::FORBIDDEN, "object does not belong to your tenant");
+    if let Some(session_value) = jar.get(COOKIE_NAME).map(|c| c.value().to_string())
+        && let Some(u) = verify_session(&session_value)
+    {
+        let tc = u.tenant_context();
+        let owned = if let Some(factory) = state.tenant_storage.as_ref() {
+            match factory.for_tenant(tc.tenant_id.as_str()).await {
+                Ok(storage) => storage.owns_object_key(&q.key),
+                Err(_) => false,
             }
+        } else {
+            false
+        };
+        if !owned {
+            return err(StatusCode::FORBIDDEN, "object does not belong to your tenant");
         }
     }
 

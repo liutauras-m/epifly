@@ -1,7 +1,7 @@
 schema_version = "2.0"
 name        = "storage-ensure-date-folder"
 version     = "0.1.0"
-namespace   = "storage.object.ensure_date_folder"
+namespace   = "storage.ensure_date_folder"
 category    = "storage"
 kind        = "native"
 description = "Create a date-partitioned directory ({base}/{YYYY}/{MM}/{DD}/) for the current UTC date."

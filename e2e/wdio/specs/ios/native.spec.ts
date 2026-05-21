@@ -43,19 +43,19 @@ describe('Native ConusAI Browser iOS app', () => {
     const text = await heading.getText();
     expect(text.toLowerCase()).toContain('workshop');
 
-    // Name input field
-    const nameInput = await $('#name-input');
+    // Name input field — id matches MobileShell.svelte (`shell-name-input`).
+    const nameInput = await $('#shell-name-input');
     await nameInput.waitForDisplayed({ timeout: 5_000 });
 
-    // Plan radio buttons — at least one should be visible
-    const planOptions = await $$('input[name="plan"]');
+    // Plan radio buttons — at least one should be visible.
+    const planOptions = await $$('input[name="shell-plan"]');
     expect(planOptions.length).toBeGreaterThanOrEqual(3);
 
-    // Begin button
-    const beginBtn = await $('button[type="submit"]');
-    await beginBtn.waitForDisplayed({ timeout: 5_000 });
-    const btnText = await beginBtn.getText();
-    expect(btnText).toContain('Begin');
+    // Submit button — text reads "Get started".
+    const submitBtn = await $('button[type="submit"]');
+    await submitBtn.waitForDisplayed({ timeout: 5_000 });
+    const btnText = await submitBtn.getText();
+    expect(btnText.toLowerCase()).toContain('get started');
   });
 
   it('submitting name + plan enters the workspace', async () => {
@@ -73,20 +73,23 @@ describe('Native ConusAI Browser iOS app', () => {
     );
 
     // Fill in name.
-    const nameInput = await $('#name-input');
+    const nameInput = await $('#shell-name-input');
     await nameInput.setValue('E2E Tester');
 
     // Select Enterprise plan (already default, but explicitly set).
     await browser.execute(() => {
-      const el = document.querySelector<HTMLInputElement>('input[name="plan"][value="enterprise"]');
+      const el = document.querySelector<HTMLInputElement>(
+        'input[name="shell-plan"][value="enterprise"]',
+      );
       if (el) el.click();
     });
 
-    // Click Begin.
-    const beginBtn = await $('button[type="submit"]');
-    await beginBtn.click();
+    // Submit the form.
+    const submitBtn = await $('button[type="submit"]');
+    await submitBtn.click();
 
-    // After login, the greeting screen should appear with the user's first name.
+    // After login, the user's first name should appear somewhere in the shell
+    // (greeting, profile chip, or sidebar).
     await browser.waitUntil(
       async () => {
         const body = await browser.execute(() => document.body.innerText);

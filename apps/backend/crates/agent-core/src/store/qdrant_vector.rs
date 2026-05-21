@@ -14,10 +14,9 @@ use chrono::{DateTime, Utc};
 use qdrant_client::{
     Qdrant,
     qdrant::{
-        Condition, CreateCollectionBuilder, Distance, FieldType, Filter,
-        CreateFieldIndexCollectionBuilder, KeywordIndexParams, PointStruct, SearchParamsBuilder,
-        SearchPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder, VectorsConfigBuilder,
-        payload_index_params,
+        Condition, CreateCollectionBuilder, CreateFieldIndexCollectionBuilder, Distance, FieldType,
+        Filter, KeywordIndexParams, PointStruct, SearchParamsBuilder, SearchPointsBuilder,
+        UpsertPointsBuilder, VectorParamsBuilder, VectorsConfigBuilder, payload_index_params,
     },
 };
 use serde_json::Value;
@@ -82,24 +81,35 @@ impl QdrantVectorStore {
     }
 
     /// Connect and derive the collection names from the active embedding service's dims.
-    pub async fn connect_from_service(url: &str, svc: &dyn EmbeddingService) -> anyhow::Result<Self> {
+    pub async fn connect_from_service(
+        url: &str,
+        svc: &dyn EmbeddingService,
+    ) -> anyhow::Result<Self> {
         Self::connect_with_dims(url, svc.dims()).await
     }
 
     pub async fn connect_with_dims(url: &str, dims: u64) -> anyhow::Result<Self> {
         let client = Qdrant::from_url(url).build()?;
-        let store = Self { inner: Some(client), dims };
+        let store = Self {
+            inner: Some(client),
+            dims,
+        };
         store.ensure_collections().await?;
         Ok(store)
     }
 
     /// Returns a store that always returns empty results — used in test mode.
     pub fn noop() -> Self {
-        Self { inner: None, dims: EMBEDDING_DIMS as u64 }
+        Self {
+            inner: None,
+            dims: EMBEDDING_DIMS as u64,
+        }
     }
 
     async fn ensure_collections(&self) -> anyhow::Result<()> {
-        let Some(client) = &self.inner else { return Ok(()) };
+        let Some(client) = &self.inner else {
+            return Ok(());
+        };
         let cap_name = cap_collection(self.dims);
         let content_name = content_collection(self.dims);
         for name in [cap_name.as_str(), content_name.as_str()] {
@@ -108,7 +118,9 @@ impl QdrantVectorStore {
                 let mut needs_recreate = false;
                 let info = client.collection_info(name).await?;
                 if let Some(config) = info.result.and_then(|r| r.config) {
-                    if let Some(params) = config.params.and_then(|p| p.vectors_config)
+                    if let Some(params) = config
+                        .params
+                        .and_then(|p| p.vectors_config)
                         .and_then(|vc| vc.config)
                     {
                         use qdrant_client::qdrant::vectors_config::Config;
@@ -143,57 +155,50 @@ impl QdrantVectorStore {
                 VectorParamsBuilder::new(self.dims, Distance::Cosine),
             );
             client
-                .create_collection(
-                    CreateCollectionBuilder::new(name).vectors_config(vcb),
-                )
+                .create_collection(CreateCollectionBuilder::new(name).vectors_config(vcb))
                 .await?;
             self.ensure_payload_indexes(client, name).await?;
         }
         Ok(())
     }
 
-    async fn ensure_payload_indexes(&self, client: &Qdrant, collection: &str) -> anyhow::Result<()> {
-        let tenant_index = CreateFieldIndexCollectionBuilder::new(
-            collection,
-            "tenant_id",
-            FieldType::Keyword,
-        )
-        .field_index_params(payload_index_params::IndexParams::KeywordIndexParams(
-            KeywordIndexParams {
-                is_tenant: Some(true),
-                on_disk: Some(false),
-                enable_hnsw: None,
-            },
-        ));
+    async fn ensure_payload_indexes(
+        &self,
+        client: &Qdrant,
+        collection: &str,
+    ) -> anyhow::Result<()> {
+        let tenant_index =
+            CreateFieldIndexCollectionBuilder::new(collection, "tenant_id", FieldType::Keyword)
+                .field_index_params(payload_index_params::IndexParams::KeywordIndexParams(
+                    KeywordIndexParams {
+                        is_tenant: Some(true),
+                        on_disk: Some(false),
+                        enable_hnsw: None,
+                    },
+                ));
         client.create_field_index(tenant_index).await?;
 
-        let owner_index = CreateFieldIndexCollectionBuilder::new(
-            collection,
-            "owner_id",
-            FieldType::Keyword,
-        )
-        .field_index_params(payload_index_params::IndexParams::KeywordIndexParams(
-            KeywordIndexParams {
-                is_tenant: Some(false),
-                on_disk: Some(false),
-                enable_hnsw: None,
-            },
-        ));
+        let owner_index =
+            CreateFieldIndexCollectionBuilder::new(collection, "owner_id", FieldType::Keyword)
+                .field_index_params(payload_index_params::IndexParams::KeywordIndexParams(
+                    KeywordIndexParams {
+                        is_tenant: Some(false),
+                        on_disk: Some(false),
+                        enable_hnsw: None,
+                    },
+                ));
         client.create_field_index(owner_index).await?;
 
         // shared_with is a repeated string — array keyword index for fast "is_member_of" filters.
-        let shared_index = CreateFieldIndexCollectionBuilder::new(
-            collection,
-            "shared_with",
-            FieldType::Keyword,
-        )
-        .field_index_params(payload_index_params::IndexParams::KeywordIndexParams(
-            KeywordIndexParams {
-                is_tenant: Some(false),
-                on_disk: Some(false),
-                enable_hnsw: None,
-            },
-        ));
+        let shared_index =
+            CreateFieldIndexCollectionBuilder::new(collection, "shared_with", FieldType::Keyword)
+                .field_index_params(payload_index_params::IndexParams::KeywordIndexParams(
+                    KeywordIndexParams {
+                        is_tenant: Some(false),
+                        on_disk: Some(false),
+                        enable_hnsw: None,
+                    },
+                ));
         client.create_field_index(shared_index).await?;
 
         Ok(())
@@ -230,10 +235,11 @@ impl QdrantVectorStore {
 
         let filter = build_capability_filter(namespace, tags);
 
-        let mut req = SearchPointsBuilder::new(cap_collection(self.dims), embedding.to_vec(), limit as u64)
-            .vector_name("default")
-            .with_payload(true)
-            .params(SearchParamsBuilder::default().exact(false));
+        let mut req =
+            SearchPointsBuilder::new(cap_collection(self.dims), embedding.to_vec(), limit as u64)
+                .vector_name("default")
+                .with_payload(true)
+                .params(SearchParamsBuilder::default().exact(false));
         if let Some(f) = filter {
             req = req.filter(f);
         }
@@ -305,7 +311,9 @@ impl QdrantVectorStore {
         namespace: &str,
         tags: &[String],
     ) -> anyhow::Result<()> {
-        let Ok(client) = self.client() else { return Ok(()) };
+        let Ok(client) = self.client() else {
+            return Ok(());
+        };
 
         let mut payload: HashMap<String, qdrant_client::qdrant::Value> = HashMap::new();
         payload.insert("capability_id".into(), capability_id.into());
@@ -323,7 +331,9 @@ impl QdrantVectorStore {
         let point = PointStruct::new(deterministic_id(capability_id), vectors, payload);
 
         client
-            .upsert_points(UpsertPointsBuilder::new(cap_collection(self.dims), vec![point]).wait(true))
+            .upsert_points(
+                UpsertPointsBuilder::new(cap_collection(self.dims), vec![point]).wait(true),
+            )
             .await?;
         Ok(())
     }
@@ -345,10 +355,14 @@ impl QdrantVectorStore {
 
         let result = client
             .search_points(
-                SearchPointsBuilder::new(content_collection(self.dims), embedding.to_vec(), limit as u64)
-                    .vector_name("default")
-                    .filter(filter)
-                    .with_payload(true),
+                SearchPointsBuilder::new(
+                    content_collection(self.dims),
+                    embedding.to_vec(),
+                    limit as u64,
+                )
+                .vector_name("default")
+                .filter(filter)
+                .with_payload(true),
             )
             .await?;
 
@@ -422,14 +436,26 @@ impl QdrantVectorStore {
         content: &str,
         embedding: &[f32],
     ) -> anyhow::Result<()> {
-        self.upsert_content_embedding_full(chunk_id, node_id, chunk_idx, content, embedding, "", "", &[]).await
+        self.upsert_content_embedding_full(
+            chunk_id,
+            node_id,
+            chunk_idx,
+            content,
+            embedding,
+            "",
+            "",
+            &[],
+        )
+        .await
     }
 
     /// Delete all content embedding chunks for a given document (by `node_id` / virtual path).
     #[instrument(skip(self), fields(doc_id))]
     pub async fn delete_content_embeddings_for_doc(&self, doc_id: &str) -> anyhow::Result<()> {
-        let Ok(client) = self.client() else { return Ok(()) };
-        use qdrant_client::qdrant::{DeletePointsBuilder, Filter, Condition};
+        let Ok(client) = self.client() else {
+            return Ok(());
+        };
+        use qdrant_client::qdrant::{Condition, DeletePointsBuilder, Filter};
         let filter = Filter::must(vec![Condition::matches("node_id", doc_id.to_string())]);
         client
             .delete_points(
@@ -453,7 +479,9 @@ impl QdrantVectorStore {
         owner_id: &str,
         shared_with: &[String],
     ) -> anyhow::Result<()> {
-        let Ok(client) = self.client() else { return Ok(()) };
+        let Ok(client) = self.client() else {
+            return Ok(());
+        };
 
         let mut payload: HashMap<String, qdrant_client::qdrant::Value> = HashMap::new();
         payload.insert("node_id".into(), node_id.into());
@@ -463,7 +491,11 @@ impl QdrantVectorStore {
         payload.insert("owner_id".into(), owner_id.into());
         payload.insert(
             "shared_with".into(),
-            shared_with.iter().map(|s| s.as_str()).collect::<Vec<_>>().into(),
+            shared_with
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .into(),
         );
 
         let mut vectors: HashMap<String, Vec<f32>> = HashMap::new();
@@ -472,7 +504,9 @@ impl QdrantVectorStore {
         let point = PointStruct::new(deterministic_id(chunk_id), vectors, payload);
 
         client
-            .upsert_points(UpsertPointsBuilder::new(content_collection(self.dims), vec![point]).wait(true))
+            .upsert_points(
+                UpsertPointsBuilder::new(content_collection(self.dims), vec![point]).wait(true),
+            )
             .await?;
         Ok(())
     }

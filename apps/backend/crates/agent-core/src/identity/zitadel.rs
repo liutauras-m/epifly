@@ -3,15 +3,17 @@
 /// Token verification: standard JWT introspection via Zitadel's introspection
 /// endpoint using reqwest (no zitadel crate dependency).
 /// Management: Zitadel REST Management API for org/user operations.
-use super::{AuthError, IdentityContext, IdentityProvider, TenantCreated, TenantManager, TenantSummary};
+use super::{
+    AuthError, IdentityContext, IdentityProvider, TenantCreated, TenantManager, TenantSummary,
+};
 use crate::context::tenant::{PlanTier, SubscriptionStatus, UserRole};
 use async_trait::async_trait;
 use common::types::TenantId;
 use moka::future::Cache;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tracing::{debug, warn};
 
@@ -30,8 +32,12 @@ impl ZitadelCacheStats {
     pub fn miss(&self) {
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
     }
-    pub fn hits(&self) -> u64 { self.cache_hits.load(Ordering::Relaxed) }
-    pub fn misses(&self) -> u64 { self.cache_misses.load(Ordering::Relaxed) }
+    pub fn hits(&self) -> u64 {
+        self.cache_hits.load(Ordering::Relaxed)
+    }
+    pub fn misses(&self) -> u64 {
+        self.cache_misses.load(Ordering::Relaxed)
+    }
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -47,15 +53,14 @@ pub struct ZitadelConfig {
 
 impl ZitadelConfig {
     pub fn from_env() -> Result<Self, AuthError> {
-        let domain = std::env::var("ZITADEL_DOMAIN").map_err(|_| {
-            AuthError::Config("ZITADEL_DOMAIN not set".into())
-        })?;
-        let audience = std::env::var("ZITADEL_AUDIENCE")
-            .unwrap_or_else(|_| "conusai-agent-gateway".into());
-        let introspection_client_id = std::env::var("ZITADEL_INTROSPECTION_CLIENT_ID")
-            .unwrap_or_default();
-        let introspection_client_secret = std::env::var("ZITADEL_INTROSPECTION_CLIENT_SECRET")
-            .unwrap_or_default();
+        let domain = std::env::var("ZITADEL_DOMAIN")
+            .map_err(|_| AuthError::Config("ZITADEL_DOMAIN not set".into()))?;
+        let audience =
+            std::env::var("ZITADEL_AUDIENCE").unwrap_or_else(|_| "conusai-agent-gateway".into());
+        let introspection_client_id =
+            std::env::var("ZITADEL_INTROSPECTION_CLIENT_ID").unwrap_or_default();
+        let introspection_client_secret =
+            std::env::var("ZITADEL_INTROSPECTION_CLIENT_SECRET").unwrap_or_default();
         let mgmt_pat = std::env::var("ZITADEL_MGMT_PAT").unwrap_or_default();
 
         Ok(Self {
@@ -127,7 +132,12 @@ impl ZitadelProvider {
             .max_capacity(TOKEN_CACHE_CAPACITY)
             .time_to_live(Duration::from_secs(TOKEN_CACHE_MAX_TTL_SECS))
             .build();
-        Self { config, client, token_cache, stats: Arc::new(ZitadelCacheStats::default()) }
+        Self {
+            config,
+            client,
+            token_cache,
+            stats: Arc::new(ZitadelCacheStats::default()),
+        }
     }
 
     pub fn from_env() -> Result<Self, AuthError> {
@@ -210,8 +220,10 @@ impl IdentityProvider for ZitadelProvider {
             )));
         }
 
-        let intro: IntrospectionResponse =
-            resp.json().await.map_err(|e| AuthError::Provider(e.to_string()))?;
+        let intro: IntrospectionResponse = resp
+            .json()
+            .await
+            .map_err(|e| AuthError::Provider(e.to_string()))?;
 
         if !intro.active {
             return Err(AuthError::TokenExpired);
@@ -227,11 +239,10 @@ impl IdentityProvider for ZitadelProvider {
             }
         }
 
-        let sub = intro.sub.ok_or_else(|| AuthError::InvalidToken("no sub claim".into()))?;
-        let tenant_id = intro
-            .org_id
-            .clone()
-            .unwrap_or_else(|| sub.clone());
+        let sub = intro
+            .sub
+            .ok_or_else(|| AuthError::InvalidToken("no sub claim".into()))?;
+        let tenant_id = intro.org_id.clone().unwrap_or_else(|| sub.clone());
 
         debug!(sub, tenant_id, "Zitadel token verified");
 
@@ -279,7 +290,9 @@ impl TenantManager for ZitadelProvider {
         owner_email: &str,
     ) -> Result<TenantCreated, AuthError> {
         let url = format!("{}/management/v1/orgs", self.config.domain);
-        let body = CreateOrgRequest { name: name.to_string() };
+        let body = CreateOrgRequest {
+            name: name.to_string(),
+        };
 
         let resp = self
             .client
@@ -299,8 +312,10 @@ impl TenantManager for ZitadelProvider {
             )));
         }
 
-        let created: CreateOrgResponse =
-            resp.json().await.map_err(|e| AuthError::Provider(e.to_string()))?;
+        let created: CreateOrgResponse = resp
+            .json()
+            .await
+            .map_err(|e| AuthError::Provider(e.to_string()))?;
 
         let org_id = created
             .organization_id
@@ -339,8 +354,10 @@ impl TenantManager for ZitadelProvider {
             name: Option<String>,
         }
 
-        let data: ListOrgsResp =
-            resp.json().await.map_err(|e| AuthError::Provider(e.to_string()))?;
+        let data: ListOrgsResp = resp
+            .json()
+            .await
+            .map_err(|e| AuthError::Provider(e.to_string()))?;
 
         Ok(data
             .result

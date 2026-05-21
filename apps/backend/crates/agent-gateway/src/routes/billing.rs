@@ -24,7 +24,10 @@ pub struct PortalRequest {
     pub return_url: String,
 }
 
+/// Query string for `/v1/billing/usage`. Date range is accepted to keep the
+/// public API stable; values are ignored until TimescaleDB rollups land.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct UsageQuery {
     pub from: Option<String>,
     pub to: Option<String>,

@@ -28,7 +28,9 @@ pub async fn presign_get(
 ) -> Result<Url, StorageError> {
     let storage = TenantStorage::from_raw_creds(tenant_id, creds.clone(), endpoint, bucket)?;
     let vp = VirtualPath::parse(virtual_path)?;
-    storage.presign_workspace_get(&vp, ttl.unwrap_or_else(presign_ttl_default), None).await
+    storage
+        .presign_workspace_get(&vp, ttl.unwrap_or_else(presign_ttl_default), None)
+        .await
 }
 
 /// Generate a presigned PUT URL for a tenant workspace object.
@@ -42,7 +44,9 @@ pub async fn presign_put(
 ) -> Result<Url, StorageError> {
     let storage = TenantStorage::from_raw_creds(tenant_id, creds.clone(), endpoint, bucket)?;
     let vp = VirtualPath::parse(virtual_path)?;
-    storage.presign_workspace_put(&vp, ttl.unwrap_or_else(presign_ttl_default)).await
+    storage
+        .presign_workspace_put(&vp, ttl.unwrap_or_else(presign_ttl_default))
+        .await
 }
 
 /// Generate a presigned PUT URL for the staging area.
@@ -55,5 +59,7 @@ pub async fn presign_tmp_put(
     bucket: &str,
 ) -> Result<Url, StorageError> {
     let storage = TenantStorage::from_raw_creds(tenant_id, creds.clone(), endpoint, bucket)?;
-    storage.presign_staging_put(upload_id, filename, presign_ttl_default()).await
+    storage
+        .presign_staging_put(upload_id, filename, presign_ttl_default())
+        .await
 }

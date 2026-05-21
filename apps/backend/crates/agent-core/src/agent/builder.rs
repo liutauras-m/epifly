@@ -1,7 +1,6 @@
 use crate::agent::hooks::TracingHook;
 use crate::capabilities::semantic_router::SemanticCapabilityRouter;
 use crate::context::tenant::TenantContext;
-use crate::llm::LlmRegistry;
 use crate::llm::providers::anthropic::{AnthropicProvider, RigAnthropicAgent};
 use rig::completion::Prompt;
 use std::sync::Arc;
@@ -49,8 +48,7 @@ impl AgentBuilder {
     }
 
     pub fn build(self) -> Agent {
-        let provider = AnthropicProvider::from_env()
-            .expect("ANTHROPIC_API_KEY must be set");
+        let provider = AnthropicProvider::from_env().expect("ANTHROPIC_API_KEY must be set");
         let max_tokens = self
             .tenant
             .as_ref()
@@ -145,11 +143,6 @@ impl Agent {
             .map_err(|e| common::error::ConusAiError::Other(e.into()))
     }
 }
-
-// Allow `AgentBuilder::new(llm_registry)` as a future migration path.
-// Today the builder constructs from env; LlmRegistry integration is Phase 2.3 work.
-#[allow(dead_code)]
-pub(crate) fn _registry_hint(_llm: Arc<LlmRegistry>) {}
 
 impl Default for AgentBuilder {
     fn default() -> Self {

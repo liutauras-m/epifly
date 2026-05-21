@@ -109,7 +109,7 @@ pub async fn ui_stream(
 }
 
 fn build_attachment_hint(
-    state: &Arc<AppState>,
+    _state: &Arc<AppState>,
     headers: &HeaderMap,
     attachment_ids: &[String],
     storage: Option<&TenantStorage>,

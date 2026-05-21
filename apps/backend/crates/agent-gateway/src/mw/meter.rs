@@ -66,7 +66,7 @@ pub async fn record_usage(
             warn!(error = %e, "metering: report_usage(agent_turn) failed");
         }
         quota
-            .record(&ctx.tenant_id.to_string(), &ActionType::AgentTurn, stats.turns as u64)
+            .record(&ctx.tenant_id, &ActionType::AgentTurn, stats.turns as u64)
             .await;
 
         // Report token usage.
@@ -81,7 +81,7 @@ pub async fn record_usage(
                 warn!(error = %e, "metering: report_usage(token) failed");
             }
             quota
-                .record(&ctx.tenant_id.to_string(), &ActionType::Token, stats.tokens)
+                .record(&ctx.tenant_id, &ActionType::Token, stats.tokens)
                 .await;
         }
     }

@@ -1,7 +1,7 @@
 schema_version = "2.0"
 name        = "sense-classify-document"
 version     = "0.1.0"
-namespace   = "sense.classification.document_type"
+namespace   = "sense.classify_document"
 category    = "sense"
 kind        = "chain"
 description = "Classify a document as invoice, contract, purchase order, receipt, or other."

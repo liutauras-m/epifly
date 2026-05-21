@@ -1,0 +1,76 @@
+schema_version = "2.0"
+name        = "compose-report-md"
+version     = "1.0.0"
+namespace   = "compose.report_md"
+category    = "compose"
+kind        = "chain"
+description = "Compose a well-structured Markdown report from structured data or free-form text. Produces a professional document with headings, summary section, key findings, and recommended actions. Use after extraction or classification steps to create human-readable deliverables."
+tags        = ["compose", "report", "markdown", "document", "summary", "write"]
+accepts     = [
+    { mime = "application/json", max_size_mb = 1 },
+    { mime = "text/plain", max_size_mb = 1 },
+]
+emits       = ["text/markdown"]
+idempotent  = true
+cost_hint   = { dollars = 0.02, latency_ms = 3000 }
+requires    = []
+search_keywords = [
+    "compose report", "write report", "markdown report", "create summary",
+    "generate document", "write summary", "draft report", "format report",
+    "make report", "build report", "report template", "professional report",
+]
+
+[[tools]]
+name        = "compose_report"
+description = "Compose a Markdown report from structured input data or free-form text. Input: data (object or string to summarise), title (optional report title), context (optional additional context about the report purpose). Output: { markdown: string, word_count: number, sections: [string] }."
+
+[tools.input_schema]
+type     = "object"
+required = ["data"]
+
+[tools.input_schema.properties.data]
+description = "Structured data (object) or plain text to turn into a report"
+
+[tools.input_schema.properties.title]
+type        = "string"
+description = "Optional report title (defaults to 'Report')"
+
+[tools.input_schema.properties.context]
+type        = "string"
+description = "Optional context about the report's audience or purpose (e.g. 'quarterly finance summary for CFO')"
+
+[chain]
+model           = "smart"
+vision          = false
+max_tokens      = 4096
+system_prompt   = "You are a professional business report writer. You create clear, well-structured Markdown reports from structured data. Use ## headings, **bold** for key terms, bullet lists for enumerable items, and tables where appropriate. Always include an Executive Summary section. Be concise but complete."
+prompt_template = """Compose a professional Markdown report from the following data.
+
+{{#if input.title}}Report title: {{input.title}}{{/if}}
+{{#if input.context}}Context: {{input.context}}{{/if}}
+
+Data to summarise:
+{{input.data}}
+
+Produce a complete Markdown report with:
+1. # Title
+2. ## Executive Summary (3-5 sentences)
+3. ## Key Findings (bullet list)
+4. ## Details (structured sections relevant to the data type)
+5. ## Recommended Actions (if applicable)
+
+Respond ONLY with the Markdown content, no code fences."""
+
+[chain.output_schema]
+type     = "object"
+required = ["markdown"]
+
+[chain.output_schema.properties.markdown]
+type = "string"
+
+[chain.output_schema.properties.word_count]
+type = "integer"
+
+[chain.output_schema.properties.sections]
+type  = "array"
+items = { type = "string" }

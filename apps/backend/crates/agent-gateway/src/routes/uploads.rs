@@ -36,6 +36,9 @@ fn presign_ttl() -> Duration {
 #[derive(Deserialize)]
 pub struct InitiateBody {
     pub filename: String,
+    /// Accepted for forward compatibility — currently ignored by the initiator;
+    /// clients SHOULD repeat it on each part PUT.
+    #[allow(dead_code)]
     pub content_type: Option<String>,
     pub size_bytes: Option<u64>,
 }
@@ -60,14 +63,13 @@ pub async fn initiate(
         return Err(HttpError::rate_limit(None));
     }
 
-    if let Some(size) = body.size_bytes {
-        if let Err(e) = state
+    if let Some(size) = body.size_bytes
+        && let Err(e) = state
             .storage_quota
             .check(&tenant.0.tenant_id, &tenant.0.plan, size)
             .await
-        {
-            return Err(HttpError::validation("size_bytes", format!("quota: {e}")));
-        }
+    {
+        return Err(HttpError::validation("size_bytes", format!("quota: {e}")));
     }
 
     let upload_id = Ulid::new().to_string();
@@ -174,9 +176,9 @@ pub async fn complete(
 }
 
 /// POST /v1/uploads/:upload_id/abort — abort and discard staged parts.
-#[instrument(skip(state, tenant))]
+#[instrument(skip(_state, tenant))]
 pub async fn abort(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
     Extension(tenant): Extension<ResolvedTenant>,
     Path(upload_id): Path<String>,
 ) -> StatusCode {

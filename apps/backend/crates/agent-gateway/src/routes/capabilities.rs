@@ -37,6 +37,8 @@ pub async fn list_capabilities(
                 card.manifest.tools.iter().map(|t| t.name.clone()).collect();
             json!({
                 "name": card.manifest.name,
+                "namespace": card.manifest.namespace.clone().unwrap_or_default(),
+                "category": card.manifest.category.clone().unwrap_or_default(),
                 "version": card.manifest.version,
                 "description": card.manifest.description,
                 "kind": format!("{:?}", card.manifest.kind),

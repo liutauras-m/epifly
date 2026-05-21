@@ -91,7 +91,13 @@ impl AttachmentHint {
     /// Stable bytes for cache key hashing (includes cost_bias so biased queries
     /// don't collide with unbiased ones in the moka cache).
     fn cache_bytes(&self) -> Vec<u8> {
-        let mut out = self.mimes.iter().cloned().collect::<Vec<_>>().join(",").into_bytes();
+        let mut out = self
+            .mimes
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(",")
+            .into_bytes();
         if let Some(bias) = &self.cost_bias {
             out.push(b'\x01');
             out.extend_from_slice(bias.as_bytes());
@@ -233,7 +239,8 @@ impl SemanticCapabilityRouter {
         query: &str,
         tenant: Option<&TenantContext>,
     ) -> anyhow::Result<Vec<Arc<dyn CapabilityProvider>>> {
-        self.select_with_hint(query, tenant, &AttachmentHint::default()).await
+        self.select_with_hint(query, tenant, &AttachmentHint::default())
+            .await
     }
 
     /// Like `select` but with an explicit [`AttachmentHint`] for MIME post-filtering.
@@ -358,7 +365,8 @@ impl SemanticCapabilityRouter {
         query: &str,
         tenant: Option<&TenantContext>,
     ) -> anyhow::Result<Vec<Value>> {
-        self.tool_definitions_with_hint(query, tenant, &AttachmentHint::default()).await
+        self.tool_definitions_with_hint(query, tenant, &AttachmentHint::default())
+            .await
     }
 
     /// Like `tool_definitions` but with an explicit `AttachmentHint`.
@@ -396,7 +404,8 @@ impl SemanticCapabilityRouter {
         query: &str,
         tenant: Option<&TenantContext>,
     ) -> anyhow::Result<Vec<Box<dyn ToolDyn>>> {
-        self.rig_tools_for_prompt_with_hint(query, tenant, &AttachmentHint::default()).await
+        self.rig_tools_for_prompt_with_hint(query, tenant, &AttachmentHint::default())
+            .await
     }
 
     /// Like `rig_tools_for_prompt` but with an explicit `AttachmentHint`.
@@ -881,20 +890,29 @@ mod tests {
     fn attachment_hint_mime_glob_matching() {
         use crate::capabilities::manifest::AcceptSpec;
         let hint = AttachmentHint::new(["image/png", "application/pdf"]);
-        let accepts = vec![
-            AcceptSpec { mime: "image/*".into(), max_size_mb: Some(20) },
-        ];
+        let accepts = vec![AcceptSpec {
+            mime: "image/*".into(),
+            max_size_mb: Some(20),
+        }];
         assert!(hint.matches_any(&accepts), "image/* should match image/png");
 
-        let accepts_pdf = vec![
-            AcceptSpec { mime: "application/pdf".into(), max_size_mb: None },
-        ];
-        assert!(hint.matches_any(&accepts_pdf), "application/pdf exact match");
+        let accepts_pdf = vec![AcceptSpec {
+            mime: "application/pdf".into(),
+            max_size_mb: None,
+        }];
+        assert!(
+            hint.matches_any(&accepts_pdf),
+            "application/pdf exact match"
+        );
 
-        let accepts_none = vec![
-            AcceptSpec { mime: "text/plain".into(), max_size_mb: None },
-        ];
-        assert!(!hint.matches_any(&accepts_none), "text/plain should not match image or pdf");
+        let accepts_none = vec![AcceptSpec {
+            mime: "text/plain".into(),
+            max_size_mb: None,
+        }];
+        assert!(
+            !hint.matches_any(&accepts_none),
+            "text/plain should not match image or pdf"
+        );
 
         // Empty accepts = no restriction, always passes
         assert!(hint.matches_any(&[]), "empty accepts = always match");
@@ -904,7 +922,10 @@ mod tests {
     fn attachment_hint_wildcard_star() {
         use crate::capabilities::manifest::AcceptSpec;
         let hint = AttachmentHint::new(["video/mp4"]);
-        let accepts = vec![AcceptSpec { mime: "*".into(), max_size_mb: None }];
+        let accepts = vec![AcceptSpec {
+            mime: "*".into(),
+            max_size_mb: None,
+        }];
         assert!(hint.matches_any(&accepts), "wildcard * matches anything");
     }
 
@@ -915,6 +936,9 @@ mod tests {
         let with_pdf = AttachmentHint::new(["application/pdf"]);
         let k1 = router.cache_key("t1", "invoice", &empty);
         let k2 = router.cache_key("t1", "invoice", &with_pdf);
-        assert_ne!(k1, k2, "different hints should produce different cache keys");
+        assert_ne!(
+            k1, k2,
+            "different hints should produce different cache keys"
+        );
     }
 }

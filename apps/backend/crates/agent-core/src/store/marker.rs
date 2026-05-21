@@ -28,8 +28,7 @@ impl HttpMarkerClient {
     }
 
     pub fn from_env() -> Self {
-        let url = std::env::var("MARKER_URL")
-            .unwrap_or_else(|_| "http://marker-api:8080".into());
+        let url = std::env::var("MARKER_URL").unwrap_or_else(|_| "http://marker-api:8080".into());
         Self::new(url)
     }
 }

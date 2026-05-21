@@ -46,7 +46,7 @@ strategy   = "single"
 image_path = "{object_key}"
 
 [[config.steps]]
-capability = "sense.classification.document_type"
+capability = "sense.classify_document"
 tool       = "classify"
 strategy   = "single"
 

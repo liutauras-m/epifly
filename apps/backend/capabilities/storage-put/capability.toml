@@ -1,7 +1,7 @@
 schema_version = "2.0"
 name        = "storage-put"
 version     = "0.1.0"
-namespace   = "storage.object.put"
+namespace   = "storage.put"
 category    = "storage"
 kind        = "native"
 description = "Write a file (text or base64-encoded binary) to the tenant workspace."

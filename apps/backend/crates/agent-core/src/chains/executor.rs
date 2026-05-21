@@ -39,9 +39,14 @@ pub async fn run_chain(
 
     debug!(user_message = %user_message, model = %cfg.model, "run_chain executing");
 
+    // Resolve alias → concrete (provider, model) BEFORE building the request so
+    // the upstream API receives the model id, not the alias label.
+    let binding = llm
+        .resolve_binding(&cfg.model, tenant)
+        .map_err(|e| anyhow::anyhow!("run_chain: model resolve failed: {e}"))?;
     let provider = llm
         .resolve(&cfg.model, tenant)
-        .map_err(|e| anyhow::anyhow!("run_chain: model resolve failed: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("run_chain: provider resolve failed: {e}"))?;
 
     if cfg.vision {
         return run_chain_vision(cfg, ctx, &user_message, llm, tenant).await;
@@ -58,7 +63,7 @@ pub async fn run_chain(
     });
 
     let req = LlmRequest::builder()
-        .model(cfg.model.clone())
+        .model(binding.model.clone())
         .messages(messages)
         .max_tokens(cfg.max_tokens)
         .build();
@@ -93,7 +98,10 @@ async fn run_chain_vision(
     let (temp_path, effective_path) = resolve_image_path(image_path).await?;
 
     let bytes = std::fs::read(&effective_path).map_err(|e| {
-        anyhow::anyhow!("run_chain_vision: cannot read file {:?}: {e}", effective_path)
+        anyhow::anyhow!(
+            "run_chain_vision: cannot read file {:?}: {e}",
+            effective_path
+        )
     })?;
 
     // Cleanup temp download after reading.
@@ -132,12 +140,18 @@ async fn run_chain_vision(
     }
     messages.push(Message::User { content });
 
+    // Resolve the alias to a concrete (provider, model) binding so the request
+    // sent upstream contains the actual model id, not the alias string.
+    // (Before this fix, `cfg.model = "smart"` was forwarded literally → 404.)
+    let binding = llm
+        .resolve_binding(&cfg.model, tenant)
+        .map_err(|e| anyhow::anyhow!("run_chain_vision: model resolve failed: {e}"))?;
     let provider = llm
         .resolve(&cfg.model, tenant)
-        .map_err(|e| anyhow::anyhow!("run_chain_vision: model resolve failed: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("run_chain_vision: provider resolve failed: {e}"))?;
 
     let req = LlmRequest::builder()
-        .model(cfg.model.clone())
+        .model(binding.model.clone())
         .messages(messages)
         .max_tokens(cfg.max_tokens)
         .build();

@@ -2,7 +2,7 @@
 
 > Companion to [arch.md](arch.md). This document is a **deep, code-level reference**: full file trees, every library + version, design principles, and exact integration patterns for `apps/web`, `apps/browser-shell`, `packages/ui`, and the Rust agent runtime (with explicit Rig 0.36 usage).
 >
-> Audit date: 2026-05-19 · Workspace versions: backend 0.3.1 (Rust) · UI 0.6.0 · browser-shell 0.4.0 · web 0.1.0
+> Audit date: 2026-05-21 · Workspace versions: backend 0.3.1 (Rust) · UI 0.6.0 · browser-shell 0.4.0 · web 0.1.0
 
 ---
 
@@ -216,7 +216,7 @@ agent-core/src/
 │   ├── mod.rs
 │   ├── builder.rs          # AgentBuilder + Agent (Rig anthropic agent wrapper)
 │   ├── runtime.rs          # AgentRuntime + map_rig_error
-│   └── hooks.rs            # TracingHook, PermissionHook (Rig PromptHook impls)
+│   └── hooks.rs            # TracingHook, PermissionHook, OrchestrationHook (Rig PromptHook impls)
 ├── llm/
 │   ├── mod.rs              # re-exports
 │   ├── types.rs            # LlmRequest/Response/Stream/Chunk/Binding
@@ -253,8 +253,8 @@ agent-core/src/
 │   │   ├── chain.rs / mcp.rs / remote_mcp.rs / wasm.rs
 │   │   ├── native_storage.rs  # NativeStorageFactory + focused providers (op-dispatched)
 │   │   ├── job_backed.rs      # JobBackedProvider + JobDispatch trait
-│   │   ├── dynamic_prompt.rs / capability_spec.rs
-│       ├── card.rs / fs.rs / cargo.rs
+│   │   └── dynamic_prompt.rs / capability_spec.rs
+│   │   (card.rs / fs.rs / cargo.rs deleted — BuiltinFactory removed in Phase 4)
 ├── identity/                  # NEW — Zitadel OIDC + legacy provider
 │   ├── mod.rs              # IdentityProvider, TenantManager, IdentityContext, AuthError
 │   ├── zitadel.rs          # ZitadelProvider (openidconnect 3 + JWKS cache)
@@ -369,6 +369,8 @@ let inner = client.agent(&self.model)
 
 Default model: `claude-sonnet-4-6` (`AgentBuilder::default`).
 
+`OrchestrationHook` and `PermissionHook` are defined in `agent/hooks.rs` and re-exported from `agent_core` but are **opt-in** — callers chain them into the Rig agent via `.with_hook(...)` when they need plan-step interception or per-tool deny lists. The default `Agent::prompt` path wires only `TracingHook`.
+
 #### 4.4.3 Hooks (`agent/hooks.rs`)
 
 `TracingHook` implements `rig::agent::PromptHook<M: CompletionModel>`:
@@ -457,13 +459,15 @@ model = "claude-sonnet-4-6"
 
 `CapabilityRegistry::with_default_factories(llm)` registers (in order):
 
-1. `McpFactory` — remote MCP servers (legacy in-process adapter).
-2. `RemoteMcpFactory` — HTTP-bridged remote MCP capabilities registered via `/admin/capabilities/register`.
-3. `WasmFactory` — wasmtime 44 component model (`.wasm` modules in `capabilities/`).
-4. `ChainFactory::new(llm)` — instantiates `PromptChainCapability` for any manifest with `kind = "chain"` and a `[chain]` block.
-5. `CapabilitySpecFactory` — declarative `kind = "capability_spec"` manifests, hot-reloadable via the realtime bus.
+1. `McpFactory` — in-process MCP adapter for `kind = "mcp"`.
+2. `WasmFactory` — wasmtime 44 component model (`kind = "wasm"`).
+3. `ChainFactory::new(llm)` — instantiates `PromptChainCapability` for any manifest with `kind = "chain"` and a `[chain]` block.
 
-`NativeStorageFactory` is registered separately in `state.rs` (after the default factories) because it captures `Arc<dyn WorkspaceStore>` and `Arc<dyn WorkspaceContentStore>` which are only available at gateway startup. It handles `kind = "native"` manifests and dispatches on `config.op`.
+`state.rs` then registers `NativeStorageFactory::new(workspace_store, workspace_content)` (handles `kind = "native"` storage manifests, dispatching on `config.op`) before `CapabilityDiscovery::from_env().discover_into(&mut registry)` walks `apps/backend/capabilities/` and instantiates one provider per TOML manifest using whichever factory's `supports(manifest)` returns true.
+
+After disk discovery, `CapabilitySpecFactory::new(llm, embedding_service, vector_store).load_batch(&mut registry).await` runs once — it is a `BulkCapabilityFactory`, **not** a per-card factory, so it ingests every declarative `kind = "capability_spec"` source in one pass.
+
+`RemoteMcpCapability` is **not** wired through a factory — it is created on demand by `POST /admin/capabilities/register` (handler in `routes/admin_capabilities.rs`) and inserted directly into the registry. This is the path the sample `services/current-time/` MCP service uses to self-register at startup.
 
 `BuiltinFactory` was removed in Phase 4 of the capabilities refactor. `read_file` / `write_file` are now `storage-read-text` / `storage-write-text` TOML manifests; `run_cargo` is a future `compute.*` capability gated by `CONUSAI_ENABLE_DEV_TOOLS`.
 
@@ -480,6 +484,39 @@ Each factory implements `CapabilityFactory::supports(manifest) -> bool` and `bui
 | Object content | RustFS / AWS S3 (`object_store` 0.11) | `store/rustfs_content.rs` |
 | Local embeddings | fastembed 5 (feature `local-embeddings`) | `indexing/local_embedding_service.rs` |
 | Cross-instance index marker | `store/marker.rs` | |
+
+### 4.8 TOML capability catalog (`apps/backend/capabilities/`)
+
+Every manifest declares `schema_version`, `name`, `namespace` (dot-separated slug), `category` (taxonomy root from `docs/capabilities/taxonomy.md`), `kind`, `accepts` / `emits` MIME globs, `idempotent`, and `cost_hint`. The router's `embedding_text()` enriches each card with `CATEGORY:<root>`, `MIME:<glob>`, `EMITS:<glob>`, and `COST:<bucket>` tokens so ANN recall stays high before the post-filter narrows by `AttachmentHint`.
+
+Current catalog (2026-05-21, 31 manifests, all pass `cargo xtask capabilities lint`):
+
+| Category | Manifests | Kind |
+|----------|-----------|------|
+| `storage.*` | `storage-put`, `storage-list-folders`, `storage-ensure-folder`, `storage-ensure-date-folder`, `storage-move`, `storage-tag`, `storage-read-text`, `storage-write-text`, `storage-workspace`, `file-storage` | `native` / `mcp` |
+| `sense.*` | `sense-mime`, `sense-classify-document` | `chain` / `wasm` |
+| `extract.*` | `extract-ocr-vision`, `extract-ocr-tesseract`, `extract-fields-invoice` (a.k.a. `invoice-processing`), `extract-fields-contract` (a.k.a. `contract-processing`), `extract-fields-medical-claim`, `extract-fields-cv`, `extract-fields-incident`, `ocr-service` | `chain` / `wasm` |
+| `convert.*` | `convert-pdf-to-md`, `convert-audio-to-text`, `transcribe-video` | `chain` / `native` (job-backed) |
+| `compose.*` | `compose-report-md`, `compose-report-json`, `compose-email` | `chain` |
+| `plan.*` | `plan-orchestrate` (meta-capability — picks `single` / `parallel_consensus` / `fallback_cascade` strategy), `plan-on-upload` | `chain` / `native` |
+| (other) | `google-workspace`, `runtime-echo`, `template-wasm` | `mcp` / `chain` / `wasm` |
+
+New in this audit window (added 2026-05-21): `plan-orchestrate`, `compose-report-md`, `compose-report-json`, `compose-email`, `extract-fields-medical-claim`, `extract-fields-cv`, `extract-fields-incident`. They power the iOS business use cases in `plan.md §10` (see §17 of this doc).
+
+### 4.9 `cargo xtask capabilities lint`
+
+Compile-time validator for the capability catalog, defined in `apps/backend/xtask/src/main.rs`. Run via `cargo run --package xtask -- capabilities lint` (or `cargo xtask capabilities lint` once `cargo-alias`'d). Checks every `apps/backend/capabilities/*/capability.toml` for:
+
+- `schema_version = "2.0"` present.
+- `namespace` present and first segment in the allowlist (`storage`, `compute`, `sense`, `extract`, `convert`, `compose`, `deliver`, `plan`).
+- `category`, when set, matches the namespace root.
+- `extract` / `convert` / `sense` categories declare at least one `accepts` and `emits` entry.
+- `kind = "chain"` manifests have a `[chain]` block.
+- Warns when `accepts` entries omit `max_size_mb`.
+
+The lint's `AcceptEntry` deserializer accepts both bare-string (`accepts = ["application/pdf"]`) and object (`accepts = [{ mime = "application/pdf", max_size_mb = 20 }]`) forms, mirroring the runtime `AcceptSpec` `#[serde(untagged)]` impl in `capabilities/manifest.rs`. Without this both forms parsed cleanly at runtime but the linter rejected the bare-string form (fixed 2026-05-21).
+
+Exit code is non-zero on any error; with `--strict`, warnings also fail. Wire into CI as a pre-merge gate.
 
 ---
 
@@ -966,7 +1003,12 @@ Shell: `telemetry.rs` initialises `tracing_subscriber` for in-process logs only 
 | DynamicPromptCapability | Implemented | `chains/dynamic_prompt.rs` |
 | WASM components (wasmtime 44 component-model) | Implemented | `capabilities/wasm_loader.rs` |
 | MCP adapter | Implemented | `capabilities/mcp_adapter.rs` |
-| Contract / invoice extraction (Claude vision) | Implemented | `chains/{contract,invoice}.rs` |
+| Contract / invoice extraction (Claude vision) | **Example capabilities** — `kind = "chain"` TOML manifests, no core code | `apps/backend/capabilities/{invoice,contract}-processing/capability.toml` |
+| Domain extract capabilities (medical claim / CV / incident) | Implemented as TOML manifests (added 2026-05-21) | `apps/backend/capabilities/extract-fields-{medical-claim,cv,incident}/` |
+| `compose.*` family (markdown / JSON / email) | Implemented as TOML manifests (added 2026-05-21) | `apps/backend/capabilities/compose-{report-md,report-json,email}/` |
+| `plan.orchestrate` meta-capability | Implemented as TOML manifest (added 2026-05-21) — picks `single` / `parallel_consensus` / `fallback_cascade` strategy from the router's top-K | `apps/backend/capabilities/plan-orchestrate/` |
+| `cargo xtask capabilities lint` | Implemented — 31 manifests, 0 errors | `apps/backend/xtask/src/main.rs` |
+| MCP `tools/call` dotted-name lookup (sanitised-name fallback) | Implemented — fixes "Tool not found" for self-registered remote MCP capabilities (e.g. `services/current-time/`); regression test `dotted_capability_name_resolves_via_sanitized_lookup` | `agent-gateway/src/routes/mcp.rs` |
 | Trace replay capability | **Deleted** (2026-05-20) — was a non-functional stub | — |
 | Local embeddings (fastembed) | Feature-gated | `indexing/local_embedding_service.rs` |
 | Qdrant vector store | Implemented | `store/qdrant_vector.rs` |
@@ -1059,7 +1101,9 @@ Shell: `telemetry.rs` initialises `tracing_subscriber` for in-process logs only 
 
 - LLM core: `apps/backend/crates/agent-core/src/llm/{registry,providers/anthropic,streaming,types}.rs`
 - Rig agent: `apps/backend/crates/agent-core/src/agent/{builder,runtime,hooks}.rs`
-- Chains: `apps/backend/crates/agent-core/src/chains/{executor,llm_chain,dynamic_prompt,contract}.rs`
+- Chains: `apps/backend/crates/agent-core/src/chains/{executor,llm_chain,dynamic_prompt}.rs` (`contract.rs`, `invoice.rs`, `extraction.rs` deleted in Phase 3 — domain extraction lives entirely in TOML manifests under `apps/backend/capabilities/`)
+- Capability catalog: `apps/backend/capabilities/*/capability.toml` (31 manifests, 2026-05-21)
+- Capability lint: `apps/backend/xtask/src/main.rs`
 - Capability registry: `apps/backend/crates/agent-core/src/capabilities/{registry,semantic_router,providers/*}.rs`
 - Identity / Zitadel: `apps/backend/crates/agent-core/src/identity/{mod,zitadel,legacy}.rs`
 - Billing: `apps/backend/crates/billing-core/src/{lib,catalog,lago,quota,events,metrics,provider,types,error}.rs`
@@ -1164,7 +1208,7 @@ Note: `ZitadelProvider` uses **introspection over reqwest** (not JWKS/openidconn
 
 ### 12.6 Capability factory chain — current state
 
-`CapabilityRegistry::with_default_factories(llm)` registers, in order: `McpFactory`, `WasmFactory`, `ChainFactory`, `CapabilitySpecFactory`. `with_all_factories` additionally registers `DynamicPromptFactory`. `NativeStorageFactory` is registered separately in `state.rs` after the executor builds (it requires `Arc<dyn WorkspaceStore>`). `BuiltinFactory` was removed in Phase 4 (2026-05-20). (`TraceReplayFactory` was deleted 2026-05-20 — the capability was a non-functional stub.) `RemoteMcpCapability` is **not** wired through a factory — it is created on demand by `POST /admin/capabilities/register` and inserted directly into the registry. `CapabilitySpecFactory` is a `BulkCapabilityFactory` invoked once at boot (`load_batch`); the hot-reload stub (`reload_one`) and capability-spec-change bus were deleted.
+`CapabilityRegistry::with_default_factories(llm)` registers, in order: `McpFactory`, `WasmFactory`, `ChainFactory`. `with_all_factories` additionally registers `DynamicPromptFactory`. `NativeStorageFactory` is registered separately in `state.rs` after the executor builds (it requires `Arc<dyn WorkspaceStore>`). `BuiltinFactory` was removed in Phase 4 (2026-05-20). (`TraceReplayFactory` was deleted 2026-05-20 — the capability was a non-functional stub.) `RemoteMcpCapability` is **not** wired through a factory — it is created on demand by `POST /admin/capabilities/register` and inserted directly into the registry. `CapabilitySpecFactory` is a `BulkCapabilityFactory` invoked once at boot via `state.rs` (`load_batch`), **not** a per-card factory in the registry chain; the hot-reload stub (`reload_one`) and capability-spec-change bus were deleted. See §4.6 for the canonical narrative ordering.
 
 ### 12.7 Full route surface (verified against `routes/mod.rs`)
 
@@ -1344,6 +1388,9 @@ Feature `e2e` (macOS debug only): enables WebDriver for Playwright integration t
 9. ~~**`apps/backend/evals` not documented.**~~ Documented in §14 (2026-05-20).
 10. ~~**Tauri shell modules not enumerated in §7.2.**~~ Documented in §15 (2026-05-20).
 11. ~~**Dead code: `real_fs_watcher.rs`, `coco_indexer.rs` (polling path), stub prompt handlers.**~~ All deleted (2026-05-20); `WorkspaceIndexer` export removed from `agent-core`.
+12. ~~**MCP `tools/call` rejected dotted capability names.**~~ Fixed (2026-05-21): `routes/mcp.rs::handle_tools_call` now mirrors `SemanticCapabilityRouter::invoke`'s sanitised-name fallback — looks up `manifest.name.replace('.', "_") == cap_name` when the literal lookup misses. Regression test `dotted_capability_name_resolves_via_sanitized_lookup` in `tests/remote_mcp_e2e.rs`.
+13. ~~**`xtask capabilities lint` rejected bare-string `accepts`.**~~ Fixed (2026-05-21): `AcceptEntry` in `xtask/src/main.rs` now uses the same `#[serde(untagged)]` enum pattern as the runtime `AcceptSpec` — both `accepts = ["application/pdf"]` and `accepts = [{ mime = "application/pdf", max_size_mb = 20 }]` parse identically.
+14. ~~**Stale embedding entry for self-registered MCP capabilities.**~~ Known issue, lower priority: `routes/admin_capabilities.rs::register_capability` writes Qdrant points keyed by `format!("{capability_id}.{tool_name}")` while the runtime indexer keys the same logical capability by `manifest.name`. Search results show two entries with different `content_hash`. Both still resolve to the same registry entry on dispatch — functionally correct, slightly duplicated discovery results. Clean fix: standardise on `manifest.name` as the Qdrant point ID.
 
 ### Remaining plan items (not yet implemented)
 
@@ -1352,4 +1399,42 @@ Feature `e2e` (macOS debug only): enables WebDriver for Playwright integration t
 - **`spec_reload_total`** Prometheus counter (requires implementing capability hot-reload, not just deleting it).
 - **`scripts/reindex.sh`** — smooth re-embed migration for operators upgrading from old embedding models.
 - **`daily_quota`** field in `PlanLimits` (currently handled by `QuotaChecker` separately; not blocking).
+- **Live-gateway iOS business spec** — `e2e/ios/capabilities-business.spec.ts` is in place (§17) but only runs when `GATEWAY_INTEGRATION_TEST=1`; full CI integration with Docker stack + Qdrant + Anthropic key is not yet wired into the default Playwright project.
+
+---
+
+## 17. iOS Business Use Case Spec — `e2e/ios/capabilities-business.spec.ts`
+
+Mirrors `docs/plan.md §10`. Runs on the existing `ios-mobile-web` Playwright project (WebKit + iPhone 15 viewport 393 × 852 @ DPR 3). All 8 tests are skipped unless `GATEWAY_INTEGRATION_TEST=1` is exported, so the default CI run stays cheap; once exported the tests drive a real Docker gateway through the full **router → planner → executor → ArtifactBridge** path.
+
+### 17.1 Use cases covered
+
+| ID | Domain | Capabilities exercised |
+|----|--------|------------------------|
+| UC1 | Finance / Accounting — invoice processing | `plan.orchestrate`, `extract.fields.invoice`, `storage.ensure_date_folder`, `storage.put`, `compose.report_md` |
+| UC2 | Legal — contract review & risk extraction | `sense.classify_document`, `extract.fields.contract`, `compose.report_md`, `storage.put` |
+| UC3 | Healthcare — medical claim processing | `plan.orchestrate` (parallel_consensus), `extract.ocr.vision`, `extract.fields.medical_claim`, `compose.report_json` |
+| UC4 | HR — 8-CV screening + outreach email | `plan.orchestrate` (fan-out × 8), `extract.fields.cv`, `compose.email`, `storage.put` |
+| UC5 | Operations — incident report + photos (mixed-MIME) | `extract.ocr.vision` (photos), `extract.fields.incident` (PDF), `storage.ensure_date_folder`, `compose.report_md` |
+
+### 17.2 Fixtures
+
+`e2e/fixtures/capabilities/` ships 14 minimal but structurally valid fixtures: `invoice.pdf`, `service-agreement.pdf`, `medical-claim.pdf`, `incident-report.pdf`, `cv-{1..8}.pdf`, `incident-photo-{1,2}.jpg`. They carry the right magic bytes so DataTransfer drag-drop and live OCR both accept them. Generated by a tiny Python helper in the spec author flow (not checked into CI as a step — fixtures are committed binaries).
+
+### 17.3 Helpers (re-used from `features.spec.ts`)
+
+- `login(page, name, plan)` — submits the dev login form.
+- `submitComposer(page)` — `Meta+Enter` on the composer textbox.
+- `uploadFile(page, filename)` — reads from `e2e/fixtures/capabilities/`, base64-encodes, fires a `drop` event with a `DataTransfer` carrying a real `File` object onto `form.composer`.
+- `expectToolCard(page, namespace, timeout?)` — asserts that a `tool_call_start` card for the given capability namespace (or its last segment) appears within `TOOL_TIMEOUT` (30s).
+- `snap(page, name)` — full-page screenshot into `test-results/ios-playwright-visual/uc{1..5}-*.png` (audit evidence).
+
+### 17.4 Run command
+
+```bash
+GATEWAY_INTEGRATION_TEST=1 SUPER_TOKEN=<jwt> TOKEN=<jwt> \
+  pnpm exec playwright test --project=ios-mobile-web e2e/ios/capabilities-business.spec.ts
+```
+
+A prerequisite check (UC §10.0) hits `GET /admin/capabilities` with `SUPER_TOKEN` and asserts that all 13 required namespaces are registered before the use-case tests run.
 

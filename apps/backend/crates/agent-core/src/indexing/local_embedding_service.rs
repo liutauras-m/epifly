@@ -22,8 +22,8 @@
 //!   (default: fastembed's own default, typically `~/.cache/huggingface`)
 //! - `EMBEDDING_MAX_BATCH`: max documents per fastembed batch call (default `256`)
 
-use crate::indexing::embedding_service::EmbeddingModel;
 use crate::indexing::EmbeddingService;
+use crate::indexing::embedding_service::EmbeddingModel;
 use async_trait::async_trait;
 use fastembed::{EmbeddingModel as FastEmbedModel, InitOptions, TextEmbedding};
 use tokio::sync::Mutex;
@@ -74,15 +74,16 @@ impl LocalEmbeddingService {
     pub fn from_model(model: EmbeddingModel) -> anyhow::Result<Self> {
         info!(model = model.name(), "initialising local fastembed model");
         match model {
-            EmbeddingModel::MultilingualE5Large => {
-                Self::build(FastEmbedModel::MultilingualE5Large, model, "query: ", "passage: ")
-            }
+            EmbeddingModel::MultilingualE5Large => Self::build(
+                FastEmbedModel::MultilingualE5Large,
+                model,
+                "query: ",
+                "passage: ",
+            ),
             EmbeddingModel::BgeSmallEnV15 => {
                 Self::build(FastEmbedModel::BGESmallENV15, model, "", "")
             }
-            EmbeddingModel::BgeM3 => {
-                Self::build(FastEmbedModel::BGEM3, model, "", "")
-            }
+            EmbeddingModel::BgeM3 => Self::build(FastEmbedModel::BGEM3, model, "", ""),
             EmbeddingModel::NomicEmbedTextV15 => {
                 Self::build(FastEmbedModel::NomicEmbedTextV15, model, "", "")
             }

@@ -66,7 +66,11 @@ impl StorageQuotaService {
         };
         let used = self.used_bytes(tenant_id).await;
         if used.saturating_add(new_bytes) > limit {
-            Err(QuotaError { used, limit, requested: new_bytes })
+            Err(QuotaError {
+                used,
+                limit,
+                requested: new_bytes,
+            })
         } else {
             Ok(())
         }
