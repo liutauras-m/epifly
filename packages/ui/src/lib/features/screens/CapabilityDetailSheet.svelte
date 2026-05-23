@@ -1,5 +1,5 @@
 <script lang="ts">
-	import AppBottomSheet from '../chrome/AppBottomSheet.svelte';
+	import AppBottomSheet from '../../components/AppBottomSheet.svelte';
 	import type { CapEntry } from '../CapabilityBrowser.svelte';
 
 	let {

@@ -1,4 +1,6 @@
-export { default as AgentChatComposer } from './AgentChatComposer.svelte';
+// Moved to ./components/ in Phase 0.1 (2026-05-23); re-exported here for source-compat
+// during the strangler-fig migration. Will be renamed to canonical `Composer` in Phase 3.5.
+export { default as AgentChatComposer } from '../components/AgentChatComposer.svelte';
 export { default as AgentChatStream } from './AgentChatStream.svelte';
 export { default as DrawerRecentChats } from './DrawerRecentChats.svelte';
 export { default as ToolCallCard } from './ToolCallCard.svelte';
@@ -11,9 +13,11 @@ export type { CapEntry } from './CapabilityBrowser.svelte';
 export { default as CapabilityPinChip } from './CapabilityPinChip.svelte';
 
 // ── Chrome (top bar, drawer/sidebar, bottom sheet) ──────────────────────────
-export { default as AppTopBar } from './chrome/AppTopBar.svelte';
-export { default as AppDrawer } from './chrome/AppDrawer.svelte';
-export { default as AppBottomSheet } from './chrome/AppBottomSheet.svelte';
+// Moved from ./chrome/ → ../components/ in Phase 0.1 (2026-05-23).
+// Renamed to canonical AppHeader / Drawer / Sheet in Phase 3 per Principle #13.
+export { default as AppTopBar } from '../components/AppTopBar.svelte';
+export { default as AppDrawer } from '../components/AppDrawer.svelte';
+export { default as AppBottomSheet } from '../components/AppBottomSheet.svelte';
 
 // ── Screens (top-level views) ───────────────────────────────────────────────
 export { default as ChatScreen } from './screens/ChatScreen.svelte';
@@ -25,7 +29,7 @@ export { buildInvocationPrompt } from './screens/buildInvocationPrompt.js';
 
 export { createChatStream } from './createChatStream.svelte.js';
 export type { ChatMessage, ToolCardEntry } from './AgentChatStream.svelte';
-export type { Attachment } from './AgentChatComposer.svelte';
+export type { Attachment } from '../components/AgentChatComposer.svelte';
 
 // ── Routing ─────────────────────────────────────────────────────────────────
 export { initialRoute } from '../routing/initialRoute.js';

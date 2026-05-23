@@ -18,7 +18,7 @@
    */
   import type { RoutingMeta } from '@conusai/sdk';
   import { Pin, Info, X } from 'lucide-svelte';
-  import AppBottomSheet from './chrome/AppBottomSheet.svelte';
+  import AppBottomSheet from '../components/AppBottomSheet.svelte';
 
   let {
     routingMeta,

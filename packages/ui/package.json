@@ -14,6 +14,10 @@
     "./assets/*": "./src/lib/assets/*",
     "./tokens.css": "./src/lib/tokens.css",
     "./foundry.css": "./src/lib/foundry.css",
+    "./components/*": "./src/lib/components/*",
+    "./features/*": "./src/lib/features/*",
+    "./utils/*": "./src/lib/utils/*",
+    "./stores/*": "./src/lib/stores/*",
     "./capabilities": {
       "types": "./src/lib/capabilities/index.ts",
       "import": "./src/lib/capabilities/index.ts"

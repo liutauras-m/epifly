@@ -1,11 +1,11 @@
 <script lang="ts">
 	import AgentChatStream from '../AgentChatStream.svelte';
-	import AgentChatComposer from '../AgentChatComposer.svelte';
+	import AgentChatComposer from '../../components/AgentChatComposer.svelte';
 	import SuggestionChips from '../SuggestionChips.svelte';
 	import ContextChip from '../ContextChip.svelte';
 	import CapabilityBrowser, { type CapEntry } from '../CapabilityBrowser.svelte';
-	import AppBottomSheet from '../chrome/AppBottomSheet.svelte';
-	import type { Attachment } from '../AgentChatComposer.svelte';
+	import AppBottomSheet from '../../components/AppBottomSheet.svelte';
+	import type { Attachment } from '../../components/AgentChatComposer.svelte';
 	import type { ConusSdk } from '@conusai/sdk';
 	import type { WorkspaceNode } from '@conusai/types';
 	import { recordRect, playFlip } from '../../motion/index.js';
