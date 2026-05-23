@@ -61,8 +61,17 @@
 <!--
   .app-shell is the container-query root.
   All breakpoints are expressed as `@container app-shell (…)` — no viewport media.
+  Skip links are injected here (Phase 7) — visually hidden until focused.
 -->
 <div class="app-shell{cls ? ` ${cls}` : ''}">
+
+  <!-- Skip navigation links (Phase 7 a11y) ───────────────── -->
+  <nav class="skip-links" aria-label="Skip navigation">
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    {#if composer}
+      <a class="skip-link" href="#composer-input">Skip to composer</a>
+    {/if}
+  </nav>
 
   <!-- Topbar ──────────────────────────────────────────────── -->
   {#if topbar}
@@ -98,7 +107,12 @@
 
   <!-- Composer ────────────────────────────────────────────── -->
   {#if composer}
-    <form class="shell-composer" aria-label={composerLabel} onsubmit={(e) => e.preventDefault()}>
+    <form
+      class="shell-composer"
+      id="composer-input"
+      aria-label={composerLabel}
+      onsubmit={(e) => e.preventDefault()}
+    >
       {@render composer()}
     </form>
   {/if}
@@ -113,6 +127,42 @@
 </div>
 
 <style>
+  /* ── Skip links (Phase 7) ───────────────────────────────────────────────── */
+  .skip-links {
+    position: absolute;
+    z-index:  9999;
+    left:     0;
+    top:      0;
+    display:  flex;
+    gap:      var(--space-2);
+  }
+
+  .skip-link {
+    /* Visually hidden until focused */
+    position:    absolute;
+    left:        var(--space-3);
+    top:         var(--space-3);
+    transform:   translateY(-200%);
+    padding:     var(--space-2) var(--space-4);
+    background:  var(--color-accent);
+    color:       #fff;
+    font-size:   var(--font-size-meta);
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    text-decoration: none;
+    outline:     none;
+
+    transition: transform var(--duration-fast) var(--ease-standard);  /* [feedback] */
+  }
+
+  .skip-link:focus {
+    transform: translateY(0);
+  }
+
+  .skip-links .skip-link:nth-child(2):focus {
+    left: calc(var(--space-3) + 180px);
+  }
+
   /* ── Container setup ─────────────────────────────────────────────────────── */
   .app-shell {
     container-type: inline-size;

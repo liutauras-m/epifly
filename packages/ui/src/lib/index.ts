@@ -92,6 +92,8 @@ export {
 } from "./utils/platform.js";
 export { haptics } from "./utils/haptics.js";
 export type { HapticsAPI } from "./utils/haptics.js";
+export { registerKeyboardShortcuts, focusOnSlash } from "./utils/keyboard.js";
+export type { KeyboardShortcutHandlers } from "./utils/keyboard.js";
 
 // ── Motion primitives ────────────────────────────────────────────────────────
 export {

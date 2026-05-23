@@ -52,7 +52,12 @@
     "build": "vite build",
     "check-types": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
-    "assets:verify": "node scripts/assets-verify.js"
+    "assets:verify": "node scripts/assets-verify.js",
+    "contracts": "node scripts/check-ui-contracts.mjs",
+    "motion:durations": "node scripts/check-motion-durations.mjs",
+    "motion:purpose": "node scripts/check-motion-purpose.mjs",
+    "no-local": "node scripts/check-no-local-components.mjs",
+    "tokens:build": "node scripts/build-tokens.mjs"
   },
   "dependencies": {
     "@conusai/types": "workspace:*"
