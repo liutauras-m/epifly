@@ -234,17 +234,17 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		padding: var(--s-5) var(--s-4) var(--s-4);
-		gap: var(--s-3);
+		padding: var(--space-5) var(--space-4) var(--space-4);
+		gap: var(--space-3);
 	}
 
 	.sigil {
 		width: 68px;
 		height: 68px;
-		border-radius: var(--r-lg);
+		border-radius: var(--radius-lg);
 		background: var(--paper-2);
 		object-fit: contain;
-		animation: sigil-enter var(--dur-3) var(--ease-spring) both;
+		animation: sigil-enter var(--duration-slow) var(--ease-spring) both;
 	}
 	@keyframes sigil-enter {
 		0%   { opacity: 0; transform: scale(0.72) rotate(-8deg); filter: blur(4px); }
@@ -253,8 +253,8 @@
 	}
 
 	.greeting {
-		font-family: var(--font-display);
-		font-size: var(--t-h1);
+		font-family: var(--font-family-sans);
+		font-size: var(--font-size-h1);
 		font-weight: 700;
 		letter-spacing: -1px;
 		line-height: 1.05;
@@ -269,7 +269,7 @@
 	.word {
 		display: inline-block;
 		opacity: 0;
-		animation: word-in var(--dur-2b) var(--ease-out) both;
+		animation: word-in var(--duration-stagger) var(--ease-out) both;
 	}
 	.word-space { display: none; }
 	@keyframes word-in {
@@ -278,12 +278,12 @@
 	}
 
 	.sub {
-		font-family: var(--font-body);
-		font-size: var(--t-body);
+		font-family: var(--font-family-sans);
+		font-size: var(--font-size-body);
 		color: var(--ink-2);
 		text-align: center;
 		margin: 0;
-		animation: fade-up var(--dur-2b) var(--ease-out) 380ms both;
+		animation: fade-up var(--duration-stagger) var(--ease-out) 380ms both;
 	}
 	@keyframes fade-up {
 		from { opacity: 0; transform: translateY(6px); }
@@ -301,8 +301,8 @@
 		max-width: var(--composer-w, 720px);
 		display: flex;
 		flex-direction: column;
-		gap: var(--s-2);
-		animation: fade-up var(--dur-2b) var(--ease-out) 420ms both;
+		gap: var(--space-2);
+		animation: fade-up var(--duration-stagger) var(--ease-out) 420ms both;
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.centred-composer { animation: none; opacity: 1; }
@@ -333,23 +333,23 @@
 		padding-bottom: env(safe-area-inset-bottom);
 		display: flex;
 		flex-direction: column;
-		gap: var(--s-2);
-		padding-top: var(--s-2);
+		gap: var(--space-2);
+		padding-top: var(--space-2);
 	}
 
 	.context-row--docked {
-		padding: 0 var(--s-4);
+		padding: 0 var(--space-4);
 		justify-content: flex-start;
 	}
 
 	.picker-wrap {
-		padding: var(--s-3) 0;
+		padding: var(--space-3) 0;
 		max-height: 70vh;
 		overflow-y: auto;
 	}
 	.picker-title {
-		margin: 0 0 var(--s-2);
-		padding: 0 var(--s-4);
+		margin: 0 0 var(--space-2);
+		padding: 0 var(--space-4);
 		font-size: var(--t-h3);
 		font-weight: 600;
 		color: var(--ink);

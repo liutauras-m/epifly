@@ -35,7 +35,7 @@
 	.chips {
 		display: flex;
 		flex-wrap: wrap;
-		gap: var(--s-2);
+		gap: var(--space-2);
 		justify-content: center;
 		list-style: none;
 		margin: 0;
@@ -46,7 +46,7 @@
 		flex-wrap: nowrap;
 		overflow-x: auto;
 		justify-content: flex-start;
-		padding: var(--s-2) var(--s-4);
+		padding: var(--space-2) var(--space-4);
 		scrollbar-width: none;
 		-webkit-overflow-scrolling: touch;
 	}
@@ -59,16 +59,16 @@
 	.chip {
 		background: var(--paper);
 		border: 1px solid var(--rule);
-		border-radius: var(--r-full);
-		padding: var(--s-2) var(--s-3);
-		font-family: var(--font-body);
-		font-size: var(--t-label, 13px);
+		border-radius: var(--radius-full);
+		padding: var(--space-2) var(--space-3);
+		font-family: var(--font-family-sans);
+		font-size: var(--font-size-label, 13px);
 		color: var(--ink-2);
 		cursor: pointer;
 		opacity: 0;
 		animation: chip-in 220ms var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1)) forwards;
 		white-space: nowrap;
-		transition: border-color var(--dur-1), color var(--dur-1), background var(--dur-1);
+		transition: border-color var(--duration-fast), color var(--duration-fast), background var(--duration-fast);
 	}
 
 	.chip:hover {

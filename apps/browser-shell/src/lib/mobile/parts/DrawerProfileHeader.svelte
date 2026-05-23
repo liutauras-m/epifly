@@ -31,15 +31,15 @@
 	.profile-header {
 		display: flex;
 		align-items: center;
-		gap: var(--s-3);
+		gap: var(--space-3);
 		width: 100%;
-		padding: var(--s-4);
+		padding: var(--space-4);
 		border: none;
 		background: none;
 		cursor: pointer;
 		border-bottom: 1px solid var(--rule);
 		text-align: left;
-		transition: background var(--dur-1);
+		transition: background var(--duration-fast);
 	}
 
 	.profile-header:hover { background: var(--paper-3); }
@@ -47,10 +47,10 @@
 	.avatar {
 		width: 40px;
 		height: 40px;
-		border-radius: var(--r-full);
+		border-radius: var(--radius-full);
 		background: var(--paper-3);
 		color: var(--ink);
-		font-family: var(--font-display);
+		font-family: var(--font-family-sans);
 		font-size: 15px;
 		font-weight: 600;
 		display: flex;
@@ -68,7 +68,7 @@
 	}
 
 	.user-name {
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-size: 15px;
 		font-weight: 500;
 		color: var(--ink);

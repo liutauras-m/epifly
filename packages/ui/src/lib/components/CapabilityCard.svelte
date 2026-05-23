@@ -32,12 +32,12 @@
 
 <style>
   .capability-card {
-    padding: var(--s-4);
+    padding: var(--space-4);
     border: 1px solid var(--rule);
     border-radius: 8px;
     background: var(--paper-2);
-    transition: border-color var(--dur-1) var(--ease-out),
-                box-shadow var(--dur-1) var(--ease-out);
+    transition: border-color var(--duration-fast) var(--ease-out),
+                box-shadow var(--duration-fast) var(--ease-out);
   }
 
   .capability-card[role="button"] {
@@ -54,8 +54,8 @@
   header {
     display: flex;
     align-items: baseline;
-    gap: var(--s-2);
-    margin-bottom: var(--s-2);
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
   }
 
   .kind {
@@ -72,14 +72,14 @@
 
   .name {
     margin: 0;
-    font-family: var(--font-body);
+    font-family: var(--font-family-sans);
     font-size: 14px;
     font-weight: 600;
     color: var(--ink);
   }
 
   .description {
-    margin: 0 0 var(--s-3);
+    margin: 0 0 var(--space-3);
     font-size: 13px;
     color: var(--ink-2);
     line-height: 1.5;
@@ -91,7 +91,7 @@
     margin: 0;
     display: flex;
     flex-wrap: wrap;
-    gap: var(--s-1);
+    gap: var(--space-1);
   }
 
   .tag {

@@ -47,15 +47,15 @@
 	.artifact-row {
 		display: flex;
 		align-items: center;
-		gap: var(--s-3);
-		padding: var(--s-3) var(--s-4);
+		gap: var(--space-3);
+		padding: var(--space-3) var(--space-4);
 		border: none;
 		background: none;
 		cursor: pointer;
 		width: 100%;
 		text-align: left;
 		border-bottom: 1px solid var(--rule);
-		transition: background var(--dur-1);
+		transition: background var(--duration-fast);
 	}
 	.artifact-row:hover { background: var(--paper-2); }
 	.artifact-row:focus-visible { outline: 2px solid var(--ember); outline-offset: -2px; }
@@ -72,8 +72,8 @@
 	}
 
 	.artifact-name {
-		font-family: var(--font-body);
-		font-size: var(--t-body);
+		font-family: var(--font-family-sans);
+		font-size: var(--font-size-body);
 		color: var(--ink);
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -82,7 +82,7 @@
 
 	.artifact-meta {
 		font-family: var(--font-mono);
-		font-size: var(--t-label);
+		font-size: var(--font-size-label);
 		color: var(--ink-3);
 	}
 

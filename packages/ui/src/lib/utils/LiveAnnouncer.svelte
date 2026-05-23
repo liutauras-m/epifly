@@ -37,8 +37,8 @@
   }
   .toast {
     display: flex; align-items: flex-start; gap: 0.5rem;
-    padding: 0.625rem 0.875rem; border-radius: var(--r-md, 0.375rem);
-    font-size: var(--t-meta, 0.875rem); line-height: 1.4;
+    padding: 0.625rem 0.875rem; border-radius: var(--radius-md, 0.375rem);
+    font-size: var(--font-size-meta, 0.875rem); line-height: 1.4;
     box-shadow: 0 2px 8px var(--shadow-md, rgba(0,0,0,0.12));
     background: var(--paper-2); border-left: 3px solid var(--ember);
     animation: toast-in 160ms ease;

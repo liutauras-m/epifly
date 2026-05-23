@@ -112,16 +112,16 @@
 	.profile-avatar-row {
 		display: flex;
 		align-items: center;
-		gap: var(--s-4);
-		padding: var(--s-4);
+		gap: var(--space-4);
+		padding: var(--space-4);
 	}
 
 	.big-avatar {
 		width: 56px;
 		height: 56px;
-		border-radius: var(--r-full);
+		border-radius: var(--radius-full);
 		background: var(--paper-3);
-		font-family: var(--font-display);
+		font-family: var(--font-family-sans);
 		font-size: 20px;
 		font-weight: 600;
 		color: var(--ink);
@@ -132,7 +132,7 @@
 	}
 
 	.profile-name {
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-size: 17px;
 		font-weight: 600;
 		color: var(--ink);
@@ -150,25 +150,25 @@
 	.divider {
 		height: 1px;
 		background: var(--rule);
-		margin: 0 var(--s-4);
+		margin: 0 var(--space-4);
 	}
 
 	.action-row {
 		display: flex;
 		align-items: center;
-		gap: var(--s-3);
+		gap: var(--space-3);
 		height: 56px;
-		padding: 0 var(--s-4);
+		padding: 0 var(--space-4);
 		border: none;
 		background: none;
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-size: 16px;
 		color: var(--ink);
 		cursor: pointer;
 		width: 100%;
 		text-align: left;
 		text-decoration: none;
-		transition: background var(--dur-1);
+		transition: background var(--duration-fast);
 	}
 
 	.action-row:hover { background: var(--paper-2); }
@@ -180,7 +180,7 @@
 	.action-row.danger { color: var(--danger); }
 
 	.version {
-		padding: var(--s-4);
+		padding: var(--space-4);
 		font-family: var(--font-mono);
 		font-size: 11px;
 		color: var(--ink-3);

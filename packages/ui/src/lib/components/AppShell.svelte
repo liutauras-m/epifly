@@ -32,7 +32,7 @@
     height: 100dvh;
     background: var(--paper);
     color: var(--ink);
-    font-family: var(--font-body);
+    font-family: var(--font-family-sans);
   }
 
   .sidebar {

@@ -325,9 +325,9 @@
 		background: none;
 		color: var(--ink-3);
 		cursor: pointer;
-		border-radius: var(--r-sm);
+		border-radius: var(--radius-sm);
 		text-decoration: none;
-		transition: background var(--dur-1), color var(--dur-1);
+		transition: background var(--duration-fast), color var(--duration-fast);
 	}
 	.topbar-action:hover { background: var(--paper-3); color: var(--ink); }
 	.topbar-action:focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }
@@ -337,24 +337,24 @@
 		display: flex;
 		flex-direction: column;
 		border-top: 1px solid var(--rule);
-		padding: var(--s-2) 0;
+		padding: var(--space-2) 0;
 	}
 
 	.drawer-link {
 		display: flex;
 		align-items: center;
-		gap: var(--s-3);
+		gap: var(--space-3);
 		height: 40px;
-		padding: 0 var(--s-4);
+		padding: 0 var(--space-4);
 		border: none;
 		background: none;
-		font-family: var(--font-body);
-		font-size: var(--t-body);
+		font-family: var(--font-family-sans);
+		font-size: var(--font-size-body);
 		color: var(--ink-2);
 		cursor: pointer;
 		width: 100%;
 		text-align: left;
-		transition: background var(--dur-1), color var(--dur-1);
+		transition: background var(--duration-fast), color var(--duration-fast);
 	}
 	.drawer-link:hover { background: var(--paper-3); color: var(--ink); }
 	.drawer-link.active {
@@ -371,13 +371,13 @@
 	.user-chip {
 		display: flex;
 		align-items: center;
-		gap: var(--s-2);
-		padding: var(--s-3) var(--s-4);
+		gap: var(--space-2);
+		padding: var(--space-3) var(--space-4);
 		border-top: 1px solid var(--rule);
 		margin-top: auto;
 		text-decoration: none;
 		color: inherit;
-		transition: background var(--dur-1);
+		transition: background var(--duration-fast);
 	}
 	.user-chip:hover { background: var(--paper-3); }
 	.user-chip:focus-visible { outline: 2px solid var(--ember); outline-offset: -2px; }
@@ -391,7 +391,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		font-size: var(--t-label);
+		font-size: var(--font-size-label);
 		font-weight: 600;
 		color: var(--ember-2);
 		flex-shrink: 0;
@@ -403,14 +403,14 @@
 		min-width: 0;
 	}
 	.user-name {
-		font-size: var(--t-meta);
+		font-size: var(--font-size-meta);
 		color: var(--ink);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 	.user-plan {
-		font-size: var(--t-label);
+		font-size: var(--font-size-label);
 		color: var(--ink-3);
 		text-transform: uppercase;
 		letter-spacing: 0.04em;

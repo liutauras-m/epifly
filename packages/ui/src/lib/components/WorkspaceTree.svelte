@@ -36,20 +36,20 @@
 <style>
   .tree {
     list-style: none;
-    padding: var(--s-2) 0;
+    padding: var(--space-2) 0;
     margin: 0;
   }
 
   .node {
     display: flex;
     align-items: center;
-    gap: var(--s-2);
-    padding: var(--s-1) var(--s-3);
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
     cursor: pointer;
     border-radius: 6px;
     font-size: 13px;
     color: var(--ink-2);
-    transition: background var(--dur-1) var(--ease-out);
+    transition: background var(--duration-fast) var(--ease-out);
     min-height: 32px;
   }
 

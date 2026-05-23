@@ -154,7 +154,7 @@
 	.breadcrumb a:hover { text-decoration: underline; }
 
 	h1 {
-		font-family: var(--font-display);
+		font-family: var(--font-family-sans);
 		font-size: 1.75rem;
 		font-weight: 800;
 		letter-spacing: -0.04em;
@@ -163,7 +163,7 @@
 	}
 
 	h2 {
-		font-family: var(--font-display);
+		font-family: var(--font-family-sans);
 		font-size: 1rem;
 		font-weight: 700;
 		letter-spacing: -0.02em;
@@ -175,7 +175,7 @@
 		background: var(--danger-soft);
 		color: var(--danger);
 		padding: 0.75rem 1rem;
-		border-radius: var(--r-md);
+		border-radius: var(--radius-md);
 		border: 1px solid rgba(179, 36, 0, 0.28);
 		margin-bottom: 1rem;
 		font-size: 0.875rem;
@@ -185,7 +185,7 @@
 	.current-plan {
 		padding: 1.25rem;
 		border: 1px solid var(--rule);
-		border-radius: var(--r-lg);
+		border-radius: var(--radius-lg);
 		margin-bottom: 2rem;
 		background: var(--paper);
 	}
@@ -200,7 +200,7 @@
 
 	.plan-badge {
 		padding: 0.12rem 0.55rem;
-		border-radius: var(--r-full);
+		border-radius: var(--radius-full);
 		font-family: var(--font-mono);
 		font-size: 0.65rem;
 		font-weight: 700;
@@ -245,7 +245,7 @@
 	.plan-card {
 		padding: 1.25rem;
 		border: 1px solid var(--rule);
-		border-radius: var(--r-lg);
+		border-radius: var(--radius-lg);
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
@@ -271,7 +271,7 @@
 	}
 
 	.plan-header h3 {
-		font-family: var(--font-display);
+		font-family: var(--font-family-sans);
 		font-weight: 700;
 		letter-spacing: -0.02em;
 		font-size: 0.95rem;
@@ -282,7 +282,7 @@
 	.price { display: flex; align-items: baseline; gap: 0.2rem; }
 
 	.price strong {
-		font-family: var(--font-display);
+		font-family: var(--font-family-sans);
 		font-size: 1.4rem;
 		font-weight: 800;
 		letter-spacing: -0.04em;
@@ -333,8 +333,8 @@
 		background: var(--ember);
 		color: #fff;
 		border: none;
-		border-radius: var(--r-md);
-		font-family: var(--font-body);
+		border-radius: var(--radius-md);
+		font-family: var(--font-family-sans);
 		font-weight: 600;
 		font-size: 0.875rem;
 		cursor: pointer;
@@ -355,8 +355,8 @@
 		background: transparent;
 		color: var(--ink-2);
 		border: 1px solid var(--seam);
-		border-radius: var(--r-md);
-		font-family: var(--font-body);
+		border-radius: var(--radius-md);
+		font-family: var(--font-family-sans);
 		font-weight: 500;
 		font-size: 0.875rem;
 		cursor: pointer;
@@ -370,8 +370,8 @@
 		background: transparent;
 		color: var(--danger);
 		border: 1px solid rgba(179, 36, 0, 0.28);
-		border-radius: var(--r-md);
-		font-family: var(--font-body);
+		border-radius: var(--radius-md);
+		font-family: var(--font-family-sans);
 		font-weight: 500;
 		font-size: 0.875rem;
 		cursor: pointer;
@@ -387,7 +387,7 @@
 		background: transparent;
 		color: var(--ink-2);
 		border: 1px solid var(--seam);
-		border-radius: var(--r-md);
+		border-radius: var(--radius-md);
 		text-decoration: none;
 		font-size: 0.875rem;
 		font-weight: 500;

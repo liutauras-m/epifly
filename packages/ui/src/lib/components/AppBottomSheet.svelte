@@ -67,7 +67,7 @@
 		z-index: 400;
 		opacity: 0;
 		pointer-events: none;
-		transition: opacity var(--dur-2) var(--ease-out);
+		transition: opacity var(--duration-normal) var(--ease-out);
 	}
 	.backdrop.visible {
 		opacity: 1;
@@ -80,11 +80,11 @@
 		left: 0;
 		right: 0;
 		background: var(--paper);
-		border-radius: var(--r-lg) var(--r-lg) 0 0;
+		border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 		border-top: 1px solid var(--rule);
 		z-index: 410;
 		transform: translateY(100%);
-		transition: transform var(--dur-3) var(--ease-out);
+		transition: transform var(--duration-slow) var(--ease-out);
 		max-height: 90vh;
 		display: flex;
 		flex-direction: column;
@@ -101,7 +101,7 @@
 			bottom: auto;
 			width: min(560px, 92vw);
 			max-height: min(80vh, 720px);
-			border-radius: var(--r-lg);
+			border-radius: var(--radius-lg);
 			border: 1px solid var(--rule);
 			transform: translate(-50%, -50%) scale(0.96);
 			opacity: 0;
@@ -117,7 +117,7 @@
 		height: 4px;
 		background: var(--rule);
 		border-radius: 999px;
-		margin: var(--s-2) auto var(--s-1);
+		margin: var(--space-2) auto var(--space-1);
 		flex-shrink: 0;
 	}
 
@@ -128,15 +128,15 @@
 	.sheet-header {
 		display: flex;
 		align-items: center;
-		padding: var(--s-2) var(--s-4);
+		padding: var(--space-2) var(--space-4);
 		border-bottom: 1px solid var(--rule);
 		flex-shrink: 0;
 	}
 
 	.sheet-title {
 		flex: 1;
-		font-family: var(--font-display);
-		font-size: var(--t-h2);
+		font-family: var(--font-family-sans);
+		font-size: var(--font-size-h2);
 		font-weight: 600;
 		color: var(--ink);
 	}
@@ -151,7 +151,7 @@
 		background: none;
 		color: var(--ink-3);
 		cursor: pointer;
-		border-radius: var(--r-sm);
+		border-radius: var(--radius-sm);
 	}
 	.sheet-close:hover { background: var(--paper-2); }
 

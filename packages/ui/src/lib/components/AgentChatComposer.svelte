@@ -162,12 +162,12 @@
   .composer {
     width: 100%;
     border: 1.5px solid var(--rule);
-    border-radius: var(--r-lg);
+    border-radius: var(--radius-lg);
     background: var(--paper-2);
     display: flex;
     flex-direction: column;
-    transition: border-color var(--dur-1) var(--ease-out),
-                box-shadow var(--dur-1) var(--ease-out);
+    transition: border-color var(--duration-fast) var(--ease-out),
+                box-shadow var(--duration-fast) var(--ease-out);
   }
 
   .composer.focused {
@@ -184,18 +184,18 @@
   .attachments {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--s-2);
-    padding: var(--s-2) var(--s-3) 0;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3) 0;
   }
 
   .attachment {
     display: inline-flex;
     align-items: center;
-    gap: var(--s-1);
+    gap: var(--space-1);
     background: var(--paper-3);
-    border-radius: var(--r-sm);
-    padding: 3px var(--s-2);
-    font-size: var(--t-meta);
+    border-radius: var(--radius-sm);
+    padding: 3px var(--space-2);
+    font-size: var(--font-size-meta);
     font-family: var(--font-mono);
   }
 
@@ -222,7 +222,7 @@
     border: none;
     outline: none;
     resize: none;
-    font-family: var(--font-body);
+    font-family: var(--font-family-sans);
     font-size: 16px; /* prevents iOS zoom on focus */
     color: var(--ink);
     line-height: 1.55;
@@ -246,7 +246,7 @@
     border: none;
     cursor: pointer;
     flex-shrink: 0;
-    transition: background var(--dur-1), color var(--dur-1), transform 0.1s;
+    transition: background var(--duration-fast), color var(--duration-fast), transform 0.1s;
     -webkit-tap-highlight-color: transparent;
   }
 

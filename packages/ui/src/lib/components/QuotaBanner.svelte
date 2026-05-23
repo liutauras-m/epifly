@@ -79,7 +79,7 @@
     justify-content: space-between;
     gap: 1rem;
     padding: 0.6rem 1rem;
-    border-radius: var(--r-md);
+    border-radius: var(--radius-md);
     font-size: 0.875rem;
     font-weight: 500;
   }
@@ -127,7 +127,7 @@
     padding: 0.3rem 0.7rem;
     background: var(--ember);
     color: #fff;
-    border-radius: var(--r-md);
+    border-radius: var(--radius-md);
     text-decoration: none;
     font-size: 0.78rem;
     font-weight: 600;
@@ -151,7 +151,7 @@
     color: inherit;
     opacity: 0.5;
     padding: 0.2rem;
-    border-radius: var(--r-xs);
+    border-radius: var(--radius-xs);
     transition: opacity 120ms cubic-bezier(0.4, 0, 0.2, 1);
     min-width: 24px;
     min-height: 24px;

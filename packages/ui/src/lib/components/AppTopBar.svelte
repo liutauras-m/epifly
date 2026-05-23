@@ -70,9 +70,9 @@
 	.topbar-inner {
 		display: flex;
 		align-items: center;
-		gap: var(--s-2);
+		gap: var(--space-2);
 		height: 48px;
-		padding: 0 var(--s-2);
+		padding: 0 var(--space-2);
 	}
 
 	.topbar-btn {
@@ -85,7 +85,7 @@
 		background: none;
 		color: var(--ink);
 		cursor: pointer;
-		border-radius: var(--r-sm);
+		border-radius: var(--radius-sm);
 		flex-shrink: 0;
 	}
 	.topbar-btn:hover { background: var(--paper-3); }
@@ -93,8 +93,8 @@
 
 	.topbar-title {
 		flex: 1;
-		font-family: var(--font-display);
-		font-size: var(--t-h2);
+		font-family: var(--font-family-sans);
+		font-size: var(--font-size-h2);
 		font-weight: 600;
 		letter-spacing: -0.4px;
 		color: var(--ink);
@@ -108,7 +108,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: flex-end;
-		gap: var(--s-1);
+		gap: var(--space-1);
 		min-width: 44px;
 		height: 44px;
 		flex-shrink: 0;
@@ -116,8 +116,8 @@
 
 	/* Desktop: smaller buttons, left-aligned title, hide hamburger when sidebar persistent */
 	@media (min-width: 641px) {
-		.topbar-inner { padding: 0 var(--s-3); }
+		.topbar-inner { padding: 0 var(--space-3); }
 		.topbar-btn { width: 36px; height: 36px; }
-		.topbar-title { text-align: left; font-size: var(--t-body); font-weight: 500; }
+		.topbar-title { text-align: left; font-size: var(--font-size-body); font-weight: 500; }
 	}
 </style>

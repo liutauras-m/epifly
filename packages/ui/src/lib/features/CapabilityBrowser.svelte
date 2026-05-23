@@ -110,8 +110,8 @@
 	.search-bar {
 		display: flex;
 		align-items: center;
-		gap: var(--s-2);
-		padding: var(--s-3) var(--s-4);
+		gap: var(--space-2);
+		padding: var(--space-3) var(--space-4);
 		border-bottom: 1px solid var(--rule);
 		flex-shrink: 0;
 	}
@@ -122,11 +122,11 @@
 		flex: 1;
 		height: 40px;
 		border: 1px solid var(--rule);
-		border-radius: var(--r-md);
-		padding: 0 var(--s-3);
+		border-radius: var(--radius-md);
+		padding: 0 var(--space-3);
 		background: var(--paper-2);
 		color: var(--ink);
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-size: 15px;
 	}
 
@@ -143,14 +143,14 @@
 	.loading-list {
 		display: flex;
 		flex-direction: column;
-		gap: var(--s-2);
-		padding: var(--s-4);
+		gap: var(--space-2);
+		padding: var(--space-4);
 	}
 
 	.skeleton-cap {
 		height: 64px;
 		background: var(--paper-2);
-		border-radius: var(--r-sm);
+		border-radius: var(--radius-sm);
 		animation: shimmer 1.2s ease-in-out infinite;
 	}
 
@@ -169,9 +169,9 @@
 		align-items: center;
 		justify-content: center;
 		color: var(--ink-3);
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-size: 15px;
-		padding: var(--s-8);
+		padding: var(--space-8);
 	}
 	.empty p { margin: 0; }
 </style>

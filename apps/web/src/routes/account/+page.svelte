@@ -74,7 +74,7 @@
 	}
 
 	.account-header h1 {
-		font-family: var(--font-display);
+		font-family: var(--font-family-sans);
 		font-size: 1.75rem;
 		font-weight: 800;
 		letter-spacing: -0.04em;
@@ -89,7 +89,7 @@
 		gap: 1rem;
 		padding: 1.25rem;
 		border: 1px solid var(--rule);
-		border-radius: var(--r-lg);
+		border-radius: var(--radius-lg);
 		margin-bottom: 1.25rem;
 		background: var(--paper);
 	}
@@ -97,13 +97,13 @@
 	.avatar {
 		width: 48px;
 		height: 48px;
-		border-radius: var(--r-full);
+		border-radius: var(--radius-full);
 		background: var(--ember);
 		color: #fff;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		font-family: var(--font-display);
+		font-family: var(--font-family-sans);
 		font-weight: 800;
 		font-size: 1.15rem;
 		letter-spacing: -0.02em;
@@ -117,7 +117,7 @@
 	}
 
 	.name {
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-weight: 600;
 		color: var(--ink);
 		margin: 0;
@@ -127,7 +127,7 @@
 		display: inline-flex;
 		align-items: center;
 		padding: 0.1rem 0.5rem;
-		border-radius: var(--r-full);
+		border-radius: var(--radius-full);
 		font-family: var(--font-mono);
 		font-size: 0.65rem;
 		font-weight: 600;
@@ -144,7 +144,7 @@
 	.status-badge {
 		display: inline-block;
 		padding: 0.1rem 0.5rem;
-		border-radius: var(--r-full);
+		border-radius: var(--radius-full);
 		font-family: var(--font-mono);
 		font-size: 0.65rem;
 		font-weight: 600;
@@ -168,7 +168,7 @@
 		gap: 1rem;
 		padding: 1rem 1.25rem;
 		border: 1px solid var(--rule);
-		border-radius: var(--r-lg);
+		border-radius: var(--radius-lg);
 		text-decoration: none;
 		color: inherit;
 		background: var(--paper);
@@ -194,7 +194,7 @@
 		justify-content: center;
 		width: 36px;
 		height: 36px;
-		border-radius: var(--r-sm);
+		border-radius: var(--radius-sm);
 		background: var(--ember-soft);
 		color: var(--ember);
 		flex-shrink: 0;
@@ -203,7 +203,7 @@
 
 	.link-body strong {
 		display: block;
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-weight: 600;
 		font-size: 0.9rem;
 		color: var(--ink);

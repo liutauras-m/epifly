@@ -31,11 +31,11 @@
     width: 32px;
     height: 32px;
     border: 1px solid var(--rule);
-    border-radius: var(--r-sm);
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--ink-3);
     cursor: pointer;
-    transition: color var(--dur-1), border-color var(--dur-1);
+    transition: color var(--duration-fast), border-color var(--duration-fast);
   }
   .theme-switcher:hover {
     color: var(--ink);

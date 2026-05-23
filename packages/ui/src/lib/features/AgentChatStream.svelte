@@ -207,7 +207,7 @@
     overflow-y: auto;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
-    padding: var(--s-4) 0 var(--s-2);
+    padding: var(--space-4) 0 var(--space-2);
     display: flex;
     flex-direction: column;
     /* Messages anchor to the bottom — empty space appears above, not below */
@@ -221,55 +221,55 @@
   .row {
     display: flex;
     align-items: flex-start;
-    padding: 3px var(--s-4);
-    gap: var(--s-2);
+    padding: 3px var(--space-4);
+    gap: var(--space-2);
   }
 
   .pin-row {
-    padding-top: var(--s-2);
-    padding-bottom: var(--s-1);
+    padding-top: var(--space-2);
+    padding-bottom: var(--space-1);
   }
 
   .retry-row {
     justify-content: flex-start;
-    padding-top: var(--s-1);
-    padding-bottom: var(--s-2);
-    padding-left: calc(var(--s-4) + 24px); /* align with ai-bubble */
+    padding-top: var(--space-1);
+    padding-bottom: var(--space-2);
+    padding-left: calc(var(--space-4) + 24px); /* align with ai-bubble */
   }
   .retry-btn {
     display: inline-flex;
     align-items: center;
     padding: 4px 10px;
-    border-radius: var(--r-md);
+    border-radius: var(--radius-md);
     border: 1px solid color-mix(in srgb, var(--ember) 50%, transparent);
     background: color-mix(in srgb, var(--ember) 12%, transparent);
     color: var(--ember);
-    font-family: var(--font-body);
-    font-size: var(--t-meta);
+    font-family: var(--font-family-sans);
+    font-size: var(--font-size-meta);
     cursor: pointer;
-    transition: filter var(--dur-1);
+    transition: filter var(--duration-fast);
   }
   .retry-btn:hover { filter: brightness(1.08); }
   .retry-btn:focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }
 
   .user-row {
     justify-content: flex-end;
-    padding-left: var(--s-8);
+    padding-left: var(--space-8);
   }
 
   .ai-row {
     justify-content: flex-start;
-    padding-right: var(--s-8);
+    padding-right: var(--space-8);
   }
 
   /* Thinking indicator row — same layout as ai-row but with the sonar ring */
   .thinking-row {
     justify-content: flex-start;
-    padding-right: var(--s-8);
+    padding-right: var(--space-8);
   }
 
   .tool-row {
-    padding-right: var(--s-4);
+    padding-right: var(--space-4);
   }
 
   /* ── User bubble ─────────────────────────────────── */
@@ -278,7 +278,7 @@
     color: #fff;
     border-radius: 18px 18px 4px 18px;
     padding: 10px 14px;
-    font-size: var(--t-body);
+    font-size: var(--font-size-body);
     line-height: 1.55;
     white-space: pre-wrap;
     word-break: break-word;
@@ -301,7 +301,7 @@
 
   /* ── AI bubble ───────────────────────────────────── */
   .ai-bubble {
-    font-size: var(--t-body);
+    font-size: var(--font-size-body);
     line-height: 1.65;
     color: var(--ink);
     word-break: break-word;
@@ -316,18 +316,18 @@
     margin-bottom: 0;
   }
   .ai-bubble :global(.md-h1) {
-    font-family: var(--font-display);
-    font-size: var(--t-h2);
+    font-family: var(--font-family-sans);
+    font-size: var(--font-size-h2);
     margin: 0.6em 0 0.3em;
     color: var(--ink);
   }
   .ai-bubble :global(.md-h2) {
-    font-size: var(--t-body);
+    font-size: var(--font-size-body);
     font-weight: 700;
     margin: 0.8em 0 0.25em;
   }
   .ai-bubble :global(.md-h3) {
-    font-size: var(--t-body);
+    font-size: var(--font-size-body);
     font-weight: 600;
     color: var(--ink-2);
     margin: 0.6em 0 0.2em;
@@ -347,14 +347,14 @@
   .ai-bubble :global(.md-pre) {
     background: var(--paper-2);
     border: 1px solid var(--rule);
-    border-radius: var(--r-sm);
-    padding: var(--s-3);
+    border-radius: var(--radius-sm);
+    padding: var(--space-3);
     overflow-x: auto;
     margin: 0.5em 0;
   }
   .ai-bubble :global(.md-pre code) {
     font-family: var(--font-mono);
-    font-size: var(--t-meta);
+    font-size: var(--font-size-meta);
     white-space: pre;
   }
   .ai-bubble :global(code) {
@@ -419,7 +419,7 @@
 
   /* ── Hosted project row ─────────────────────────── */
   .hosted-row {
-    margin-top: var(--s-1);
+    margin-top: var(--space-1);
   }
 
   /* ── Markdown links ──────────────────────────────── */
@@ -441,23 +441,23 @@
   /* ── Invoice stub ────────────────────────────────── */
   .invoice-stub {
     display: flex;
-    gap: var(--s-3);
+    gap: var(--space-3);
     align-items: baseline;
     border: 1px solid var(--rule);
-    border-radius: var(--r-sm);
-    padding: var(--s-2) var(--s-3);
-    font-size: var(--t-meta);
+    border-radius: var(--radius-sm);
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--font-size-meta);
   }
   .inv-label { color: var(--ink-3); }
   .inv-total { font-family: var(--font-mono); font-weight: 600; }
 
   /* ── Bottom spacer ───────────────────────────────── */
-  .bottom-spacer { height: var(--s-4); flex-shrink: 0; }
+  .bottom-spacer { height: var(--space-4); flex-shrink: 0; }
 
   /* ── Mobile tweaks ───────────────────────────────── */
   @media (max-width: 640px) {
-    .user-row { padding-left: var(--s-7); }
-    .ai-row   { padding-right: var(--s-6); }
+    .user-row { padding-left: var(--space-7); }
+    .ai-row   { padding-right: var(--space-6); }
     .user-bubble { max-width: min(340px, 80vw); }
   }
 </style>

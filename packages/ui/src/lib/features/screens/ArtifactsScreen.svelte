@@ -69,14 +69,14 @@
 	.loading-list {
 		display: flex;
 		flex-direction: column;
-		gap: var(--s-2);
-		padding: var(--s-4);
+		gap: var(--space-2);
+		padding: var(--space-4);
 	}
 
 	.skeleton-row {
 		height: 60px;
 		background: var(--paper-2);
-		border-radius: var(--r-sm);
+		border-radius: var(--radius-sm);
 		animation: shimmer 1.2s ease-in-out infinite;
 	}
 
@@ -90,10 +90,10 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		padding: var(--s-8);
+		padding: var(--space-8);
 		color: var(--ink-3);
-		font-family: var(--font-body);
-		font-size: var(--t-body);
+		font-family: var(--font-family-sans);
+		font-size: var(--font-size-body);
 		text-align: center;
 		max-width: 480px;
 		margin: 0 auto;

@@ -51,7 +51,7 @@
 	<button
 		class="row"
 		class:active
-		style="padding-left: calc(var(--s-4) + {depth * 16}px)"
+		style="padding-left: calc(var(--space-4) + {depth * 16}px)"
 		onclick={() => {
 			if (node.kind === 'folder') toggleExpand();
 			else onSelect(node);
@@ -105,7 +105,7 @@
 	{#if expanded && node.kind === 'folder'}
 		<div class="children">
 			{#if children.length === 0 && childrenLoaded}
-				<div class="empty-folder" style="padding-left: calc(var(--s-4) + {(depth + 1) * 16}px)">
+				<div class="empty-folder" style="padding-left: calc(var(--space-4) + {(depth + 1) * 16}px)">
 					Empty
 				</div>
 			{:else}
@@ -133,14 +133,14 @@
 		border: none;
 		background: none;
 		cursor: pointer;
-		gap: var(--s-2);
-		padding-right: var(--s-3);
+		gap: var(--space-2);
+		padding-right: var(--space-3);
 		color: var(--ink);
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-size: 15px;
 		text-align: left;
 		position: relative;
-		transition: background var(--dur-1);
+		transition: background var(--duration-fast);
 	}
 
 	.row:hover { background: var(--paper-3); }
@@ -155,7 +155,7 @@
 		width: 2px;
 		background: var(--ember);
 		border-radius: 999px;
-		animation: rail-in var(--dur-2) var(--ease-out) forwards;
+		animation: rail-in var(--duration-normal) var(--ease-out) forwards;
 		transform: scaleY(0);
 		transform-origin: top;
 	}
@@ -167,7 +167,7 @@
 	.chevron {
 		flex-shrink: 0;
 		color: var(--ink-3);
-		transition: transform var(--dur-2) var(--ease-out);
+		transition: transform var(--duration-normal) var(--ease-out);
 	}
 
 	.chevron.rotated { transform: rotate(90deg); }
@@ -197,7 +197,7 @@
 		height: 36px;
 		display: flex;
 		align-items: center;
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-size: 13px;
 		color: var(--ink-3);
 		font-style: italic;

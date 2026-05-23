@@ -75,9 +75,9 @@
 <style>
   .hosted-card {
     border: 1px solid var(--rule);
-    border-radius: var(--r-md, 10px);
+    border-radius: var(--radius-md, 10px);
     overflow: hidden;
-    margin: var(--s-2, 8px) 0;
+    margin: var(--space-2, 8px) 0;
     background: var(--paper, #fff);
     transition: box-shadow 160ms var(--ease-out, ease);
     max-width: 480px;
@@ -91,11 +91,11 @@
   .card-header {
     display: flex;
     align-items: center;
-    gap: var(--s-2, 8px);
-    padding: var(--s-2, 8px) var(--s-3, 12px);
+    gap: var(--space-2, 8px);
+    padding: var(--space-2, 8px) var(--space-3, 12px);
     background: var(--paper-2, #f5f5f5);
     border-bottom: 1px solid var(--rule);
-    font-size: var(--t-meta, 0.75rem);
+    font-size: var(--font-size-meta, 0.75rem);
   }
 
   .live-badge {
@@ -150,14 +150,14 @@
   .card-body {
     display: flex;
     align-items: center;
-    gap: var(--s-3, 12px);
-    padding: var(--s-3, 12px);
+    gap: var(--space-3, 12px);
+    padding: var(--space-3, 12px);
   }
 
   .url-preview {
     flex: 1;
     font-family: var(--font-mono, monospace);
-    font-size: var(--t-meta, 0.75rem);
+    font-size: var(--font-size-meta, 0.75rem);
     color: var(--ink-2, #555);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -168,12 +168,12 @@
   .open-btn {
     display: inline-flex;
     align-items: center;
-    gap: var(--s-1, 4px);
+    gap: var(--space-1, 4px);
     background: var(--ember, #FF6200);
     color: #fff;
-    border-radius: var(--r-sm, 6px);
+    border-radius: var(--radius-sm, 6px);
     padding: 6px 14px;
-    font-size: var(--t-meta, 0.75rem);
+    font-size: var(--font-size-meta, 0.75rem);
     font-weight: 600;
     text-decoration: none;
     white-space: nowrap;

@@ -227,63 +227,63 @@
   .workspace-explorer { display: flex; flex-direction: column; height: 100%; }
   .explorer-header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: var(--s-3) var(--s-4); border-bottom: 1px solid var(--rule);
+    padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--rule);
   }
-  .explorer-heading { font-family: var(--font-mono); font-size: var(--t-label); color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.08em; }
+  .explorer-heading { font-family: var(--font-mono); font-size: var(--font-size-label); color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.08em; }
   .icon-btn {
     display: flex; align-items: center; justify-content: center;
     background: none; border: none; cursor: pointer; color: var(--ink-3);
-    width: 28px; height: 28px; border-radius: var(--r-xs);
+    width: 28px; height: 28px; border-radius: var(--radius-xs);
   }
   .icon-btn:hover { background: var(--paper-3); color: var(--ink); }
   .search-wrap {
     position: relative; display: flex; align-items: center;
-    padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--rule);
+    padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--rule);
   }
-  .search-icon { position: absolute; left: calc(var(--s-3) + 4px); color: var(--ink-3); pointer-events: none; }
+  .search-icon { position: absolute; left: calc(var(--space-3) + 4px); color: var(--ink-3); pointer-events: none; }
   .search-input {
-    width: 100%; padding: 4px var(--s-4) 4px 28px;
+    width: 100%; padding: 4px var(--space-4) 4px 28px;
     background: var(--paper-3); border: 1px solid var(--rule);
-    border-radius: var(--r-xs); font-size: var(--t-meta); color: var(--ink);
+    border-radius: var(--radius-xs); font-size: var(--font-size-meta); color: var(--ink);
     outline: none;
   }
   .search-input:focus { border-color: var(--ember); }
   .search-clear {
-    position: absolute; right: var(--s-3); background: none; border: none;
+    position: absolute; right: var(--space-3); background: none; border: none;
     cursor: pointer; color: var(--ink-3);
   }
-  .tree { flex: 1; overflow-y: auto; padding: var(--s-2) 0; }
+  .tree { flex: 1; overflow-y: auto; padding: var(--space-2) 0; }
   .tree-item { padding-left: calc(var(--depth) * 16px); }
   .tree-node {
-    display: flex; align-items: center; gap: var(--s-2);
-    width: 100%; padding: var(--s-1) var(--s-3);
+    display: flex; align-items: center; gap: var(--space-2);
+    width: 100%; padding: var(--space-1) var(--space-3);
     background: none; border: none; cursor: pointer;
-    font-size: var(--t-meta); color: var(--ink-2); text-align: left;
-    border-radius: var(--r-xs); transition: background var(--dur-1);
+    font-size: var(--font-size-meta); color: var(--ink-2); text-align: left;
+    border-radius: var(--radius-xs); transition: background var(--duration-fast);
   }
   .tree-node:hover { background: var(--paper-3); }
   .tree-node.selected { background: var(--ember-soft); color: var(--ink); }
   .node-chevron { font-size: 10px; width: 12px; flex-shrink: 0; }
   .node-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .node-path { font-size: var(--t-label); color: var(--ink-3); }
-  .empty-hint { padding: var(--s-3) var(--s-4); color: var(--ink-3); font-size: var(--t-meta); }
-  .new-node-form { padding: var(--s-2) var(--s-3); border-bottom: 1px solid var(--rule); }
-  .new-node-kind { display: flex; gap: var(--s-2); margin-bottom: var(--s-2); }
+  .node-path { font-size: var(--font-size-label); color: var(--ink-3); }
+  .empty-hint { padding: var(--space-3) var(--space-4); color: var(--ink-3); font-size: var(--font-size-meta); }
+  .new-node-form { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--rule); }
+  .new-node-kind { display: flex; gap: var(--space-2); margin-bottom: var(--space-2); }
   .kind-btn {
-    padding: 2px var(--s-3); border: 1px solid var(--rule); border-radius: var(--r-xs);
-    background: none; cursor: pointer; font-size: var(--t-label); color: var(--ink-2);
+    padding: 2px var(--space-3); border: 1px solid var(--rule); border-radius: var(--radius-xs);
+    background: none; cursor: pointer; font-size: var(--font-size-label); color: var(--ink-2);
   }
   .kind-btn.active { background: var(--ember-soft); border-color: var(--ember); color: var(--ink); }
-  .new-node-row { display: flex; gap: var(--s-2); }
+  .new-node-row { display: flex; gap: var(--space-2); }
   .new-node-input {
-    flex: 1; padding: 4px var(--s-2); border: 1px solid var(--rule);
-    border-radius: var(--r-xs); background: var(--paper); font-size: var(--t-meta); color: var(--ink);
+    flex: 1; padding: 4px var(--space-2); border: 1px solid var(--rule);
+    border-radius: var(--radius-xs); background: var(--paper); font-size: var(--font-size-meta); color: var(--ink);
   }
   .new-node-ok, .new-node-cancel {
-    padding: 4px var(--s-2); border: 1px solid var(--rule); border-radius: var(--r-xs);
-    background: none; cursor: pointer; font-size: var(--t-meta);
+    padding: 4px var(--space-2); border: 1px solid var(--rule); border-radius: var(--radius-xs);
+    background: none; cursor: pointer; font-size: var(--font-size-meta);
   }
   .new-node-ok:not(:disabled):hover { background: var(--ember-soft); }
   .new-node-cancel:hover { background: var(--paper-3); }
-  .new-node-error { color: var(--danger); font-size: var(--t-label); margin-top: var(--s-1); }
+  .new-node-error { color: var(--danger); font-size: var(--font-size-label); margin-top: var(--space-1); }
 </style>

@@ -30,12 +30,12 @@
   .toast-host {
     position: fixed;
     /* Mobile: full-width strip above the keyboard / home indicator */
-    bottom: calc(var(--s-4) + env(safe-area-inset-bottom, 0px));
-    left: var(--s-3);
-    right: var(--s-3);
+    bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+    left: var(--space-3);
+    right: var(--space-3);
     display: flex;
     flex-direction: column;
-    gap: var(--s-2);
+    gap: var(--space-2);
     z-index: 1000;
     pointer-events: none;
   }
@@ -44,8 +44,8 @@
   @media (min-width: 641px) {
     .toast-host {
       left: auto;
-      right: var(--s-5);
-      bottom: var(--s-5);
+      right: var(--space-5);
+      bottom: var(--space-5);
       max-width: 360px;
     }
   }
@@ -53,15 +53,15 @@
   .toast {
     display: flex;
     align-items: center;
-    gap: var(--s-3);
-    padding: var(--s-3) var(--s-4);
-    border-radius: var(--r-sm);
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-sm);
     border: 1px solid var(--rule);
     background: var(--paper);
     color: var(--ink);
-    font-size: var(--t-meta, 13px);
+    font-size: var(--font-size-meta, 13px);
     box-shadow: var(--shadow);
-    animation: slide-up var(--dur-2, 200ms) var(--ease-out, cubic-bezier(0.4, 0, 0.2, 1));
+    animation: slide-up var(--duration-normal, 200ms) var(--ease-out, cubic-bezier(0.4, 0, 0.2, 1));
     pointer-events: auto;
   }
 
@@ -81,10 +81,10 @@
     background: transparent;
     color: var(--ink-3);
     cursor: pointer;
-    border-radius: var(--r-sm);
+    border-radius: var(--radius-sm);
     padding: 0;
     flex-shrink: 0;
-    transition: background var(--dur-1, 100ms);
+    transition: background var(--duration-fast, 100ms);
   }
   .dismiss:hover {
     background: var(--paper-3);

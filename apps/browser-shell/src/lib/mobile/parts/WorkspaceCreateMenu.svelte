@@ -43,7 +43,7 @@
 		right: 0;
 		background: var(--paper);
 		border: 1px solid var(--rule);
-		border-radius: var(--r-md);
+		border-radius: var(--radius-md);
 		box-shadow: 0 8px 24px var(--shadow-md);
 		z-index: 210;
 		min-width: 180px;
@@ -53,13 +53,13 @@
 	.menu-item {
 		display: flex;
 		align-items: center;
-		gap: var(--s-3);
+		gap: var(--space-3);
 		width: 100%;
 		height: 48px;
-		padding: 0 var(--s-4);
+		padding: 0 var(--space-4);
 		border: none;
 		background: none;
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-size: 15px;
 		color: var(--ink);
 		cursor: pointer;

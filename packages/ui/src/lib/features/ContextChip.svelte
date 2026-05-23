@@ -43,16 +43,16 @@
 	.context-chip {
 		display: inline-flex;
 		align-items: center;
-		gap: var(--s-1);
-		padding: 4px var(--s-2) 4px var(--s-2);
+		gap: var(--space-1);
+		padding: 4px var(--space-2) 4px var(--space-2);
 		background: var(--ember-soft);
 		border: 1px solid var(--ember-glow);
-		border-radius: var(--r-full);
+		border-radius: var(--radius-full);
 		cursor: pointer;
 		font-family: var(--font-mono);
 		font-size: 12px;
 		color: var(--ink-2);
-		transition: background var(--dur-1), border-color var(--dur-1);
+		transition: background var(--duration-fast), border-color var(--duration-fast);
 	}
 
 	.context-chip:hover {

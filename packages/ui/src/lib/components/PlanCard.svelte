@@ -65,7 +65,7 @@
   .plan-card {
     padding: 1.25rem;
     border: 1px solid var(--rule);
-    border-radius: var(--r-lg);
+    border-radius: var(--radius-lg);
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
@@ -96,7 +96,7 @@
   }
 
   .plan-header h3 {
-    font-family: var(--font-display);
+    font-family: var(--font-family-sans);
     font-weight: 700;
     font-size: 1rem;
     letter-spacing: -0.02em;
@@ -111,7 +111,7 @@
   }
 
   .price strong {
-    font-family: var(--font-display);
+    font-family: var(--font-family-sans);
     font-size: 1.5rem;
     font-weight: 800;
     letter-spacing: -0.04em;
@@ -166,8 +166,8 @@
     background: var(--ember);
     color: #fff;
     border: none;
-    border-radius: var(--r-md);
-    font-family: var(--font-body);
+    border-radius: var(--radius-md);
+    font-family: var(--font-family-sans);
     font-weight: 600;
     font-size: 0.875rem;
     cursor: pointer;
@@ -192,7 +192,7 @@
     background: transparent;
     color: var(--ink-2);
     border: 1px solid var(--seam);
-    border-radius: var(--r-md);
+    border-radius: var(--radius-md);
     text-decoration: none;
     font-size: 0.875rem;
     font-weight: 600;

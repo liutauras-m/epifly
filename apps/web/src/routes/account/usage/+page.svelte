@@ -129,7 +129,7 @@
 	.breadcrumb a:hover { text-decoration: underline; }
 
 	h1 {
-		font-family: var(--font-display);
+		font-family: var(--font-family-sans);
 		font-size: 1.75rem;
 		font-weight: 800;
 		letter-spacing: -0.04em;
@@ -155,7 +155,7 @@
 	.meter-card {
 		padding: 1.25rem;
 		border: 1px solid var(--rule);
-		border-radius: var(--r-lg);
+		border-radius: var(--radius-lg);
 		background: var(--paper);
 	}
 
@@ -167,14 +167,14 @@
 	}
 
 	.meter-label {
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-weight: 600;
 		font-size: 0.875rem;
 		color: var(--ink);
 	}
 
 	.meter-value {
-		font-family: var(--font-display);
+		font-family: var(--font-family-sans);
 		font-size: 1.05rem;
 		font-weight: 700;
 		letter-spacing: -0.03em;
@@ -184,7 +184,7 @@
 	.progress-bar {
 		height: 7px;
 		background: var(--paper-3);
-		border-radius: var(--r-full);
+		border-radius: var(--radius-full);
 		overflow: hidden;
 		margin-bottom: 0.4rem;
 	}
@@ -192,7 +192,7 @@
 	.progress-fill {
 		height: 100%;
 		background: var(--ember);
-		border-radius: var(--r-full);
+		border-radius: var(--radius-full);
 		transition: width 300ms cubic-bezier(0.4, 0, 0.2, 1),
 		            background 180ms cubic-bezier(0.4, 0, 0.2, 1);
 	}
@@ -216,7 +216,7 @@
 		padding: 1.25rem 1.5rem;
 		background: var(--ember-soft);
 		border: 1px solid var(--ember-glow);
-		border-radius: var(--r-lg);
+		border-radius: var(--radius-lg);
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
@@ -239,8 +239,8 @@
 		background: var(--ember);
 		color: #fff;
 		border: none;
-		border-radius: var(--r-md);
-		font-family: var(--font-body);
+		border-radius: var(--radius-md);
+		font-family: var(--font-family-sans);
 		font-weight: 600;
 		text-decoration: none;
 		white-space: nowrap;

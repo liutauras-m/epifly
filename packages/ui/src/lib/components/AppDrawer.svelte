@@ -60,7 +60,7 @@
 		z-index: 300;
 		opacity: 0;
 		pointer-events: none;
-		transition: opacity var(--dur-2) var(--ease-out);
+		transition: opacity var(--duration-normal) var(--ease-out);
 	}
 	.backdrop.visible {
 		opacity: 1;
@@ -78,7 +78,7 @@
 		border-right: 1px solid var(--seam);
 		z-index: 310;
 		transform: translateX(-100%);
-		transition: transform var(--dur-3) var(--ease-out);
+		transition: transform var(--duration-slow) var(--ease-out);
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
@@ -100,7 +100,7 @@
 	.drawer-header {
 		display: flex;
 		justify-content: flex-end;
-		padding: var(--s-2) var(--s-3) 0;
+		padding: var(--space-2) var(--space-3) 0;
 		flex-shrink: 0;
 	}
 
@@ -110,7 +110,7 @@
 		justify-content: center;
 		width: 36px;
 		height: 36px;
-		border-radius: var(--r-full);
+		border-radius: var(--radius-full);
 		border: none;
 		background: transparent;
 		color: var(--ink-3);
@@ -131,8 +131,8 @@
 			top: auto;
 			left: auto;
 			bottom: auto;
-			width: var(--rail, 240px);
-			max-width: var(--rail, 240px);
+			width: var(--sidebar, 240px);
+			max-width: var(--sidebar, 240px);
 			transform: none;
 			transition: none;
 			z-index: 1;

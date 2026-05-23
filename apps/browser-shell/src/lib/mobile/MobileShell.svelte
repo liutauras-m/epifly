@@ -392,7 +392,7 @@
 		align-items: center;
 		justify-content: center;
 		background: var(--paper);
-		padding: var(--s-4);
+		padding: var(--space-4);
 	}
 
 	.login-card {
@@ -400,13 +400,13 @@
 		max-width: 440px;
 		display: flex;
 		flex-direction: column;
-		gap: var(--s-5);
+		gap: var(--space-5);
 	}
 
 	.login-brand {
 		display: flex;
 		align-items: center;
-		gap: var(--s-2);
+		gap: var(--space-2);
 	}
 
 	.brand-logo {
@@ -416,14 +416,14 @@
 	}
 
 	.brand-name {
-		font-family: var(--font-display);
+		font-family: var(--font-family-sans);
 		font-size: 20px;
 		font-weight: 700;
 		color: var(--ink);
 	}
 
 	.login-title {
-		font-family: var(--font-display);
+		font-family: var(--font-family-sans);
 		font-size: 32px;
 		font-weight: 700;
 		letter-spacing: -1px;
@@ -433,18 +433,18 @@
 	}
 
 	.login-sub {
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-size: 16px;
 		color: var(--ink-2);
-		margin: var(--s-2) 0 0;
+		margin: var(--space-2) 0 0;
 		line-height: 1.5;
 	}
 
 	.login-copy { display: flex; flex-direction: column; }
 
-	.login-form { display: flex; flex-direction: column; gap: var(--s-4); }
+	.login-form { display: flex; flex-direction: column; gap: var(--space-4); }
 
-	.field { display: flex; flex-direction: column; gap: var(--s-1); }
+	.field { display: flex; flex-direction: column; gap: var(--space-1); }
 
 	.field-label {
 		font-family: var(--font-mono);
@@ -458,11 +458,11 @@
 	.field-input {
 		height: 48px;
 		border: 1px solid var(--rule);
-		border-radius: var(--r-md);
-		padding: 0 var(--s-4);
+		border-radius: var(--radius-md);
+		padding: 0 var(--space-4);
 		background: var(--paper-2);
 		color: var(--ink);
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-size: 16px;
 	}
 
@@ -470,7 +470,7 @@
 	.field-input.error { border-color: var(--danger); }
 
 	.field-error {
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-size: 13px;
 		color: var(--danger);
 		margin: 0;
@@ -482,10 +482,10 @@
 		margin: 0;
 		display: flex;
 		flex-direction: column;
-		gap: var(--s-2);
+		gap: var(--space-2);
 	}
 
-	.plan-row { display: flex; gap: var(--s-2); }
+	.plan-row { display: flex; gap: var(--space-2); }
 
 	.plan-option {
 		flex: 1;
@@ -494,9 +494,9 @@
 		justify-content: center;
 		height: 44px;
 		border: 1px solid var(--rule);
-		border-radius: var(--r-md);
+		border-radius: var(--radius-md);
 		cursor: pointer;
-		transition: border-color var(--dur-1), background var(--dur-1);
+		transition: border-color var(--duration-fast), background var(--duration-fast);
 	}
 
 	.plan-option.selected {
@@ -507,7 +507,7 @@
 	.plan-option input { display: none; }
 
 	.plan-label {
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-size: 14px;
 		color: var(--ink-2);
 	}
@@ -518,17 +518,17 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		gap: var(--s-2);
+		gap: var(--space-2);
 		height: 52px;
 		background: var(--ember);
 		color: var(--ink);
 		border: none;
-		border-radius: var(--r-md);
-		font-family: var(--font-body);
+		border-radius: var(--radius-md);
+		font-family: var(--font-family-sans);
 		font-size: 17px;
 		font-weight: 600;
 		cursor: pointer;
-		transition: background var(--dur-1);
+		transition: background var(--duration-fast);
 	}
 
 	.begin-btn:hover { background: var(--ember-2); }
@@ -572,7 +572,7 @@
 		background: none;
 		color: var(--ink);
 		cursor: pointer;
-		border-radius: var(--r-sm);
+		border-radius: var(--radius-sm);
 	}
 
 	.topbar-icon-btn:hover { background: var(--paper-2); }
@@ -588,19 +588,19 @@
 	.drawer-link {
 		display: flex;
 		align-items: center;
-		gap: var(--s-3);
+		gap: var(--space-3);
 		height: 48px;
-		padding: 0 var(--s-4);
+		padding: 0 var(--space-4);
 		border: none;
 		background: none;
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-size: 15px;
 		color: var(--ink-2);
 		cursor: pointer;
 		width: 100%;
 		text-align: left;
 		border-bottom: 1px solid var(--rule);
-		transition: background var(--dur-1);
+		transition: background var(--duration-fast);
 	}
 
 	.drawer-link:hover { background: var(--paper-3); color: var(--ink); }

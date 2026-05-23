@@ -57,59 +57,59 @@
 
 <style>
 	.detail-body {
-		padding: var(--s-4);
+		padding: var(--space-4);
 		display: flex;
 		flex-direction: column;
-		gap: var(--s-4);
+		gap: var(--space-4);
 	}
 
 	.detail-kind { display: flex; }
 
 	.kind-badge {
 		font-family: var(--font-mono);
-		font-size: var(--t-label);
+		font-size: var(--font-size-label);
 		background: var(--ember-soft);
 		color: var(--ember-2);
-		padding: 4px var(--s-2);
-		border-radius: var(--r-sm);
+		padding: 4px var(--space-2);
+		border-radius: var(--radius-sm);
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
 	}
 
 	.detail-desc {
-		font-family: var(--font-body);
-		font-size: var(--t-body);
+		font-family: var(--font-family-sans);
+		font-size: var(--font-size-body);
 		color: var(--ink-2);
 		line-height: 1.5;
 		margin: 0;
 	}
 
-	.tools-section { display: flex; flex-direction: column; gap: var(--s-2); }
+	.tools-section { display: flex; flex-direction: column; gap: var(--space-2); }
 
 	.tools-label {
 		font-family: var(--font-mono);
-		font-size: var(--t-label);
+		font-size: var(--font-size-label);
 		letter-spacing: 0.08em;
 		color: var(--ink-3);
 		text-transform: uppercase;
 	}
 
 	.tool-row {
-		padding: var(--s-2) var(--s-3);
+		padding: var(--space-2) var(--space-3);
 		background: var(--paper-2);
-		border-radius: var(--r-sm);
+		border-radius: var(--radius-sm);
 	}
 
 	.tool-name {
 		font-family: var(--font-mono);
-		font-size: var(--t-meta);
+		font-size: var(--font-size-meta);
 		color: var(--ink);
 		display: block;
 	}
 
 	.tool-desc {
-		font-family: var(--font-body);
-		font-size: var(--t-meta);
+		font-family: var(--font-family-sans);
+		font-size: var(--font-size-meta);
 		color: var(--ink-3);
 		display: block;
 		margin-top: 2px;
@@ -119,17 +119,17 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		gap: var(--s-2);
+		gap: var(--space-2);
 		height: 48px;
 		background: var(--ember);
 		color: var(--ink);
 		border: none;
-		border-radius: var(--r-md);
-		font-family: var(--font-body);
-		font-size: var(--t-body);
+		border-radius: var(--radius-md);
+		font-family: var(--font-family-sans);
+		font-size: var(--font-size-body);
 		font-weight: 600;
 		cursor: pointer;
-		transition: background var(--dur-1);
+		transition: background var(--duration-fast);
 	}
 	.invoke-btn:hover { background: var(--ember-2); }
 	.invoke-btn:focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }

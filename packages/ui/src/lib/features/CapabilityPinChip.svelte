@@ -168,18 +168,18 @@
   .pin-chip {
     display: inline-flex;
     align-items: center;
-    gap: var(--s-1);
-    padding: 2px var(--s-2);
-    border-radius: var(--r-full, 9999px);
+    gap: var(--space-1);
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-full, 9999px);
     border: 1px solid color-mix(in srgb, var(--accent, var(--ember)) 40%, transparent);
     background: color-mix(in srgb, var(--accent, var(--ember)) 10%, transparent);
     color: var(--accent, var(--ember));
-    font-size: var(--t-meta);
-    font-family: var(--font-sans, var(--font-body));
+    font-size: var(--font-size-meta);
+    font-family: var(--font-sans, var(--font-family-sans));
     line-height: 1.4;
     cursor: pointer;
     user-select: none;
-    transition: filter var(--dur-1);
+    transition: filter var(--duration-fast);
   }
   .pin-chip:hover { filter: brightness(1.08); }
   .pin-chip:focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }
@@ -203,7 +203,7 @@
     margin: 0;
     padding: 0;
     border: 1px solid var(--rule);
-    border-radius: var(--r-md);
+    border-radius: var(--radius-md);
     background: var(--paper);
     color: var(--ink);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
@@ -213,19 +213,19 @@
   .popover-dialog::backdrop { background: transparent; }
 
   .popover-content {
-    padding: var(--s-3) var(--s-4);
+    padding: var(--space-3) var(--space-4);
   }
   .popover-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding-bottom: var(--s-2);
+    padding-bottom: var(--space-2);
     border-bottom: 1px solid var(--rule);
-    margin-bottom: var(--s-2);
+    margin-bottom: var(--space-2);
   }
   .popover-title {
     margin: 0;
-    font-size: var(--t-meta);
+    font-size: var(--font-size-meta);
     font-weight: 600;
     color: var(--ink);
   }
@@ -238,7 +238,7 @@
     color: var(--ink-3);
     cursor: pointer;
     padding: 2px;
-    border-radius: var(--r-sm);
+    border-radius: var(--radius-sm);
     line-height: 1;
   }
   .popover-close:hover { color: var(--ink); }
@@ -246,9 +246,9 @@
   .popover-list {
     display: grid;
     grid-template-columns: max-content 1fr;
-    gap: var(--s-1) var(--s-3);
+    gap: var(--space-1) var(--space-3);
     margin: 0;
-    font-size: var(--t-meta);
+    font-size: var(--font-size-meta);
   }
   .popover-list dt {
     color: var(--ink-3);

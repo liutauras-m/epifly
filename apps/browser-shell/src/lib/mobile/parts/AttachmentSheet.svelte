@@ -49,19 +49,19 @@
 	.att-row {
 		display: flex;
 		align-items: center;
-		gap: var(--s-4);
+		gap: var(--space-4);
 		height: 56px;
-		padding: 0 var(--s-5);
+		padding: 0 var(--space-5);
 		border: none;
 		background: none;
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-size: 16px;
 		color: var(--ink);
 		cursor: pointer;
 		width: 100%;
 		text-align: left;
 		border-bottom: 1px solid var(--rule);
-		transition: background var(--dur-1);
+		transition: background var(--duration-fast);
 	}
 
 	.att-row:hover { background: var(--paper-2); }

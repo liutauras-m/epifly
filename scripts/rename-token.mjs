@@ -49,9 +49,10 @@ function walk(dir) {
 
 function renameInFile(filePath, oldName, newName) {
   const src = readFileSync(filePath, 'utf8');
-  // Replace var(--old) and also bare --old: occurrences (token definitions)
+  // Replace var(--old) and var(--old, fallback) — capture the tail so fallback is preserved
+  // Also replace bare --old: occurrences (token definitions)
   const next = src
-    .replace(new RegExp(`var\\(${escapeRe(oldName)}\\)`, 'g'), `var(${newName})`)
+    .replace(new RegExp(`var\\(${escapeRe(oldName)}(\\s*[,)])`, 'g'), `var(${newName}$1`)
     .replace(new RegExp(`(?<=[\\s;{,])${escapeRe(oldName)}(?=\\s*:)`, 'g'), newName);
   if (next !== src) {
     if (!DRY) writeFileSync(filePath, next);
@@ -123,8 +124,30 @@ const SHORT_TO_LONG = [
 ];
 
 if (BATCH_SHORT_TO_LONG) {
-  console.log(`Batch rename: short-to-long (${SHORT_TO_LONG.length} pairs)${DRY ? ' [dry-run]' : ''}`);
-  for (const [old, nw] of SHORT_TO_LONG) doRename(old, nw, null);
+  // §2.1c — migrate consumer var() usage only.
+  // tokens.css and tokens.json are EXCLUDED: the compat aliases must stay
+  // in the generated file as a safety net (per §2.1c spec). No JSON update,
+  // no changelog entry (the short-form tokens still exist — we're just
+  // discouraging their use in new code, enforced by §2.1e --warn flag).
+  const EXCLUDE = new Set([
+    'packages/ui/src/lib/tokens.css',
+    'packages/ui/tokens/tokens.json',
+    'packages/ui/tokens/tokens.d.ts',
+  ].map(p => join(ROOT, p)));
+
+  console.log(`Batch rename: short-to-long (${SHORT_TO_LONG.length} pairs, consumer code only)${DRY ? ' [dry-run]' : ''}`);
+  let totalFiles = 0;
+  for (const [old, nw] of SHORT_TO_LONG) {
+    if (!old.startsWith('--') || !nw.startsWith('--')) continue;
+    let count = 0;
+    for (const file of walk(ROOT)) {
+      if (EXCLUDE.has(file)) continue;
+      if (renameInFile(file, old, nw)) count++;
+    }
+    if (count > 0) console.log(`  ${old} → ${nw}: ${count} file(s)${DRY ? ' (dry-run)' : ''}`);
+    totalFiles += count;
+  }
+  console.log(`Total: ${totalFiles} file(s) updated${DRY ? ' (dry-run)' : ''}.`);
   process.exit(0);
 }
 

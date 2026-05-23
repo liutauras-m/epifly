@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * check-design-tokens.mjs  (Phase 1.2 CI gate)
+ * check-design-tokens.mjs  (Phase 1.2 + 2.1e CI gate)
  *
  * Fails with exit 1 when it finds:
  *   1. Raw hex colours  (#rgb / #rrggbb / #rrggbbaa) outside the token files.
@@ -8,17 +8,24 @@
  *   3. `cubic-bezier(` or bare `transition: …Nms` outside motion token files.
  *   4. Any <style> block in apps/* containing colour, radius, or size literals
  *      (catches inline drift the other rules miss).
+ *   5. (§2.1e) Short-form token aliases (--s-*, --r-*, --t-*, --dur-*, --rail,
+ *      --font-body, --font-display) used via var() in consumer code. These were
+ *      migrated to canonical long-form names in §2.1c; any new occurrence in a PR
+ *      means someone used the compat alias instead of the canonical name.
+ *      Currently warn-only; flips to error at Phase 4 close per ui-plan.md.
  *
- * TOKEN FILES (excluded from all checks):
- *   packages/ui/src/lib/tokens.css
+ * TOKEN FILES (excluded from rules 1–4; rule 5 also excludes them):
+ *   packages/ui/src/lib/tokens.css   (generated — defines the aliases)
  *   packages/ui/src/lib/foundry.css
+ *   packages/ui/tokens/tokens.json
+ *   packages/ui/tokens/tokens.d.ts
  *
  * Usage:
  *   node scripts/check-design-tokens.mjs            # check everything
  *   node scripts/check-design-tokens.mjs --warn     # print but do not exit 1
  */
 
-import { readFileSync, readdirSync, statSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { join, relative, extname } from 'path';
 
 const ROOT   = new URL('..', import.meta.url).pathname;
@@ -27,6 +34,11 @@ const WARN   = process.argv.includes('--warn');
 const TOKEN_FILES = new Set([
   'packages/ui/src/lib/tokens.css',
   'packages/ui/src/lib/foundry.css',
+  'packages/ui/tokens/tokens.json',
+  'packages/ui/tokens/tokens.d.ts',
+  // codemod + changelog reference old names — exclude them
+  'scripts/rename-token.mjs',
+  'docs/ui-tokens-changelog.md',
 ]);
 
 // ── file walker ───────────────────────────────────────────────────────────────
@@ -116,9 +128,41 @@ for (const appDir of ['apps/web/src', 'apps/browser-shell/src']) {
   }
 }
 
+// ── §2.1e short-form alias detection ─────────────────────────────────────────
+// Detects var(--s-N), var(--r-*), var(--t-*), var(--dur-*), var(--sidebar),
+// var(--font-family-sans), var(--font-family-sans) in consumer code.
+// These were migrated to canonical names in §2.1c; warn-only until Phase 4.
+const SHORT_FORM_PATTERN = /var\(--(s-[1-8]|r-(?:xs|sm|md|lg|xl|full)|t-(?:display|h1|h2|body|meta|label|mono)|dur-(?:1|2|2b|3|4)|rail|font-(?:body|display))\b\s*[,)]/;
+
+const shortFormErrors = [];
+
+for (const dir of ['packages/ui/src', 'apps/web/src', 'apps/browser-shell/src']) {
+  for (const file of walk(join(ROOT, dir), ['.svelte', '.css', '.ts', '.tsx'])) {
+    const path = rel(file);
+    if (TOKEN_FILES.has(path)) continue;
+    const src = readFileSync(file, 'utf8');
+    const lines = src.split('\n');
+    lines.forEach((line, i) => {
+      if (SHORT_FORM_PATTERN.test(line)) {
+        shortFormErrors.push({ file: path, line: i + 1, rule: 'short-form-alias', text: line.trim().slice(0, 120) });
+      }
+    });
+  }
+}
+
+if (shortFormErrors.length > 0) {
+  console.warn(`\nWARN (§2.1e): ${shortFormErrors.length} short-form token alias usage(s) found.`);
+  console.warn('  Use canonical long-form names (--space-N, --radius-*, --font-size-*, --duration-*, --sidebar).');
+  console.warn('  These will become CI errors at Phase 4 close.\n');
+  for (const { file, line, text } of shortFormErrors.slice(0, 20)) {
+    console.warn(`  ${file}:${line}  ${text}`);
+  }
+  if (shortFormErrors.length > 20) console.warn(`  … and ${shortFormErrors.length - 20} more.`);
+}
+
 // ── report ────────────────────────────────────────────────────────────────────
 
-if (errors.length === 0) {
+if (errors.length === 0 && shortFormErrors.length === 0) {
   console.log('✅ check-design-tokens: no violations found.');
   process.exit(0);
 }

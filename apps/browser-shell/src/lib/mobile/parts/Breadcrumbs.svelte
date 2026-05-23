@@ -12,7 +12,7 @@
 
 <style>
 	.breadcrumb {
-		font-family: var(--font-display);
+		font-family: var(--font-family-sans);
 		font-size: 16px;
 		font-weight: 600;
 		color: var(--ink);

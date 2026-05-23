@@ -65,14 +65,14 @@
   }
 
   .meter-label {
-    font-family: var(--font-body);
+    font-family: var(--font-family-sans);
     font-weight: 600;
     font-size: 0.875rem;
     color: var(--ink);
   }
 
   .meter-value {
-    font-family: var(--font-display);
+    font-family: var(--font-family-sans);
     font-size: 0.875rem;
     font-weight: 600;
     letter-spacing: -0.02em;
@@ -86,14 +86,14 @@
   .bar-track {
     height: 6px;
     background: var(--paper-3);
-    border-radius: var(--r-full);
+    border-radius: var(--radius-full);
     overflow: hidden;
   }
 
   .bar-fill {
     height: 100%;
     background: var(--ember);
-    border-radius: var(--r-full);
+    border-radius: var(--radius-full);
     transition: width 300ms cubic-bezier(0.4, 0, 0.2, 1),
                 background 180ms cubic-bezier(0.4, 0, 0.2, 1);
   }

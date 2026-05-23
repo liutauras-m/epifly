@@ -160,7 +160,7 @@
 	.ws-header {
 		display: flex;
 		align-items: center;
-		padding: var(--s-2) var(--s-3) var(--s-2) var(--s-4);
+		padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
 		position: relative;
 	}
 
@@ -188,26 +188,26 @@
 		background: none;
 		color: var(--ink-3);
 		cursor: pointer;
-		border-radius: var(--r-sm);
+		border-radius: var(--radius-sm);
 	}
 
 	.icon-btn:hover { background: var(--paper-3); color: var(--ink); }
 
 	.new-folder-row {
 		display: flex;
-		gap: var(--s-2);
-		padding: var(--s-2) var(--s-4);
+		gap: var(--space-2);
+		padding: var(--space-2) var(--space-4);
 	}
 
 	.folder-input {
 		flex: 1;
 		height: 36px;
 		border: 1px solid var(--rule);
-		border-radius: var(--r-sm);
-		padding: 0 var(--s-3);
+		border-radius: var(--radius-sm);
+		padding: 0 var(--space-3);
 		background: var(--paper);
 		color: var(--ink);
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-size: 14px;
 	}
 
@@ -218,19 +218,19 @@
 
 	.confirm-btn {
 		height: 36px;
-		padding: 0 var(--s-3);
+		padding: 0 var(--space-3);
 		border: none;
 		background: var(--ember);
 		color: var(--ink);
-		border-radius: var(--r-sm);
-		font-family: var(--font-body);
+		border-radius: var(--radius-sm);
+		font-family: var(--font-family-sans);
 		font-size: 14px;
 		cursor: pointer;
 	}
 
 	.empty {
-		padding: var(--s-3) var(--s-4);
-		font-family: var(--font-body);
+		padding: var(--space-3) var(--space-4);
+		font-family: var(--font-family-sans);
 		font-size: 14px;
 		color: var(--ink-3);
 	}
@@ -243,14 +243,14 @@
 	.skeleton-list {
 		display: flex;
 		flex-direction: column;
-		gap: var(--s-1);
-		padding: var(--s-2) var(--s-4);
+		gap: var(--space-1);
+		padding: var(--space-2) var(--space-4);
 	}
 
 	.skeleton-row {
 		height: 36px;
 		background: var(--paper-2);
-		border-radius: var(--r-sm);
+		border-radius: var(--radius-sm);
 		animation: shimmer 1.2s ease-in-out infinite;
 	}
 
@@ -264,8 +264,8 @@
 	}
 
 	.error-msg {
-		padding: var(--s-2) var(--s-4);
-		font-family: var(--font-body);
+		padding: var(--space-2) var(--space-4);
+		font-family: var(--font-family-sans);
 		font-size: 13px;
 		color: var(--danger);
 	}

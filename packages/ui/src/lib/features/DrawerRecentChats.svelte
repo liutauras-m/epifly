@@ -111,7 +111,7 @@
 	}
 
 	.section-header {
-		padding: var(--s-2) var(--s-3) var(--s-1) var(--s-4);
+		padding: var(--space-2) var(--space-3) var(--space-1) var(--space-4);
 	}
 
 	.section-label {
@@ -124,8 +124,8 @@
 	}
 
 	.state-row {
-		padding: var(--s-2) var(--s-4) var(--s-3);
-		font-family: var(--font-body);
+		padding: var(--space-2) var(--space-4) var(--space-3);
+		font-family: var(--font-family-sans);
 		font-size: 13px;
 		color: var(--ink-3);
 	}
@@ -150,15 +150,15 @@
 	.recent-row {
 		display: flex;
 		align-items: center;
-		gap: var(--s-2);
+		gap: var(--space-2);
 		height: 44px;
-		padding: 0 var(--s-4);
+		padding: 0 var(--space-4);
 		border: none;
 		background: none;
 		cursor: pointer;
 		width: 100%;
 		text-align: left;
-		transition: background var(--dur-1);
+		transition: background var(--duration-fast);
 	}
 
 	.recent-row:hover {
@@ -178,7 +178,7 @@
 
 	.recent-title {
 		flex: 1;
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-size: 15px;
 		color: var(--ink);
 		overflow: hidden;

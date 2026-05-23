@@ -44,15 +44,15 @@
 	.cap-row {
 		display: flex;
 		align-items: center;
-		gap: var(--s-3);
-		padding: var(--s-3) var(--s-4);
+		gap: var(--space-3);
+		padding: var(--space-3) var(--space-4);
 		border: none;
 		background: none;
 		cursor: pointer;
 		width: 100%;
 		text-align: left;
 		border-bottom: 1px solid var(--rule);
-		transition: background var(--dur-1);
+		transition: background var(--duration-fast);
 	}
 
 	.cap-row:hover { background: var(--paper-2); }
@@ -63,12 +63,12 @@
 	.cap-header {
 		display: flex;
 		align-items: center;
-		gap: var(--s-2);
+		gap: var(--space-2);
 		flex-wrap: wrap;
 	}
 
 	.cap-name {
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-size: 15px;
 		font-weight: 600;
 		color: var(--ink);
@@ -79,14 +79,14 @@
 		font-size: 11px;
 		background: var(--ember-soft);
 		color: var(--ember-2);
-		padding: 2px var(--s-2);
-		border-radius: var(--r-sm);
+		padding: 2px var(--space-2);
+		border-radius: var(--radius-sm);
 		flex-shrink: 0;
 		text-transform: lowercase;
 	}
 
 	.cap-desc {
-		font-family: var(--font-body);
+		font-family: var(--font-family-sans);
 		font-size: 13px;
 		color: var(--ink-2);
 		margin-top: 2px;
@@ -99,7 +99,7 @@
 
 	.cap-tools {
 		font-family: var(--font-mono);
-		font-size: var(--t-label, 11px);
+		font-size: var(--font-size-label, 11px);
 		color: var(--ink-3);
 		flex-shrink: 0;
 	}
