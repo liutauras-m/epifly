@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createChatStream } from '../src/lib/features/createChatStream.js';
+import { createChatStream } from '../src/lib/features/createChatStream.svelte.js';
 import type { ConusSdk } from '@conusai/sdk';
 
 function makeSdk(deltas: any[]): ConusSdk {

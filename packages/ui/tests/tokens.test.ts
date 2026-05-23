@@ -1,3 +1,6 @@
+// @vitest-environment node
+// ↑ Required: this file uses readFileSync and execSync — must run in Node.js,
+//   not the default jsdom environment (where import.meta.url becomes an HTTP URL).
 /**
  * Token parity test (Phase 2.1b).
  *
@@ -12,9 +15,11 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 
-const ROOT   = new URL('../../..', import.meta.url).pathname;
+// In Node.js ESM, import.meta.url is a proper file:// URL; fileURLToPath normalises it.
+const ROOT   = fileURLToPath(new URL('../../..', import.meta.url));
 const JSON_PATH = join(ROOT, 'packages/ui/tokens/tokens.json');
 
 const data = JSON.parse(readFileSync(JSON_PATH, 'utf8'));
