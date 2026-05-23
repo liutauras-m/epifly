@@ -32,6 +32,24 @@
         document.documentElement.setAttribute('data-theme', t);
       })();
     </script>
+    <script>
+      /* Platform detection — sets data-platform on <html> before hydration (Phase 5.1) */
+      (function(){
+        var ua = navigator.userAgent;
+        var p = navigator.platform || '';
+        var t = navigator.maxTouchPoints || 0;
+        var platform =
+          (/iPad|iPhone|iPod/.test(ua) || (p === 'MacIntel' && t > 1)) ? 'ios' :
+          /Android/.test(ua) ? 'android' :
+          (/MacIntel/.test(p) && t === 0) ? 'macos' :
+          /Win/.test(p) ? 'windows' :
+          /Linux/.test(p) ? 'linux' : 'web';
+        document.documentElement.dataset.platform = platform;
+        if ('__TAURI_INTERNALS__' in window) {
+          document.documentElement.dataset.tauri = 'true';
+        }
+      })();
+    </script>
     %sveltekit.head%
   </head>
   <body>

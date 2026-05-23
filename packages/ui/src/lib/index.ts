@@ -76,6 +76,22 @@ export type { ChatMessage, ToolCardEntry } from "./features/AgentChatStream.svel
 export { default as LiveAnnouncer } from "./utils/LiveAnnouncer.svelte";
 export { autoGrow } from "./utils/actions.js";
 export { prefersReducedMotion } from "./utils/motion-prefs.js";
+export {
+  getPlatform,
+  isTauriRuntime,
+  isIOSWebView,
+  isAndroidWebView,
+  isMacOSDesktop,
+  isWindowsDesktop,
+  isLinuxDesktop,
+  supportsHaptics,
+  supportsSafeAreaEnv,
+  supportsViewTransitions,
+  supportsWebShare,
+  PLATFORM_SCRIPT,
+} from "./utils/platform.js";
+export { haptics } from "./utils/haptics.js";
+export type { HapticsAPI } from "./utils/haptics.js";
 
 // ── Motion primitives ────────────────────────────────────────────────────────
 export {
@@ -90,7 +106,7 @@ export type { SpringOpts } from "./motion/index.js";
 
 // ── Stores ───────────────────────────────────────────────────────────────────
 export { createThemeStore, localStorageAdapter } from "./stores/themeStore.svelte.js";
-export type { Theme, ThemeAdapter, ThemeStore } from "./stores/themeStore.svelte.js";
+export type { Theme, ThemePreference, ThemeAdapter, ThemeStore } from "./stores/themeStore.svelte.js";
 export { createFeatureFlags } from "./stores/featureFlags.svelte.js";
 export type { FeatureFlags, FeatureFlagStore } from "./stores/featureFlags.svelte.js";
 export { toasts } from "./stores/toast.svelte.js";
