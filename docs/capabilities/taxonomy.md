@@ -11,7 +11,7 @@ by the `SemanticCapabilityRouter` to route intents, and both are enforced by
 
 | Category  | Namespace prefix | Examples                                                                   | Typical kind              |
 |-----------|------------------|----------------------------------------------------------------------------|---------------------------|
-| Storage   | `storage.*`      | `storage.put`, `storage.list`, `storage.move`, `storage.tag`, `storage.ensure_date_folder` | `native`     |
+| Storage   | `storage.*`      | `storage.workspace`, `storage.fs`, `storage.object`                       | `native` / `mcp`          |
 | Compute   | `compute.*`      | `compute.run_cargo`, `compute.shell` (gated)                               | `native` (opt-in)         |
 | Sense     | `sense.*`        | `sense.mime`, `sense.detect_language`, `sense.classify_document`           | `chain` or `wasm`         |
 | Extract   | `extract.*`      | `extract.ocr.vision`, `extract.ocr.tesseract`, `extract.fields.invoice`, `extract.fields.contract` | `chain`  |
@@ -19,6 +19,14 @@ by the `SemanticCapabilityRouter` to route intents, and both are enforced by
 | Compose   | `compose.*`      | `compose.email`, `compose.invoice_pdf`, `compose.report_md`               | `chain`                   |
 | Deliver   | `deliver.*`      | `deliver.email_smtp`, `deliver.webhook`, `deliver.s3_export`              | `remote_mcp` / `native`   |
 | Plan      | `plan.*`         | `plan.orchestrate`, `plan.route_by_mime`, `plan.on_upload`                | `chain` (meta)            |
+| Code *(proposed)* | `code.*` | `code.project` — scaffold/edit/patch code projects                  | `chain`                   |
+
+> **`code` root status.** `code.project` is in use by
+> [code-project](../../apps/backend/capabilities/code-project/capability.toml)
+> with `category = "compose"` as a temporary assignment. When the `code` domain grows
+> (e.g. `code-shell`, `code-test`, `code-review`), promote `code` to a first-class root
+> and update this table, the lint allowlist in `xtask/src/main.rs`, and the existing
+> `code-project` manifest.
 
 **Rule:** every new domain element MUST pick a namespace from this taxonomy.
 Adding a new category requires updating this table, `docs/capability-authoring-guide.md`,

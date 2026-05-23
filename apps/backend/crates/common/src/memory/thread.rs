@@ -17,7 +17,10 @@ pub struct Thread {
     /// LLM-generated summary injected as system context once the thread
     /// exceeds MAX_MESSAGES_BEFORE_SUMMARY.
     pub summary: Option<String>,
-    pub metadata: serde_json::Value,
+    // NOTE: `metadata: serde_json::Value` was removed — postcard (used for redb
+    // storage) cannot deserialize serde_json::Value because it requires
+    // `deserialize_any` which postcard intentionally does not implement.
+    // Add strongly-typed metadata fields here if needed in the future.
 }
 
 /// A single message within a thread.

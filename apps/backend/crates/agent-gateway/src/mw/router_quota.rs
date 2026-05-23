@@ -25,7 +25,13 @@ use tower::{Layer, Service};
 /// Default per-turn tool cap (number of tool definitions sent to the LLM).
 pub const DEFAULT_MAX_TOOLS_PER_TURN: usize = 25;
 /// Default per-turn tool invocation cap.
-pub const DEFAULT_MAX_INVOKES_PER_TURN: usize = 10;
+/// 25 allows bulk-style operations (e.g. deleting many workspace nodes) to
+/// complete without hitting the limit. Override via `CONUSAI_MAX_INVOKES_PER_TURN`.
+pub const DEFAULT_MAX_INVOKES_PER_TURN: usize = 25;
+/// Default minimum cosine similarity score for confident routing (PR 2.A.3.1).
+/// Turns where `max_score < MIN_CONFIDENCE` are tagged low-confidence; the router
+/// still serves all lexical + forced-pin results but bumps the Prometheus counter.
+pub const DEFAULT_MIN_CONFIDENCE: f64 = 0.60;
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -33,6 +39,10 @@ pub const DEFAULT_MAX_INVOKES_PER_TURN: usize = 10;
 pub struct RouterQuotaConfig {
     pub max_tools_per_turn: usize,
     pub max_invokes_per_turn: usize,
+    /// Minimum cosine similarity score [0.0, 1.0] for a turn to be considered
+    /// high-confidence by the semantic router (PR 2.A.3.1).
+    /// Turns below this threshold are flagged via `low_confidence_turns_total`.
+    pub min_confidence: f64,
     /// Optional daily quota enforcer. When set, agent/chat routes check the
     /// per-day turn limit before passing through.
     pub quota: Option<Arc<QuotaChecker>>,
@@ -45,6 +55,7 @@ impl std::fmt::Debug for RouterQuotaConfig {
         f.debug_struct("RouterQuotaConfig")
             .field("max_tools_per_turn", &self.max_tools_per_turn)
             .field("max_invokes_per_turn", &self.max_invokes_per_turn)
+            .field("min_confidence", &self.min_confidence)
             .field("quota_enabled", &self.quota.is_some())
             .field("upgrade_url", &self.upgrade_url)
             .finish()
@@ -56,6 +67,7 @@ impl Default for RouterQuotaConfig {
         Self {
             max_tools_per_turn: DEFAULT_MAX_TOOLS_PER_TURN,
             max_invokes_per_turn: DEFAULT_MAX_INVOKES_PER_TURN,
+            min_confidence: DEFAULT_MIN_CONFIDENCE,
             quota: None,
             upgrade_url: "/account/billing".into(),
         }
@@ -72,12 +84,18 @@ impl RouterQuotaConfig {
         }
         let upgrade_url = std::env::var("BILLING_RETURN_URL")
             .unwrap_or_else(|_| "/account/billing".into());
+        let min_confidence = std::env::var("CONUSAI_ROUTER_MIN_CONFIDENCE")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(DEFAULT_MIN_CONFIDENCE)
+            .clamp(0.0, 1.0);
         Self {
             max_tools_per_turn: env_usize("CONUSAI_MAX_TOOLS_PER_TURN", DEFAULT_MAX_TOOLS_PER_TURN),
             max_invokes_per_turn: env_usize(
                 "CONUSAI_MAX_INVOKES_PER_TURN",
                 DEFAULT_MAX_INVOKES_PER_TURN,
             ),
+            min_confidence,
             quota: None,
             upgrade_url,
         }
@@ -85,6 +103,15 @@ impl RouterQuotaConfig {
 
     pub fn with_quota(mut self, quota: Arc<QuotaChecker>) -> Self {
         self.quota = Some(quota);
+        self
+    }
+
+    /// Override the confidence threshold at which the router falls back to the
+    /// lexical + top-3 ensemble (PR 2.A.3.1). Useful for tests and per-deploy
+    /// tuning via `RouterQuotaLayer::with_config(…)`.
+    #[allow(dead_code)]
+    pub fn with_min_confidence(mut self, min_confidence: f64) -> Self {
+        self.min_confidence = min_confidence.clamp(0.0, 1.0);
         self
     }
 }
@@ -182,6 +209,7 @@ where
                 Arc::new(RouterQuotaConfig {
                     max_tools_per_turn: plan_limits.max_tools_per_turn,
                     max_invokes_per_turn: plan_limits.max_invokes_per_turn,
+                    min_confidence: cfg.min_confidence,
                     quota: cfg.quota.clone(),
                     upgrade_url: cfg.upgrade_url.clone(),
                 })
@@ -266,6 +294,7 @@ mod tests {
         let quota_cfg = RouterQuotaConfig {
             max_tools_per_turn: 42,
             max_invokes_per_turn: 7,
+            min_confidence: DEFAULT_MIN_CONFIDENCE,
             quota: None,
             upgrade_url: "/account/billing".into(),
         };
@@ -309,6 +338,7 @@ mod tests {
         let global_cfg = RouterQuotaConfig {
             max_tools_per_turn: 99,
             max_invokes_per_turn: 99,
+            min_confidence: DEFAULT_MIN_CONFIDENCE,
             quota: None,
             upgrade_url: "/billing".into(),
         };

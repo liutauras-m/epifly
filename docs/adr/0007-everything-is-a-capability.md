@@ -97,3 +97,20 @@ Job-backed capabilities (e.g. `transcribe-video`) are registered programmaticall
 - **Keeping domain chains**: Would require Rust changes for every new domain; no discoverability.
 - **Single omnibus `NativeFactory` in `agent-core`**: Would require `agent-core` to depend on `jobs`, creating a circular dependency.
 - **Adding `can_handle(card: &CapabilityCard)` to `CapabilityFactory`**: Too large a breaking change at this stage.
+
+
+---
+
+## Addendum — 2026-05-22 (capabilities-consolidation refactor)
+
+**Capabilities are *domain-level*.** One capability ≡ one coherent toolkit;
+granularity lives in `[[tools]]`, not in directories.
+
+The 15 granular `storage.*` capabilities collapsed into two:
+`storage-workspace` (11 workspace-node tools) and `storage-fs` (5 filesystem-path tools).
+Provider dispatch is on `tool_name` in `invoke()` — the canonical pattern for multi-tool
+native capabilities. `ToolManifest` schema is unchanged; no `[[config.tools]]` extension exists.
+
+**Rule**: ANN embeddings index one card per domain. If two capabilities compete for the
+same prompt, they are the same domain and should be merged. Splitting a domain across
+cards is an anti-pattern.

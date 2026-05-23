@@ -1,12 +1,14 @@
 <script lang="ts">
-	import { AgentChatStream, AgentChatComposer } from '@conusai/ui/features';
-	import type { Attachment } from '@conusai/ui/features';
+	import AgentChatStream from '../AgentChatStream.svelte';
+	import AgentChatComposer from '../AgentChatComposer.svelte';
+	import SuggestionChips from '../SuggestionChips.svelte';
+	import ContextChip from '../ContextChip.svelte';
+	import CapabilityBrowser, { type CapEntry } from '../CapabilityBrowser.svelte';
+	import AppBottomSheet from '../chrome/AppBottomSheet.svelte';
+	import type { Attachment } from '../AgentChatComposer.svelte';
 	import type { ConusSdk } from '@conusai/sdk';
 	import type { WorkspaceNode } from '@conusai/types';
-	import favicon from '@conusai/ui/assets/images/favicon.png';
-	import SuggestionChips from '../parts/SuggestionChips.svelte';
-	import ContextChip from '../parts/ContextChip.svelte';
-	import { recordRect, playFlip } from '@conusai/ui/motion';
+	import { recordRect, playFlip } from '../../motion/index.js';
 
 	let {
 		sdk,
@@ -14,6 +16,8 @@
 		selectedNode,
 		onSelectNode,
 		userName,
+		sigil,
+		suggestions,
 	}: {
 		sdk: ConusSdk;
 		chatStream: {
@@ -21,18 +25,40 @@
 			toolCards: Map<string, any>;
 			toolCardsList?: Array<[string, any]>;
 			inFlight: boolean;
+			lastRoutingMeta?: any;
+			lastInvalidation?: any;
 			send: (p: string, opts?: any) => void;
 			newSession: () => void;
 		};
 		selectedNode: WorkspaceNode | null;
 		onSelectNode: (n: WorkspaceNode | null) => void;
 		userName: string;
+		/** Optional sigil image URL shown above the greeting in empty state. */
+		sigil?: string;
+		/** Optional override for the 4 suggestion chips. */
+		suggestions?: string[];
 	} = $props();
 
 	let inputValue = $state('');
 	let attachments = $state<Attachment[]>([]);
 	let messagesEl = $state<HTMLElement | undefined>();
 	let chipsUsed = $state(false);
+	let retryPickerOpen = $state(false);
+
+	function handleRetryWithCapability() {
+		retryPickerOpen = true;
+	}
+
+	function handlePickCapabilityForRetry(cap: CapEntry) {
+		retryPickerOpen = false;
+		const last = chatStream.lastSend;
+		if (!last) return;
+		chatStream.send(last.prompt, {
+			workspaceNodeId: last.workspaceNodeId,
+			attachmentIds: last.attachmentIds,
+			forcedCapability: cap.name,
+		});
+	}
 
 	// Reset local composer state when chatStream.newSession() clears messages
 	$effect(() => {
@@ -43,21 +69,20 @@
 		}
 	});
 
-	// For FLIP transition: bind to centred composer in empty state
+	// For FLIP transition between empty-state and active-state composers
 	let centredComposerEl = $state<HTMLElement | undefined>();
-	// For FLIP transition: bind to docked composer in active state
 	let dockedComposerEl = $state<HTMLElement | undefined>();
-	// Saved rect before state flip
 	let savedRect: DOMRect | null = null;
 
 	const isEmpty = $derived(chatStream.messages.length === 0);
 
-	const SUGGESTIONS = [
+	const DEFAULT_SUGGESTIONS = [
 		'What can you help me with?',
 		'Explain the difference between AI agents and AI assistants.',
 		'What tools and capabilities do you have?',
 		'What is the current time?',
 	];
+	const SUGGESTIONS = $derived(suggestions ?? DEFAULT_SUGGESTIONS);
 
 	function greeting() {
 		const h = new Date().getHours();
@@ -66,14 +91,12 @@
 		return 'Good evening';
 	}
 
-	// Split greeting text into words for stagger animation
 	const greetingWords = $derived(
 		`${greeting()}, ${userName.split(' ')[0]}.`.split(' ')
 	);
 
 	function handleSubmit(prompt: string, atts: Attachment[] = []) {
 		if (!prompt.trim() && atts.length === 0) return;
-		// Record composer rect before state changes (for FLIP)
 		if (centredComposerEl) savedRect = recordRect(centredComposerEl);
 		chipsUsed = true;
 		chatStream.send(prompt, {
@@ -89,12 +112,10 @@
 		handleSubmit(text);
 	}
 
-	// After state flips to active, play FLIP on docked composer
 	$effect(() => {
 		if (!isEmpty && dockedComposerEl && savedRect) {
 			const rect = savedRect;
 			savedRect = null;
-			// Run after paint
 			requestAnimationFrame(() => {
 				if (dockedComposerEl) playFlip(dockedComposerEl, rect, { duration: 320 });
 			});
@@ -104,8 +125,6 @@
 	async function handleUpload(files: File[]): Promise<Attachment[]> {
 		const results: Attachment[] = [];
 		for (const file of files) {
-			// workspaces.upload → /ui/upload (session-token auth, works in all contexts)
-			// files.upload → /v1/files (JWT Bearer only, unavailable without device registration)
 			const res = await sdk.workspaces.upload(file);
 			if (res.data) {
 				results.push({
@@ -121,9 +140,11 @@
 
 <div class="chat-screen">
 	{#if isEmpty}
-		<!-- Empty state: centred greeting -->
+		<!-- Empty state: centred greeting + composer + suggestions -->
 		<div class="empty-state">
-			<img class="sigil" src={favicon} alt="" aria-hidden="true" />
+			{#if sigil}
+				<img class="sigil" src={sigil} alt="" aria-hidden="true" />
+			{/if}
 
 			<h1 class="greeting" aria-label="{greeting()}, {userName.split(' ')[0]}.">
 				{#each greetingWords as word, i}
@@ -161,13 +182,15 @@
 				toolCards={chatStream.toolCards}
 				toolCardsList={chatStream.toolCardsList}
 				inFlight={chatStream.inFlight}
+				routingMeta={chatStream.lastRoutingMeta ?? null}
+				onRetryWithCapability={handleRetryWithCapability}
 				bind:messagesEl
 			/>
 		</div>
 
 		<div class="composer-dock" bind:this={dockedComposerEl}>
 			{#if selectedNode}
-				<div class="context-row">
+				<div class="context-row context-row--docked">
 					<ContextChip node={selectedNode} onClear={() => onSelectNode(null)} />
 				</div>
 			{/if}
@@ -180,6 +203,19 @@
 			/>
 		</div>
 	{/if}
+
+	<!-- Retry-with-capability picker (PR 3.B.2). Opens when the assistant turn
+	     served zero tools or the LLM said it doesn't have the needed tool. -->
+	{#if retryPickerOpen}
+		<AppBottomSheet open onClose={() => (retryPickerOpen = false)}>
+			{#snippet children()}
+				<div class="picker-wrap">
+					<h2 class="picker-title">Pick a capability</h2>
+					<CapabilityBrowser {sdk} onSelect={handlePickCapabilityForRetry} />
+				</div>
+			{/snippet}
+		</AppBottomSheet>
+	{/if}
 </div>
 
 <style>
@@ -191,7 +227,7 @@
 		background: var(--paper);
 	}
 
-	/* ── Empty state ── */
+	/* ── Empty state ────────────────────────────────────────────────────── */
 	.empty-state {
 		flex: 1;
 		display: flex;
@@ -202,7 +238,6 @@
 		gap: var(--s-3);
 	}
 
-	/* Sigil: favicon image with entrance animation */
 	.sigil {
 		width: 68px;
 		height: 68px;
@@ -211,17 +246,15 @@
 		object-fit: contain;
 		animation: sigil-enter var(--dur-3) var(--ease-spring) both;
 	}
-
 	@keyframes sigil-enter {
 		0%   { opacity: 0; transform: scale(0.72) rotate(-8deg); filter: blur(4px); }
 		60%  { opacity: 1; transform: scale(1.05) rotate(1deg);  filter: blur(0); }
 		100% { opacity: 1; transform: scale(1)    rotate(0deg);  filter: blur(0); }
 	}
 
-	/* Greeting: word-by-word stagger fade-up */
 	.greeting {
 		font-family: var(--font-display);
-		font-size: 32px;
+		font-size: var(--t-h1);
 		font-weight: 700;
 		letter-spacing: -1px;
 		line-height: 1.05;
@@ -233,17 +266,12 @@
 		justify-content: center;
 		gap: 0.25em;
 	}
-
 	.word {
 		display: inline-block;
 		opacity: 0;
 		animation: word-in var(--dur-2b) var(--ease-out) both;
 	}
-
-	.word-space {
-		display: none; /* gap handles spacing */
-	}
-
+	.word-space { display: none; }
 	@keyframes word-in {
 		from { opacity: 0; transform: translateY(6px); }
 		to   { opacity: 1; transform: translateY(0); }
@@ -251,13 +279,12 @@
 
 	.sub {
 		font-family: var(--font-body);
-		font-size: 17px;
+		font-size: var(--t-body);
 		color: var(--ink-2);
 		text-align: center;
 		margin: 0;
 		animation: fade-up var(--dur-2b) var(--ease-out) 380ms both;
 	}
-
 	@keyframes fade-up {
 		from { opacity: 0; transform: translateY(6px); }
 		to   { opacity: 1; transform: translateY(0); }
@@ -271,22 +298,32 @@
 
 	.centred-composer {
 		width: 100%;
-		max-width: 640px;
+		max-width: var(--composer-w, 720px);
 		display: flex;
 		flex-direction: column;
 		gap: var(--s-2);
 		animation: fade-up var(--dur-2b) var(--ease-out) 420ms both;
 	}
-
 	@media (prefers-reduced-motion: reduce) {
 		.centred-composer { animation: none; opacity: 1; }
 	}
 
-	/* ── Active state ── */
+	.context-row {
+		display: flex;
+		justify-content: center;
+	}
+
+	/* ── Active state ───────────────────────────────────────────────────── */
 	.messages-area {
+		/* Flex passthrough — must NOT be the scroll container.
+		 * AgentChatStream's inner .messages div has overflow-y:auto and
+		 * calls scrollTo() on itself; if this wrapper also scrolls, the
+		 * inner element never overflows and scrollToBottom() is a no-op. */
 		flex: 1;
-		overflow-y: auto;
-		overflow-x: hidden;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
 	}
 
 	.composer-dock {
@@ -300,7 +337,21 @@
 		padding-top: var(--s-2);
 	}
 
-	.context-row {
+	.context-row--docked {
 		padding: 0 var(--s-4);
+		justify-content: flex-start;
+	}
+
+	.picker-wrap {
+		padding: var(--s-3) 0;
+		max-height: 70vh;
+		overflow-y: auto;
+	}
+	.picker-title {
+		margin: 0 0 var(--s-2);
+		padding: 0 var(--s-4);
+		font-size: var(--t-h3);
+		font-weight: 600;
+		color: var(--ink);
 	}
 </style>

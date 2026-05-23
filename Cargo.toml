@@ -84,6 +84,10 @@ object_store = { version = "0.11", features = ["aws"] }
 # Encryption (AES-256-GCM for per-tenant credential storage)
 aes-gcm = { version = "0.10" }
 
+# RustFS admin body encryption (argon2id key derivation + chacha20poly1305 AEAD)
+argon2          = { version = "0.5", features = ["std"] }
+chacha20poly1305 = { version = "0.10" }
+
 # Local embeddings (optional, feature-gated in agent-core)
 fastembed = { version = "5" }
 

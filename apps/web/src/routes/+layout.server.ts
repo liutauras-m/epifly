@@ -11,7 +11,9 @@ export const load: LayoutServerLoad = ({ locals, url }) => {
 			name: u.name,
 			plan: u.plan.toUpperCase(),
 			firstName: firstName(u.name),
-			initials: initials(u.name)
+			initials: initials(u.name),
+			/** Tenant identifier (PR 3.A.7) — used by client-side scope assert. */
+			tenantId: u.tenantId ?? null
 		}
 	};
 };

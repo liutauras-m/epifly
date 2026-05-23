@@ -91,10 +91,14 @@ impl EmbeddingService for NoopEmbeddingService {
     }
 
     async fn embed_query(&self, _: &str) -> anyhow::Result<Vec<f32>> {
-        anyhow::bail!("embedding not available: set EMBEDDING_BACKEND=local")
+        anyhow::bail!(
+            "embeddings disabled: gateway not compiled with --features local-embeddings"
+        )
     }
 
     async fn embed_documents(&self, _: Vec<String>) -> anyhow::Result<Vec<Vec<f32>>> {
-        anyhow::bail!("embedding not available: set EMBEDDING_BACKEND=local")
+        anyhow::bail!(
+            "embeddings disabled: gateway not compiled with --features local-embeddings"
+        )
     }
 }

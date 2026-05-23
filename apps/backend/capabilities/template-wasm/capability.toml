@@ -9,6 +9,7 @@ tags        = ["demo", "wasm", "test"]
 emits       = ["application/json"]
 idempotent  = true
 requires    = []
+search_keywords = ["wasm", "ping", "wasm-ping", "webassembly", "wasm ping", "ping test", "42"]
 
 [[tools]]
 name = "ping"

@@ -1,5 +1,6 @@
 <script lang="ts">
-	import MobileBottomSheet from '../chrome/MobileBottomSheet.svelte';
+	import AppBottomSheet from '../chrome/AppBottomSheet.svelte';
+	import type { CapEntry } from '../CapabilityBrowser.svelte';
 
 	let {
 		open,
@@ -8,18 +9,19 @@
 		onInvoke,
 	}: {
 		open: boolean;
-		capability: { name: string; description?: string; kind: string; tools?: any[] } | null;
+		capability: CapEntry | null;
 		onClose: () => void;
-		onInvoke: (name: string) => void;
+		/** Called with the full capability so the parent can build a rich invocation prompt. */
+		onInvoke: (cap: CapEntry) => void;
 	} = $props();
 </script>
 
-<MobileBottomSheet {open} {onClose} title={capability?.name ?? ''}>
+<AppBottomSheet {open} {onClose} title={capability?.name ?? ''}>
 	{#snippet children()}
 		{#if capability}
 			<div class="detail-body">
 				<div class="detail-kind">
-					<span class="kind-badge">{capability.kind}</span>
+					<span class="kind-badge">{capability.kind ?? 'tool'}</span>
 				</div>
 
 				{#if capability.description}
@@ -28,7 +30,7 @@
 
 				{#if capability.tools?.length}
 					<div class="tools-section">
-						<div class="tools-label">TOOLS</div>
+						<div class="tools-label">Tools</div>
 						{#each capability.tools as tool}
 							<div class="tool-row">
 								<span class="tool-name">{tool.name}</span>
@@ -40,16 +42,18 @@
 					</div>
 				{/if}
 
-				<button class="invoke-btn" onclick={() => { onInvoke(capability.name); onClose(); }}>
+				<button class="invoke-btn" onclick={() => { onInvoke(capability); onClose(); }}>
 					Invoke in current workspace
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+						stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
+						width="18" height="18" aria-hidden="true">
 						<path d="M4 10h12M10 4l6 6-6 6"/>
 					</svg>
 				</button>
 			</div>
 		{/if}
 	{/snippet}
-</MobileBottomSheet>
+</AppBottomSheet>
 
 <style>
 	.detail-body {
@@ -63,16 +67,18 @@
 
 	.kind-badge {
 		font-family: var(--font-mono);
-		font-size: 11px;
+		font-size: var(--t-label);
 		background: var(--ember-soft);
 		color: var(--ember-2);
 		padding: 4px var(--s-2);
 		border-radius: var(--r-sm);
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
 	}
 
 	.detail-desc {
 		font-family: var(--font-body);
-		font-size: 15px;
+		font-size: var(--t-body);
 		color: var(--ink-2);
 		line-height: 1.5;
 		margin: 0;
@@ -82,7 +88,7 @@
 
 	.tools-label {
 		font-family: var(--font-mono);
-		font-size: 11px;
+		font-size: var(--t-label);
 		letter-spacing: 0.08em;
 		color: var(--ink-3);
 		text-transform: uppercase;
@@ -96,14 +102,14 @@
 
 	.tool-name {
 		font-family: var(--font-mono);
-		font-size: 13px;
+		font-size: var(--t-meta);
 		color: var(--ink);
 		display: block;
 	}
 
 	.tool-desc {
 		font-family: var(--font-body);
-		font-size: 13px;
+		font-size: var(--t-meta);
 		color: var(--ink-3);
 		display: block;
 		margin-top: 2px;
@@ -120,13 +126,13 @@
 		border: none;
 		border-radius: var(--r-md);
 		font-family: var(--font-body);
-		font-size: 16px;
+		font-size: var(--t-body);
 		font-weight: 600;
 		cursor: pointer;
 		transition: background var(--dur-1);
 	}
-
 	.invoke-btn:hover { background: var(--ember-2); }
+	.invoke-btn:focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }
 
 	@media (prefers-reduced-motion: reduce) {
 		.invoke-btn { transition: none; }

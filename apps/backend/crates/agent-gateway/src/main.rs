@@ -84,12 +84,14 @@ async fn main() -> Result<()> {
     let (_telemetry, prom_registry) = common::telemetry::init("agent-gateway", "info");
     let prom_registry = Arc::new(prom_registry);
 
-    // Register billing/quota metrics + RustFS metrics.
+    // Register billing/quota metrics + RustFS metrics + router metrics.
     billing_core::metrics::register(&prom_registry);
     let rustfs_metrics = metrics::RustFsMetrics::register(&prom_registry);
+    let router_metrics = metrics::RouterMetrics::register(&prom_registry);
 
     let mut state = AppState::from_env().await?;
     state.rustfs_metrics = Some(Arc::clone(&rustfs_metrics));
+    state.router_metrics = Some(Arc::clone(&router_metrics));
     let state = Arc::new(state);
     let loaded = state.registry.lock().unwrap().len();
     info!(capabilities = loaded, "capability registry loaded");

@@ -1,7 +1,6 @@
 <script lang="ts">
-	import '@conusai/ui/tokens.css';
 	import '@conusai/ui/foundry.css';
-	import { ThemeProvider, LiveAnnouncer } from '@conusai/ui';
+	import { ThemeProvider, LiveAnnouncer, ToastHost } from '@conusai/ui';
 	import { emit } from '@tauri-apps/api/event';
 
 	async function handleThemeChange(theme: string) {
@@ -9,6 +8,11 @@
 	}
 
 	let { children } = $props();
+
+	// Signal hydration complete — mirrors the web app so shared E2E selectors work.
+	$effect(() => {
+		document.documentElement.dataset.hydrated = 'true';
+	});
 </script>
 
 <ThemeProvider onThemeChange={handleThemeChange}>
@@ -16,6 +20,7 @@
 		{@render children()}
 	</div>
 	<LiveAnnouncer />
+	<ToastHost />
 </ThemeProvider>
 
 <style>

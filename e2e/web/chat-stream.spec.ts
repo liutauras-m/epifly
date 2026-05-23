@@ -104,7 +104,8 @@ test.describe('chat stream', () => {
     await page.getByRole('textbox').fill('search the web');
     await submitComposer(page);
 
-    await expect(page.getByText('web_search')).toBeVisible({ timeout: 5000 });
+    // ToolCallCard renders name with underscores replaced by spaces (e.g. web_search → web search)
+    await expect(page.getByText('web search')).toBeVisible({ timeout: 5000 });
   });
 
   test('file upload via drag-drop triggers SDK upload', async ({ page }) => {

@@ -170,6 +170,9 @@ pub struct RouterMetrics {
 struct CachedResult {
     cap_names: Vec<String>,
     tool_defs: Vec<Value>,
+    /// Best semantic match score: `1.0 - min_distance` for ANN hits, `0.0` if no ANN hits.
+    /// Used by the confidence-threshold fallback in `build_ctx` (PR 2.A.3.1).
+    max_score: f64,
 }
 
 pub struct SemanticCapabilityRouter {
@@ -281,22 +284,36 @@ impl SemanticCapabilityRouter {
 
         let t0 = Instant::now();
 
-        // Embed the query.
-        let embedding = self.embedder.embed_query(query).await?;
-
-        // ANN search with namespace + tags filter.
+        // Embed the query. If embedding is unavailable (e.g. NoopEmbeddingService in
+        // test mode, or a transient embedding service failure), skip ANN entirely and
+        // fall through to `include_always` + lexical matching — so callers still get
+        // deterministic tools in environments without a vector store.
         let limit = self.cfg.top_k.min(50);
-        let hits = self
-            .vector_store
-            .top_n_capabilities_filtered(&embedding, limit, &self.cfg.namespace, &self.cfg.tags_any)
-            .await
-            .unwrap_or_default();
+        let hits = match self.embedder.embed_query(query).await {
+            Ok(embedding) => self
+                .vector_store
+                .top_n_capabilities_filtered(&embedding, limit, &self.cfg.namespace, &self.cfg.tags_any)
+                .await
+                .unwrap_or_default(),
+            Err(e) => {
+                tracing::debug!(
+                    error = %e,
+                    "embed_query unavailable — skipping ANN, using include_always + lexical only"
+                );
+                vec![]
+            }
+        };
 
-        // Apply distance threshold.
+        // Apply distance threshold; track min_distance across passing hits so
+        // callers can compute max_score = 1.0 - min_distance (PR 2.A.3.1).
+        let mut min_distance = f64::MAX;
         let mut cap_names: Vec<String> = hits
             .into_iter()
             .filter(|h| {
                 if h.distance <= self.cfg.max_distance {
+                    if h.distance < min_distance {
+                        min_distance = h.distance;
+                    }
                     metrics::semantic_router_distance().record(h.distance, &[]);
                     true
                 } else {
@@ -305,6 +322,12 @@ impl SemanticCapabilityRouter {
             })
             .map(|h| h.capability_id)
             .collect();
+        // max_score ∈ [0.0, 1.0]: 0.0 when no ANN hit passed the distance threshold.
+        let max_score = if min_distance < f64::MAX {
+            (1.0_f64 - min_distance).max(0.0)
+        } else {
+            0.0
+        };
 
         // Post-filter by AttachmentHint (skip if hint is empty — no attachments).
         if !hint.is_empty() {
@@ -352,6 +375,7 @@ impl SemanticCapabilityRouter {
         let result = Arc::new(CachedResult {
             cap_names: cap_names.clone(),
             tool_defs,
+            max_score,
         });
         self.cache.insert(key, result).await;
 
@@ -392,6 +416,33 @@ impl SemanticCapabilityRouter {
             .get(&key)
             .await
             .map(|r| r.tool_defs.clone())
+            .unwrap_or_default())
+    }
+
+    /// Like `tool_definitions` but also returns the best semantic match score
+    /// (`max_score` ∈ [0.0, 1.0]; 0.0 when no ANN hits passed the distance threshold).
+    ///
+    /// Used by `build_ctx` to implement the confidence-threshold fallback (PR 2.A.3.1).
+    pub async fn tool_definitions_and_score(
+        &self,
+        query: &str,
+        tenant: Option<&TenantContext>,
+    ) -> anyhow::Result<(Vec<Value>, f64)> {
+        let hint = AttachmentHint::default();
+        let tenant_id = tenant.map(|t| t.tenant_id.as_str()).unwrap_or("");
+        let key = self.cache_key(tenant_id, query, &hint);
+
+        if let Some(result) = self.cache.get(&key).await {
+            return Ok((result.tool_defs.clone(), result.max_score));
+        }
+
+        let _ = self.select_with_hint(query, tenant, &hint).await?;
+
+        Ok(self
+            .cache
+            .get(&key)
+            .await
+            .map(|r| (r.tool_defs.clone(), r.max_score))
             .unwrap_or_default())
     }
 
@@ -802,6 +853,8 @@ mod tests {
                     name: "always_cap__do".into(),
                     description: "do it".into(),
                     input_schema: serde_json::json!({"type":"object"}),
+                    search_keywords: vec![],
+                    read_before_write: None,
                 }],
                 config: serde_json::Value::Null,
                 tags: vec![],

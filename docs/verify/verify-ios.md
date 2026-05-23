@@ -474,3 +474,22 @@ cd apps/browser-shell && \
 - ✅ All other chat surfaces — login, compose, submit, new-conversation reset, scrollable container — render correctly.
 
 Users see the tool result **in the assistant's natural-language response**; they only miss the live status chip ("running → success") that the tool-card UI would have shown. The agent is fully functional.
+
+---
+
+## §19 Live state + deep links (PR 3.A.6 / 3.A.8 / 3.C — manual)
+
+The Playwright suite in `apps/web` covers the web-side guarantees (`e2e/web/live-resources.spec.ts`, `e2e/web/url-state.spec.ts`, `e2e/web/tool-errors.spec.ts`). The Tauri iOS shell behaviour is verified manually because the Tauri WebDriver bridge does not yet handle deep links + background lifecycle on the simulator.
+
+### Checklist
+
+1. **Deep-link cold open** — boot the iOS simulator, install the shell build, then:
+   ```sh
+   xcrun simctl openurl booted "conusai://open?ws=<known-ws-id>"
+   ```
+   Expected: app launches into the chat screen with that workspace selected (breadcrumb shows the node, composer is ready). If the id is unknown, a toast `Workspace not found, returning to root` fires and the URL clears.
+2. **Mid-session URL refresh** — from inside the app, select a workspace node, kill via the multitask switcher, then re-launch via the same `xcrun simctl openurl …` command. Expected: same node restored, no reset.
+3. **Background → foreground live refresh** — open the app, mutate workspace from a separate desktop browser session (e.g. create a folder via the web app), then foreground the simulator app. Expected: workspace tree shows the new folder within ~1 s of resume. This exercises `createLiveResource`'s `visibilitychange === 'visible'` handler (PR 3.A.8).
+4. **Recents live refresh** — open the drawer, note the recents count, start a new chat from a desktop browser session, then resume the shell. Expected: recents list shows the new thread row within ~1 s.
+
+If any step fails: capture a `xcrun simctl io booted recordVideo` clip, attach it to the regression bug. Do **not** mark green unless all four pass back-to-back.

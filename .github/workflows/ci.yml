@@ -62,6 +62,20 @@ jobs:
 
       - run: cargo test --workspace --lib
 
+      - name: Routing-quality regression (PR 4.2)
+        run: cargo test -p agent-gateway --test routing_quality --release
+
+      - name: Upload routing-quality report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: routing-quality-report
+          path: apps/backend/target/routing_quality.md
+          if-no-files-found: ignore
+
+      - name: Embeddings feature guard (PR 1.1.4)
+        run: cargo build -p agent-gateway && grep -q fastembed apps/backend/target/debug/agent-gateway
+
   frontend:
     name: Frontend Build, Lint & Test
     runs-on: ubuntu-latest
@@ -79,6 +93,9 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       - run: pnpm install --frozen-lockfile
+
+      - name: Cross-app parity lint (PR 4.4)
+        run: node scripts/check-cross-app-imports.mjs
 
       - name: Lint (biome)
         run: pnpm -w exec biome check --no-errors-on-unmatched .

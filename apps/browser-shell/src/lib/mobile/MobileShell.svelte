@@ -2,28 +2,37 @@
 	import { onMount } from 'svelte';
 	import { sdk, setSessionToken, getSessionToken } from '$lib/sdk';
 	import { isTauri, streamChatTauri } from '$lib/tauri-stream';
-	import { createChatStream } from '@conusai/ui/features';
+	import {
+		createChatStream,
+		AppTopBar,
+		AppDrawer,
+		ChatScreen,
+		CapabilitiesScreen,
+		ArtifactsScreen,
+		DrawerRecentChats,
+		buildInvocationPrompt,
+		initialRoute,
+		applyInitialRoute,
+		type CapEntry,
+	} from '@conusai/ui/features';
 	import type { WorkspaceNode } from '@conusai/types';
 
 	import { setPlatformTag } from './platform/detect.js';
 	import { tap } from '@conusai/ui/motion';
-	import { screenStore } from './stores/screen.svelte.js';
-	import { drawerStore } from './stores/drawer.svelte.js';
-	import { sheetStore } from './stores/sheet.svelte.js';
-	import { recentsStore, breadcrumbsStore } from '@conusai/ui/stores';
-
-	import MobileTopBar from './chrome/MobileTopBar.svelte';
-	import MobileDrawer from './chrome/MobileDrawer.svelte';
+	import {
+		recentsStore,
+		breadcrumbsStore,
+		screenStore,
+		drawerStore,
+		toasts,
+	} from '@conusai/ui/stores';
 
 	import DrawerProfileHeader from './parts/DrawerProfileHeader.svelte';
 	import DrawerWorkspaceTree from './parts/DrawerWorkspaceTree.svelte';
-	import DrawerRecentChats from './parts/DrawerRecentChats.svelte';
 	import ProfileSheet from './parts/ProfileSheet.svelte';
 
-	import ChatScreen from './screens/ChatScreen.svelte';
-	import CapabilitiesScreen from './screens/CapabilitiesScreen.svelte';
-	import ArtifactsScreen from './screens/ArtifactsScreen.svelte';
 	import logoDark from '@conusai/ui/assets/images/conusai-logo-darkmode.png';
+	import favicon from '@conusai/ui/assets/images/favicon.png';
 
 	// ── Auth state ──────────────────────────────────────────────────
 	let user = $state<{ name: string; plan: string } | null>(null);
@@ -34,6 +43,10 @@
 	// ── Workspace state ──────────────────────────────────────────────
 	let workspaceNodes = $state<WorkspaceNode[]>([]);
 	let selectedNode = $state<WorkspaceNode | null>(null);
+	let lastInvalidationKey = $state<string | null>(null);
+	/** Incremented on every `resource_invalidated` workspace event; drives
+	 *  DrawerWorkspaceTree's refreshSignal prop so it re-fetches automatically. */
+	let wsRefreshKey = $state(0);
 
 	// ── Profile sheet ────────────────────────────────────────────────
 	let profileSheetOpen = $state(false);
@@ -47,6 +60,7 @@
 					threadId: params.threadId,
 					workspaceNodeId: params.workspaceNodeId,
 					attachmentIds: params.attachmentIds,
+					forcedCapability: params.forcedCapability,
 					signal: params.signal,
 				})
 		: undefined;
@@ -61,7 +75,7 @@
 	);
 
 	// ── Lifecycle ────────────────────────────────────────────────────
-	onMount(() => {
+	onMount(async () => {
 		setPlatformTag();
 
 		// Restore cached token sync so API calls work immediately
@@ -75,6 +89,25 @@
 				user = JSON.parse(raw);
 				if (user) issueSessionCookie(user.name, user.plan).catch(() => {});
 			} catch { /* corrupt */ }
+		}
+
+		// Restore navigation state from URL params / deep-link (PR 3.C / 3.C.5)
+		const route = await initialRoute();
+		await applyInitialRoute<WorkspaceNode>(sdk, route, {
+			onApplyNode(node) {
+				handleSelectNode(node);
+				screenStore.setActive('chat');
+			},
+			onUnknown() {
+				toasts.warning('Workspace not found, returning to root');
+				// Tauri webview: clear the URL param if present so refresh stays clean.
+				if (typeof window !== 'undefined' && window.location.search.includes('ws=')) {
+					window.history.replaceState({}, '', window.location.pathname);
+				}
+			},
+		});
+		if (route.cap) {
+			screenStore.setActive('chat');
 		}
 	});
 
@@ -150,9 +183,34 @@
 		drawerStore.close();
 	}
 
-	function handleInvoke(capName: string) {
+	// ── Workspace revalidation on resource_invalidated (PR 3.A) ─────
+	// Incrementing wsRefreshKey propagates to DrawerWorkspaceTree via the
+	// `refreshSignal` prop, which causes that component's $effect to re-run
+	// `loadTree()` and update its own internal `nodes` state.  Previously this
+	// effect called sdk.workspaces.tree() directly here and stored the result in
+	// `workspaceNodes`, but DrawerWorkspaceTree never consumed that variable — it
+	// always rendered from its own private `nodes`.
+	$effect(() => {
+		const inv = (chatStream as any).lastInvalidation;
+		if (inv && inv.resource === 'workspace') {
+			const key = JSON.stringify(inv);
+			if (key !== lastInvalidationKey) {
+				lastInvalidationKey = key;
+				wsRefreshKey++;
+			}
+		}
+	});
+
+	function handleInvoke(cap: CapEntry) {
 		screenStore.setActive('chat');
-		// prefill handled by ChatScreen via suggestion; here just switch screen
+		// PR 2.A: pass forced_capability as structured data so the gateway pins
+		// those tools before semantic routing. The prompt is now a brief natural
+		// description — the semantic weight is carried by the structured hint.
+		const prompt = buildInvocationPrompt(cap);
+		chatStream.send(prompt, {
+			workspaceNodeId: selectedNode?.id,
+			forcedCapability: cap.name,
+		});
 	}
 </script>
 
@@ -215,7 +273,7 @@
 {:else}
 	<!-- ── Main shell ────────────────────────────────────────────── -->
 	<div class="shell">
-		<MobileTopBar
+		<AppTopBar
 			onMenuToggle={() => drawerStore.toggle()}
 			canGoBack={screenStore.canGoBack}
 			onBack={() => screenStore.pop()}
@@ -232,7 +290,7 @@
 					</button>
 				{/if}
 			{/snippet}
-		</MobileTopBar>
+		</AppTopBar>
 
 		<div class="screen-host">
 			{#if screenStore.active === 'chat'}
@@ -241,7 +299,8 @@
 					{chatStream}
 					selectedNode={selectedNode}
 					onSelectNode={(n) => { selectedNode = n; breadcrumbsStore.set(n); }}
-					userName={user.name}
+					userName={user?.name ?? ''}
+					sigil={favicon}
 				/>
 			{:else if screenStore.active === 'capabilities'}
 				<CapabilitiesScreen {sdk} onInvoke={handleInvoke} />
@@ -250,11 +309,11 @@
 			{/if}
 		</div>
 
-		<MobileDrawer open={drawerStore.open} onClose={() => drawerStore.close()}>
+		<AppDrawer open={drawerStore.open} onClose={() => drawerStore.close()}>
 			{#snippet children()}
 				<DrawerProfileHeader
-					name={user.name}
-					plan={user.plan}
+					name={user?.name ?? ''}
+					plan={user?.plan ?? ''}
 					onOpenProfile={() => profileSheetOpen = true}
 				/>
 
@@ -262,12 +321,20 @@
 					{sdk}
 					selectedNodeId={selectedNode?.id}
 					onSelectNode={handleSelectNode}
+					onNodesLoaded={(ns) => workspaceNodes = ns}
+					refreshSignal={wsRefreshKey}
 				/>
 
 				<DrawerRecentChats
-					recentIds={recentsStore.ids}
-					nodes={workspaceNodes}
-					onSelect={handleSelectNode}
+					{sdk}
+					tenantId={null}
+					{chatStream}
+					onSelect={(thread) => {
+						chatStream.loadThread(thread.id);
+						breadcrumbsStore.clear();
+						drawerStore.close();
+						screenStore.setActive('chat');
+					}}
 				/>
 
 				<!-- Secondary links -->
@@ -305,7 +372,7 @@
 					</button>
 				</div>
 			{/snippet}
-		</MobileDrawer>
+		</AppDrawer>
 	</div>
 
 	<ProfileSheet

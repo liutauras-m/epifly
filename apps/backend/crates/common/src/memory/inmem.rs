@@ -12,7 +12,7 @@ use crate::memory::workspace::{NodeKind, WorkspaceNode, join_virtual_path, valid
 use crate::types::ThreadId;
 use async_trait::async_trait;
 use chrono::Utc;
-use serde_json::json;
+use serde_json;
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -50,7 +50,6 @@ impl ThreadStore for InMemoryThreadStore {
             last_active: now,
             message_count: initial_messages.len(),
             summary: None,
-            metadata: json!({}),
         };
         {
             let mut threads = self.threads.lock().unwrap();

@@ -7,6 +7,14 @@ export interface StreamChatParams {
   threadId?: string | null;
   workspaceNodeId?: string | null;
   attachmentIds?: string[];
+  /**
+   * Optional capability name to pin for this turn (PR 2.A).
+   *
+   * When provided, the gateway prepends that capability's tools before any
+   * semantic-routing hits so the LLM is guaranteed to see them.
+   * Set by the "Invoke in current workspace" button in the UI.
+   */
+  forcedCapability?: string | null;
   fetch?: typeof globalThis.fetch;
   signal?: AbortSignal;
 }
@@ -27,6 +35,7 @@ export async function* streamChat(
       if (params.threadId) body.thread_id = params.threadId;
       if (params.workspaceNodeId) body.workspace_node_id = params.workspaceNodeId;
       if (params.attachmentIds?.length) body.attachment_ids = params.attachmentIds;
+      if (params.forcedCapability) body.forced_capability = params.forcedCapability;
 
       const res = await fetchFn(`${params.baseUrl}${EP.UI_STREAM}`, {
         method: 'POST',
@@ -66,7 +75,32 @@ export async function* streamChat(
                 yield { kind: 'tool_start', id, name };
               } else if (delta.tool_call_result) {
                 const { tool_use_id, result } = delta.tool_call_result as { tool_use_id: string; result: string };
-                yield { kind: 'tool_result', tool_use_id, result };
+                const error = result.startsWith('Error:') ? result.slice('Error:'.length).trim() : undefined;
+                yield { kind: 'tool_result', tool_use_id, result, ...(error !== undefined && { error }) };
+              } else if (delta.routing_meta) {
+                const rm = delta.routing_meta as {
+                  forced_capability: string | null;
+                  selected_capabilities: string[];
+                  pinned_tools: string[];
+                  lexical_hits: string[];
+                  max_score: number;
+                };
+                yield {
+                  kind: 'routing_meta',
+                  forced_capability: rm.forced_capability ?? null,
+                  selected_capabilities: rm.selected_capabilities ?? [],
+                  pinned_tools: rm.pinned_tools ?? [],
+                  lexical_hits: rm.lexical_hits ?? [],
+                  max_score: rm.max_score ?? 0,
+                };
+              } else if (delta.resource_invalidated) {
+                const ri = delta.resource_invalidated as { resource: string; scope: string; changed_keys?: string[] };
+                yield {
+                  kind: 'resource_invalidated',
+                  resource: ri.resource ?? '',
+                  scope: ri.scope ?? '',
+                  changed_keys: ri.changed_keys ?? [],
+                };
               }
             }
 

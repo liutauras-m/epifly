@@ -19,6 +19,7 @@ use crate::indexing::EmbeddingService;
 use crate::llm::LlmRegistry;
 use crate::store::qdrant_vector::QdrantVectorStore;
 use async_trait::async_trait;
+use common::metrics;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -116,6 +117,8 @@ impl CapabilitySpecFactory {
             name: spec.tool_name.clone(),
             description: spec.description.clone(),
             input_schema: spec.input_schema.clone(),
+            search_keywords: vec![],
+            read_before_write: None,
         };
         let (kind, chain_cfg) = match spec.strategy.as_str() {
             "dynamic_prompt" => (ToolKind::DynamicPrompt, None),
@@ -244,13 +247,49 @@ impl BulkCapabilityFactory for CapabilitySpecFactory {
             })
             .collect();
 
-        let embeddings = match self.embedder.embed_documents(texts.clone()).await {
-            Ok(e) => e,
-            Err(err) => {
-                warn!(error = %err, "batch embed failed for capability-spec chunk — skipping embeddings");
-                vec![]
+        // ── Embedding cache (PR 2.B.3.1): skip already-cached descriptions ──────
+        let cache_hits_counter    = metrics::embedding_cache_hits();
+        let cache_misses_counter  = metrics::embedding_cache_misses();
+        let miss_indices: Vec<usize> = texts
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| registry.cached_embedding(t).is_none())
+            .map(|(i, _)| i)
+            .collect();
+
+        let miss_texts: Vec<String> = miss_indices.iter().map(|&i| texts[i].clone()).collect();
+
+        // Record hit/miss metrics.
+        let n_hits = texts.len().saturating_sub(miss_indices.len()) as u64;
+        let n_misses = miss_indices.len() as u64;
+        if n_hits > 0   { cache_hits_counter.add(n_hits, &[]); }
+        if n_misses > 0 { cache_misses_counter.add(n_misses, &[]); }
+
+        let fresh_embeddings: Vec<Vec<f32>> = if miss_texts.is_empty() {
+            vec![]
+        } else {
+            match self.embedder.embed_documents(miss_texts.clone()).await {
+                Ok(e) => e,
+                Err(err) => {
+                    warn!(error = %err, "batch embed failed for capability-spec chunk — skipping embeddings");
+                    vec![]
+                }
             }
         };
+
+        // Populate cache with newly computed embeddings.
+        for (j, &idx) in miss_indices.iter().enumerate() {
+            if let Some(emb) = fresh_embeddings.get(j) {
+                registry.cache_embedding(texts[idx].clone(), emb.clone());
+            }
+        }
+
+        // Build full embeddings vec (cache hits + fresh) indexed by original position.
+        // Cloned so we can later borrow `registry` mutably for `register()`.
+        let embeddings: Vec<Option<Vec<f32>>> = texts
+            .iter()
+            .map(|t| registry.cached_embedding(t).cloned())
+            .collect();
 
         let mut count = 0;
         for (i, spec) in self.specs.iter().enumerate() {
@@ -263,7 +302,7 @@ impl BulkCapabilityFactory for CapabilitySpecFactory {
                 }
             };
 
-            if let Some(emb) = embeddings.get(i) {
+            if let Some(ref emb) = embeddings[i] {
                 let _ = self
                     .vector_store
                     .upsert_capability_embedding_full(
@@ -313,6 +352,8 @@ mod tests {
                 name: name.into(),
                 description: "test".into(),
                 input_schema: serde_json::json!({"type": "object"}),
+                search_keywords: vec![],
+                read_before_write: None,
             }],
             config: serde_json::Value::Null,
             tags: vec![],

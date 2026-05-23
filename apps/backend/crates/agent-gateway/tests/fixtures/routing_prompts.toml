@@ -1,0 +1,173 @@
+# Routing-quality regression fixtures (PR 4.1).
+#
+# Each case asserts that `CapabilityRegistry::lexical_hint_capabilities(prompt, tenant)`
+# returns a list containing `expected_capability`. The lexical hints are sourced
+# from each capability's `[[tools]].search_keywords` (or top-level `search_keywords`)
+# in `apps/backend/capabilities/*/capability.toml` — so this suite catches
+# regressions when keywords are added/removed and helps catch missing keywords
+# for the symptoms documented in `docs/plan.md` §0.
+#
+# Test harness: `tests/routing_quality.rs`.
+# Pass criterion: at least 27/30 base prompts must pass.
+
+[[case]]
+id = "delete-vague"
+prompt = "delete the meeting-notes file"
+expected_capability = "storage-workspace"
+expected_tool = "delete_node"
+
+[[case]]
+id = "delete-explicit"
+prompt = "remove projects/foo/README.md"
+expected_capability = "storage-workspace"
+expected_tool = "delete_node"
+
+[[case]]
+id = "delete-trash"
+prompt = "trash the old draft"
+expected_capability = "storage-workspace"
+expected_tool = "delete_node"
+
+[[case]]
+id = "save-doc"
+prompt = "save this as notes/ideas.md"
+expected_capability = "storage-workspace"
+expected_tool = "save_document"
+
+[[case]]
+id = "rename-node"
+prompt = "rename projects/foo to demo"
+expected_capability = "storage-workspace"
+
+[[case]]
+id = "list-tree"
+prompt = "show me my workspace files"
+expected_capability = "storage-workspace"
+
+[[case]]
+id = "scaffold-sveltekit"
+prompt = "scaffold a sveltekit app under projects/demo"
+expected_capability = "code-project"
+expected_tool = "scaffold_project"
+
+[[case]]
+id = "scaffold-react"
+prompt = "create a new react+vite project at projects/web"
+expected_capability = "code-project"
+expected_tool = "scaffold_project"
+
+[[case]]
+id = "scaffold-nextjs"
+prompt = "new nextjs app called blog"
+expected_capability = "code-project"
+expected_tool = "scaffold_project"
+
+[[case]]
+id = "host-deploy"
+prompt = "host projects/demo and give me a preview url"
+expected_capability = "code-project"
+expected_tool = "host_project"
+
+[[case]]
+id = "host-publish"
+prompt = "publish this project so I can share it"
+expected_capability = "code-project"
+expected_tool = "host_project"
+
+[[case]]
+id = "add-dep"
+prompt = "add lodash to projects/demo/package.json"
+expected_capability = "code-project"
+expected_tool = "add_dependency"
+
+[[case]]
+id = "add-dep-pnpm"
+prompt = "pnpm add zod in projects/api"
+expected_capability = "code-project"
+expected_tool = "add_dependency"
+
+[[case]]
+id = "edit-file"
+prompt = "edit projects/demo/src/routes/+page.svelte"
+expected_capability = "code-project"
+
+[[case]]
+id = "read-project"
+prompt = "summarise this svelte project at projects/demo"
+expected_capability = "code-project"
+
+[[case]]
+id = "upload-file"
+prompt = "upload this invoice and store it"
+expected_capability = "file-storage"
+
+[[case]]
+id = "presigned-url"
+prompt = "give me a temporary link to invoice.pdf"
+expected_capability = "file-storage"
+
+[[case]]
+id = "ocr-vision"
+prompt = "extract text from this scanned page"
+expected_capability = "extract-ocr-vision"
+
+[[case]]
+id = "ocr-tesseract"
+prompt = "run tesseract on this image"
+expected_capability = "extract-ocr-tesseract"
+
+[[case]]
+id = "convert-pdf"
+prompt = "convert this pdf to markdown"
+expected_capability = "convert-pdf-to-md"
+
+[[case]]
+id = "transcribe-audio"
+prompt = "transcribe this meeting recording"
+expected_capability = "transcribe-video"
+
+[[case]]
+id = "mime-detect"
+prompt = "what file type is this"
+expected_capability = "sense-mime"
+
+[[case]]
+id = "classify-doc"
+prompt = "categorize file: invoice or contract"
+expected_capability = "sense-classify-document"
+
+[[case]]
+id = "extract-invoice"
+prompt = "pull the invoice number and total"
+expected_capability = "invoice-processing"
+
+[[case]]
+id = "extract-cv"
+prompt = "summarise this CV"
+expected_capability = "extract-fields-cv"
+
+[[case]]
+id = "extract-incident"
+prompt = "structure this incident report"
+expected_capability = "extract-fields-incident"
+
+[[case]]
+id = "extract-medical"
+prompt = "extract fields from this medical claim"
+expected_capability = "extract-fields-medical-claim"
+
+[[case]]
+id = "compose-email"
+prompt = "draft a follow-up email"
+expected_capability = "compose-email"
+
+[[case]]
+id = "compose-report-md"
+prompt = "write a markdown report summarising X"
+expected_capability = "compose-report-md"
+
+[[case]]
+id = "runtime-echo"
+prompt = "echo hello"
+expected_capability = "runtime-echo"
+expected_tool = "echo"

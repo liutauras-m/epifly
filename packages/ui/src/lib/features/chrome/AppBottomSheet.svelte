@@ -28,6 +28,8 @@
 	class:visible={open}
 	aria-hidden="true"
 	onclick={onClose}
+	onkeydown={(e) => { if (e.key === 'Escape') onClose(); }}
+	role="presentation"
 ></div>
 
 <div
@@ -43,7 +45,9 @@
 		<div class="sheet-header">
 			<span class="sheet-title">{title}</span>
 			<button class="sheet-close" aria-label="Close" onclick={onClose}>
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="24" height="24">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+					stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
+					width="22" height="22" aria-hidden="true">
 					<path d="M18 6L6 18M6 6l12 12"/>
 				</svg>
 			</button>
@@ -59,13 +63,12 @@
 	.backdrop {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.4);
+		background: var(--backdrop);
 		z-index: 400;
 		opacity: 0;
 		pointer-events: none;
-		transition: opacity var(--dur-2, 200ms) var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+		transition: opacity var(--dur-2) var(--ease-out);
 	}
-
 	.backdrop.visible {
 		opacity: 1;
 		pointer-events: auto;
@@ -77,19 +80,36 @@
 		left: 0;
 		right: 0;
 		background: var(--paper);
-		border-radius: var(--r-lg, 20px) var(--r-lg, 20px) 0 0;
+		border-radius: var(--r-lg) var(--r-lg) 0 0;
 		border-top: 1px solid var(--rule);
 		z-index: 410;
 		transform: translateY(100%);
-		transition: transform var(--dur-3, 320ms) var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+		transition: transform var(--dur-3) var(--ease-out);
 		max-height: 90vh;
 		display: flex;
 		flex-direction: column;
 		padding-bottom: env(safe-area-inset-bottom);
 	}
+	.sheet.open { transform: translateY(0); }
 
-	.sheet.open {
-		transform: translateY(0);
+	/* Desktop: center modal instead of bottom sheet */
+	@media (min-width: 641px) {
+		.sheet {
+			top: 50%;
+			left: 50%;
+			right: auto;
+			bottom: auto;
+			width: min(560px, 92vw);
+			max-height: min(80vh, 720px);
+			border-radius: var(--r-lg);
+			border: 1px solid var(--rule);
+			transform: translate(-50%, -50%) scale(0.96);
+			opacity: 0;
+		}
+		.sheet.open {
+			transform: translate(-50%, -50%) scale(1);
+			opacity: 1;
+		}
 	}
 
 	.drag-handle {
@@ -101,10 +121,14 @@
 		flex-shrink: 0;
 	}
 
+	@media (min-width: 641px) {
+		.drag-handle { display: none; }
+	}
+
 	.sheet-header {
 		display: flex;
 		align-items: center;
-		padding: var(--s-2) var(--s-4) var(--s-2) var(--s-4);
+		padding: var(--s-2) var(--s-4);
 		border-bottom: 1px solid var(--rule);
 		flex-shrink: 0;
 	}
@@ -112,7 +136,7 @@
 	.sheet-title {
 		flex: 1;
 		font-family: var(--font-display);
-		font-size: 16px;
+		font-size: var(--t-h2);
 		font-weight: 600;
 		color: var(--ink);
 	}
@@ -129,7 +153,6 @@
 		cursor: pointer;
 		border-radius: var(--r-sm);
 	}
-
 	.sheet-close:hover { background: var(--paper-2); }
 
 	.sheet-body {
@@ -140,7 +163,5 @@
 	@media (prefers-reduced-motion: reduce) {
 		.backdrop { transition: opacity 0.01ms; }
 		.sheet { transition: none; }
-		.sheet:not(.open) { opacity: 0; pointer-events: none; transform: none; }
-		.sheet.open { opacity: 1; transform: none; }
 	}
 </style>

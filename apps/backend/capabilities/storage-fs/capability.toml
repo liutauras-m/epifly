@@ -1,0 +1,103 @@
+schema_version = "2.0"
+name        = "storage-fs"
+version     = "1.0.0"
+namespace   = "storage.fs"
+category    = "storage"
+kind        = "native"
+description = """
+Low-level filesystem operations on paths under the tenant workspace root.
+Use when the user gives an explicit path (e.g. 'uploads/2026/05/file.pdf'),
+not when they talk about workspace nodes by name.
+"""
+tags     = ["storage", "filesystem", "path", "read", "write", "put", "move", "list"]
+accepts  = ["application/json"]
+emits    = ["application/json"]
+idempotent = true
+cost_hint = "low"
+requires  = []
+search_keywords = [
+  "read file by path", "write file by path", "put file", "upload to path",
+  "list paths", "list under prefix", "move file path",
+  "read", "file", "load", "open", "text",
+  "write", "save", "create", "put", "upload", "store file",
+  "move", "rename", "relocate file",
+  "list", "browse", "directory", "files", "ls",
+]
+
+# NOTE: No [config] op required. Provider dispatch lives in
+# StorageFsProvider::invoke() — dispatch is on tool_name in Rust.
+
+[[tools]]
+name = "read_file"
+description = "Read text content from a file path within the tenant workspace."
+
+[tools.input_schema]
+type = "object"
+required = ["path"]
+
+[tools.input_schema.properties.path]
+type = "string"
+description = "Relative file path within the tenant workspace"
+
+[[tools]]
+name = "write_file"
+description = "Write text content to a file path within the tenant workspace. Creates parent directories as needed."
+
+[tools.input_schema]
+type = "object"
+required = ["path", "content"]
+
+[tools.input_schema.properties.path]
+type = "string"
+description = "Relative file path within the tenant workspace"
+
+[tools.input_schema.properties.content]
+type = "string"
+description = "Text content to write"
+
+[[tools]]
+name = "put_object"
+description = "Write content to a workspace path. Supply content (text) or content_base64 (binary)."
+
+[tools.input_schema]
+type = "object"
+required = ["path"]
+
+[tools.input_schema.properties.path]
+type = "string"
+description = "Relative workspace path to write to (e.g. uploads/2026/01/file.pdf)"
+
+[tools.input_schema.properties.content]
+type = "string"
+description = "Text content to write"
+
+[tools.input_schema.properties.content_base64]
+type = "string"
+description = "Base64-encoded binary content to write"
+
+[[tools]]
+name = "move_object"
+description = "Move a file from one workspace path to another. Parent directories of the destination are created automatically."
+
+[tools.input_schema]
+type = "object"
+required = ["from", "to"]
+
+[tools.input_schema.properties.from]
+type = "string"
+description = "Source workspace-relative path"
+
+[tools.input_schema.properties.to]
+type = "string"
+description = "Destination workspace-relative path"
+
+[[tools]]
+name = "list_paths"
+description = "List files and directories under a path prefix in the workspace root. Renamed from the legacy list_folders to disambiguate from storage-workspace.list_folders."
+
+[tools.input_schema]
+type = "object"
+
+[tools.input_schema.properties.prefix]
+type = "string"
+description = "Workspace-relative prefix to list under. Defaults to workspace root."

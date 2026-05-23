@@ -1438,3 +1438,45 @@ GATEWAY_INTEGRATION_TEST=1 SUPER_TOKEN=<jwt> TOKEN=<jwt> \
 
 A prerequisite check (UC §10.0) hits `GET /admin/capabilities` with `SUPER_TOKEN` and asserts that all 13 required namespaces are registered before the use-case tests run.
 
+---
+
+## 18. Live UI State Architecture (PR 3.A)
+
+All server-driven UI invalidations flow through a single generic channel instead of per-feature SSE deltas — see [`docs/plan.md`](plan.md) §11 for the design rationale.
+
+**Backend.** `agent_core::realtime::invalidation::InvalidationEvent { resource, scope, changed_keys }` is broadcast through a per-tenant `tokio::sync::broadcast::Sender` (`InvalidationBus`, wired into `AppState::invalidation_bus`). The streaming `stream_agent` (`apps/backend/crates/agent-gateway/src/routes/agent.rs`) emits exactly one `resource_invalidated` SSE delta per turn per resource, with deduped `changed_keys`. Today it emits `resource: "workspace"` when `ArtifactBridge::process_if_artifacts` records virtual paths, and `resource: "threads"` when the turn either created a new thread or set a title via `maybe_set_title` (PR 3.A.6). Future producers append themselves to this same channel — no new wire format.
+
+**Frontend.** `packages/ui/src/lib/live/createLiveResource.svelte.ts` exposes a runes-only factory:
+
+```ts
+const recents = createLiveResource(
+  'threads',
+  () => sdk.threads.list({ limit: 20 }),
+  { tenantId: data.user?.tenantId ?? null },
+);
+$effect(() => { /* forward chatStream.lastInvalidation to recents.notifyInvalidationWithScope */ });
+```
+
+`mutate(updater, { rollbackOn })` is the only sanctioned optimistic-update path; the rollback promise contract is mandatory (PR 3.A.4.1) — failure reverts the snapshot via `structuredClone`, sets `lastError`, fires `toasts.error(...)`. The bare `mutate(updater)` form is deprecated and logs a one-shot `console.warn`.
+
+**Scope guard (PR 3.A.7).** Both `createChatStream` and `createLiveResource` accept an optional `tenantId`. When set, `resource_invalidated` deltas whose `scope` does not match are dropped and logged via `console.warn`. The server filters by tenant before sending; the client check is belt-and-braces against misconfig or a real cross-tenant leak. `apps/web` plumbs `tenantId` through `SessionUser` → `+layout.server.ts` → `data.user.tenantId`. `apps/browser-shell` ships `tenantId: null` (no server-side session) — the check no-ops.
+
+**Mobile webview suspend.** `createLiveResource` listens for `visibilitychange === 'visible'` and re-fetches when the tab/app has been idle ≥ 60 s, so the live tree recovers after iOS suspends a Tauri webview (PR 3.A.8). Verified manually in `docs/verify/verify-ios.md` §19.
+
+**Cross-app parity (load-bearing).** `createLiveResource`, `createChatStream`, `DrawerRecentChats`, `CapabilityPinChip`, `applyInitialRoute` all live in `packages/ui` and are imported identically by `apps/web` and `apps/browser-shell` (§0.5 invariant of `docs/plan.md`). `scripts/check-cross-app-imports.mjs` enforces this: no feature `.svelte` may live under `apps/<app>/src/lib/features/`, and no `apps/<app>` source may import a `.svelte` from a sibling app. CI runs the script in the `frontend:` job.
+
+## 19. Capability Routing & Forced Pin (PR 2.A / 2.B)
+
+The semantic router (`agent_core::capabilities::semantic_router::SemanticCapabilityRouter`) ranks tools by cosine ANN over `fastembed` embeddings, then `build_ctx` in `routes/agent.rs` runs the post-merge pipeline (load-bearing order):
+
+1. **Semantic** — ANN top-K + `include_always`.
+2. **Lexical** — word-boundary keyword matches via `CapabilityRegistry::lexical_hint_capabilities`, sourced from `[[tools]].search_keywords` in each `capability.toml`. No in-code lexeme tables.
+3. **Forced pin** — when `req.forced_capability` is set, `tools_for_capability_exact_for_tenant(name, tenant)` resolves the tools and `merge_pinned` prepends them *before* truncation. Unknown/disabled caps are silently dropped and logged in the audit event (security: never trust the client value verbatim).
+4. **Truncate** to `router_quota.max_tools_per_turn`.
+
+The routing-quality regression suite (`apps/backend/crates/agent-gateway/tests/routing_quality.rs`) asserts that for 30 canonical fixtures, the lexical pipeline returns the expected capability — pass criterion ≥ 27/30 base prompts. Baseline drift (`tests/fixtures/routing_baseline.txt`) is a hard fail. CI runs `cargo test --test routing_quality --release` after the workspace tests.
+
+## 20. Observability (PR 1.6)
+
+OTEL tracer initialised in `agent-gateway::main` via `common::telemetry::init`. Default exporter is stdout; OTLP enabled by `OTEL_EXPORTER_OTLP_ENDPOINT`. Each chat turn produces a `chat.turn` root span with a child `router.semantic { tools_returned }` span. `/metrics` Prometheus endpoint exposes `routing_latency_ms{stage}`, `tools_per_turn`, `forced_capability_hit_rate{result}`, `embedding_cache_hit_rate{result}`, `low_confidence_turns_total`. `/healthz/embeddings` is a readiness probe that round-trips a one-token embedding through the active service; `start.sh` gates on it.
+

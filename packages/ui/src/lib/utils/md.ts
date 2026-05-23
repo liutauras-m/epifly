@@ -15,6 +15,16 @@ function esc(s: string): string {
 
 function inlineStyles(s: string): string {
   return s
+    // links [text](url) — processed first so URLs with * or ` survive
+    .replace(
+      /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener noreferrer" class="md-link">$1</a>'
+    )
+    // bare https?:// URLs not already inside an <a href>
+    .replace(
+      /(?<!href=")(?<!">)(https?:\/\/[^\s<>"']+)/g,
+      '<a href="$1" target="_blank" rel="noopener noreferrer" class="md-link">$1</a>'
+    )
     // bold+italic
     .replace(/\*\*\*([^*\n]+)\*\*\*/g, '<strong><em>$1</em></strong>')
     // bold

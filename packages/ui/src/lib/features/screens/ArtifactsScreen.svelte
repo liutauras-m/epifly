@@ -1,20 +1,30 @@
 <script lang="ts">
 	import type { ConusSdk } from '@conusai/sdk';
-	import ArtifactRow from '../parts/ArtifactRow.svelte';
+	import ArtifactRow from './ArtifactRow.svelte';
 
 	let { sdk }: { sdk: ConusSdk } = $props();
 
-	let artifacts = $state<any[]>([]);
+	type Artifact = {
+		id: string;
+		name: string;
+		kind: string;
+		size_bytes?: number;
+		updated_at?: string;
+	};
+
+	let artifacts = $state<Artifact[]>([]);
 	let loading = $state(true);
 
 	$effect(() => { loadArtifacts(); });
 
 	async function loadArtifacts() {
 		loading = true;
-		const res = await sdk.workspaces.list();
+		// Pull the full workspace tree, then filter to file kinds.
+		const res = await sdk.workspaces.tree();
 		if (!res.error && res.data) {
-			const all: any[] = (res.data as any).nodes ?? [];
-			artifacts = all.filter((n: any) => n.kind === 'file');
+			const raw = res.data as any;
+			const all: Artifact[] = Array.isArray(raw) ? raw : (raw?.nodes ?? []);
+			artifacts = all.filter((n) => n.kind === 'file');
 		}
 		loading = false;
 	}
@@ -22,14 +32,14 @@
 
 <div class="artifacts-screen">
 	{#if loading}
-		<div class="loading-list">
-			{#each [1,2,3] as _}
-				<div class="skeleton-row"></div>
+		<div class="loading-list" role="list" aria-label="Loading artifacts">
+			{#each [1, 2, 3, 4] as _}
+				<div class="skeleton-row" role="presentation"></div>
 			{/each}
 		</div>
 	{:else if artifacts.length === 0}
 		<div class="empty">
-			<p>No artifacts yet.</p>
+			<p>No artifacts yet — files attached to conversations will appear here.</p>
 		</div>
 	{:else}
 		<div class="artifacts-list">
@@ -72,11 +82,7 @@
 
 	@keyframes shimmer {
 		0%, 100% { opacity: 1; }
-		50% { opacity: 0.5; }
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.skeleton-row { animation: none; }
+		50%      { opacity: 0.5; }
 	}
 
 	.empty {
@@ -84,8 +90,18 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		padding: var(--s-8);
 		color: var(--ink-3);
 		font-family: var(--font-body);
-		font-size: 15px;
+		font-size: var(--t-body);
+		text-align: center;
+		max-width: 480px;
+		margin: 0 auto;
+	}
+
+	.empty p { margin: 0; }
+
+	@media (prefers-reduced-motion: reduce) {
+		.skeleton-row { animation: none; }
 	}
 </style>

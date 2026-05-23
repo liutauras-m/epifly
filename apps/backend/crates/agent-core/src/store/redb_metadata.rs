@@ -129,7 +129,6 @@ impl ThreadStore for RedbMetadataStore {
             last_active: now,
             message_count: initial_messages.len(),
             summary: None,
-            metadata: json!({}),
         };
         let thread_clone = thread.clone();
         let db = Arc::clone(&self.db);

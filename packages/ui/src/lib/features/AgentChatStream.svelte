@@ -1,6 +1,8 @@
 <script lang="ts">
-  import type { InvoiceData } from '@conusai/sdk';
+  import type { InvoiceData, RoutingMeta } from '@conusai/sdk';
   import ToolCallCard from './ToolCallCard.svelte';
+  import HostedProjectCard from './HostedProjectCard.svelte';
+  import CapabilityPinChip from './CapabilityPinChip.svelte';
   import { renderMarkdown } from '../utils/md.js';
 
   export interface ChatMessage {
@@ -15,6 +17,12 @@
     status: 'running' | 'success' | 'error';
     result: string;
     startTime: number;
+    /** Public URL returned by host_project when hosting_type = "static". */
+    publicUrl?: string;
+    /** Workspace-relative project path. */
+    projectPath?: string;
+    /** Framework name, e.g. "sveltekit". */
+    framework?: string;
   }
 
   let {
@@ -23,6 +31,8 @@
     toolCardsList,
     invoiceResults = new Map(),
     inFlight = false,
+    routingMeta = null,
+    onRetryWithCapability = undefined,
     messagesEl = $bindable<HTMLElement | undefined>(),
   }: {
     messages: ChatMessage[];
@@ -34,12 +44,44 @@
     toolCardsList?: Array<[string, ToolCardEntry]>;
     invoiceResults?: Map<string, unknown>;
     inFlight?: boolean;
+    /** Routing metadata from the current turn — shows a CapabilityPinChip when forced (PR 3.B). */
+    routingMeta?: RoutingMeta | null;
+    /**
+     * If provided, render a "Retry with explicit capability" button below the
+     * last assistant message when the gateway returned no tools or the
+     * assistant signalled it doesn't have a needed tool (PR 3.B.2). The parent
+     * is responsible for opening the picker + re-sending with `forcedCapability`.
+     */
+    onRetryWithCapability?: () => void;
     messagesEl?: HTMLElement;
   } = $props();
 
   // Prefer the explicit list when the caller provides one.
   const cards = $derived(
     toolCardsList ?? Array.from(toolCards?.entries() ?? []),
+  );
+
+  // ── Zero-tools detection (PR 3.B.2) ──────────────────────────────────────
+  // The structured signal is preferred — count = 0 means the router served no
+  // tools this turn. The regex fallback catches the LLM saying "I don't have
+  // X tool" even when tools were served (e.g. wrong tool was picked).
+  const NO_TOOL_REGEXES = [
+    /(don['’]?t|do not|no longer) have (the |a |any )?(\w+)\s+tool/i,
+    /no tools (are )?available/i,
+  ];
+  const noToolsTurn = $derived.by(() => {
+    if (!onRetryWithCapability || messages.length === 0 || inFlight) return false;
+    const structuredZero =
+      routingMeta != null &&
+      routingMeta.selected_capabilities.length === 0 &&
+      routingMeta.pinned_tools.length === 0;
+    if (structuredZero) return true;
+    const lastAi = [...messages].reverse().find((m) => m.role === 'ai');
+    if (!lastAi || lastAi.streaming) return false;
+    return NO_TOOL_REGEXES.some((re) => re.test(lastAi.text));
+  });
+  const retryButtonLabel = $derived(
+    routingMeta?.forced_capability ? 'Pick another capability' : 'Retry with explicit capability'
   );
 
   function scrollToBottom() {
@@ -56,9 +98,18 @@
 </script>
 
 <div class="messages" bind:this={messagesEl} role="log" aria-live="polite">
+  <!-- Routing-audit chip: render whenever the gateway emitted routing_meta
+       (every turn, post-PR 3.B). Click expands a popover with selected
+       capabilities / pinned tools / lexical hits / max_score. -->
+  {#if routingMeta}
+    <div class="row pin-row">
+      <CapabilityPinChip {routingMeta} />
+    </div>
+  {/if}
+
   {#each messages as msg, i (i)}
     {#if msg.role === 'thinking'}
-      <div class="row ai-row message ai thinking">
+      <div class="row ai-row thinking-row">
         <div class="ai-mark" aria-hidden="true">
           <svg viewBox="0 0 16 16" fill="none" width="16" height="16">
             <circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/>
@@ -73,7 +124,7 @@
       </div>
 
     {:else if msg.role === 'user'}
-      <div class="row user-row message user">
+      <div class="row user-row">
         <div class="user-bubble">{msg.text}</div>
       </div>
 
@@ -96,7 +147,7 @@
       {/if}
 
     {:else}
-      <div class="row ai-row message ai" class:streaming={msg.streaming}>
+      <div class="row ai-row" class:streaming={msg.streaming}>
         <div class="ai-mark" aria-hidden="true">
           <svg viewBox="0 0 16 16" fill="none" width="16" height="16">
             <circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/>
@@ -117,10 +168,33 @@
     {/if}
   {/each}
 
+  {#if noToolsTurn && onRetryWithCapability}
+    <div class="row retry-row">
+      <button type="button" class="retry-btn" onclick={() => onRetryWithCapability?.()}>
+        {retryButtonLabel}
+      </button>
+    </div>
+  {/if}
+
   {#each cards as [id, card] (id)}
     <div class="row tool-row">
       <ToolCallCard {id} name={card.name} status={card.status} result={card.result} startTime={card.startTime} />
     </div>
+    {#if card.publicUrl && card.status === 'success'}
+      <div class="row ai-row hosted-row">
+        <div class="ai-mark" aria-hidden="true">
+          <svg viewBox="0 0 16 16" fill="none" width="16" height="16">
+            <circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M5 8.5l2 2 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <HostedProjectCard
+          url={card.publicUrl}
+          projectPath={card.projectPath ?? ''}
+          framework={card.framework ?? ''}
+        />
+      </div>
+    {/if}
   {/each}
 
   <!-- Bottom spacer for overscroll clearance -->
@@ -151,12 +225,45 @@
     gap: var(--s-2);
   }
 
+  .pin-row {
+    padding-top: var(--s-2);
+    padding-bottom: var(--s-1);
+  }
+
+  .retry-row {
+    justify-content: flex-start;
+    padding-top: var(--s-1);
+    padding-bottom: var(--s-2);
+    padding-left: calc(var(--s-4) + 24px); /* align with ai-bubble */
+  }
+  .retry-btn {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: var(--r-md);
+    border: 1px solid color-mix(in srgb, var(--ember) 50%, transparent);
+    background: color-mix(in srgb, var(--ember) 12%, transparent);
+    color: var(--ember);
+    font-family: var(--font-body);
+    font-size: var(--t-meta);
+    cursor: pointer;
+    transition: filter var(--dur-1);
+  }
+  .retry-btn:hover { filter: brightness(1.08); }
+  .retry-btn:focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }
+
   .user-row {
     justify-content: flex-end;
     padding-left: var(--s-8);
   }
 
   .ai-row {
+    justify-content: flex-start;
+    padding-right: var(--s-8);
+  }
+
+  /* Thinking indicator row — same layout as ai-row but with the sonar ring */
+  .thinking-row {
     justify-content: flex-start;
     padding-right: var(--s-8);
   }
@@ -308,6 +415,27 @@
   @keyframes sonar-out {
     0%   { transform: scale(0.3); opacity: 0.9; }
     100% { transform: scale(2.2); opacity: 0; }
+  }
+
+  /* ── Hosted project row ─────────────────────────── */
+  .hosted-row {
+    margin-top: var(--s-1);
+  }
+
+  /* ── Markdown links ──────────────────────────────── */
+  .ai-bubble :global(.md-link) {
+    color: var(--ember);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    border-radius: 2px;
+    transition: color 120ms;
+  }
+  .ai-bubble :global(.md-link:hover) {
+    color: var(--ember-2);
+  }
+  .ai-bubble :global(.md-link:focus-visible) {
+    outline: 2px solid var(--ember);
+    outline-offset: 2px;
   }
 
   /* ── Invoice stub ────────────────────────────────── */

@@ -35,6 +35,10 @@ pub struct UiChatBody {
     pub workspace_node_id: Option<String>,
     #[serde(default)]
     pub attachment_ids: Vec<String>,
+    /// Optional capability name to pin for this turn (PR 2.A).
+    /// Sent by the UI "Invoke in current workspace" button.
+    #[serde(default)]
+    pub forced_capability: Option<String>,
 }
 
 pub async fn ui_stream(
@@ -100,6 +104,7 @@ pub async fn ui_stream(
         workspace_node_id: body.workspace_node_id,
         max_turns: None,
         attachment_content,
+        forced_capability: body.forced_capability,
     };
 
     let limits = tenant.0.plan.limits();

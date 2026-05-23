@@ -3,6 +3,11 @@ set -euo pipefail
 
 # Root entrypoint for starting/stopping the platform.
 # Default behavior starts the full profile so all services come up.
+#
+# `./start.sh local` sources `$ROOT_DIR/.env.local` before invoking
+# cargo / docker, so any secret declared there (ANTHROPIC_API_KEY,
+# LAGO_RSA_PRIVATE_KEY, etc.) is visible to the gateway and to
+# `docker compose` commands. See Phase 1.4 of `docs/plan.md`.
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_START="$ROOT_DIR/apps/backend/start.sh"
 LOCAL_GATEWAY_BIN="$ROOT_DIR/target/debug/agent-gateway"
@@ -163,7 +168,36 @@ start_local_gateway() {
 
 	echo "▶ Starting local gateway binary on :8080"
 	cd "$ROOT_DIR/apps/backend"
-	exec "$LOCAL_GATEWAY_BIN"
+
+	# Launch the gateway in the background so we can probe its readiness
+	# without blocking on `exec`. SIGINT/SIGTERM propagate to the child via
+	# the trap below, so Ctrl-C still cleanly shuts the gateway down.
+	"$LOCAL_GATEWAY_BIN" &
+	local gw_pid=$!
+	# shellcheck disable=SC2064
+	trap "kill $gw_pid 2>/dev/null || true" EXIT INT TERM
+
+	# Wait for the embedding stack to finish loading before declaring "ready".
+	# Phase 1.3.3 of docs/plan.md. fastembed downloads its model on first
+	# launch (~50 MB) and warms a CPU pool; 90 s is generous on a cold cache.
+	(
+		if wait_http "http://localhost:8080/healthz/embeddings" '^200$' 90; then
+			echo "✅ Embeddings ready"
+			# Phase 1.6.5: surface the active OTEL exporter so operators know
+			# whether traces are being shipped or just printed.
+			echo "ℹ️  OTEL exporter: ${OTEL_EXPORTER_OTLP_ENDPOINT:-stdout (no OTEL_EXPORTER_OTLP_ENDPOINT set)}"
+			# Quick sanity check — surfaces the first few routing counters.
+			echo "ℹ️  /metrics router counters:"
+			curl -s http://localhost:8080/metrics 2>/dev/null \
+				| grep -E '^(routing_latency_ms|tools_per_turn|forced_capability_hit_rate|embedding_cache_hit_rate|low_confidence_turns_total)' \
+				| head -10 || true
+		else
+			echo "⚠️  Gateway did not report embeddings ready within 90 s"
+			echo "    Check the gateway log above — likely missing --features local-embeddings"
+		fi
+	) &
+
+	wait "$gw_pid"
 }
 
 if [ $# -eq 0 ]; then

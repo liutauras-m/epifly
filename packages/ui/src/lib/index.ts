@@ -19,8 +19,27 @@ export { THEME_SCRIPT } from "./components/ThemeScript.js";
 // ── Features ─────────────────────────────────────────────────────────────────
 export { default as AgentChatComposer } from "./features/AgentChatComposer.svelte";
 export { default as AgentChatStream } from "./features/AgentChatStream.svelte";
+export { default as HostedProjectCard } from "./features/HostedProjectCard.svelte";
 export { default as ToolCallCard } from "./features/ToolCallCard.svelte";
 export { default as WorkspaceExplorer } from "./features/WorkspaceExplorer.svelte";
+export { default as SuggestionChips } from "./features/SuggestionChips.svelte";
+export { default as ContextChip } from "./features/ContextChip.svelte";
+export { default as CapabilityRow } from "./features/CapabilityRow.svelte";
+export { default as CapabilityBrowser } from "./features/CapabilityBrowser.svelte";
+export type { CapEntry } from "./features/CapabilityBrowser.svelte";
+
+// ── Chrome ──────────────────────────────────────────────────────────────────
+export { default as AppTopBar } from "./features/chrome/AppTopBar.svelte";
+export { default as AppDrawer } from "./features/chrome/AppDrawer.svelte";
+export { default as AppBottomSheet } from "./features/chrome/AppBottomSheet.svelte";
+
+// ── Screens ─────────────────────────────────────────────────────────────────
+export { default as ChatScreen } from "./features/screens/ChatScreen.svelte";
+export { default as CapabilitiesScreen } from "./features/screens/CapabilitiesScreen.svelte";
+export { default as CapabilityDetailSheet } from "./features/screens/CapabilityDetailSheet.svelte";
+export { default as ArtifactsScreen } from "./features/screens/ArtifactsScreen.svelte";
+export { default as ArtifactRow } from "./features/screens/ArtifactRow.svelte";
+export { buildInvocationPrompt } from "./features/screens/buildInvocationPrompt.js";
 export type { ChatMessage, ToolCardEntry } from "./features/AgentChatStream.svelte";
 export type { Attachment } from "./features/AgentChatComposer.svelte";
 
@@ -51,6 +70,12 @@ export { modeStore } from "./stores/modeStore.svelte.js";
 export type { AppMode } from "./stores/modeStore.svelte.js";
 export { recentsStore } from "./stores/recents.svelte.js";
 export { breadcrumbsStore } from "./stores/breadcrumbs.svelte.js";
+
+// ── Routing ──────────────────────────────────────────────────────────────────
+export { initialRoute } from "./routing/initialRoute.js";
+export type { InitialRoute } from "./routing/initialRoute.js";
+export { applyInitialRoute } from "./routing/applyInitialRoute.js";
+export type { ApplyInitialRouteHandlers } from "./routing/applyInitialRoute.js";
 
 // ── Capabilities ─────────────────────────────────────────────────────────────
 export { createCapabilityRendererRegistry } from "./capabilities/CapabilityRendererRegistry.js";

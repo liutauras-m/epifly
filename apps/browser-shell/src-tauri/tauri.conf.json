@@ -55,5 +55,18 @@
     "android": {
       "minSdkVersion": 26
     }
+  },
+  "plugins": {
+    "deep-link": {
+      "mobile": [
+        {
+          "host": "open",
+          "pathPrefix": ["/"]
+        }
+      ],
+      "desktop": {
+        "schemes": ["conusai"]
+      }
+    }
   }
 }

@@ -330,6 +330,29 @@ gateway startup. Categories follow [taxonomy.md](taxonomy.md).
 | [compose-email](../../apps/backend/capabilities/compose-email/capability.toml)                   | `compose.email`       | chain | Subject + body + tone (`professional` / `friendly` / `formal`) from arbitrary context. |
 | [compose-report-md](../../apps/backend/capabilities/compose-report-md/capability.toml)           | `compose.report_md`   | chain | Markdown report for humans.                                                            |
 | [compose-report-json](../../apps/backend/capabilities/compose-report-json/capability.toml)       | `compose.report_json` | chain | Machine-bound JSON with metadata envelope (`report_id`, `created_at`, `schema_version`).|
+| [code-project](../../apps/backend/capabilities/code-project/capability.toml)                     | `code.project`        | chain | **6 tools**: `scaffold_project`, `edit_file`, `apply_patch`, `add_dependency`, `read_project`, `host_project`. Generates full source trees for SvelteKit, React, Next.js, Python, Rust, and more. Returns `ToolOutput.artifacts` (plain-text `data` field); `ArtifactBridge` materialises the file tree. |
+
+> **`code` taxonomy root (proposed).** `code.project` uses `category = "compose"` today.
+> A future `code` root may be promoted once the domain grows (e.g. `code-shell`, `code-test`).
+> Existing routing and embedding behaviour is unaffected by the category rename.
+
+#### Artifact materialisation rule
+
+**Capabilities never write workspace nodes directly.** They return
+`ToolOutput { content, artifacts: [{name, mime_type, data}] }` and the
+`ArtifactBridge` is the sole writer.
+
+`ArtifactBridge.process_if_artifacts()` reads `output.metadata` to control behaviour:
+
+- **`artifact_path_prefix`** — overrides the workspace content store virtual path:
+  - absent → `/outputs/{tool_name}/{artifact.name}` (default)
+  - `""` → `/{artifact.name}` (raw project path; used by `code-project`)
+- **`hosting_type = "static"`** — activates static hosting mode:
+  - Artifact object keys use a stable path `{tenant_id}/static/{artifact.name}` (no ULID; overwrites on redeploy).
+  - `process_if_artifacts` returns `Some(public_url)` constructed from `RUSTFS_PUBLIC_BASE_URL` + `root_path` + `index_file`. The agent route merges `public_url` into the tool result JSON so the LLM and UI can render a clickable link.
+  - If `RUSTFS_PUBLIC_BASE_URL` is not set, the URL is not returned (warning logged).
+  - **Dynamic hosting** (Node.js server, FastAPI, etc.) returns `hosting_type = "unsupported"` — no URL, explanation in `content`. Dynamic hosting is deferred to the future `code-shell` capability.
+- **Artifact `data` encoding** — tried as base64 first; if decode fails, treated as plain UTF-8. This lets chain capabilities (LLM output) pass plain text without explicit base64 encoding.
 
 ### 5.5 `plan` — choose and sequence work
 
@@ -340,28 +363,19 @@ gateway startup. Categories follow [taxonomy.md](taxonomy.md).
 
 ### 5.6 `storage` — workspace I/O
 
-All except `file-storage` (MCP wrapper around RustFS/S3) are `native` Rust
-providers dispatched by `config.op`. Workspaces are per-tenant; see
-[ops/rustfs.md](../ops/rustfs.md).
+**Consolidated 2026-05-22 (capabilities-consolidation refactor).** The 15 granular
+per-op capabilities have been collapsed into two domain-level capabilities plus the
+unchanged MCP wrapper. Provider dispatch is on `tool_name` in `invoke()`; no `[config] op`
+is needed in the manifests. See [plan.md](plan.md) for rationale.
 
-| Cap dir                                                                                              | Namespace                       | Kind   | Tool(s) → effect                                                       |
-| ---------------------------------------------------------------------------------------------------- | ------------------------------- | ------ | ---------------------------------------------------------------------- |
-| [file-storage](../../apps/backend/capabilities/file-storage/capability.toml)                         | `storage.object`                | mcp    | `upload_file`, `download_file`, `presigned_url` (RustFS / AWS S3).      |
-| [storage-workspace](../../apps/backend/capabilities/storage-workspace/capability.toml)               | `storage.workspace`             | native | `save_document` (markdown to top-level folder), `list_folders`.         |
-| [storage-workspace-move](../../apps/backend/capabilities/storage-workspace-move/capability.toml)     | `storage.node.move`             | native | `move_node` — relocate workspace node by ULID.                          |
-| [storage-put](../../apps/backend/capabilities/storage-put/capability.toml)                           | `storage.put`                   | native | `put_object` — write text or base64 binary.                             |
-| [storage-read-text](../../apps/backend/capabilities/storage-read-text/capability.toml)               | `storage.fs.read`               | native | `read_file` — read UTF-8 text.                                          |
-| [storage-write-text](../../apps/backend/capabilities/storage-write-text/capability.toml)             | `storage.fs.write`              | native | `write_file` — UTF-8 write with auto-mkdir parents.                     |
-| [storage-move](../../apps/backend/capabilities/storage-move/capability.toml)                         | `storage.object.move`           | native | `move_object` — rename/relocate a file path.                            |
-| [storage-tag](../../apps/backend/capabilities/storage-tag/capability.toml)                           | `storage.object.tag`            | native | `tag_object` — write key/value `.meta.json` sidecar.                    |
-| [storage-list-folders](../../apps/backend/capabilities/storage-list-folders/capability.toml)         | `storage.object.list`           | native | `list_folders` — enumerate files & dirs under prefix.                   |
-| [storage-create-folder](../../apps/backend/capabilities/storage-create-folder/capability.toml)       | `storage.folder.create`         | native | `create_folder` — create a workspace folder node.                       |
-| [storage-ensure-folder](../../apps/backend/capabilities/storage-ensure-folder/capability.toml)       | `storage.object.ensure_folder`  | native | `ensure_folder` — idempotent mkdir-p.                                   |
-| [storage-ensure-date-folder](../../apps/backend/capabilities/storage-ensure-date-folder/capability.toml)| `storage.ensure_date_folder` | native | `ensure_date_folder` — `<root>/YYYY/MM/DD`.                             |
-| [storage-find-by-name](../../apps/backend/capabilities/storage-find-by-name/capability.toml)         | `storage.node.find_by_name`     | native | `find_by_name` — exact-name lookup in tenant workspace.                 |
-| [storage-show-tree](../../apps/backend/capabilities/storage-show-tree/capability.toml)               | `storage.tree.show`             | native | `show_tree` — bounded Markdown tree (depth 1–5, default 2).             |
-| [storage-delete](../../apps/backend/capabilities/storage-delete/capability.toml)                     | `storage.node.delete`           | native | `delete_node` — single node.                                            |
-| [storage-bulk-delete](../../apps/backend/capabilities/storage-bulk-delete/capability.toml)           | `storage.node.bulk_delete`      | native | `bulk_delete` — atomic recursive delete; requires explicit confirmation.|
+| Cap dir                                                                                  | Namespace          | Kind   | Tool(s) → effect                                                                                                                                                                                                                  |
+| ---------------------------------------------------------------------------------------- | ------------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [file-storage](../../apps/backend/capabilities/file-storage/capability.toml)             | `storage.object`   | mcp    | `upload_file`, `download_file`, `presigned_url` (RustFS / AWS S3). Unchanged.                                                                                                                                                     |
+| [storage-workspace](../../apps/backend/capabilities/storage-workspace/capability.toml)   | `storage.workspace`| native | **11 tools**: `save_document`, `list_folders`, `show_tree`, `find_by_name`, `create_folder`, `ensure_folder`, `ensure_date_folder`, `move_node`, `delete_node`, `bulk_delete`, `tag_object`. Use for natural-language workspace ops. |
+| [storage-fs](../../apps/backend/capabilities/storage-fs/capability.toml)                 | `storage.fs`       | native | **5 tools**: `read_file`, `write_file`, `put_object`, `move_object`, `list_paths`. Use when the user gives an explicit path. `list_paths` replaces the legacy `list_folders` fs variant to avoid name collision with the workspace tool. |
+
+> **Naming rule.** `list_folders` belongs to `storage-workspace` (workspace-node listing).
+> The fs-level listing tool is `list_paths` in `storage-fs`.
 
 ### 5.7 `deliver` — push to external systems
 

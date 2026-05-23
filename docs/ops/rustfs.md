@@ -41,7 +41,7 @@ To disable: `RUSTFS_BOOTSTRAP=off`
 
 ## Per-tenant IAM
 
-Each tenant gets a RustFS service account (access key + secret key) via the MinIO admin API. These are:
+Each tenant gets a RustFS service account (access key + secret key) via the RustFS admin API. These are:
 - Created by `rustfs_admin::provision_tenant()` on first use
 - Stored encrypted (AES-256-GCM) in redb at `iam/tenant/{tenant_id}`
 - Cached in memory for 5 minutes (max 1024 entries)

@@ -1,15 +1,36 @@
 schema_version = "2.0"
 name        = "storage-workspace"
-version     = "1.0.0"
+version     = "2.0.0"
 namespace   = "storage.workspace"
 category    = "storage"
 kind        = "native"
-description = "Save documents and list folders in the user's workspace."
-tags        = ["workspace", "files", "storage", "save", "document"]
-emits       = ["application/json"]
-idempotent  = false
-requires    = []
-search_keywords = ["save", "store", "folder", "workspace", "document", "file"]
+description = """
+The user's workspace toolkit. Save, organise, find, move, tag and delete
+documents and folders in the tenant's hierarchical workspace.
+Use these tools whenever the user talks about their files, folders, notes,
+documents, or workspace in natural language.
+"""
+tags     = ["workspace", "storage", "files", "folders", "documents", "save", "document", "tree", "find", "move", "delete", "tag"]
+accepts  = ["application/json"]
+emits    = ["application/json"]
+idempotent = false
+cost_hint = "low"
+requires  = []
+search_keywords = [
+  "save", "store", "save as", "save document", "save note", "save file",
+  "folder", "new folder", "create folder", "make folder",
+  "list folders", "what folders", "show workspace", "show tree", "outline",
+  "find", "find file", "lookup", "search workspace",
+  "move", "rename", "relocate", "move file", "move folder", "reparent",
+  "delete", "remove", "trash", "empty folder", "bulk delete",
+  "tag", "label", "annotate",
+  "ensure folder", "today's folder", "date folder",
+  "tree", "summarise", "list everything",
+  "workspace", "document", "file",
+]
+
+# NOTE: No [config] op required. Provider dispatch lives in
+# StorageWorkspaceProvider::invoke() — dispatch is on tool_name in Rust.
 
 [[tools]]
 name = "save_document"
@@ -25,7 +46,7 @@ description = "Name of the top-level workspace folder (e.g. 'Research', 'Project
 
 [tools.input_schema.properties.filename]
 type = "string"
-description = "Document filename without extension (e.g. 'meeting-notes'). A .md extension will be added."
+description = "Filename for the document. Include the extension to control the file type (e.g. 'package.json', 'svelte.config.js', 'README.md'). If no extension is provided a .md extension is appended automatically."
 
 [tools.input_schema.properties.content]
 type = "string"
@@ -38,5 +59,159 @@ description = "List all top-level workspace folders available to the user."
 [tools.input_schema]
 type = "object"
 
-[config]
-op = "workspace"
+[[tools]]
+name = "show_tree"
+description = "Render a Markdown tree of folders and files under parent_id (or root if omitted). Use to summarise the workspace."
+
+[tools.input_schema]
+type = "object"
+
+[tools.input_schema.properties.parent_id]
+type = "string"
+description = "Root ULID to render from. Omit to render from the user's workspace root."
+
+[tools.input_schema.properties.depth]
+type = "integer"
+description = "Maximum recursion depth (1–5, default 2)."
+minimum = 1
+maximum = 5
+
+[[tools]]
+name = "find_by_name"
+description = "Find one or more workspace nodes by name. Returns {found, best_match, matches[]} where best_match.id is the ULID you can pass to delete_node / move_node."
+
+[tools.input_schema]
+type = "object"
+required = ["name"]
+
+[tools.input_schema.properties.name]
+type = "string"
+description = "Name (or partial name) to search for. Case-insensitive."
+
+[tools.input_schema.properties.limit]
+type = "integer"
+description = "Maximum number of matches to return (1–50, default 10)."
+minimum = 1
+maximum = 50
+
+[[tools]]
+name = "create_folder"
+description = "Create an empty folder in the workspace tree. Pass name (required) and optionally parent_id (ULID of the parent folder; omit/null for the root). Returns the new folder's ULID, name, and virtual_path."
+
+[tools.input_schema]
+type = "object"
+required = ["name"]
+
+[tools.input_schema.properties.name]
+type = "string"
+description = "Folder name (e.g. 'Projects' or 'Q3 reports')."
+
+[tools.input_schema.properties.parent_id]
+type = "string"
+description = "Optional parent folder ULID. Omit or pass null to create the folder at the workspace root."
+
+[[tools]]
+name = "ensure_folder"
+description = "Create the specified directory path (and all parents) in the workspace filesystem."
+
+[tools.input_schema]
+type = "object"
+required = ["path"]
+
+[tools.input_schema.properties.path]
+type = "string"
+description = "Workspace-relative directory path to create"
+
+[[tools]]
+name = "ensure_date_folder"
+description = "Create a YYYY/MM/DD directory under base_path for today's UTC date. Returns the relative path."
+
+[tools.input_schema]
+type = "object"
+
+[tools.input_schema.properties.base_path]
+type = "string"
+description = "Base directory to partition under. Defaults to 'uploads'."
+
+[[tools]]
+name = "move_node"
+description = "Move a workspace node (folder or conversation) under a new parent. Accept either id (ULID) or name for the target, plus either new_parent_id (ULID) or new_parent_name for the destination folder."
+
+[tools.input_schema]
+type = "object"
+
+[tools.input_schema.properties.id]
+type = "string"
+description = "ULID of the node to move. Mutually exclusive with name."
+
+[tools.input_schema.properties.name]
+type = "string"
+description = "Human-readable name of the node to move (e.g. 'meeting.md' or 'Drafts')."
+
+[tools.input_schema.properties.new_parent_id]
+type = "string"
+description = "ULID of the destination folder. Omit or pass null to move to the workspace root."
+
+[tools.input_schema.properties.new_parent_name]
+type = "string"
+description = "Human-readable name of the destination folder (e.g. 'Archive'). Used when the ULID is not known."
+
+[[tools]]
+name = "delete_node"
+description = "Delete a workspace folder or document. Provide either the node ULID (id) or a human-readable name; when name is supplied the server resolves it via a workspace search."
+search_keywords = ["delete", "remove", "trash", "drop", "get rid of", "erase", "wipe"]
+
+[tools.input_schema]
+type = "object"
+
+[tools.input_schema.properties.id]
+type = "string"
+description = "ULID of the workspace node to delete. Mutually exclusive with name."
+
+[tools.input_schema.properties.name]
+type = "string"
+description = "Human-readable node name (e.g. 'Projects' or 'meeting.md'). The server resolves this to a ULID."
+
+[[tools]]
+name = "bulk_delete"
+description = """
+Delete every item under a folder (or the entire workspace root) in a single call.
+- Omit both parent_id and parent_name to delete ALL top-level folders and files at the workspace root.
+- Provide parent_id (ULID) or parent_name to target a specific folder.
+- Use kind to filter: 'all' (default), 'conversation'/'file' for documents only, 'folder' for sub-folders only.
+- Each deleted folder cascades to all its children automatically.
+SAFETY: destructive and irreversible — only call after the user has explicitly confirmed.
+"""
+search_keywords = ["delete all", "clear folder", "empty folder", "bulk delete", "remove all", "wipe folder", "delete everything", "clear workspace", "empty workspace"]
+
+[tools.input_schema]
+type = "object"
+
+[tools.input_schema.properties.parent_id]
+type = "string"
+description = "ULID of the target folder whose children will be deleted. Omit to target the workspace root."
+
+[tools.input_schema.properties.parent_name]
+type = "string"
+description = "Human-readable name of the target folder (e.g. 'Drafts'). Omit to target the workspace root."
+
+[tools.input_schema.properties.kind]
+type = "string"
+description = "Filter: 'all' (default, deletes everything), 'conversation'/'file' for documents only, 'folder' for sub-folders only."
+enum = ["all", "conversation", "file", "files", "folder", "folders"]
+
+[[tools]]
+name = "tag_object"
+description = "Write tags (key-value pairs) to a .meta.json sidecar next to the target file."
+
+[tools.input_schema]
+type = "object"
+required = ["path"]
+
+[tools.input_schema.properties.path]
+type = "string"
+description = "Workspace-relative path of the file to tag"
+
+[tools.input_schema.properties.tags]
+type = "object"
+description = "Arbitrary key-value pairs to store as metadata"

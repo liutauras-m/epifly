@@ -24,6 +24,7 @@ search_keywords = [
 [[tools]]
 name        = "extract_text"
 description = "Extract raw plain text from an image or scanned document using Claude vision. Returns unstructured text. Input: image_path — local path or URL. Set preserve_layout=true to keep whitespace structure."
+search_keywords = ["ocr", "extract text from image", "scan", "read image text", "optical character recognition"]
 
 [tools.input_schema]
 type     = "object"

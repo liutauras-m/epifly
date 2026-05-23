@@ -61,7 +61,8 @@ moka.workspace        = true
 wiremock.workspace = true
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"
+toml.workspace = true
 
 [features]
-default          = []
+default          = ["local-embeddings"]
 local-embeddings = ["agent-core/local-embeddings"]

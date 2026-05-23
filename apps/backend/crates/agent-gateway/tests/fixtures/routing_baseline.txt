@@ -1,0 +1,40 @@
+# Routing-quality baseline (PR 4.2).
+#
+# Each line is a fixture `id` that passes today. The test harness
+# (`routing_quality.rs`) reads this file and HARD FAILS if any of these ids
+# regresses (i.e. stops returning the expected capability on the BASE prompt).
+#
+# Adding a new fixture: append its id here only after confirming it passes.
+# Removing a previously-passing fixture id requires a code-review rationale.
+#
+# Comments (lines starting with #) and blank lines are ignored.
+
+add-dep
+add-dep-pnpm
+classify-doc
+compose-email
+compose-report-md
+convert-pdf
+delete-explicit
+delete-trash
+delete-vague
+edit-file
+extract-cv
+extract-incident
+extract-invoice
+extract-medical
+host-deploy
+host-publish
+list-tree
+mime-detect
+ocr-tesseract
+ocr-vision
+presigned-url
+read-project
+rename-node
+runtime-echo
+save-doc
+scaffold-nextjs
+scaffold-react
+scaffold-sveltekit
+upload-file

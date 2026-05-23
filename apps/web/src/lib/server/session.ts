@@ -6,6 +6,17 @@ const TTL_SECS = 24 * 3600;
 export interface SessionUser {
 	name: string;
 	plan: string;
+	/**
+	 * Tenant identifier from the upstream JWT (`tenant_id` claim) — used
+	 * client-side to defensively filter `resource_invalidated` SSE deltas (PR
+	 * 3.A.7). Always trust the server-side gateway scope as the actual security
+	 * boundary; this is a belt-and-braces check that exposes mismatches as
+	 * `console.warn` rather than silent UI drift.
+	 *
+	 * Optional + nullable so existing HMAC cookies (which have no claim) keep
+	 * working — users issued from those flows simply skip the client check.
+	 */
+	tenantId?: string | null;
 	exp: number;
 }
 
@@ -73,12 +84,13 @@ export class BackendJwtAdapter implements SessionAdapter {
 		if (parts.length !== 3) return null;
 		try {
 			const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString()) as {
-				sub?: string; name?: string; plan?: string; exp?: number;
+				sub?: string; name?: string; plan?: string; tenant_id?: string; exp?: number;
 			};
 			if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
 			return {
 				name: payload.name ?? payload.sub ?? '',
 				plan: payload.plan ?? 'enterprise',
+				tenantId: payload.tenant_id ?? null,
 				exp: payload.exp,
 			};
 		} catch { return null; }
@@ -128,10 +140,15 @@ export function verify(cookieValue: string): SessionUser | null {
 		try {
 			const parts = cookieValue.split('.');
 			const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString()) as {
-				sub?: string; name?: string; plan?: string; exp?: number;
+				sub?: string; name?: string; plan?: string; tenant_id?: string; exp?: number;
 			};
 			if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
-			return { name: payload.name ?? payload.sub ?? '', plan: payload.plan ?? 'enterprise', exp: payload.exp };
+			return {
+				name: payload.name ?? payload.sub ?? '',
+				plan: payload.plan ?? 'enterprise',
+				tenantId: payload.tenant_id ?? null,
+				exp: payload.exp,
+			};
 		} catch { return null; }
 	}
 	return verifyRaw(cookieValue);

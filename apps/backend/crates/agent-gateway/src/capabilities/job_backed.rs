@@ -32,6 +32,8 @@ pub fn transcribe_video_provider(executor: &Arc<JobExecutor>) -> JobBackedProvid
             name: "transcribe".into(),
             description: "Enqueue a video/audio transcription job. Returns task_id and queued status.".into(),
             input_schema,
+            search_keywords: vec!["transcribe".into(), "audio".into(), "video".into(), "speech to text".into()],
+            read_before_write: None,
         }],
         config: serde_json::Value::Null,
         tags: vec!["audio".into(), "video".into(), "transcription".into()],

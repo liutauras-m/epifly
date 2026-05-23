@@ -93,7 +93,25 @@ The capability will appear in the agent's tool catalog and be searchable by the 
 
 ### Native capabilities (require workspace storage)
 
-If your capability needs `Arc<dyn WorkspaceStore>`, add `op = "..."` to the `[config]` section and handle it in `NativeStorageFactory::create()` in `agent-core/src/capabilities/providers/native_storage.rs`.
+**Single-tool (legacy pattern — do not use for new work):** add `op = "..."` to the
+`[config]` section and handle it in `NativeStorageFactory::create()` in
+`agent-core/src/capabilities/providers/native_storage.rs`.
+
+**Multi-tool native (preferred pattern):** implement a purpose-built provider struct
+(e.g. `StorageWorkspaceProvider`) in `native_storage.rs` whose `invoke()` dispatches
+on `tool_name`. No `[config] op` is needed — just declare `[[tools]]` blocks in the
+TOML and add a `manifest.name` match in `NativeStorageFactory::create()`:
+
+```rust
+match card.manifest.name.as_str() {
+    "my-domain" => return Ok(Arc::new(MyDomainProvider::new(card.manifest, /* deps */))),
+    _ => {}
+}
+```
+
+`ToolManifest` schema is **unchanged** — only standard `[[tools]]` blocks are used;
+no `[[config.tools]]` extension exists or is needed. See `StorageWorkspaceProvider`
+and `StorageFsProvider` in `native_storage.rs` for reference implementations.
 
 ### Job-backed capabilities (async, long-running)
 
@@ -102,3 +120,12 @@ If your capability should enqueue a background job, register it programmatically
 ### MCP server capabilities
 
 Deploy an MCP server, then `POST /admin/capabilities/register` with the endpoint URL. The gateway supports hot-registration without restart.
+
+### Checklist (post-PR 3/4)
+
+When adding a new capability, also do the following so it interoperates with routing, live state, and the parity invariants:
+
+- **Populate `[[tools]].search_keywords`** for any tool with strong lexical triggers (delete / upload / scaffold / etc.). The router reads keywords from the manifest — no in-code table. Drift is caught by the regression suite at `apps/backend/crates/agent-gateway/tests/routing_quality.rs` (PR 4.2).
+- **Publish to `InvalidationBus`** from any state-mutating tool so live consumers refresh automatically. Use `state.invalidation_bus.send(InvalidationEvent::new(<resource>, &tenant_id).with_keys(<changed paths>))`. Existing producers: `ArtifactBridge::process_if_artifacts` → `"workspace"`, `stream_agent` end-of-turn → `"threads"` (PR 3.A.6). See [`docs/arch.md`](../arch.md) §18.
+- **Any feature `.svelte` ships in `packages/ui`**, never in `apps/<app>`. The cross-app parity invariant (`docs/plan.md` §0.5) is enforced by `scripts/check-cross-app-imports.mjs` (CI fails on violation).
+- **Add 1–2 routing fixtures** to `apps/backend/crates/agent-gateway/tests/fixtures/routing_prompts.toml` whenever you add a capability with distinct user-intent prompts. Append the case `id` to `tests/fixtures/routing_baseline.txt` after confirming it passes locally.

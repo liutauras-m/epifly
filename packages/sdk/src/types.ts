@@ -27,9 +27,19 @@ export interface InvoiceData {
   line_items?: { description?: string; quantity?: unknown; unit_price?: unknown; total?: unknown }[];
 }
 
+export interface RoutingMeta {
+  forced_capability: string | null;
+  selected_capabilities: string[];
+  pinned_tools: string[];
+  lexical_hits: string[];
+  max_score: number;
+}
+
 export type ChatStreamDelta =
   | { kind: 'text'; content: string }
   | { kind: 'tool_start'; id: string; name: string }
-  | { kind: 'tool_result'; tool_use_id: string; result: string }
+  | { kind: 'tool_result'; tool_use_id: string; result: string; error?: string }
+  | { kind: 'routing_meta'; forced_capability: string | null; selected_capabilities: string[]; pinned_tools: string[]; lexical_hits: string[]; max_score: number }
+  | { kind: 'resource_invalidated'; resource: string; scope: string; changed_keys: string[] }
   | { kind: 'thread_id'; id: string }
   | { kind: 'done' };

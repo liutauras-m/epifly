@@ -9,6 +9,7 @@ use agent_core::{
     RedbMetadataStore, RustFsContentStore, SemanticCapabilityRouter, SemanticRouterConfig,
     StorageQuotaService, TenantOnboardingService, TenantStorageFactory, build_admin,
 };
+use agent_core::realtime::{InvalidationBus, new_invalidation_bus};
 use agent_core::identity::IdentityManager;
 use agent_core::{LegacyIdentityProvider, ZitadelCacheStats, ZitadelProvider};
 use billing_core::{BillingProvider, LagoProvider, PlanCatalog, QuotaChecker};
@@ -24,10 +25,12 @@ use crate::capabilities::job_backed::transcribe_video_provider;
 use object_store::aws::AmazonS3Builder;
 use object_store::ObjectStore;
 use rustfs_admin::RustFsAdminClient;
-use crate::metrics::RustFsMetrics;
+use crate::metrics::{RouterMetrics, RustFsMetrics};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
+#[cfg(not(feature = "local-embeddings"))]
+use tracing::error;
 
 pub struct AppState {
     pub registry: Arc<Mutex<CapabilityRegistry>>,
@@ -47,6 +50,8 @@ pub struct AppState {
     pub storage_quota: Arc<StorageQuotaService>,
     /// Prometheus metrics for storage operations and fallbacks.
     pub rustfs_metrics: Option<Arc<RustFsMetrics>>,
+    /// Router-decision metrics (set by `main.rs` at boot; None in test mode).
+    pub router_metrics: Option<Arc<RouterMetrics>>,
     /// Per-tenant single-flight mutex for the onboarding safety net in the `tree` route.
     pub onboarding_guards: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     /// In-memory device tokens for browser-shell (keyed by blake3 hash of plaintext token).
@@ -70,6 +75,9 @@ pub struct AppState {
     #[allow(dead_code)]
     pub capability_spec_factory: Option<Arc<CapabilitySpecFactory>>,
     pub artifact_bridge: Option<Arc<ArtifactBridge>>,
+    /// Broadcast channel for workspace invalidation events (PR 3.A).
+    /// Emit to this when workspace content changes so SSE clients can revalidate.
+    pub invalidation_bus: InvalidationBus,
     /// Identity provider (legacy HMAC/JWT or Zitadel OIDC).
     pub identity: StdArc<dyn IdentityManager>,
     /// Hot-reload watcher for capability TOML manifests. Kept alive for the process lifetime —
@@ -134,9 +142,18 @@ impl AppState {
                 }
                 #[cfg(not(feature = "local-embeddings"))]
                 {
-                    warn!(
-                        "local-embeddings feature not compiled — vector search disabled. \
-                         Rebuild with --features agent-core/local-embeddings"
+                    // Visible boot banner on stderr — survives log-level filtering.
+                    eprintln!(
+                        "\n\
+                         ╔════════════════════════════════════════════════════════════════════╗\n\
+                         ║  ⚠️  GATEWAY HAS NO EMBEDDINGS                                     ║\n\
+                         ║  Semantic router will return ZERO tools every turn.                ║\n\
+                         ║  Rebuild: cargo build --features agent-gateway/local-embeddings    ║\n\
+                         ╚════════════════════════════════════════════════════════════════════╝\n"
+                    );
+                    error!(
+                        "local-embeddings feature not compiled — semantic router will serve zero \
+                         tools. Rebuild with: cargo build --features agent-gateway/local-embeddings"
                     );
                     Arc::new(NoopEmbeddingService)
                 }
@@ -340,6 +357,7 @@ impl AppState {
             onboarding,
             storage_quota,
             rustfs_metrics: None,
+            router_metrics: None,
             onboarding_guards: Arc::new(Mutex::new(HashMap::new())),
             device_tokens: Mutex::new(HashMap::new()),
             thread_store,
@@ -358,6 +376,7 @@ impl AppState {
             router_quota: RouterQuotaConfig::from_env(),
             capability_spec_factory: Some(capability_spec_factory),
             artifact_bridge,
+            invalidation_bus: new_invalidation_bus(),
             identity,
             manifest_watcher,
             zitadel_cache_stats,
@@ -432,6 +451,7 @@ impl AppState {
             onboarding: None,
             storage_quota: noop_quota_service(),
             rustfs_metrics: None,
+            router_metrics: None,
             onboarding_guards: Arc::new(Mutex::new(HashMap::new())),
             device_tokens: Mutex::new(HashMap::new()),
             thread_store,
@@ -450,6 +470,7 @@ impl AppState {
             router_quota: RouterQuotaConfig::default(),
             capability_spec_factory: None,
             artifact_bridge: None,
+            invalidation_bus: new_invalidation_bus(),
             identity,
             manifest_watcher: None,
             zitadel_cache_stats: None,

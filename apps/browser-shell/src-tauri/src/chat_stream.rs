@@ -27,6 +27,8 @@ pub async fn chat_stream_start(
     thread_id: Option<String>,
     workspace_node_id: Option<String>,
     attachment_ids: Option<Vec<String>>,
+    // Optional capability name to pin before semantic routing (PR 2.A).
+    forced_capability: Option<String>,
     api_base: String,
 ) -> Result<String, String> {
     let stream_id = ulid::Ulid::new().to_string();
@@ -43,6 +45,9 @@ pub async fn chat_stream_start(
         }
         if let Some(ids) = attachment_ids.filter(|ids| !ids.is_empty()) {
             body["attachment_ids"] = serde_json::json!(ids);
+        }
+        if let Some(cap) = forced_capability {
+            body["forced_capability"] = serde_json::json!(cap);
         }
 
         let result = client

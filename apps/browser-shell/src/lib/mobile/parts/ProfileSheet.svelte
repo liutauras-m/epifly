@@ -1,5 +1,5 @@
 <script lang="ts">
-	import MobileBottomSheet from '../chrome/MobileBottomSheet.svelte';
+	import { AppBottomSheet } from '@conusai/ui/features';
 	import { tap, startViewTransition } from '@conusai/ui/motion';
 
 	let {
@@ -37,7 +37,7 @@
 	const APP_VERSION = '0.4.0';
 </script>
 
-<MobileBottomSheet {open} {onClose} title="Profile">
+<AppBottomSheet {open} {onClose} title="Profile">
 	{#snippet children()}
 		<div class="profile-content">
 			<div class="profile-avatar-row">
@@ -71,6 +71,24 @@
 
 			<div class="divider"></div>
 
+			<!-- Billing & Usage (opens web app account page) -->
+			<a
+				class="action-row"
+				href="/account/billing"
+				target="_blank"
+				rel="noopener noreferrer"
+				use:tap
+				onclick={onClose}
+			>
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="20" height="20">
+					<rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
+					<line x1="1" y1="10" x2="23" y2="10"/>
+				</svg>
+				<span>Billing &amp; Usage</span>
+			</a>
+
+			<div class="divider"></div>
+
 			<button class="action-row danger" use:tap onclick={() => { onLogout(); onClose(); }}>
 				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="20" height="20">
 					<path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
@@ -83,7 +101,7 @@
 			<div class="version">v{APP_VERSION} · ConusAI</div>
 		</div>
 	{/snippet}
-</MobileBottomSheet>
+</AppBottomSheet>
 
 <style>
 	.profile-content {
@@ -149,6 +167,7 @@
 		cursor: pointer;
 		width: 100%;
 		text-align: left;
+		text-decoration: none;
 		transition: background var(--dur-1);
 	}
 

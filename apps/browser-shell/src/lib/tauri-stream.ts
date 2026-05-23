@@ -27,6 +27,8 @@ export async function* streamChatTauri(params: {
   threadId?: string | null;
   workspaceNodeId?: string | null;
   attachmentIds?: string[];
+  /** PR 2.A — capability name to pin before semantic routing. */
+  forcedCapability?: string | null;
   signal?: AbortSignal;
 }): AsyncGenerator<ChatStreamDelta> {
   const streamId = await invoke<string>('chat_stream_start', {
@@ -35,6 +37,7 @@ export async function* streamChatTauri(params: {
     threadId: params.threadId ?? null,
     workspaceNodeId: params.workspaceNodeId ?? null,
     attachmentIds: params.attachmentIds ?? [],
+    forcedCapability: params.forcedCapability ?? null,
     apiBase: API_BASE,
   });
 

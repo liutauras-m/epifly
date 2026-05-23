@@ -42,6 +42,14 @@ pub struct ChatRequest {
     /// Set by the UI stream handler after fetching bytes from object storage.
     #[serde(default)]
     pub attachment_content: Vec<Value>,
+    /// Optional capability name to pin before semantic routing (PR 2.A).
+    ///
+    /// When set, tools from this capability are **prepended** before any semantic
+    /// hits and survive truncation — the LLM is guaranteed to see them.
+    /// Server-side validation: unknown or tenant-disabled capabilities are silently
+    /// ignored (logged at WARN level); they never cause a 500.
+    #[serde(default)]
+    pub forced_capability: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]

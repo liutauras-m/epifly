@@ -130,6 +130,7 @@ pub struct RouteEntry {
 pub const ROUTE_TABLE: &[RouteEntry] = &[
     // Public
     RouteEntry { method: "GET",  path: "/health",                               auth: "none",        router: "public" },
+    RouteEntry { method: "GET",  path: "/healthz/embeddings",                   auth: "none",        router: "public" },
     RouteEntry { method: "GET",  path: "/login",                                auth: "none",        router: "public" },
     RouteEntry { method: "POST", path: "/v1/auth/login",                        auth: "none",        router: "public" },
     RouteEntry { method: "POST", path: "/v1/auth/legacy/login",                 auth: "none",        router: "public" },
@@ -171,6 +172,7 @@ pub const ROUTE_TABLE: &[RouteEntry] = &[
     RouteEntry { method: "GET",  path: "/v1/tasks",                             auth: "bearer",      router: "protected" },
     RouteEntry { method: "GET",  path: "/v1/tasks/{id}",                        auth: "bearer",      router: "protected" },
     RouteEntry { method: "GET",  path: "/v1/tasks/{id}/sse",                    auth: "bearer",      router: "protected" },
+    RouteEntry { method: "GET",  path: "/v1/threads",                           auth: "bearer",      router: "protected" },
     RouteEntry { method: "GET",  path: "/v1/threads/{id}/messages",             auth: "bearer",      router: "protected" },
     RouteEntry { method: "GET",  path: "/api/realtime/workspace",               auth: "bearer",      router: "protected" },
     RouteEntry { method: "GET",  path: "/v1/shells/{device_id}/control",        auth: "bearer",      router: "protected" },
@@ -230,6 +232,7 @@ pub fn dump_routes_markdown() -> String {
 pub fn public_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/health", get(health::health))
+        .route("/healthz/embeddings", get(health::embeddings_ready))
         .route("/login", get(auth::login_page))
         .route("/v1/auth/login", post(auth::login))
         .route("/v1/auth/legacy/login", post(auth::login))
@@ -372,6 +375,7 @@ pub fn protected_router(
         .route("/v1/tasks/{id}", get(tasks::get_task))
         .route("/v1/tasks/{id}/sse", get(tasks::task_sse))
         // ── Threads ─────────────────────────────────────────────────────────
+        .route("/v1/threads", get(threads::list))
         .route("/v1/threads/{id}/messages", get(threads::get_messages))
         // ── Realtime ────────────────────────────────────────────────────────
         .route("/api/realtime/workspace", get(realtime::realtime_workspace))

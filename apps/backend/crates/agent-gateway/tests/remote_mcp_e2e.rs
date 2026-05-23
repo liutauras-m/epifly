@@ -58,6 +58,8 @@ fn register_remote_mcp(
         name: tool_fn.into(),
         description: format!("{tool_fn} tool"),
         input_schema: json!({"type": "object"}),
+        search_keywords: vec![],
+        read_before_write: None,
     };
     let manifest = ToolManifest {
         name: name.into(),

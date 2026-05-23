@@ -17,6 +17,7 @@ search_keywords = [
 [[tools]]
 name = "upload_file"
 description = "Upload a file to object storage and return its key."
+search_keywords = ["upload", "attach file", "store file", "put file", "send file"]
 
 [tools.input_schema]
 type = "object"
@@ -51,6 +52,7 @@ type = "string"
 [[tools]]
 name = "presigned_url"
 description = "Generate a presigned URL for temporary public access to an object."
+search_keywords = ["presigned url", "presigned link", "temporary link", "share file link", "file sharing url"]
 
 [tools.input_schema]
 type = "object"

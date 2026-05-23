@@ -4,6 +4,9 @@
 //! Workspace changes are published by the store layer; this service fans them out
 //! to per-tenant WebSocket subscriptions.
 
+pub mod invalidation;
+pub use invalidation::{InvalidationBus, InvalidationEvent, new_invalidation_bus};
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;

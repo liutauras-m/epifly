@@ -11,9 +11,12 @@ export type {
   ApiError,
   ApiResult,
   ChatStreamDelta,
+  RoutingMeta,
   InvoiceData,
   UploadResponse,
   WorkspaceContent,
 } from './types.js';
 
 export type { RegisterCapabilityRequest } from './capabilities.js';
+
+export type { ThreadMessage, ThreadSummary } from './threads.js';

@@ -230,6 +230,28 @@ pub struct ToolDef {
     pub name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
+    /// Per-tool keywords for the lexical capability prefilter (PR 2.B.2).
+    /// Checked in `lexical_capability_hints()` with Unicode word-boundary matching.
+    /// Default empty; fully backward-compatible — old manifests behave as today.
+    #[serde(default)]
+    pub search_keywords: Vec<String>,
+    /// Optional: name of the input field that holds a workspace-relative path to
+    /// read before invoking the tool (PR 2.D — read-before-write pattern).
+    ///
+    /// When set, the gateway reads the file at `input[field]` from
+    /// `WorkspaceContentStore` and injects its text as `input._current_content`
+    /// before the tool runs. If the file does not exist, injects
+    /// `_current_content: null` and `_is_new_file: true` so the chain prompt can
+    /// branch cleanly for the "create from scratch" case.
+    ///
+    /// Example (in TOML manifest):
+    /// ```toml
+    /// [[tools]]
+    /// name              = "add_dependency"
+    /// read_before_write = "manifest_path"
+    /// ```
+    #[serde(default)]
+    pub read_before_write: Option<String>,
 }
 
 impl ToolManifest {

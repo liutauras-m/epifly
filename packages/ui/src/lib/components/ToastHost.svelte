@@ -1,42 +1,53 @@
 <script lang="ts">
-  export interface Toast {
-    id: string;
-    message: string;
-    kind?: "info" | "success" | "error";
-    durationMs?: number;
-  }
-
-  interface Props {
-    toasts?: Toast[];
-    ondismiss?: (id: string) => void;
-  }
-
-  let { toasts = [], ondismiss }: Props = $props();
+  /**
+   * ToastHost — renders the global `toasts` singleton.
+   *
+   * Reads directly from the `toasts` module-level store so layout.svelte
+   * can use `<ToastHost />` with no props and get automatic reactivity.
+   */
+  import { toasts } from '../stores/toast.svelte.js';
+  import { X } from 'lucide-svelte';
 </script>
 
+{#if toasts.items.length > 0}
 <div class="toast-host" aria-live="polite" aria-atomic="false">
-  {#each toasts as toast (toast.id)}
-    <div class="toast {toast.kind ?? 'info'}" role="status">
+  {#each toasts.items as toast (toast.id)}
+    <div class="toast {toast.kind}" role="status" data-testid="toast">
       <span class="message">{toast.message}</span>
       <button
         class="dismiss"
         aria-label="Dismiss notification"
-        onclick={() => ondismiss?.(toast.id)}
-      >×</button>
+        onclick={() => toasts.dismiss(toast.id)}
+      >
+        <X size={16} strokeWidth={1.75} aria-hidden="true" />
+      </button>
     </div>
   {/each}
 </div>
+{/if}
 
 <style>
   .toast-host {
     position: fixed;
-    bottom: var(--s-5);
-    right: var(--s-5);
+    /* Mobile: full-width strip above the keyboard / home indicator */
+    bottom: calc(var(--s-4) + env(safe-area-inset-bottom, 0px));
+    left: var(--s-3);
+    right: var(--s-3);
     display: flex;
     flex-direction: column;
     gap: var(--s-2);
     z-index: 1000;
-    max-width: 360px;
+    pointer-events: none;
+  }
+
+  /* Desktop: compact right-aligned stack */
+  @media (min-width: 641px) {
+    .toast-host {
+      left: auto;
+      right: var(--s-5);
+      bottom: var(--s-5);
+      max-width: 360px;
+    }
   }
 
   .toast {
@@ -44,32 +55,48 @@
     align-items: center;
     gap: var(--s-3);
     padding: var(--s-3) var(--s-4);
-    border-radius: 8px;
+    border-radius: var(--r-sm);
     border: 1px solid var(--rule);
     background: var(--paper);
     color: var(--ink);
-    font-size: 13px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
-    animation: slide-in var(--dur-2) var(--ease-out);
+    font-size: var(--t-meta, 13px);
+    box-shadow: var(--shadow);
+    animation: slide-up var(--dur-2, 200ms) var(--ease-out, cubic-bezier(0.4, 0, 0.2, 1));
+    pointer-events: auto;
   }
 
   .toast.success { border-color: var(--success); background: var(--success-soft); }
   .toast.error   { border-color: var(--danger);  background: var(--danger-soft); }
+  .toast.warning { border-color: var(--warning, #d97706); background: var(--warning-soft, #fffbeb); }
 
   .message { flex: 1; }
 
   .dismiss {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
     border: none;
     background: transparent;
     color: var(--ink-3);
     cursor: pointer;
-    font-size: 18px;
-    line-height: 1;
+    border-radius: var(--r-sm);
     padding: 0;
+    flex-shrink: 0;
+    transition: background var(--dur-1, 100ms);
+  }
+  .dismiss:hover {
+    background: var(--paper-3);
+    color: var(--ink);
   }
 
-  @keyframes slide-in {
-    from { transform: translateX(100%); opacity: 0; }
-    to   { transform: translateX(0);   opacity: 1; }
+  @keyframes slide-up {
+    from { transform: translateY(16px); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .toast { animation: none; }
   }
 </style>

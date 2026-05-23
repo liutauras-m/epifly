@@ -16,6 +16,7 @@ search_keywords = ["ocr", "image text", "read image", "extract text", "vision"]
 [[tools]]
 name = "extract_text"
 description = "Extract all readable text from an image or PDF using vision. Returns the extracted text and bounding confidence."
+search_keywords = ["ocr", "extract text from image", "scan", "read image text", "text recognition", "vision ocr"]
 
 [tools.input_schema]
 type = "object"

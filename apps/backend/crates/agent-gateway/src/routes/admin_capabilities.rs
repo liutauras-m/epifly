@@ -357,6 +357,8 @@ pub async fn register_capability(
             name: t.name.clone(),
             description: t.description.clone(),
             input_schema: t.input_schema.clone(),
+            search_keywords: vec![],
+            read_before_write: None,
         };
         let manifest = ToolManifest {
             name: cap_name.clone(),

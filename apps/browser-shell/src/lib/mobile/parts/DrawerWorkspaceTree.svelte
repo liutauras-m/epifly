@@ -8,10 +8,20 @@
 		sdk,
 		selectedNodeId,
 		onSelectNode,
+		onNodesLoaded,
+		refreshSignal = 0,
 	}: {
 		sdk: ConusSdk;
 		selectedNodeId?: string;
 		onSelectNode: (n: WorkspaceNode) => void;
+		/** Called after the root-level tree is fetched, with the loaded nodes. */
+		onNodesLoaded?: (nodes: WorkspaceNode[]) => void;
+		/**
+		 * Increment this counter whenever an external event (e.g. a
+		 * `resource_invalidated` SSE delta) means the tree should re-fetch.
+		 * The `$effect` below tracks it and calls `loadTree()` on every change.
+		 */
+		refreshSignal?: number;
 	} = $props();
 
 	let nodes = $state<WorkspaceNode[]>([]);
@@ -22,6 +32,10 @@
 	let error = $state('');
 
 	$effect(() => {
+		// Track refreshSignal so an external increment triggers a re-fetch
+		// (e.g. from a `resource_invalidated` SSE event in MobileShell).
+		// eslint-disable-next-line @typescript-eslint/no-unused-expressions
+		refreshSignal;
 		loadTree();
 	});
 
@@ -30,6 +44,7 @@
 		const res = await sdk.workspaces.tree();
 		if (!res.error && res.data) {
 			nodes = (res.data as any).nodes ?? (Array.isArray(res.data) ? res.data : []);
+			onNodesLoaded?.(nodes);
 		}
 		loading = false;
 	}
@@ -54,6 +69,14 @@
 			await loadTree();
 			onSelectNode((res.data as any) as WorkspaceNode);
 		}
+	}
+
+	/** Lazy-loads children of a folder on first expand. */
+	async function loadChildren(parentId: string): Promise<WorkspaceNode[]> {
+		const res = await sdk.workspaces.tree(parentId);
+		if (res.error || !res.data) return [];
+		const d = res.data as any;
+		return Array.isArray(d) ? d : (d.nodes ?? []);
 	}
 
 	let pendingFolder = $state(false);
@@ -117,6 +140,7 @@
 					{node}
 					active={node.id === selectedNodeId}
 					onSelect={(n) => onSelectNode(n)}
+					{loadChildren}
 				/>
 			{/each}
 		</div>
@@ -145,7 +169,7 @@
 		font-family: var(--font-mono);
 		font-size: 11px;
 		font-weight: 500;
-		letter-spacing: 0.08em;
+		letter-spacing: 0.14em;
 		color: var(--ink-3);
 		text-transform: uppercase;
 	}

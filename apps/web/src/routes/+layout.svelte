@@ -1,6 +1,6 @@
 <script lang="ts">
 	import '@conusai/ui/foundry.css';
-	import { ThemeProvider, LiveAnnouncer } from '@conusai/ui';
+	import { ThemeProvider, LiveAnnouncer, ToastHost } from '@conusai/ui';
 	import type { LayoutData } from './$types';
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -14,3 +14,4 @@
 	{@render children()}
 </ThemeProvider>
 <LiveAnnouncer />
+<ToastHost />

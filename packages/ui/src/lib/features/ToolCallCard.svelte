@@ -9,6 +9,7 @@
     result,
     startTime,
     capabilityCard = undefined,
+    onRetry = undefined,
   }: {
     id: string;
     name: string;
@@ -16,6 +17,7 @@
     result: string;
     startTime: number;
     capabilityCard?: CapabilityCard;
+    onRetry?: () => void;
   } = $props();
 
   const registry = useCapabilityRendererRegistry();
@@ -46,6 +48,11 @@
       <span class="tool-time" aria-label={status === 'running' ? 'Running' : `${elapsedMs}ms`}>
         {#if status !== 'running'}{elapsedMs}ms{:else}…{/if}
       </span>
+      {#if status === 'error' && onRetry}
+        <button class="retry-btn" onclick={(e) => { e.preventDefault(); onRetry!(); }} aria-label="Retry tool call">
+          Retry
+        </button>
+      {/if}
     </summary>
     <div class="tool-body">{result || 'running…'}</div>
   </details>
@@ -74,6 +81,18 @@
   [data-status="error"]   .tool-dot { background: var(--danger); }
   .tool-name { flex: 1; font-family: var(--font-mono); }
   .tool-time { color: var(--ink-3); }
+  .retry-btn {
+    margin-left: var(--s-2);
+    padding: 1px var(--s-2);
+    font-size: var(--t-meta);
+    border: 1px solid var(--danger);
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--danger);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .retry-btn:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
   .tool-body {
     padding: var(--s-3);
     font-family: var(--font-mono);

@@ -1,0 +1,312 @@
+schema_version = "2.0"
+name        = "code-project"
+version     = "1.0.0"
+namespace   = "code.project"
+category    = "compose"
+kind        = "chain"
+description = """
+Author and edit code projects: scaffold a new application in any supported
+framework, edit existing source files, apply patches, manage package
+dependencies, or summarise a project for follow-up edits.
+Operates on directories of source files under a tenant workspace path.
+Use for: creating new apps, modifying source code, patching files, updating
+package.json, and reviewing project structure.
+"""
+tags = [
+  "code", "project", "scaffold", "app", "framework", "sveltekit", "svelte",
+  "react", "vite", "nextjs", "nuxt", "python", "rust", "typescript",
+  "edit", "patch", "refactor", "dependency",
+]
+accepts  = ["application/json"]
+emits    = ["application/json"]
+idempotent = false
+cost_hint  = "medium"
+requires   = []
+search_keywords = [
+  "build app", "create app", "new app", "scaffold", "new project",
+  "svelte", "sveltekit", "react", "vite", "next.js", "nextjs", "nuxt",
+  "python project", "rust project", "go project", "node cli",
+  "edit code", "add component", "add route", "add page",
+  "install package", "add dependency", "update package.json",
+  "refactor", "fix bug", "update file", "patch file",
+  "package.json", "tsconfig", "vite.config", "pyproject.toml",
+  "host", "deploy", "publish", "preview", "serve", "live url",
+  "share app", "static site", "make it public",
+]
+
+# ── Tool 1 — scaffold a new project ────────────────────────────────────────────
+
+[[tools]]
+name        = "scaffold_project"
+description = """
+Generate a complete source tree for a new application.
+Returns ToolOutput with one Artifact per generated file (content in data field).
+Supported frameworks: sveltekit, vite-svelte, vite-react, nextjs, nuxt,
+node-cli, python-uv, rust-bin, go-cli.
+"""
+search_keywords = [
+  "scaffold", "generate project", "new app", "new project", "create app",
+  "sveltekit", "svelte", "react", "vite", "nextjs", "nuxt", "python",
+  "rust project", "go project", "node cli", "starter", "boilerplate",
+]
+
+[tools.input_schema]
+type     = "object"
+required = ["framework", "name", "target_path"]
+
+[tools.input_schema.properties.framework]
+type        = "string"
+description = "Framework identifier: sveltekit | vite-svelte | vite-react | nextjs | nuxt | node-cli | python-uv | rust-bin | go-cli"
+
+[tools.input_schema.properties.name]
+type        = "string"
+description = "Project name (used in package.json, Cargo.toml, etc.)"
+
+[tools.input_schema.properties.target_path]
+type        = "string"
+description = "Workspace-relative directory to create the project in (e.g. 'projects/my-app')"
+
+[tools.input_schema.properties.description]
+type        = "string"
+description = "Optional short description of what the app should do"
+
+# ── Tool 2 — edit an existing file ─────────────────────────────────────────────
+
+[[tools]]
+name        = "edit_file"
+description = """
+Edit or rewrite a source file based on a natural-language instruction.
+Pass the current file content; returns ToolOutput with the updated file as an Artifact.
+"""
+
+[tools.input_schema]
+type     = "object"
+required = ["path", "current_content", "instruction"]
+
+[tools.input_schema.properties.path]
+type        = "string"
+description = "Workspace-relative path to the file (e.g. 'projects/my-app/src/routes/+page.svelte')"
+
+[tools.input_schema.properties.current_content]
+type        = "string"
+description = "Current contents of the file"
+
+[tools.input_schema.properties.instruction]
+type        = "string"
+description = "Natural-language description of the change to make"
+
+# ── Tool 3 — apply a unified diff ──────────────────────────────────────────────
+
+[[tools]]
+name        = "apply_patch"
+description = """
+Apply a unified-diff patch to a source file.
+Pass the current file content and the diff; returns ToolOutput with the patched file as an Artifact.
+"""
+
+[tools.input_schema]
+type     = "object"
+required = ["path", "current_content", "unified_diff"]
+
+[tools.input_schema.properties.path]
+type        = "string"
+description = "Workspace-relative path to the file"
+
+[tools.input_schema.properties.current_content]
+type        = "string"
+description = "Current full contents of the file before patching"
+
+[tools.input_schema.properties.unified_diff]
+type        = "string"
+description = "Unified diff (--- / +++ / @@ format) to apply"
+
+# ── Tool 4 — add a package dependency ─────────────────────────────────────────
+
+[[tools]]
+name               = "add_dependency"
+read_before_write  = "manifest_path"
+description = """
+Add (or update) a dependency in a package manifest file.
+Supports package.json (npm/pnpm/yarn), pyproject.toml, Cargo.toml.
+The gateway automatically reads the current file at manifest_path and injects
+_current_content before the chain runs — do NOT pass manifest_content; it is
+optional and ignored when _current_content is present.
+Returns ToolOutput with the updated manifest file as an Artifact.
+"""
+search_keywords = [
+  "add dependency", "install package", "pnpm add", "npm install", "yarn add",
+  "pip install", "cargo add", "add library", "update package.json",
+  "add module", "require package",
+]
+
+[tools.input_schema]
+type     = "object"
+required = ["manifest_path", "package_name"]
+
+[tools.input_schema.properties.manifest_path]
+type        = "string"
+description = "Workspace-relative path to the manifest file (e.g. 'projects/my-app/package.json'). The gateway reads it automatically."
+
+[tools.input_schema.properties.manifest_content]
+type        = "string"
+description = "OPTIONAL: current contents of the manifest. Ignored when the gateway has already injected _current_content (normal path). Provide only if you already have the content in context."
+
+[tools.input_schema.properties.package_name]
+type        = "string"
+description = "Package / crate / pip name to add (e.g. 'lodash', 'requests', 'serde')"
+
+[tools.input_schema.properties.version]
+type        = "string"
+description = "Optional version constraint (e.g. '^4.17.21', '>=2.28', '*')"
+
+[tools.input_schema.properties.dev]
+type        = "boolean"
+description = "If true, add as a dev dependency (devDependencies, dev-dependencies, etc.)"
+
+# ── Tool 5 — summarise a project for context ───────────────────────────────────
+
+[[tools]]
+name        = "read_project"
+description = """
+Produce a structured summary of a project: directory tree, key files, and
+a short technical overview. Use before making edits to understand the project.
+Pass the files you want summarised; returns a textual overview with no Artifacts.
+"""
+
+[tools.input_schema]
+type     = "object"
+required = ["files"]
+
+[tools.input_schema.properties.files]
+type        = "array"
+description = "Array of {path, content} objects representing project files to analyse"
+
+[tools.input_schema.properties.files.items]
+type = "object"
+
+[tools.input_schema.properties.question]
+type        = "string"
+description = "Optional specific question about the project (e.g. 'what routing library is used?')"
+
+# ── Tool 6 — host a static project ────────────────────────────────────────────
+
+[[tools]]
+name        = "host_project"
+description = """
+Prepare a project for static hosting. Detects the framework from package.json /
+svelte.config / vite.config, generates static-export configuration, and returns
+ToolOutput with the build-ready files as Artifacts.
+Returns metadata.hosting_type = "static" with root_path and index_file so
+ArtifactBridge can derive a public_url. If the project uses a dynamic runtime
+(e.g. Express, FastAPI) that cannot be statically exported, returns
+hosting_type = "unsupported" with guidance.
+"""
+search_keywords = [
+  "host", "deploy", "publish", "preview url", "share app", "make it public",
+  "static site", "live url", "hosting", "go live",
+]
+
+[tools.input_schema]
+type     = "object"
+required = ["target_path", "files"]
+
+[tools.input_schema.properties.target_path]
+type        = "string"
+description = "Workspace-relative path to the project root (e.g. 'projects/my-app')"
+
+[tools.input_schema.properties.files]
+type        = "array"
+description = "Array of {path, content} for the project's key config files (package.json, svelte.config.js, vite.config.ts, etc.)"
+
+[tools.input_schema.properties.files.items]
+type = "object"
+
+[tools.input_schema.properties.framework_hint]
+type        = "string"
+description = "Optional framework hint if auto-detection is ambiguous: sveltekit | vite-react | vite-svelte | nextjs | plain-html"
+
+# ── Shared chain config ─────────────────────────────────────────────────────────
+
+[chain]
+model      = "smart"
+max_tokens = 8192
+system_prompt = """
+You are an expert software engineer. You generate, edit, and review source code
+for web apps, CLIs, and libraries across multiple frameworks and languages.
+
+CRITICAL OUTPUT REQUIREMENT: You MUST respond with EXACTLY this JSON structure and nothing else.
+No prose before, no prose after, no markdown fences, no planning notes:
+
+{"content":"<one-sentence summary>","artifacts":[{"name":"<workspace-relative path>","mime_type":"<mime>","data":"<FULL file contents>"}],"metadata":{"artifact_path_prefix":""}}
+
+The top-level keys MUST be exactly: "content", "artifacts", "metadata".
+Each artifact MUST have exactly: "name", "mime_type", "data".
+Do NOT use any other keys. Do NOT add explanations outside the JSON.
+
+Rules:
+- Detect the operation from the input JSON fields provided to you.
+- For scaffold_project: generate ALL files for a working, runnable project.
+  Include package.json / Cargo.toml / pyproject.toml, config files, a minimal
+  working page or entry point, and a README.md. Set "name" and "target_path"
+  from the input. Each file becomes one Artifact with "name" = "<target_path>/<relative-path>".
+  Add "post_install" (e.g. ["pnpm install", "pnpm dev"]) to metadata.
+- For edit_file: apply the instruction to current_content and return the full
+  updated file in one Artifact. "name" = the "path" input field.
+- For apply_patch: apply the unified_diff to current_content and return the
+  patched file in one Artifact. "name" = the "path" input field.
+- For add_dependency: update the manifest and return the full updated file in one
+  Artifact. "name" = the "manifest_path" input field.
+  CRITICAL — use the content source with the highest authority, in this order:
+  1. `_current_content` (injected by the gateway from disk — most authoritative).
+  2. `manifest_content` (provided by the caller — use only if _current_content is absent).
+  3. If both are absent or null AND `_is_new_file` is true, create a valid minimal
+     manifest for the detected type (package.json / Cargo.toml / pyproject.toml).
+  NEVER fabricate or hallucinate existing fields. Copy ALL existing keys verbatim;
+  only add or update the `package_name` entry. Preserve formatting style.
+- For read_project: analyse the files, answer any question, and return a
+  structured textual summary in "content" with NO artifacts.
+- For host_project: inspect the config files, determine if the framework supports
+  static export, and return:
+  * If static export is supported: ToolOutput with updated config files that
+    enable static export (e.g. @sveltejs/adapter-static, vite build output,
+    next export flag, etc.) as Artifacts, AND set metadata:
+    { "artifact_path_prefix": "", "hosting_type": "static",
+      "root_path": "<target_path>", "index_file": "index.html",
+      "framework": "<detected>" }.
+  * If static export is NOT supported: ToolOutput with no artifacts, content
+    explaining why, and metadata { "hosting_type": "unsupported",
+    "reason": "...", "suggested_capability": "code-shell (future)" }.
+- The "data" field in each Artifact must contain the COMPLETE file contents
+  as plain UTF-8 text (not base64, not truncated).
+- Never omit files. Never use placeholders or "// ... rest of file unchanged".
+- Respond ONLY with the JSON object — no markdown fences, no explanation.
+
+Framework scaffolding guides (use as canonical starting points):
+
+SvelteKit (sveltekit):
+  package.json: { "name": "<name>", "type": "module", "scripts": {"dev":"vite dev","build":"vite build","preview":"vite preview"}, "devDependencies":{"@sveltejs/kit":"^2","@sveltejs/adapter-auto":"^3","svelte":"^5","vite":"^5","typescript":"^5"}}
+  svelte.config.js, vite.config.ts, tsconfig.json, src/routes/+page.svelte, src/app.html
+
+Vite + React (vite-react):
+  package.json with react, react-dom, @vitejs/plugin-react, vite, typescript
+  vite.config.ts, tsconfig.json, index.html, src/main.tsx, src/App.tsx, src/App.css
+
+Vite + Svelte (vite-svelte):
+  package.json with svelte, @sveltejs/vite-plugin-svelte, vite, typescript
+  vite.config.ts, tsconfig.json, index.html, src/main.ts, src/App.svelte
+
+Next.js (nextjs):
+  package.json with next, react, react-dom, typescript, @types/react
+  next.config.mjs, tsconfig.json, src/app/layout.tsx, src/app/page.tsx
+
+Python uv (python-uv):
+  pyproject.toml (uv-compatible), README.md, src/<name>/__init__.py, src/<name>/main.py
+
+Rust binary (rust-bin):
+  Cargo.toml, src/main.rs, README.md
+
+Node CLI (node-cli):
+  package.json with "bin" entry, index.js or src/index.ts, README.md
+"""
+
+prompt_template = "Input JSON:\n{{input}}"

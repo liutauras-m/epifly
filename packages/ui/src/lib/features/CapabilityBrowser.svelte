@@ -1,22 +1,30 @@
 <script lang="ts">
 	import type { ConusSdk } from '@conusai/sdk';
-	import CapabilityRow from '../parts/CapabilityRow.svelte';
-	import CapabilityDetailSheet from '../parts/CapabilityDetailSheet.svelte';
+	import CapabilityRow from './CapabilityRow.svelte';
+
+	export type CapEntry = {
+		name: string;
+		description?: string;
+		kind?: string;
+		tools?: Array<{ name: string; description?: string }>;
+	};
 
 	let {
 		sdk,
-		onInvoke,
+		onSelect,
+		showChevron = true,
 	}: {
 		sdk: ConusSdk;
-		onInvoke: (name: string) => void;
+		/** Called when a capability row is clicked. */
+		onSelect: (cap: CapEntry) => void;
+		/** Pass false to hide the chevron on each row (desktop panel style). */
+		showChevron?: boolean;
 	} = $props();
 
 	let query = $state('');
-	let caps = $state<any[]>([]);
+	let caps = $state<CapEntry[]>([]);
 	let loading = $state(true);
-	let selectedCap = $state<any | null>(null);
-	let sheetOpen = $state(false);
-	let debounceTimer: ReturnType<typeof setTimeout>;
+	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
 	$effect(() => {
 		loadCaps();
@@ -24,39 +32,41 @@
 
 	async function loadCaps() {
 		loading = true;
-		if (query.trim()) {
-			const res = await sdk.capabilities.search(query);
-			caps = (res.data as any)?.results ?? [];
-		} else {
-			const res = await sdk.capabilities.list();
-			const d = res.data as any;
-			caps = Array.isArray(d) ? d : (d?.capabilities ?? []);
+		try {
+			if (query.trim()) {
+				const res = await sdk.capabilities.search(query);
+				caps = (res.data as any)?.results ?? [];
+			} else {
+				const res = await sdk.capabilities.list();
+				const d = res.data as any;
+				caps = Array.isArray(d) ? d : (d?.capabilities ?? []);
+			}
+		} catch {
+			caps = [];
+		} finally {
+			loading = false;
 		}
-		loading = false;
 	}
 
 	function onQueryInput(e: Event) {
 		query = (e.target as HTMLInputElement).value;
 		clearTimeout(debounceTimer);
-		debounceTimer = setTimeout(loadCaps, 200);
-	}
-
-	function openDetail(cap: any) {
-		selectedCap = cap;
-		sheetOpen = true;
+		debounceTimer = setTimeout(loadCaps, 220);
 	}
 </script>
 
-<div class="caps-screen">
+<div class="cap-browser">
 	<div class="search-bar">
-		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" class="search-icon">
+		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"
+			stroke-linecap="round" stroke-linejoin="round" width="18" height="18"
+			class="search-icon" aria-hidden="true">
 			<circle cx="11" cy="11" r="8"/>
 			<line x1="21" y1="21" x2="16.65" y2="16.65"/>
 		</svg>
 		<input
 			class="search-input"
 			type="search"
-			placeholder="Search capabilities..."
+			placeholder="Search capabilities…"
 			value={query}
 			oninput={onQueryInput}
 			aria-label="Search capabilities"
@@ -64,14 +74,14 @@
 	</div>
 
 	{#if loading}
-		<div class="loading-list">
-			{#each [1,2,3,4,5] as _}
-				<div class="skeleton-cap"></div>
+		<div class="loading-list" role="list" aria-label="Loading capabilities">
+			{#each [1, 2, 3, 4, 5] as _}
+				<div class="skeleton-cap" role="presentation"></div>
 			{/each}
 		</div>
 	{:else if caps.length === 0}
 		<div class="empty">
-			<p>No matching capabilities.</p>
+			<p>No capabilities found{query.trim() ? ` for "${query}"` : ''}.</p>
 		</div>
 	{:else}
 		<div class="caps-list" role="list">
@@ -79,28 +89,22 @@
 				<CapabilityRow
 					name={cap.name}
 					description={cap.description}
-					kind={cap.kind}
-					onClick={() => openDetail(cap)}
+					kind={cap.kind ?? 'tool'}
+					toolCount={Array.isArray(cap.tools) ? cap.tools.length : 0}
+					{showChevron}
+					onClick={() => onSelect(cap)}
 				/>
 			{/each}
 		</div>
 	{/if}
 </div>
 
-<CapabilityDetailSheet
-	open={sheetOpen}
-	capability={selectedCap}
-	onClose={() => sheetOpen = false}
-	onInvoke={(name) => { onInvoke(name); sheetOpen = false; }}
-/>
-
 <style>
-	.caps-screen {
-		flex: 1;
+	.cap-browser {
 		display: flex;
 		flex-direction: column;
+		flex: 1;
 		overflow: hidden;
-		background: var(--paper);
 	}
 
 	.search-bar {
@@ -152,7 +156,7 @@
 
 	@keyframes shimmer {
 		0%, 100% { opacity: 1; }
-		50% { opacity: 0.5; }
+		50%       { opacity: 0.5; }
 	}
 
 	@media (prefers-reduced-motion: reduce) {
@@ -167,5 +171,7 @@
 		color: var(--ink-3);
 		font-family: var(--font-body);
 		font-size: 15px;
+		padding: var(--s-8);
 	}
+	.empty p { margin: 0; }
 </style>

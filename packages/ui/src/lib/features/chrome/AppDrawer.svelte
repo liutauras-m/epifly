@@ -21,26 +21,30 @@
 	});
 </script>
 
-<!-- Backdrop -->
+<!-- Backdrop (mobile only — desktop has persistent sidebar) -->
 <div
 	class="backdrop"
 	class:visible={open}
 	aria-hidden="true"
 	onclick={onClose}
+	onkeydown={(e) => { if (e.key === 'Escape') onClose(); }}
+	role="presentation"
 ></div>
 
-<!-- Panel -->
+<!-- Drawer / sidebar panel -->
 <nav
 	class="drawer"
 	class:open
 	aria-label="Workspace navigation"
-	aria-hidden={!open}
 >
 	<div class="drawer-inner">
+		<!-- Close button (mobile only — hidden on desktop via CSS) -->
 		<div class="drawer-header">
-			<button class="drawer-close" aria-label="Close" onclick={onClose}>
-				<svg viewBox="0 0 24 24" fill="none" width="20" height="20" aria-hidden="true">
-					<path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+			<button class="drawer-close" aria-label="Close navigation" onclick={onClose}>
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+					stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
+					width="20" height="20" aria-hidden="true">
+					<path d="M18 6L6 18M6 6l12 12"/>
 				</svg>
 			</button>
 		</div>
@@ -52,13 +56,12 @@
 	.backdrop {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.4);
+		background: var(--backdrop);
 		z-index: 300;
 		opacity: 0;
 		pointer-events: none;
-		transition: opacity var(--dur-2, 200ms) var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+		transition: opacity var(--dur-2) var(--ease-out);
 	}
-
 	.backdrop.visible {
 		opacity: 1;
 		pointer-events: auto;
@@ -75,21 +78,13 @@
 		border-right: 1px solid var(--seam);
 		z-index: 310;
 		transform: translateX(-100%);
-		transition: transform var(--dur-3, 320ms) var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+		transition: transform var(--dur-3) var(--ease-out);
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
 	}
-
 	.drawer.open {
 		transform: translateX(0);
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.backdrop { transition-duration: 80ms; }
-		.drawer { transition: opacity 80ms linear; transform: none !important; }
-		.drawer:not(.open) { opacity: 0; pointer-events: none; }
-		.drawer.open { opacity: 1; }
 	}
 
 	.drawer-inner {
@@ -115,16 +110,48 @@
 		justify-content: center;
 		width: 36px;
 		height: 36px;
-		border-radius: 50%;
+		border-radius: var(--r-full);
 		border: none;
 		background: transparent;
 		color: var(--ink-3);
 		cursor: pointer;
 		padding: 0;
 	}
-
 	.drawer-close:hover {
 		background: var(--paper-3);
 		color: var(--ink);
+	}
+
+	/* ── Desktop: persistent sidebar, no overlay ────────────────────────── */
+	@media (min-width: 641px) {
+		.backdrop { display: none; }
+
+		.drawer {
+			position: relative;
+			top: auto;
+			left: auto;
+			bottom: auto;
+			width: var(--rail, 240px);
+			max-width: var(--rail, 240px);
+			transform: none;
+			transition: none;
+			z-index: 1;
+			flex-shrink: 0;
+		}
+
+		.drawer-header {
+			display: none;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.backdrop { transition-duration: 80ms; }
+		.drawer { transition: opacity 80ms linear; transform: none !important; }
+		.drawer:not(.open) { opacity: 0; pointer-events: none; }
+		.drawer.open { opacity: 1; }
+	}
+
+	@media (prefers-reduced-motion: reduce) and (min-width: 641px) {
+		.drawer, .drawer:not(.open), .drawer.open { opacity: 1; pointer-events: auto; }
 	}
 </style>

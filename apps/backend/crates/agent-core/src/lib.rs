@@ -52,6 +52,7 @@ pub use indexing::LocalEmbeddingService;
 pub use indexing::{EmbeddingModel, EmbeddingService, NoopEmbeddingService};
 pub use memory::{ContextBuilder, ContextTruncator, OldestFirstTruncator};
 pub use realtime::{RealtimeService, WorkspaceChangeEvent};
+pub use realtime::{InvalidationBus, InvalidationEvent, new_invalidation_bus};
 pub use store::onboarding::TenantOnboardingService;
 pub use store::{
     CompletedPart, CredentialStore, DEFAULT_TENANT_ROOT_NAME, FinalizeResult, HttpMarkerClient,

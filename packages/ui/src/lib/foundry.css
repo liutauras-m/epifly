@@ -20,6 +20,47 @@
   font-display: swap;
 }
 
+/* ── Tokens · Theme colours (paper = light, forge = dark) ────────────────── */
+:root,
+:root[data-theme="paper"] {
+  --ink:    #111111;
+  --ink-2:  #3A3A3A;
+  --ink-3:  #767676;
+  --paper:  #F8F8F8;
+  --paper-2:#F0F0F0;
+  --paper-3:#E8E8E8;
+  --rule:   #E0E0E0;
+  --seam:   #C8C8C8;
+}
+
+:root[data-theme="forge"] {
+  --ink:    #F8F8F8;
+  --ink-2:  #C0C0C0;
+  --ink-3:  #888888;
+  --paper:  #111111;
+  --paper-2:#1A1A1A;
+  --paper-3:#222222;
+  --rule:   #2A2A2A;
+  --seam:   #3A3A3A;
+
+  /* Accent overrides — brighter on dark */
+  --ember-2:    #FF7A20;
+  --ember-soft: rgba(255, 98, 0, 0.12);
+  --ember-glow: rgba(255, 98, 0, 0.28);
+  --cyan-soft:  rgba(0, 212, 255, 0.12);
+
+  /* Semantic overrides — brighter on dark */
+  --success:      #22a060;
+  --success-soft: rgba(34, 160, 96, 0.15);
+  --danger:       #e03000;
+  --danger-soft:  rgba(224, 48, 0, 0.15);
+
+  /* Overlay overrides — stronger on dark */
+  --shadow-sm: rgba(0, 0, 0, 0.30);
+  --shadow-md: rgba(0, 0, 0, 0.50);
+  --backdrop:  rgba(0, 0, 0, 0.60);
+}
+
 /* ── Tokens · Shared (non-theme) ──────────────────────────────────────────── */
 :root {
   /* Brand */
@@ -70,7 +111,12 @@
   --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
   --ease-in:     cubic-bezier(0.6, 0, 0.7, 0.2);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --dur-1: 120ms; --dur-2: 200ms; --dur-3: 320ms; --dur-4: 520ms;
+  --ease-ui:     cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-1: 120ms;   /* hover paint, micro-feedback */
+  --dur-2: 200ms;   /* fast state changes */
+  --dur-2b: 240ms;  /* staggered reveals, greeting animations */
+  --dur-3: 320ms;   /* sheet open, modal in */
+  --dur-4: 520ms;   /* page reveals */
 
   --r-xs:   6px;
   --r-sm:   10px;

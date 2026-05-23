@@ -16,6 +16,10 @@ pub struct CapabilityRegistry {
     bulk_factories: Vec<Box<dyn BulkCapabilityFactory>>,
     /// namespace segment → child segment names (for admin autocomplete).
     namespace_index: HashMap<String, Vec<String>>,
+    /// In-process cache of tool description → embedding vector (PR 2.B.3.1).
+    /// Avoids re-embedding unchanged capability descriptions across restarts or
+    /// hot-reload cycles. Key is the exact text sent to `EmbeddingService::embed_documents`.
+    embedding_cache: HashMap<String, Vec<f32>>,
 }
 
 impl CapabilityRegistry {
@@ -197,6 +201,75 @@ impl CapabilityRegistry {
             .filter(move |c| c.enabled && c.is_visible_to(tenant_id))
     }
 
+    /// Return Anthropic-format tool definition JSON blocks for every tool in a named
+    /// capability, if that capability is enabled and visible to `tenant_id`.
+    ///
+    /// Returns `None` when the capability is unknown, disabled, or outside the
+    /// tenant's scope — so callers can distinguish "not found / blocked" from
+    /// "found but provider has no tools" (empty `Vec`).
+    ///
+    /// Security: server-side validation — the caller's `forced_capability` value is
+    /// never trusted blindly; it is checked against the tenant's enabled capability
+    /// set here. Unknown / disabled capabilities return `None`, never a 500.
+    pub fn tools_for_capability_exact_for_tenant(
+        &self,
+        cap_name: &str,
+        tenant_id: &str,
+    ) -> Option<Vec<serde_json::Value>> {
+        let card = self.cards.get(cap_name)?;
+        if !card.enabled || !card.is_visible_to(tenant_id) {
+            return None;
+        }
+        let provider = card.provider.as_ref()?;
+        Some(provider.tool_definitions())
+    }
+
+    /// Collect distinct capability names whose `search_keywords` (at the manifest
+    /// level OR at the per-`ToolDef` level) contain a case-insensitive
+    /// Unicode word-boundary match for any keyword against `query`.
+    ///
+    /// Used by `lexical_capability_hints()` in the agent router (PR 2.B.3).
+    /// Returns only capabilities that are enabled and visible to `tenant_id`.
+    pub fn lexical_hint_capabilities(
+        &self,
+        query: &str,
+        tenant_id: &str,
+    ) -> Vec<String> {
+        let query_lower = query.to_lowercase();
+        let mut matched: Vec<String> = Vec::new();
+
+        for card in self.cards.values() {
+            if !card.enabled || !card.is_visible_to(tenant_id) {
+                continue;
+            }
+            let cap_name = card.manifest.name.clone();
+            if matched.contains(&cap_name) {
+                continue;
+            }
+
+            // 1. Check capability-level search_keywords.
+            let cap_hit = card.manifest.search_keywords.iter().any(|kw| {
+                word_boundary_contains(&query_lower, &kw.to_lowercase())
+            });
+            if cap_hit {
+                matched.push(cap_name);
+                continue;
+            }
+
+            // 2. Check per-tool search_keywords.
+            let tool_hit = card.manifest.tools.iter().any(|tool| {
+                tool.search_keywords.iter().any(|kw| {
+                    word_boundary_contains(&query_lower, &kw.to_lowercase())
+                })
+            });
+            if tool_hit {
+                matched.push(cap_name);
+            }
+        }
+
+        matched
+    }
+
     pub fn len(&self) -> usize {
         self.cards.len()
     }
@@ -233,6 +306,27 @@ impl CapabilityRegistry {
         for card in &cards {
             self.index_namespace(card);
         }
+    }
+
+    // ── Embedding cache (PR 2.B.3.1) ─────────────────────────────────────────
+    //
+    // Bulk factories call `cache_embedding` after computing a fresh embedding so
+    // subsequent hot-reload cycles skip the embedding service call.  Keyed by the
+    // exact description text; lookup is O(1) average.
+
+    /// Store an embedding vector for `text` in the in-process cache.
+    pub fn cache_embedding(&mut self, text: String, embedding: Vec<f32>) {
+        self.embedding_cache.insert(text, embedding);
+    }
+
+    /// Return a cached embedding for `text`, or `None` if not yet computed.
+    pub fn cached_embedding(&self, text: &str) -> Option<&Vec<f32>> {
+        self.embedding_cache.get(text)
+    }
+
+    /// Number of entries currently in the embedding cache.
+    pub fn embedding_cache_len(&self) -> usize {
+        self.embedding_cache.len()
     }
 
     fn factory_for(&self, card: &CapabilityCard) -> Option<&dyn CapabilityFactory> {
@@ -292,6 +386,53 @@ impl CapabilityRegistry {
         }
         Ok(count)
     }
+}
+
+/// True when `needle` appears in `haystack` at a Unicode word boundary on both sides.
+///
+/// A word boundary exists where the character before the match is not a Unicode
+/// alphanumeric/underscore, or the match is at the start of the string (same for
+/// the end).  Both `haystack` and `needle` must already be lowercased by the caller
+/// for case-insensitive matching.
+///
+/// This avoids the `regex` crate dependency while correctly handling multi-word
+/// keyword phrases (e.g. "get rid of") that contain spaces.
+fn word_boundary_contains(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let hay_chars: Vec<char> = haystack.chars().collect();
+    let ndl_chars: Vec<char> = needle.chars().collect();
+    let hay_len = hay_chars.len();
+    let ndl_len = ndl_chars.len();
+    if ndl_len > hay_len {
+        return false;
+    }
+
+    for start in 0..=(hay_len - ndl_len) {
+        // Check char match.
+        if hay_chars[start..start + ndl_len] != ndl_chars[..] {
+            continue;
+        }
+        // Left boundary: start of string or previous char is non-word.
+        let left_ok = start == 0 || !is_word_char(hay_chars[start - 1]);
+        if !left_ok {
+            continue;
+        }
+        // Right boundary: end of string or next char is non-word.
+        let end = start + ndl_len;
+        let right_ok = end == hay_len || !is_word_char(hay_chars[end]);
+        if right_ok {
+            return true;
+        }
+    }
+    false
+}
+
+/// Unicode "word character": letter, digit, or underscore.
+#[inline]
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
 }
 
 fn read_state_enabled(cap_dir: &Path) -> bool {
@@ -534,5 +675,110 @@ mod tests {
                 assert_eq!(r.enabled_for_tenant(&tenant_id).count(), if expected { 1 } else { 0 });
             }
         }
+    }
+
+    // ── word_boundary_contains ────────────────────────────────────────────────────
+
+    #[test]
+    fn word_boundary_single_word_match() {
+        assert!(word_boundary_contains("delete the file", "delete"));
+        assert!(word_boundary_contains("please remove it", "remove"));
+        assert!(!word_boundary_contains("undelete", "delete")); // prefix
+        assert!(!word_boundary_contains("deleted", "delete")); // suffix
+    }
+
+    #[test]
+    fn word_boundary_phrase_match() {
+        assert!(word_boundary_contains("i want to get rid of it", "get rid of"));
+        assert!(!word_boundary_contains("get rid", "get rid of")); // too short
+    }
+
+    #[test]
+    fn word_boundary_case_insensitive_via_lowercase_caller() {
+        // Caller lowercases both; test that lowercased strings match.
+        let q = "DELETE the notes folder".to_lowercase();
+        assert!(word_boundary_contains(&q, "delete"));
+    }
+
+    #[test]
+    fn word_boundary_empty_needle_never_matches() {
+        assert!(!word_boundary_contains("anything", ""));
+    }
+
+    // ── lexical_hint_capabilities ─────────────────────────────────────────────────
+
+    fn make_kw_card(name: &str, cap_kws: Vec<String>, tool_kws: Vec<String>) -> CapabilityCard {
+        use crate::capabilities::manifest::{ToolDef, ToolKind, ToolManifest};
+        let manifest = ToolManifest {
+            name: name.into(),
+            version: "0.1.0".into(),
+            description: "kw-test".into(),
+            kind: ToolKind::Chain,
+            tools: vec![ToolDef {
+                name: format!("{name}__do"),
+                description: "do it".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+                search_keywords: tool_kws,
+                read_before_write: None,
+            }],
+            config: serde_json::Value::Null,
+            tags: vec![],
+            namespace: None,
+            chain: None,
+            tenant_scope: vec![],
+            enabled: true,
+            search_keywords: cap_kws,
+            schema_version: "2.0".into(),
+            category: None,
+            accepts: vec![],
+            emits: vec![],
+            idempotent: true,
+            cost_hint: None,
+            requires: vec![],
+        };
+        CapabilityCard::new(manifest, std::path::PathBuf::from("/tmp"))
+    }
+
+    #[test]
+    fn lexical_hints_cap_level_keyword_match() {
+        let mut r = CapabilityRegistry::new();
+        r.register(make_kw_card("delete-cap", vec!["delete".into()], vec![]));
+        let hits = r.lexical_hint_capabilities("delete the file", "any-tenant");
+        assert!(hits.contains(&"delete-cap".to_string()), "expected delete-cap in {hits:?}");
+    }
+
+    #[test]
+    fn lexical_hints_tool_level_keyword_match() {
+        let mut r = CapabilityRegistry::new();
+        r.register(make_kw_card("remove-cap", vec![], vec!["remove".into()]));
+        let hits = r.lexical_hint_capabilities("remove the folder", "any-tenant");
+        assert!(hits.contains(&"remove-cap".to_string()));
+    }
+
+    #[test]
+    fn lexical_hints_no_match_returns_empty() {
+        let mut r = CapabilityRegistry::new();
+        r.register(make_kw_card("cap-a", vec!["upload".into()], vec![]));
+        let hits = r.lexical_hint_capabilities("show me something", "any-tenant");
+        assert!(hits.is_empty(), "expected empty, got {hits:?}");
+    }
+
+    #[test]
+    fn lexical_hints_disabled_cap_excluded() {
+        let mut r = CapabilityRegistry::new();
+        r.register(make_kw_card("disabled-cap", vec!["delete".into()], vec![]));
+        r.set_enabled("disabled-cap", false);
+        let hits = r.lexical_hint_capabilities("delete something", "any");
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn lexical_hints_scoped_cap_excluded_for_other_tenant() {
+        let mut r = CapabilityRegistry::new();
+        let mut card = make_kw_card("scoped-cap", vec!["delete".into()], vec![]);
+        card.manifest.tenant_scope = vec!["acme".into()];
+        r.register(card);
+        assert!(r.lexical_hint_capabilities("delete something", "acme").contains(&"scoped-cap".to_string()));
+        assert!(r.lexical_hint_capabilities("delete something", "other").is_empty());
     }
 }
