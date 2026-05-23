@@ -42,6 +42,10 @@
     "./live": {
       "types": "./src/lib/live/createLiveResource.svelte.ts",
       "import": "./src/lib/live/createLiveResource.svelte.ts"
+    },
+    "./gallery.types": {
+      "types": "./src/lib/gallery.types.ts",
+      "import": "./src/lib/gallery.types.ts"
     }
   },
   "scripts": {
