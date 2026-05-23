@@ -1,18 +1,33 @@
+<svelte:options runes={true} />
 <script lang="ts">
   import { Layers, Zap, Users, Building2, Check } from 'lucide-svelte';
 
-  export let planKey: string;
-  export let displayName: string;
-  export let monthlyPriceCents: number = 0;
-  export let maxTurnsPerDay: number | null = null;
-  export let maxStorageGb: number | null = null;
-  export let maxTokens: number = 0;
-  export let rateLimitRpm: number = 0;
-  export let current: boolean = false;
-  export let onUpgrade: (() => void) | null = null;
+  let {
+    planKey,
+    displayName,
+    monthlyPriceCents = 0,
+    maxTurnsPerDay = null,
+    maxStorageGb = null,
+    maxTokens = 0,
+    rateLimitRpm = 0,
+    current = false,
+    onUpgrade = null,
+  }: {
+    planKey: string;
+    displayName: string;
+    monthlyPriceCents?: number;
+    maxTurnsPerDay?: number | null;
+    maxStorageGb?: number | null;
+    maxTokens?: number;
+    rateLimitRpm?: number;
+    current?: boolean;
+    onUpgrade?: (() => void) | null;
+  } = $props();
 
-  $: isEnterprise = planKey === 'enterprise';
-  $: priceLabel = monthlyPriceCents === 0 ? 'Free' : `$${(monthlyPriceCents / 100).toFixed(0)}`;
+  const isEnterprise = $derived(planKey === 'enterprise');
+  const priceLabel = $derived(
+    monthlyPriceCents === 0 ? 'Free' : `$${(monthlyPriceCents / 100).toFixed(0)}`
+  );
 </script>
 
 <div class="plan-card" class:current>
@@ -55,7 +70,7 @@
   {:else if isEnterprise}
     <a href="mailto:sales@conusai.com" class="btn-contact">Contact Sales</a>
   {:else if onUpgrade}
-    <button class="btn-upgrade" on:click={onUpgrade}>
+    <button class="btn-upgrade" onclick={() => onUpgrade?.()}>
       {monthlyPriceCents > 0 ? 'Upgrade' : 'Downgrade'}
     </button>
   {/if}

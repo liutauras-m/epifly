@@ -1,24 +1,30 @@
+<svelte:options runes={true} />
 <script lang="ts">
   import { Layers, Zap, Users, Building2 } from 'lucide-svelte';
 
-  export let tier: string = 'free';
-  export let status: string = 'active';
+  let {
+    tier = 'free',
+    status = 'active',
+  }: {
+    tier?: string;
+    status?: string;
+  } = $props();
 
-  const tierKey = () => tier.toLowerCase();
-  $: isDegraded = status === 'past_due' || status === 'canceled';
+  const tierKey = $derived(tier.toLowerCase());
+  const isDegraded = $derived(status === 'past_due' || status === 'canceled');
 </script>
 
 <span
-  class="plan-badge badge-{tierKey()}"
+  class="plan-badge badge-{tierKey}"
   class:degraded={isDegraded}
   title="Plan: {tier} ({status})"
 >
   <span class="badge-icon" aria-hidden="true">
-    {#if tierKey() === 'pro'}
+    {#if tierKey === 'pro'}
       <Zap size={11} strokeWidth={1.75} />
-    {:else if tierKey() === 'team'}
+    {:else if tierKey === 'team'}
       <Users size={11} strokeWidth={1.75} />
-    {:else if tierKey() === 'enterprise'}
+    {:else if tierKey === 'enterprise'}
       <Building2 size={11} strokeWidth={1.75} />
     {:else}
       <Layers size={11} strokeWidth={1.75} />

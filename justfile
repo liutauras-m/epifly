@@ -161,6 +161,7 @@ verify:
     just lint-tenant-paths
     just lint-capability-storage
     just ui-tokens --warn
+    pnpm -w lint:svelte
     pnpm -w lint
     pnpm -w test
     cargo test --workspace

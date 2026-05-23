@@ -1,9 +1,15 @@
+<svelte:options runes={true} />
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { AlertTriangle, Ban, Check, X, ArrowUpRight } from 'lucide-svelte';
 
-  export let apiBase: string = '';
-  export let upgradeUrl: string = '/account/billing';
+  let {
+    apiBase = '',
+    upgradeUrl = '/account/billing',
+  }: {
+    apiBase?: string;
+    upgradeUrl?: string;
+  } = $props();
 
   type BannerKind = 'quota_warning' | 'quota_exceeded' | 'subscription_updated';
 
@@ -13,7 +19,7 @@
     plan?: string;
   }
 
-  let banner: BannerEvent | null = null;
+  let banner = $state<BannerEvent | null>(null);
   let es: EventSource | null = null;
 
   function connect() {
@@ -65,7 +71,7 @@
           <ArrowUpRight size={13} strokeWidth={1.75} aria-hidden="true" />
         </a>
       {/if}
-      <button class="btn-dismiss" on:click={dismiss} aria-label="Dismiss notification">
+      <button class="btn-dismiss" onclick={dismiss} aria-label="Dismiss notification">
         <X size={14} strokeWidth={1.75} />
       </button>
     </div>

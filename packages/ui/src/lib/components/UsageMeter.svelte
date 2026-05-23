@@ -1,14 +1,23 @@
+<svelte:options runes={true} />
 <script lang="ts">
-  export let label: string;
-  export let used: number = 0;
-  export let limit: number | null = null;
-  export let unit: string = '';
-  export let warnAt: number = 0.8;
+  let {
+    label,
+    used = 0,
+    limit = null,
+    unit = '',
+    warnAt = 0.8,
+  }: {
+    label: string;
+    used?: number;
+    limit?: number | null;
+    unit?: string;
+    warnAt?: number;
+  } = $props();
 
-  $: pct = limit !== null && limit > 0 ? Math.min(used / limit, 1) : 0;
-  $: hasLimit = limit !== null;
-  $: isWarn = pct >= warnAt && pct < 1;
-  $: isExceeded = pct >= 1;
+  const pct       = $derived(limit !== null && limit > 0 ? Math.min(used / limit, 1) : 0);
+  const hasLimit  = $derived(limit !== null);
+  const isWarn    = $derived(pct >= warnAt && pct < 1);
+  const isExceeded = $derived(pct >= 1);
 
   function fmt(n: number): string {
     return n.toLocaleString();

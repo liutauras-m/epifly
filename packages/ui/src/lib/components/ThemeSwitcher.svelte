@@ -1,3 +1,4 @@
+<svelte:options runes={true} />
 <script lang="ts">
   import { getContext } from 'svelte';
   import type { ThemeStore } from '../stores/themeStore.svelte.js';
