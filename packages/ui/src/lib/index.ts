@@ -74,6 +74,8 @@ export type { ChatMessage, ToolCardEntry } from "./features/AgentChatStream.svel
 
 // ── Utils ────────────────────────────────────────────────────────────────────
 export { default as LiveAnnouncer } from "./utils/LiveAnnouncer.svelte";
+export { createI18n, setI18n, getI18n, t, enMessages } from "./utils/i18n.js";
+export type { I18nMessages, I18nInstance } from "./utils/i18n.js";
 export { autoGrow } from "./utils/actions.js";
 export { prefersReducedMotion } from "./utils/motion-prefs.js";
 export {

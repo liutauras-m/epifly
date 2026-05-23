@@ -41,7 +41,8 @@
 {#if Renderer && capabilityCard}
   <Renderer card={capabilityCard} />
 {:else}
-  <details class="tool-card" data-status={status}>
+  <!-- role="status" announces state transitions to screen readers (Phase 7) -->
+  <details class="tool-card" data-status={status} role="status" aria-label="{displayName}: {status}">
     <summary class="tool-head">
       <span class="tool-dot" role="status" aria-label={status}></span>
       <span class="tool-name">{displayName}</span>
@@ -60,48 +61,57 @@
 
 <style>
   .tool-card {
-    border: 1px solid var(--rule);
+    border:        1px solid var(--color-border);
     border-radius: var(--radius-sm);
-    margin: var(--space-2) 0;
-    font-size: var(--font-size-meta);
-    overflow: hidden;
+    margin:        var(--space-2) 0;
+    font-size:     var(--font-size-meta);
+    overflow:      hidden;
   }
   .tool-head {
-    display: flex; align-items: center; gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    cursor: pointer; list-style: none;
-    background: var(--paper-2);
+    display:     flex;
+    align-items: center;
+    gap:         var(--space-2);
+    padding:     var(--space-2) var(--space-3);
+    cursor:      pointer;
+    list-style:  none;
+    background:  var(--color-bg-raised);
   }
   .tool-dot {
-    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
-    background: var(--ink-3);
+    width:         8px;
+    height:        8px;
+    border-radius: 50%;
+    flex-shrink:   0;
+    background:    var(--color-fg-subtle);
   }
-  [data-status="running"] .tool-dot { background: var(--ember); animation: pulse 1.2s infinite; }
-  [data-status="success"] .tool-dot { background: var(--success); }
-  [data-status="error"]   .tool-dot { background: var(--danger); }
+  [data-status="running"] .tool-dot {
+    background: var(--color-accent);
+    animation:  pulse 1.2s infinite;  /* [feedback] */
+  }
+  [data-status="success"] .tool-dot { background: var(--color-success, var(--color-accent)); }
+  [data-status="error"]   .tool-dot { background: var(--color-danger); }
   .tool-name { flex: 1; font-family: var(--font-mono); }
-  .tool-time { color: var(--ink-3); }
+  .tool-time { color: var(--color-fg-subtle); }
   .retry-btn {
-    margin-left: var(--space-2);
-    padding: 1px var(--space-2);
-    font-size: var(--font-size-meta);
-    border: 1px solid var(--danger);
+    margin-left:   var(--space-2);
+    padding:       1px var(--space-2);
+    font-size:     var(--font-size-meta);
+    border:        1px solid var(--color-danger);
     border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--danger);
-    cursor: pointer;
-    flex-shrink: 0;
+    background:    transparent;
+    color:         var(--color-danger);
+    cursor:        pointer;
+    flex-shrink:   0;
   }
-  .retry-btn:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+  .retry-btn:hover { background: color-mix(in srgb, var(--color-danger) 12%, transparent); }
   .tool-body {
-    padding: var(--space-3);
+    padding:     var(--space-3);
     font-family: var(--font-mono);
-    font-size: var(--font-size-mono);
+    font-size:   var(--font-size-meta);
     white-space: pre-wrap;
-    word-break: break-all;
-    background: var(--paper);
-    max-height: 200px;
-    overflow: auto;
+    word-break:  break-all;
+    background:  var(--color-bg);
+    max-height:  200px;
+    overflow:    auto;
   }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
 </style>

@@ -58,7 +58,34 @@
     class?:               string;
   } = $props();
 
-  let textareaEl = $state<HTMLTextAreaElement | undefined>(undefined);
+  let textareaEl  = $state<HTMLTextAreaElement | undefined>(undefined);
+  let composerEl  = $state<HTMLElement | undefined>(undefined);
+  // iOS keyboard offset — set via visualViewport API (Phase 5.4)
+  let keyboardOffset = $state(0);
+
+  /**
+   * Phase 5.4 — visual viewport listener.
+   * iOS/Android: when the software keyboard appears, `window.visualViewport.height`
+   * shrinks. We compute how much the composer needs to be lifted.
+   * This keeps the send button visible above the keyboard at all times.
+   */
+  $effect(() => {
+    if (typeof window === 'undefined' || !window.visualViewport) return;
+
+    function onViewportResize() {
+      const vv = window.visualViewport!;
+      // Distance from bottom of visual viewport to bottom of layout viewport
+      const offset = window.innerHeight - vv.height - vv.offsetTop;
+      keyboardOffset = Math.max(0, offset);
+    }
+
+    window.visualViewport.addEventListener('resize', onViewportResize);
+    window.visualViewport.addEventListener('scroll', onViewportResize);
+    return () => {
+      window.visualViewport!.removeEventListener('resize', onViewportResize);
+      window.visualViewport!.removeEventListener('scroll', onViewportResize);
+    };
+  });
 
   function submit() {
     const trimmed = value.trim();
@@ -88,7 +115,11 @@
   const canSend = $derived(value.trim().length > 0 && !loading && !disabled);
 </script>
 
-<div class="composer{loading ? ' composer-loading' : ''}{cls ? ` ${cls}` : ''}">
+<div
+  bind:this={composerEl}
+  class="composer{loading ? ' composer-loading' : ''}{cls ? ` ${cls}` : ''}"
+  style:padding-bottom={keyboardOffset > 0 ? `${keyboardOffset}px` : undefined}
+>
 
   <!-- Attachments row -->
   {#if attachments.length > 0}
