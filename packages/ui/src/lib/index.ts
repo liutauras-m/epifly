@@ -29,7 +29,8 @@ export { default as ThemeSwitcher } from "./components/ThemeSwitcher.svelte";
 export { THEME_SCRIPT } from "./components/ThemeScript.js";
 
 // ── Features ─────────────────────────────────────────────────────────────────
-export { default as AgentChatComposer } from "./components/AgentChatComposer.svelte"; // moved in Phase 0.1 (2026-05-23); will be renamed to `Composer` in Phase 3.5
+// @deprecated AgentChatComposer → use Composer (Phase 3.5). Removed at Phase 4 close.
+export { default as AgentChatComposer } from "./components/AgentChatComposer.svelte";
 export { default as AgentChatStream } from "./features/AgentChatStream.svelte";
 export { default as HostedProjectCard } from "./features/HostedProjectCard.svelte";
 export { default as ToolCallCard } from "./features/ToolCallCard.svelte";
@@ -40,10 +41,21 @@ export { default as CapabilityRow } from "./features/CapabilityRow.svelte";
 export { default as CapabilityBrowser } from "./features/CapabilityBrowser.svelte";
 export type { CapEntry } from "./features/CapabilityBrowser.svelte";
 
+// ── Shell components (Phase 3) ───────────────────────────────────────────────
+export { default as AppHeader } from "./components/AppHeader.svelte";
+export { default as Drawer } from "./components/Drawer.svelte";
+export { default as Sheet } from "./components/Sheet.svelte";
+export { default as Sidebar } from "./components/Sidebar.svelte";
+export { default as SidebarSection } from "./components/SidebarSection.svelte";
+export { default as SidebarItem } from "./components/SidebarItem.svelte";
+export { default as Composer } from "./components/Composer.svelte";
+export type { Attachment } from "./components/Composer.svelte";
+
 // ── Chrome ──────────────────────────────────────────────────────────────────
 // Moved from ./features/chrome/ → ./components/ in Phase 0.1 (2026-05-23).
-// These names will be renamed to canonical AppHeader / Drawer / Sheet in Phase 3 (Principle #13);
-// the App* names here remain as the strangler-fig shim until Phase 4 close.
+// @deprecated AppTopBar → use AppHeader (Phase 3.3). Removed at Phase 4 close.
+// @deprecated AppDrawer → use Drawer (Phase 3.2). Removed at Phase 4 close.
+// @deprecated AppBottomSheet → use Sheet (Phase 3.2). Removed at Phase 4 close.
 export { default as AppTopBar } from "./components/AppTopBar.svelte";
 export { default as AppDrawer } from "./components/AppDrawer.svelte";
 export { default as AppBottomSheet } from "./components/AppBottomSheet.svelte";
@@ -56,7 +68,7 @@ export { default as ArtifactsScreen } from "./features/screens/ArtifactsScreen.s
 export { default as ArtifactRow } from "./features/screens/ArtifactRow.svelte";
 export { buildInvocationPrompt } from "./features/screens/buildInvocationPrompt.js";
 export type { ChatMessage, ToolCardEntry } from "./features/AgentChatStream.svelte";
-export type { Attachment } from "./components/AgentChatComposer.svelte"; // moved in Phase 0.1
+// Note: Attachment is now exported from Composer.svelte (Phase 3.5) — see Shell components section above.
 
 // ── Utils ────────────────────────────────────────────────────────────────────
 export { default as LiveAnnouncer } from "./utils/LiveAnnouncer.svelte";

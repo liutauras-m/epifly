@@ -20,6 +20,7 @@
   import Field              from '@conusai/ui/components/Field.svelte';
   import Chip               from '@conusai/ui/components/Chip.svelte';
   import EmptyState         from '@conusai/ui/components/EmptyState.svelte';
+  import Composer           from '@conusai/ui/components/Composer.svelte';
   import PlanBadge          from '@conusai/ui/components/PlanBadge.svelte';
   import PlanCard           from '@conusai/ui/components/PlanCard.svelte';
   import UsageMeter         from '@conusai/ui/components/UsageMeter.svelte';
@@ -44,11 +45,12 @@
   import fieldFx             from '@conusai/ui/components/Field.fixtures.js';
   import chipFx              from '@conusai/ui/components/Chip.fixtures.js';
   import emptyStateFx        from '@conusai/ui/components/EmptyState.fixtures.js';
+  import composerFx2         from '@conusai/ui/components/Composer.fixtures.js';
   import planBadgeFx         from '@conusai/ui/components/PlanBadge.fixtures.js';
   import planCardFx          from '@conusai/ui/components/PlanCard.fixtures.js';
   import usageMeterFx        from '@conusai/ui/components/UsageMeter.fixtures.js';
   import capabilityCardFx    from '@conusai/ui/components/CapabilityCard.fixtures.js';
-  import composerFx          from '@conusai/ui/components/AgentChatComposer.fixtures.js';
+  import agentChatComposerFx from '@conusai/ui/components/AgentChatComposer.fixtures.js';
   import appTopBarFx         from '@conusai/ui/components/AppTopBar.fixtures.js';
   import themeSwitcherFx     from '@conusai/ui/components/ThemeSwitcher.fixtures.js';
   import toastHostFx         from '@conusai/ui/components/ToastHost.fixtures.js';
@@ -75,12 +77,13 @@
     { name: 'Field',             component: Field,             fixtures: fieldFx                           },
     { name: 'Chip',              component: Chip,              fixtures: chipFx                            },
     { name: 'EmptyState',        component: EmptyState,        fixtures: emptyStateFx,   fullWidth: true   },
+    { name: 'Composer',          component: Composer,          fixtures: composerFx2,    fullWidth: true   },
     // ── Billing components ────────────────────────────────────────────────
     { name: 'PlanBadge',         component: PlanBadge,         fixtures: planBadgeFx                      },
     { name: 'UsageMeter',        component: UsageMeter,        fixtures: usageMeterFx,   fullWidth: true   },
     { name: 'PlanCard',          component: PlanCard,          fixtures: planCardFx,     fullWidth: true   },
     { name: 'CapabilityCard',    component: CapabilityCard,    fixtures: capabilityCardFx                  },
-    { name: 'AgentChatComposer', component: AgentChatComposer, fixtures: composerFx,     fullWidth: true   },
+    { name: 'AgentChatComposer', component: AgentChatComposer, fixtures: agentChatComposerFx, fullWidth: true   },
     { name: 'AppTopBar',         component: AppTopBar,         fixtures: appTopBarFx,    fullWidth: true   },
     { name: 'ThemeSwitcher',     component: ThemeSwitcher,     fixtures: themeSwitcherFx                   },
     { name: 'ToastHost',         component: ToastHost,         fixtures: toastHostFx,    fullWidth: true   },

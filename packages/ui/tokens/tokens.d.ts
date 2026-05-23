@@ -1,13 +1,8 @@
-/** Auto-generated design token names. Run `node scripts/build-tokens.mjs` to regenerate. */
-export type TokenName =
-  | '--ink'
-  | '--ink-2'
-  | '--ink-3'
-  | '--paper'
-  | '--paper-2'
-  | '--paper-3'
-  | '--rule'
-  | '--seam'
+// GENERATED — do not hand-edit.
+// Source of truth: packages/ui/tokens/tokens.json
+// Regenerate with: node scripts/build-tokens.mjs
+
+export type FoundryToken =
   | '--ink'
   | '--ink-2'
   | '--ink-3'
@@ -28,18 +23,7 @@ export type TokenName =
   | '--shadow-md'
   | '--backdrop'
   | '--ember'
-  | '--ember-2'
-  | '--ember-soft'
-  | '--ember-glow'
   | '--cyan'
-  | '--cyan-soft'
-  | '--success'
-  | '--success-soft'
-  | '--danger'
-  | '--danger-soft'
-  | '--shadow-sm'
-  | '--shadow-md'
-  | '--backdrop'
   | '--poster-gradient'
   | '--poster-hi'
   | '--poster-em'
@@ -138,6 +122,13 @@ export type TokenName =
   | '--icon-sm'
   | '--icon-md'
   | '--icon-lg'
+  | '--bp-compact'
+  | '--bp-medium'
+  | '--bp-expanded'
+  | '--z-drawer'
+  | '--z-sheet'
+  | '--z-overlay'
+  | '--z-topbar'
   | '--rail'
   | '--focus-ring'
   | '--focus-ring-offset'
@@ -147,8 +138,7 @@ export type TokenName =
   | '--safe-left'
   | '--foundry-version';
 
-export type SpacingToken   = '--space-1' | '--space-2' | '--space-3' | '--space-4' | '--space-5' | '--space-6' | '--space-7' | '--space-8';
-export type RadiusToken    = '--radius-xs' | '--radius-sm' | '--radius-md' | '--radius-lg' | '--radius-xl' | '--radius-full';
-export type DurationToken  = '--duration-fast' | '--duration-normal' | '--duration-stagger' | '--duration-slow' | '--duration-page';
-export type ColorToken     = '--color-bg' | '--color-bg-raised' | '--color-bg-hover' | '--color-fg' | '--color-fg-muted' | '--color-fg-subtle' | '--color-border' | '--color-border-strong' | '--color-accent' | '--color-accent-hover' | '--color-accent-soft' | '--color-danger' | '--color-danger-soft' | '--color-success' | '--color-success-soft' | '--color-shadow-sm' | '--color-shadow-md' | '--color-backdrop';
-export type SpringToken    = '--spring-snappy' | '--spring-gentle' | '--spring-bouncy';
+declare module '*.css' {
+  const content: Record<string, string>;
+  export default content;
+}
