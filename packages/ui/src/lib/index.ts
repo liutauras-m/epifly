@@ -17,6 +17,8 @@ export { default as Chip } from "./components/Chip.svelte";
 export type { ChipVariant, ChipSize } from "./components/Chip.svelte";
 export { default as EmptyState } from "./components/EmptyState.svelte";
 export type { EmptyStateKind } from "./components/EmptyState.svelte";
+export { default as StatusBadge } from "./components/StatusBadge.svelte";
+export type { StatusKind } from "./components/StatusBadge.svelte";
 export { default as AppShell } from "./components/AppShell.svelte";
 export { default as CapabilityCard } from "./components/CapabilityCard.svelte";
 export { default as ToastHost } from "./components/ToastHost.svelte";

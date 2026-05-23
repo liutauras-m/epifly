@@ -1,13 +1,22 @@
 <svelte:options runes={true} />
 <script lang="ts">
   /**
-   * ToastHost — renders the global `toasts` singleton.
+   * ToastHost — renders the global `toasts` singleton (Phase 4.10 audit).
+   *
+   * Positioning:
+   *   Desktop (≥ 768px): top-right corner, below the topbar, inset var(--space-5)
+   *   Mobile  (< 768px): top-center under the topbar, full-width minus gutters,
+   *                       safe-area-inset-top aware so Dynamic Island is never covered
    *
    * Reads directly from the `toasts` module-level store so layout.svelte
    * can use `<ToastHost />` with no props and get automatic reactivity.
    */
   import { toasts } from '../stores/toast.svelte.js';
+  import type { ToastKind } from '../stores/toast.svelte.js';
   import { X } from 'lucide-svelte';
+
+  // Re-export Toast type for consumers
+  export type Toast = { id: string; kind: ToastKind; message: string; };
 </script>
 
 {#if toasts.items.length > 0}
@@ -28,73 +37,114 @@
 {/if}
 
 <style>
+  /* ── Host positioning ────────────────────────────────────────────────────── */
   .toast-host {
     position: fixed;
-    /* Mobile: full-width strip above the keyboard / home indicator */
-    bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
-    left: var(--space-3);
-    right: var(--space-3);
+    /* Mobile: top-center under the topbar, safe-area aware */
+    top:    calc(var(--safe-top, 0px) + 56px + var(--space-3));
+    left:   var(--space-3);
+    right:  var(--space-3);
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap:    var(--space-2);
     z-index: 1000;
     pointer-events: none;
+    align-items: center;
   }
 
-  /* Desktop: compact right-aligned stack */
-  @media (min-width: 641px) {
+  /* Desktop: top-right corner */
+  @media (min-width: 768px) {
     .toast-host {
-      left: auto;
-      right: var(--space-5);
-      bottom: var(--space-5);
-      max-width: 360px;
+      top:        var(--space-5);
+      left:       auto;
+      right:      var(--space-5);
+      max-width:  380px;
+      align-items: flex-end;
     }
   }
 
+  /* ── Toast ───────────────────────────────────────────────────────────────── */
   .toast {
-    display: flex;
+    display:     flex;
     align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-3) var(--space-4);
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--rule);
-    background: var(--paper);
-    color: var(--ink);
-    font-size: var(--font-size-meta, 13px);
-    box-shadow: var(--shadow);
-    animation: slide-up var(--duration-normal, 200ms) var(--ease-out, cubic-bezier(0.4, 0, 0.2, 1));
+    gap:         var(--space-3);
+    padding:     var(--space-3) var(--space-4);
+    border-radius: var(--radius-md);
+    border:      1px solid var(--color-border);
+    background:  var(--color-bg-raised);
+    color:       var(--color-fg);
+    font-size:   var(--font-size-meta);
+    font-family: var(--font-family-sans);
+    box-shadow:  0 4px 16px var(--color-shadow-md);
     pointer-events: auto;
+    width:       100%;
+    max-width:   380px;
+
+    animation: toast-enter var(--duration-normal) var(--ease-emphasized-decelerate) both;
   }
 
-  .toast.success { border-color: var(--success); background: var(--success-soft); }
-  .toast.error   { border-color: var(--danger);  background: var(--danger-soft); }
-  .toast.warning { border-color: var(--warning, #d97706); background: var(--warning-soft, #fffbeb); }
+  .toast.success {
+    border-color: var(--color-success);
+    background:   var(--color-success-soft);
+    color:        var(--color-success);
+  }
+  .toast.error {
+    border-color: var(--color-danger);
+    background:   var(--color-danger-soft);
+    color:        var(--color-danger);
+  }
+  .toast.warning {
+    border-color: rgba(217, 119, 6, 0.4);
+    background:   rgba(217, 119, 6, 0.10);
+    color:        #b45309;
+  }
 
-  .message { flex: 1; }
+  /* ── Parts ───────────────────────────────────────────────────────────────── */
+  .message {
+    flex:        1;
+    color:       var(--color-fg);
+    line-height: 1.4;
+  }
+
+  .toast.success .message,
+  .toast.error   .message,
+  .toast.warning .message {
+    color: inherit;
+  }
 
   .dismiss {
-    display: inline-flex;
-    align-items: center;
+    display:         inline-flex;
+    align-items:     center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
-    border: none;
-    background: transparent;
-    color: var(--ink-3);
-    cursor: pointer;
-    border-radius: var(--radius-sm);
-    padding: 0;
-    flex-shrink: 0;
-    transition: background var(--duration-fast, 100ms);
+    width:           28px;
+    height:          28px;
+    border:          none;
+    background:      transparent;
+    color:           currentColor;
+    cursor:          pointer;
+    border-radius:   var(--radius-sm);
+    padding:         0;
+    flex-shrink:     0;
+    opacity:         0.6;
+    transition:      opacity var(--duration-fast), background var(--duration-fast);
+    outline:         none;
   }
-  .dismiss:hover {
-    background: var(--paper-3);
-    color: var(--ink);
+  .dismiss:hover { opacity: 1; background: rgba(0,0,0,0.06); }
+  .dismiss:focus-visible {
+    outline:        var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
   }
 
-  @keyframes slide-up {
-    from { transform: translateY(16px); opacity: 0; }
-    to   { transform: translateY(0);    opacity: 1; }
+  /* ── Animation ───────────────────────────────────────────────────────────── */
+  @keyframes toast-enter {
+    from {
+      transform: translateY(-12px) scale(0.97);
+      opacity:   0;
+    }
+    to {
+      transform: translateY(0) scale(1);
+      opacity:   1;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {

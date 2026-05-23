@@ -20,6 +20,7 @@
   import Field              from '@conusai/ui/components/Field.svelte';
   import Chip               from '@conusai/ui/components/Chip.svelte';
   import EmptyState         from '@conusai/ui/components/EmptyState.svelte';
+  import StatusBadge        from '@conusai/ui/components/StatusBadge.svelte';
   import Composer           from '@conusai/ui/components/Composer.svelte';
   import PlanBadge          from '@conusai/ui/components/PlanBadge.svelte';
   import PlanCard           from '@conusai/ui/components/PlanCard.svelte';
@@ -45,6 +46,7 @@
   import fieldFx             from '@conusai/ui/components/Field.fixtures.js';
   import chipFx              from '@conusai/ui/components/Chip.fixtures.js';
   import emptyStateFx        from '@conusai/ui/components/EmptyState.fixtures.js';
+  import statusBadgeFx       from '@conusai/ui/components/StatusBadge.fixtures.js';
   import composerFx2         from '@conusai/ui/components/Composer.fixtures.js';
   import planBadgeFx         from '@conusai/ui/components/PlanBadge.fixtures.js';
   import planCardFx          from '@conusai/ui/components/PlanCard.fixtures.js';
@@ -77,6 +79,7 @@
     { name: 'Field',             component: Field,             fixtures: fieldFx                           },
     { name: 'Chip',              component: Chip,              fixtures: chipFx                            },
     { name: 'EmptyState',        component: EmptyState,        fixtures: emptyStateFx,   fullWidth: true   },
+    { name: 'StatusBadge',       component: StatusBadge,       fixtures: statusBadgeFx                     },
     { name: 'Composer',          component: Composer,          fixtures: composerFx2,    fullWidth: true   },
     // ── Billing components ────────────────────────────────────────────────
     { name: 'PlanBadge',         component: PlanBadge,         fixtures: planBadgeFx                      },

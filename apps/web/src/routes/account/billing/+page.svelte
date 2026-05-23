@@ -1,427 +1,373 @@
+<svelte:options runes={true} />
 <script lang="ts">
-	import { enhance } from '$app/forms';
-	import { Layers, Zap, Users, Building2, Check, ArrowUpRight } from 'lucide-svelte';
-	import type { ActionData, PageData } from './$types';
+  /**
+   * Billing page — Phase 4.5
+   * Plan cards + invoices. Consumes PlanBadge, StatusBadge, Button primitives.
+   * Local CSS replaced with design-system tokens; raw buttons replaced with Button.
+   */
+  import { enhance } from '$app/forms';
+  import { Layers, Zap, Users, Building2, Check, ArrowUpRight } from 'lucide-svelte';
+  import { PlanBadge, StatusBadge, Button } from '@conusai/ui';
+  import type { ActionData, PageData } from './$types';
 
-	export let data: PageData;
-	export let form: ActionData;
+  let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	const { plans, subscription } = data;
+  const { plans, subscription } = data;
 
-	$: currentPlan = subscription?.plan_key ?? 'free';
-	$: isActive = subscription?.status === 'active' || subscription?.status === 'trialing';
+  const currentPlan = $derived(subscription?.plan_key ?? 'free');
+  const isActive    = $derived(
+    subscription?.status === 'active' || subscription?.status === 'trialing'
+  );
 
-	const planIcons: Record<string, typeof Zap> = {
-		free: Layers, pro: Zap, team: Users, enterprise: Building2,
-	};
+  const subscriptionStatus = $derived((): import('@conusai/ui').StatusKind => {
+    switch (subscription?.status) {
+      case 'active':
+      case 'trialing': return 'success';
+      case 'past_due': return 'warning';
+      case 'canceled': return 'danger';
+      default:         return 'neutral';
+    }
+  });
+
+  const planIcons: Record<string, typeof Zap> = {
+    free: Layers, pro: Zap, team: Users, enterprise: Building2,
+  };
 </script>
 
 <svelte:head>
-	<title>Billing — ConusAI</title>
+  <title>Billing — ConusAI</title>
 </svelte:head>
 
 <div class="billing-page">
-	<nav class="breadcrumb" aria-label="Breadcrumb">
-		<a href="/account">Account</a>
-		<span aria-hidden="true">›</span>
-		<span>Billing</span>
-	</nav>
 
-	<h1>Billing &amp; Plans</h1>
+  <!-- Breadcrumb -->
+  <nav class="breadcrumb" aria-label="Breadcrumb">
+    <a href="/account">Account</a>
+    <span aria-hidden="true">›</span>
+    <span aria-current="page">Billing</span>
+  </nav>
 
-	{#if form?.error}
-		<div class="error-banner" role="alert">{form.error}</div>
-	{/if}
+  <header class="page-header">
+    <h1 class="page-title">Billing &amp; Plans</h1>
+  </header>
 
-	<!-- Current plan summary -->
-	{#if subscription}
-		<section class="current-plan">
-			<h2>Current Plan</h2>
-			<div class="plan-summary">
-				<span class="plan-badge badge-{currentPlan}">{currentPlan.toUpperCase()}</span>
-				<span class="plan-status status-{subscription.status}">{subscription.status.replace('_', ' ')}</span>
-				{#if subscription.current_period_end}
-					<span class="period">
-						Renews {new Date(subscription.current_period_end).toLocaleDateString()}
-					</span>
-				{/if}
-			</div>
-			<div class="portal-actions">
-				<form method="POST" action="?/portal" use:enhance>
-					<button class="btn-secondary" type="submit">Manage Billing</button>
-				</form>
-				{#if isActive && currentPlan !== 'free'}
-					<form method="POST" action="?/cancel" use:enhance>
-						<button class="btn-danger" type="submit">Cancel Subscription</button>
-					</form>
-				{/if}
-			</div>
-		</section>
-	{/if}
+  {#if form?.error}
+    <p class="error-banner" role="alert">{form.error}</p>
+  {/if}
 
-	<!-- Plan cards -->
-	<section class="plans-section">
-		<h2>Available Plans</h2>
-		<div class="plans-grid">
-			{#each plans as plan}
-				{@const isCurrent = plan.key === currentPlan}
-				{@const Icon = planIcons[plan.key] ?? Layers}
-				<div class="plan-card" class:current={isCurrent}>
-					<div class="plan-header">
-						<span class="plan-icon" aria-hidden="true">
-							<svelte:component this={Icon} size={20} strokeWidth={1.5} />
-						</span>
-						<h3>{plan.display_name}</h3>
-						<div class="price">
-							{#if plan.monthly_price_cents === 0}
-								<strong>Free</strong>
-							{:else}
-								<strong>${(plan.monthly_price_cents / 100).toFixed(0)}</strong>
-								<span class="per-mo">/mo</span>
-							{/if}
-						</div>
-					</div>
+  <!-- ── Current plan ─────────────────────────────────────────────── -->
+  {#if subscription}
+    <section class="current-plan" aria-label="Current plan">
+      <h2 class="section-heading">Current Plan</h2>
+      <div class="plan-summary">
+        <PlanBadge plan={currentPlan} />
+        <StatusBadge
+          status={subscriptionStatus()}
+          label={subscription.status.replace('_', ' ')}
+        />
+        {#if subscription.current_period_end}
+          <span class="period-text">
+            Renews {new Date(subscription.current_period_end).toLocaleDateString()}
+          </span>
+        {/if}
+      </div>
+      <div class="portal-actions">
+        <form method="POST" action="?/portal" use:enhance>
+          <Button type="submit" variant="secondary" size="sm" text="Manage Billing" />
+        </form>
+        {#if isActive && currentPlan !== 'free'}
+          <form method="POST" action="?/cancel" use:enhance>
+            <Button type="submit" variant="danger" size="sm" text="Cancel Subscription" />
+          </form>
+        {/if}
+      </div>
+    </section>
+  {/if}
 
-					<ul class="features">
-						{#if plan.max_turns_per_day}
-							<li><Check size={12} strokeWidth={2} aria-hidden="true" />{plan.max_turns_per_day.toLocaleString()} agent turns/day</li>
-						{:else}
-							<li><Check size={12} strokeWidth={2} aria-hidden="true" />Unlimited agent turns</li>
-						{/if}
-						{#if plan.max_storage_gb}
-							<li><Check size={12} strokeWidth={2} aria-hidden="true" />{plan.max_storage_gb} GB storage</li>
-						{:else}
-							<li><Check size={12} strokeWidth={2} aria-hidden="true" />Unlimited storage</li>
-						{/if}
-						<li><Check size={12} strokeWidth={2} aria-hidden="true" />{plan.max_tokens.toLocaleString()} tokens/request</li>
-						<li><Check size={12} strokeWidth={2} aria-hidden="true" />{plan.rate_limit_rpm} requests/min</li>
-					</ul>
+  <!-- ── Plan cards ───────────────────────────────────────────────── -->
+  <section class="plans-section" aria-label="Available plans">
+    <h2 class="section-heading">Available Plans</h2>
+    <div class="plans-grid">
+      {#each plans as plan (plan.key)}
+        {@const isCurrent   = plan.key === currentPlan}
+        {@const PlanIcon    = planIcons[plan.key] ?? Layers}
+        <article class="plan-card" class:current={isCurrent} aria-label="{plan.display_name} plan">
+          <header class="plan-header">
+            <span class="plan-icon" aria-hidden="true">
+              <PlanIcon size={20} strokeWidth={1.5} />
+            </span>
+            <h3 class="plan-name">{plan.display_name}</h3>
+            <div class="plan-price">
+              {#if plan.monthly_price_cents === 0}
+                <strong class="price-amount">Free</strong>
+              {:else}
+                <strong class="price-amount">${(plan.monthly_price_cents / 100).toFixed(0)}</strong>
+                <span class="price-unit">/mo</span>
+              {/if}
+            </div>
+          </header>
 
-					{#if plan.key !== currentPlan && plan.key !== 'enterprise'}
-						<form method="POST" action="?/upgrade" use:enhance>
-							<input type="hidden" name="plan_key" value={plan.key} />
-							<button class="btn-primary" type="submit">
-								{plan.monthly_price_cents > 0 ? 'Upgrade' : 'Downgrade'}
-								<ArrowUpRight size={14} strokeWidth={1.75} aria-hidden="true" />
-							</button>
-						</form>
-					{:else if isCurrent}
-						<div class="current-tag">Current Plan</div>
-					{:else}
-						<a href="mailto:sales@conusai.com" class="btn-contact">Contact Sales</a>
-					{/if}
-				</div>
-			{/each}
-		</div>
-	</section>
+          <ul class="feature-list">
+            {#if plan.max_turns_per_day}
+              <li><Check size={12} strokeWidth={2} aria-hidden="true" />{plan.max_turns_per_day.toLocaleString()} agent turns/day</li>
+            {:else}
+              <li><Check size={12} strokeWidth={2} aria-hidden="true" />Unlimited agent turns</li>
+            {/if}
+            {#if plan.max_storage_gb}
+              <li><Check size={12} strokeWidth={2} aria-hidden="true" />{plan.max_storage_gb} GB storage</li>
+            {:else}
+              <li><Check size={12} strokeWidth={2} aria-hidden="true" />Unlimited storage</li>
+            {/if}
+            <li><Check size={12} strokeWidth={2} aria-hidden="true" />{plan.max_tokens.toLocaleString()} tokens/request</li>
+            <li><Check size={12} strokeWidth={2} aria-hidden="true" />{plan.rate_limit_rpm} requests/min</li>
+          </ul>
 
-	<!-- Invoices -->
-	<section class="invoices">
-		<h2>Invoices</h2>
-		<p class="invoices-hint">
-			View and download invoices from the billing portal.
-		</p>
-		<form method="POST" action="?/portal" use:enhance>
-			<button class="link-btn" type="submit">Open billing portal</button>
-		</form>
-	</section>
+          {#if plan.key !== currentPlan && plan.key !== 'enterprise'}
+            <form method="POST" action="?/upgrade" use:enhance>
+              <input type="hidden" name="plan_key" value={plan.key} />
+              <Button
+                type="submit"
+                variant="primary"
+                size="sm"
+                fullWidth
+                text={plan.monthly_price_cents > 0 ? 'Upgrade' : 'Downgrade'}
+                iconTrailing={ArrowUpRight}
+              />
+            </form>
+          {:else if isCurrent}
+            <div class="current-badge" aria-label="Your current plan">Current Plan</div>
+          {:else}
+            <a href="mailto:sales@conusai.com" class="contact-link">Contact Sales</a>
+          {/if}
+        </article>
+      {/each}
+    </div>
+  </section>
+
+  <!-- ── Invoices ──────────────────────────────────────────────────── -->
+  <section class="invoices-section" aria-label="Invoices">
+    <h2 class="section-heading">Invoices</h2>
+    <p class="invoices-hint">View and download invoices from the billing portal.</p>
+    <form method="POST" action="?/portal" use:enhance>
+      <Button type="submit" variant="ghost" size="sm" text="Open billing portal" />
+    </form>
+  </section>
+
 </div>
 
 <style>
-	.billing-page {
-		max-width: 800px;
-		margin: 0 auto;
-		padding: 2rem 1rem;
-	}
+  /* ── Page ────────────────────────────────────────────────────────────────── */
+  .billing-page {
+    max-width: 820px;
+    margin:    0 auto;
+    padding:   var(--space-7) var(--space-4);
+    display:   flex;
+    flex-direction: column;
+    gap:       var(--space-6);
+  }
 
-	.breadcrumb {
-		display: flex;
-		gap: 0.5rem;
-		align-items: center;
-		margin-bottom: 1rem;
-		font-family: var(--font-mono);
-		font-size: 0.78rem;
-		letter-spacing: 0.04em;
-		color: var(--ink-3);
-	}
+  /* ── Breadcrumb ──────────────────────────────────────────────────────────── */
+  .breadcrumb {
+    display:     flex;
+    gap:         var(--space-2);
+    align-items: center;
+    font-family: var(--font-family-mono);
+    font-size:   var(--font-size-meta);
+    color:       var(--color-fg-subtle);
+  }
+  .breadcrumb a {
+    color:           var(--color-accent);
+    text-decoration: none;
+    font-weight:     500;
+  }
+  .breadcrumb a:hover { text-decoration: underline; }
 
-	.breadcrumb a {
-		color: var(--ember);
-		text-decoration: none;
-		font-weight: 500;
-	}
+  /* ── Page header ─────────────────────────────────────────────────────────── */
+  .page-header { margin-bottom: calc(var(--space-5) * -1); }
 
-	.breadcrumb a:hover { text-decoration: underline; }
+  .page-title {
+    margin:         0;
+    font-size:      var(--font-size-h1);
+    font-weight:    620;
+    letter-spacing: -0.025em;
+    color:          var(--color-fg);
+  }
 
-	h1 {
-		font-family: var(--font-family-sans);
-		font-size: 1.75rem;
-		font-weight: 800;
-		letter-spacing: -0.04em;
-		color: var(--ink);
-		margin-bottom: 1.5rem;
-	}
+  /* ── Section headings ────────────────────────────────────────────────────── */
+  .section-heading {
+    margin:         0 0 var(--space-3);
+    font-size:      var(--font-size-body);
+    font-weight:    580;
+    letter-spacing: -0.01em;
+    color:          var(--color-fg);
+  }
 
-	h2 {
-		font-family: var(--font-family-sans);
-		font-size: 1rem;
-		font-weight: 700;
-		letter-spacing: -0.02em;
-		color: var(--ink);
-		margin-bottom: 0.75rem;
-	}
+  /* ── Error banner ────────────────────────────────────────────────────────── */
+  .error-banner {
+    margin:        0;
+    background:    var(--color-danger-soft);
+    color:         var(--color-danger);
+    padding:       var(--space-3) var(--space-4);
+    border-radius: var(--radius-md);
+    border:        1px solid var(--color-danger);
+    font-size:     var(--font-size-meta);
+  }
 
-	.error-banner {
-		background: var(--danger-soft);
-		color: var(--danger);
-		padding: 0.75rem 1rem;
-		border-radius: var(--radius-md);
-		border: 1px solid rgba(179, 36, 0, 0.28);
-		margin-bottom: 1rem;
-		font-size: 0.875rem;
-	}
+  /* ── Current plan ────────────────────────────────────────────────────────── */
+  .current-plan {
+    padding:       var(--space-5);
+    border:        1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    background:    var(--color-bg-raised);
+  }
 
-	/* Current plan */
-	.current-plan {
-		padding: 1.25rem;
-		border: 1px solid var(--rule);
-		border-radius: var(--radius-lg);
-		margin-bottom: 2rem;
-		background: var(--paper);
-	}
+  .plan-summary {
+    display:     flex;
+    gap:         var(--space-3);
+    align-items: center;
+    margin-bottom: var(--space-4);
+    flex-wrap:   wrap;
+  }
 
-	.plan-summary {
-		display: flex;
-		gap: 0.75rem;
-		align-items: center;
-		margin-bottom: 1rem;
-		flex-wrap: wrap;
-	}
+  .period-text {
+    font-family:    var(--font-family-mono);
+    font-size:      var(--font-size-meta);
+    color:          var(--color-fg-subtle);
+    letter-spacing: 0.03em;
+  }
 
-	.plan-badge {
-		padding: 0.12rem 0.55rem;
-		border-radius: var(--radius-full);
-		font-family: var(--font-mono);
-		font-size: 0.65rem;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-	}
+  .portal-actions {
+    display: flex;
+    gap:     var(--space-3);
+    flex-wrap: wrap;
+  }
 
-	.badge-free       { background: var(--paper-2); color: var(--ink-3); border: 1px solid var(--rule); }
-	.badge-pro,
-	.badge-enterprise { background: var(--ember-soft); color: var(--ember); border: 1px solid var(--ember-glow); }
-	.badge-team       { background: var(--cyan-soft); color: var(--cyan); border: 1px solid rgba(0,212,255,0.28); }
+  /* ── Plans grid ──────────────────────────────────────────────────────────── */
+  .plans-grid {
+    display:               grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap:                   var(--space-4);
+  }
 
-	.plan-status {
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		letter-spacing: 0.04em;
-	}
+  /* ── Plan card ───────────────────────────────────────────────────────────── */
+  .plan-card {
+    padding:        var(--space-5);
+    border:         1px solid var(--color-border);
+    border-radius:  var(--radius-lg);
+    display:        flex;
+    flex-direction: column;
+    gap:            var(--space-3);
+    background:     var(--color-bg-raised);
 
-	.status-active, .status-trialing { color: var(--success); }
-	.status-past_due, .status-canceled { color: var(--danger); }
+    transition: box-shadow var(--duration-fast) var(--ease-standard);
+  }
 
-	.period {
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		color: var(--ink-3);
-	}
+  .plan-card.current {
+    border-color: var(--color-accent);
+    box-shadow:   0 0 0 2px var(--color-accent-soft);
+  }
 
-	.portal-actions {
-		display: flex;
-		gap: 0.75rem;
-	}
+  .plan-card:not(.current):hover {
+    box-shadow: 0 4px 16px var(--color-shadow-sm);
+  }
 
-	/* Plan cards grid */
-	.plans-section { margin-bottom: 2rem; }
+  .plan-header {
+    display:        flex;
+    flex-direction: column;
+    gap:            var(--space-1);
+  }
 
-	.plans-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-		gap: 1rem;
-	}
+  .plan-icon {
+    display: inline-flex;
+    color:   var(--color-accent);
+    margin-bottom: 2px;
+  }
 
-	.plan-card {
-		padding: 1.25rem;
-		border: 1px solid var(--rule);
-		border-radius: var(--radius-lg);
-		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
-		background: var(--paper);
-		transition: box-shadow 180ms cubic-bezier(0.4, 0, 0.2, 1);
-	}
+  .plan-name {
+    margin:         0;
+    font-size:      var(--font-size-body);
+    font-weight:    580;
+    letter-spacing: -0.012em;
+    color:          var(--color-fg);
+  }
 
-	.plan-card.current {
-		border-color: var(--ember);
-		box-shadow: 0 0 0 2px var(--ember-glow);
-	}
+  .plan-price {
+    display:     flex;
+    align-items: baseline;
+    gap:         2px;
+  }
 
-	.plan-card:not(.current):hover {
-		box-shadow: 0 6px 20px rgba(17, 17, 17, 0.07);
-	}
+  .price-amount {
+    font-size:      22px;
+    font-weight:    700;
+    letter-spacing: -0.04em;
+    color:          var(--color-fg);
+  }
 
-	.plan-header { display: flex; flex-direction: column; gap: 0.25rem; }
+  .price-unit {
+    font-size: var(--font-size-meta);
+    color:     var(--color-fg-subtle);
+  }
 
-	.plan-icon {
-		display: inline-flex;
-		color: var(--ember);
-		margin-bottom: 0.1rem;
-	}
+  .feature-list {
+    list-style: none;
+    padding:    0;
+    margin:     0;
+    font-size:  var(--font-size-meta);
+    color:      var(--color-fg-muted);
+    flex:       1;
+    display:    flex;
+    flex-direction: column;
+    gap:        var(--space-1);
+  }
 
-	.plan-header h3 {
-		font-family: var(--font-family-sans);
-		font-weight: 700;
-		letter-spacing: -0.02em;
-		font-size: 0.95rem;
-		margin: 0;
-		color: var(--ink);
-	}
+  .feature-list li {
+    display:     flex;
+    align-items: center;
+    gap:         var(--space-2);
+  }
 
-	.price { display: flex; align-items: baseline; gap: 0.2rem; }
+  .feature-list li :global(svg) {
+    color:       var(--color-success);
+    flex-shrink: 0;
+  }
 
-	.price strong {
-		font-family: var(--font-family-sans);
-		font-size: 1.4rem;
-		font-weight: 800;
-		letter-spacing: -0.04em;
-		color: var(--ink);
-	}
+  /* Current plan badge */
+  .current-badge {
+    text-align:     center;
+    font-family:    var(--font-family-mono);
+    font-size:      var(--font-size-label);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color:          var(--color-accent);
+    font-weight:    600;
+    padding:        var(--space-2) 0;
+    border-top:     1px solid var(--color-accent-soft);
+  }
 
-	.per-mo { font-size: 0.8rem; color: var(--ink-3); }
+  /* Contact sales link */
+  .contact-link {
+    display:         block;
+    text-align:      center;
+    padding:         var(--space-2) var(--space-3);
+    border:          1px solid var(--color-border);
+    border-radius:   var(--radius-sm);
+    text-decoration: none;
+    font-size:       var(--font-size-meta);
+    font-weight:     500;
+    color:           var(--color-fg-muted);
+    transition:      background var(--duration-fast) var(--ease-standard);
+  }
+  .contact-link:hover { background: var(--color-bg-hover); }
 
-	.features {
-		list-style: none;
-		padding: 0;
-		margin: 0;
-		font-size: 0.82rem;
-		color: var(--ink-2);
-		flex: 1;
-		display: flex;
-		flex-direction: column;
-		gap: 0.3rem;
-	}
+  /* ── Invoices ────────────────────────────────────────────────────────────── */
+  .invoices-hint {
+    margin:      0 0 var(--space-3);
+    font-size:   var(--font-size-meta);
+    color:       var(--color-fg-subtle);
+  }
 
-	.features li {
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-	}
-
-	.features li :global(svg) { color: var(--success); flex-shrink: 0; }
-
-	.current-tag {
-		text-align: center;
-		font-family: var(--font-mono);
-		font-size: 0.68rem;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: var(--ember);
-		font-weight: 600;
-		padding: 0.4rem;
-		border-top: 1px solid var(--ember-soft);
-	}
-
-	.btn-primary {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.3rem;
-		width: 100%;
-		padding: 0.5rem;
-		background: var(--ember);
-		color: #fff;
-		border: none;
-		border-radius: var(--radius-md);
-		font-family: var(--font-family-sans);
-		font-weight: 600;
-		font-size: 0.875rem;
-		cursor: pointer;
-		box-shadow: 0 4px 12px var(--ember-glow);
-		transition: transform 120ms cubic-bezier(0.4, 0, 0.2, 1),
-		            box-shadow 120ms cubic-bezier(0.4, 0, 0.2, 1);
-	}
-
-	.btn-primary:hover {
-		transform: translateY(-1px);
-		box-shadow: 0 6px 16px var(--ember-glow);
-	}
-
-	.btn-primary:active { transform: scale(0.97); }
-
-	.btn-secondary {
-		padding: 0.45rem 1rem;
-		background: transparent;
-		color: var(--ink-2);
-		border: 1px solid var(--seam);
-		border-radius: var(--radius-md);
-		font-family: var(--font-family-sans);
-		font-weight: 500;
-		font-size: 0.875rem;
-		cursor: pointer;
-		transition: background 120ms cubic-bezier(0.4, 0, 0.2, 1);
-	}
-
-	.btn-secondary:hover { background: var(--paper-2); }
-
-	.btn-danger {
-		padding: 0.45rem 1rem;
-		background: transparent;
-		color: var(--danger);
-		border: 1px solid rgba(179, 36, 0, 0.28);
-		border-radius: var(--radius-md);
-		font-family: var(--font-family-sans);
-		font-weight: 500;
-		font-size: 0.875rem;
-		cursor: pointer;
-		transition: background 120ms cubic-bezier(0.4, 0, 0.2, 1);
-	}
-
-	.btn-danger:hover { background: var(--danger-soft); }
-
-	.btn-contact {
-		display: block;
-		text-align: center;
-		padding: 0.5rem;
-		background: transparent;
-		color: var(--ink-2);
-		border: 1px solid var(--seam);
-		border-radius: var(--radius-md);
-		text-decoration: none;
-		font-size: 0.875rem;
-		font-weight: 500;
-		transition: background 120ms cubic-bezier(0.4, 0, 0.2, 1);
-	}
-
-	.btn-contact:hover { background: var(--paper-2); }
-
-	/* Invoices */
-	.invoices { color: var(--ink-2); }
-
-	.invoices-hint {
-		font-size: 0.875rem;
-		color: var(--ink-3);
-		margin: 0;
-	}
-
-	.link-btn {
-		background: none;
-		border: none;
-		color: var(--ember);
-		cursor: pointer;
-		font-size: inherit;
-		padding: 0;
-		text-decoration: underline;
-		font-family: inherit;
-	}
-
-	.link-btn:hover { color: var(--ember-2); }
-
-	@media (prefers-reduced-motion: reduce) {
-		.plan-card,
-		.btn-primary,
-		.btn-secondary,
-		.btn-danger { transition: none; }
-	}
+  @media (prefers-reduced-motion: reduce) {
+    .plan-card { transition: none; }
+  }
 </style>

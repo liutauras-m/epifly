@@ -1,236 +1,278 @@
+<svelte:options runes={true} />
 <script lang="ts">
-	import { CreditCard, BarChart3, LogOut } from 'lucide-svelte';
-	import type { PageData } from './$types';
+  /**
+   * Account page — Phase 4.4
+   * Profile card + nav links. Consumes PlanBadge + Button primitives.
+   * Local CSS replaced with semantic design tokens.
+   */
+  import { CreditCard, BarChart3, LogOut } from 'lucide-svelte';
+  import { PlanBadge, Button, Icon } from '@conusai/ui';
+  import type { PageData } from './$types';
 
-	export let data: PageData;
+  let { data }: { data: PageData } = $props();
 
-	const { user, subscription, authProvider } = data;
+  const { user, subscription, authProvider } = data;
 
-	$: planLabel = subscription?.plan_key ?? user?.plan ?? 'free';
-	$: statusLabel = subscription?.status ?? 'active';
+  const planLabel   = $derived(subscription?.plan_key ?? user?.plan ?? 'free');
+  const statusLabel = $derived(subscription?.status ?? 'active');
+  const showStatus  = $derived(statusLabel !== 'active' && statusLabel !== 'trialing');
+  const logoutHref  = $derived(authProvider === 'zitadel' ? '/auth/logout' : '/logout');
 </script>
 
 <svelte:head>
-	<title>Account — ConusAI</title>
+  <title>Account — ConusAI</title>
 </svelte:head>
 
 <div class="account-page">
-	<header class="account-header">
-		<h1>Account</h1>
-	</header>
 
-	<section class="profile-card">
-		<div class="avatar" aria-hidden="true">{(user?.name ?? '?')[0].toUpperCase()}</div>
-		<div class="profile-info">
-			<p class="name">{user?.name ?? 'Unknown'}</p>
-			<span class="plan-badge badge-{planLabel.toLowerCase()}">{planLabel.toUpperCase()}</span>
-			{#if statusLabel !== 'active' && statusLabel !== 'trialing'}
-				<span class="status-badge status-{statusLabel}">{statusLabel.replace('_', ' ')}</span>
-			{/if}
-		</div>
-	</section>
+  <!-- Page header -->
+  <header class="page-header">
+    <p class="page-eyebrow">Settings</p>
+    <h1 class="page-title">Account</h1>
+  </header>
 
-	<nav class="links" aria-label="Account navigation">
-		<a href="/account/billing" class="link-card">
-			<span class="link-icon" aria-hidden="true">
-				<CreditCard size={20} strokeWidth={1.5} />
-			</span>
-			<div class="link-body">
-				<strong>Billing &amp; Plans</strong>
-				<p>Manage your subscription, upgrade, or view invoices.</p>
-			</div>
-		</a>
+  <!-- Profile card -->
+  <section class="profile-card" aria-label="Profile">
+    <div class="avatar" aria-label="User avatar: {(user?.name ?? '?')[0].toUpperCase()}">
+      {(user?.name ?? '?')[0].toUpperCase()}
+    </div>
+    <div class="profile-info">
+      <p class="profile-name">{user?.name ?? 'Unknown'}</p>
+      <div class="profile-badges">
+        <PlanBadge plan={planLabel} />
+        {#if showStatus}
+          <span class="status-pill status-{statusLabel}">
+            {statusLabel.replace('_', ' ')}
+          </span>
+        {/if}
+      </div>
+    </div>
+  </section>
 
-		<a href="/account/usage" class="link-card">
-			<span class="link-icon" aria-hidden="true">
-				<BarChart3 size={20} strokeWidth={1.5} />
-			</span>
-			<div class="link-body">
-				<strong>Usage</strong>
-				<p>View agent turns, token consumption, and storage.</p>
-			</div>
-		</a>
+  <!-- Nav links -->
+  <nav class="account-links" aria-label="Account navigation">
+    <a href="/account/billing" class="link-card">
+      <span class="link-icon" aria-hidden="true">
+        <Icon icon={CreditCard} size="md" />
+      </span>
+      <div class="link-body">
+        <strong class="link-title">Billing &amp; Plans</strong>
+        <p class="link-desc">Manage your subscription, upgrade, or view invoices.</p>
+      </div>
+      <span class="link-arrow" aria-hidden="true">›</span>
+    </a>
 
-		<a
-			href={authProvider === 'zitadel' ? '/auth/logout' : '/logout'}
-			class="link-card link-destructive"
-		>
-			<span class="link-icon" aria-hidden="true">
-				<LogOut size={20} strokeWidth={1.5} />
-			</span>
-			<div class="link-body">
-				<strong>Sign out</strong>
-				<p>End your session.</p>
-			</div>
-		</a>
-	</nav>
+    <a href="/account/usage" class="link-card">
+      <span class="link-icon" aria-hidden="true">
+        <Icon icon={BarChart3} size="md" />
+      </span>
+      <div class="link-body">
+        <strong class="link-title">Usage</strong>
+        <p class="link-desc">View agent turns, token consumption, and storage.</p>
+      </div>
+      <span class="link-arrow" aria-hidden="true">›</span>
+    </a>
+
+    <a href={logoutHref} class="link-card link-destructive">
+      <span class="link-icon" aria-hidden="true">
+        <Icon icon={LogOut} size="md" />
+      </span>
+      <div class="link-body">
+        <strong class="link-title">Sign out</strong>
+        <p class="link-desc">End your session.</p>
+      </div>
+      <span class="link-arrow" aria-hidden="true">›</span>
+    </a>
+  </nav>
+
 </div>
 
 <style>
-	.account-page {
-		max-width: 640px;
-		margin: 0 auto;
-		padding: 2rem 1rem;
-	}
+  /* ── Page layout ─────────────────────────────────────────────────────────── */
+  .account-page {
+    max-width: 600px;
+    margin:    0 auto;
+    padding:   var(--space-7) var(--space-4);
+  }
 
-	.account-header h1 {
-		font-family: var(--font-family-sans);
-		font-size: 1.75rem;
-		font-weight: 800;
-		letter-spacing: -0.04em;
-		color: var(--ink);
-		margin-bottom: 1.5rem;
-	}
+  /* ── Page header ─────────────────────────────────────────────────────────── */
+  .page-header {
+    margin-bottom: var(--space-6);
+  }
 
-	/* Profile card */
-	.profile-card {
-		display: flex;
-		align-items: center;
-		gap: 1rem;
-		padding: 1.25rem;
-		border: 1px solid var(--rule);
-		border-radius: var(--radius-lg);
-		margin-bottom: 1.25rem;
-		background: var(--paper);
-	}
+  .page-eyebrow {
+    margin:         0 0 var(--space-1);
+    font-family:    var(--font-family-mono);
+    font-size:      var(--font-size-label);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color:          var(--color-fg-subtle);
+  }
 
-	.avatar {
-		width: 48px;
-		height: 48px;
-		border-radius: var(--radius-full);
-		background: var(--ember);
-		color: #fff;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-family: var(--font-family-sans);
-		font-weight: 800;
-		font-size: 1.15rem;
-		letter-spacing: -0.02em;
-		flex-shrink: 0;
-	}
+  .page-title {
+    margin:         0;
+    font-size:      var(--font-size-h1);     /* 28px */
+    font-weight:    620;
+    letter-spacing: -0.025em;
+    color:          var(--color-fg);
+    line-height:    1.2;
+  }
 
-	.profile-info {
-		display: flex;
-		flex-direction: column;
-		gap: 0.3rem;
-	}
+  /* ── Profile card ────────────────────────────────────────────────────────── */
+  .profile-card {
+    display:       flex;
+    align-items:   center;
+    gap:           var(--space-4);
+    padding:       var(--space-4) var(--space-5);
+    border:        1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    margin-bottom: var(--space-4);
+    background:    var(--color-bg-raised);
+  }
 
-	.name {
-		font-family: var(--font-family-sans);
-		font-weight: 600;
-		color: var(--ink);
-		margin: 0;
-	}
+  .avatar {
+    width:          48px;
+    height:         48px;
+    border-radius:  var(--radius-full);
+    background:     var(--color-accent);
+    color:          #fff;
+    display:        flex;
+    align-items:    center;
+    justify-content: center;
+    font-weight:    700;
+    font-size:      18px;
+    letter-spacing: -0.02em;
+    flex-shrink:    0;
+    user-select:    none;
+  }
 
-	.plan-badge {
-		display: inline-flex;
-		align-items: center;
-		padding: 0.1rem 0.5rem;
-		border-radius: var(--radius-full);
-		font-family: var(--font-mono);
-		font-size: 0.65rem;
-		font-weight: 600;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		width: fit-content;
-	}
+  .profile-info {
+    display:        flex;
+    flex-direction: column;
+    gap:            var(--space-2);
+  }
 
-	.badge-free       { background: var(--paper-2); color: var(--ink-3); border: 1px solid var(--rule); }
-	.badge-pro        { background: var(--ember-soft); color: var(--ember); border: 1px solid var(--ember-glow); }
-	.badge-team       { background: var(--cyan-soft); color: var(--cyan); border: 1px solid rgba(0,212,255,0.28); }
-	.badge-enterprise { background: var(--ember-soft); color: var(--ember); border: 1px solid var(--ember-glow); font-weight: 700; }
+  .profile-name {
+    margin:      0;
+    font-weight: 550;
+    font-size:   var(--font-size-body);
+    color:       var(--color-fg);
+  }
 
-	.status-badge {
-		display: inline-block;
-		padding: 0.1rem 0.5rem;
-		border-radius: var(--radius-full);
-		font-family: var(--font-mono);
-		font-size: 0.65rem;
-		font-weight: 600;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		background: var(--danger-soft);
-		color: var(--danger);
-		border: 1px solid rgba(179, 36, 0, 0.28);
-	}
+  .profile-badges {
+    display:     flex;
+    align-items: center;
+    gap:         var(--space-2);
+    flex-wrap:   wrap;
+  }
 
-	/* Nav links */
-	.links {
-		display: flex;
-		flex-direction: column;
-		gap: 0.625rem;
-	}
+  .status-pill {
+    display:        inline-flex;
+    align-items:    center;
+    padding:        2px var(--space-2);
+    border-radius:  var(--radius-full);
+    font-family:    var(--font-family-mono);
+    font-size:      var(--font-size-label);
+    font-weight:    600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    background:     var(--color-danger-soft);
+    color:          var(--color-danger);
+    border:         1px solid var(--color-danger);
+  }
 
-	.link-card {
-		display: flex;
-		align-items: flex-start;
-		gap: 1rem;
-		padding: 1rem 1.25rem;
-		border: 1px solid var(--rule);
-		border-radius: var(--radius-lg);
-		text-decoration: none;
-		color: inherit;
-		background: var(--paper);
-		transition: background 150ms cubic-bezier(0.4, 0, 0.2, 1),
-		            box-shadow 150ms cubic-bezier(0.4, 0, 0.2, 1),
-		            transform 150ms cubic-bezier(0.4, 0, 0.2, 1);
-	}
+  /* ── Nav links ───────────────────────────────────────────────────────────── */
+  .account-links {
+    display:        flex;
+    flex-direction: column;
+    gap:            var(--space-2);
+  }
 
-	.link-card:hover {
-		background: var(--paper-2);
-		transform: translateY(-1px);
-		box-shadow: 0 4px 12px rgba(17, 17, 17, 0.06);
-	}
+  .link-card {
+    display:       flex;
+    align-items:   center;
+    gap:           var(--space-4);
+    padding:       var(--space-4) var(--space-5);
+    border:        1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    text-decoration: none;
+    color:         inherit;
+    background:    var(--color-bg-raised);
+    min-height:    var(--hit);
 
-	.link-card:focus-visible {
-		outline: none;
-		box-shadow: 0 0 0 3px var(--ember-glow);
-	}
+    transition:
+      background   var(--duration-fast) var(--ease-standard),
+      border-color var(--duration-fast) var(--ease-standard),
+      box-shadow   var(--duration-fast) var(--ease-standard);
+  }
 
-	.link-icon {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 36px;
-		height: 36px;
-		border-radius: var(--radius-sm);
-		background: var(--ember-soft);
-		color: var(--ember);
-		flex-shrink: 0;
-		margin-top: 0.1rem;
-	}
+  .link-card:hover {
+    background:   var(--color-bg-hover);
+    border-color: var(--color-border-strong);
+    box-shadow:   0 2px 8px var(--color-shadow-sm);
+  }
 
-	.link-body strong {
-		display: block;
-		font-family: var(--font-family-sans);
-		font-weight: 600;
-		font-size: 0.9rem;
-		color: var(--ink);
-		margin-bottom: 0.15rem;
-	}
+  .link-card:focus-visible {
+    outline:        var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+  }
 
-	.link-body p {
-		margin: 0;
-		font-size: 0.8rem;
-		color: var(--ink-3);
-		line-height: 1.5;
-	}
+  /* Icon pip */
+  .link-icon {
+    display:        flex;
+    align-items:    center;
+    justify-content: center;
+    width:          36px;
+    height:         36px;
+    border-radius:  var(--radius-sm);
+    background:     var(--color-accent-soft);
+    color:          var(--color-accent);
+    flex-shrink:    0;
+  }
 
-	.link-destructive {
-		border-color: var(--danger-soft);
-	}
+  /* Body */
+  .link-body {
+    flex: 1;
+    min-width: 0;
+  }
 
-	.link-destructive .link-icon {
-		background: var(--danger-soft);
-		color: var(--danger);
-	}
+  .link-title {
+    display:        block;
+    font-weight:    550;
+    font-size:      var(--font-size-body);
+    color:          var(--color-fg);
+    margin-bottom:  2px;
+  }
 
-	.link-destructive:hover {
-		background: rgba(179, 36, 0, 0.04);
-	}
+  .link-desc {
+    margin:      0;
+    font-size:   var(--font-size-meta);
+    color:       var(--color-fg-subtle);
+    line-height: 1.45;
+  }
 
-	@media (prefers-reduced-motion: reduce) {
-		.link-card { transition: none; }
-	}
+  /* Arrow */
+  .link-arrow {
+    font-size:   18px;
+    color:       var(--color-fg-subtle);
+    flex-shrink: 0;
+  }
+
+  /* Destructive */
+  .link-destructive {
+    border-color: var(--color-danger-soft);
+  }
+  .link-destructive .link-icon {
+    background: var(--color-danger-soft);
+    color:      var(--color-danger);
+  }
+  .link-destructive:hover {
+    background:   var(--color-danger-soft);
+    border-color: var(--color-danger);
+  }
+  .link-destructive .link-title { color: var(--color-danger); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .link-card { transition: none; }
+  }
 </style>
