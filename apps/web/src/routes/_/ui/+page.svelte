@@ -15,6 +15,11 @@
 
   // ── Primitives ────────────────────────────────────────────────────────────
   import Type               from '@conusai/ui/components/Type.svelte';
+  import Icon               from '@conusai/ui/components/Icon.svelte';
+  import Button             from '@conusai/ui/components/Button.svelte';
+  import Field              from '@conusai/ui/components/Field.svelte';
+  import Chip               from '@conusai/ui/components/Chip.svelte';
+  import EmptyState         from '@conusai/ui/components/EmptyState.svelte';
   import PlanBadge          from '@conusai/ui/components/PlanBadge.svelte';
   import PlanCard           from '@conusai/ui/components/PlanCard.svelte';
   import UsageMeter         from '@conusai/ui/components/UsageMeter.svelte';
@@ -34,6 +39,11 @@
 
   // ── Fixtures ──────────────────────────────────────────────────────────────
   import typeFx              from '@conusai/ui/components/Type.fixtures.js';
+  import iconFx              from '@conusai/ui/components/Icon.fixtures.js';
+  import buttonFx            from '@conusai/ui/components/Button.fixtures.js';
+  import fieldFx             from '@conusai/ui/components/Field.fixtures.js';
+  import chipFx              from '@conusai/ui/components/Chip.fixtures.js';
+  import emptyStateFx        from '@conusai/ui/components/EmptyState.fixtures.js';
   import planBadgeFx         from '@conusai/ui/components/PlanBadge.fixtures.js';
   import planCardFx          from '@conusai/ui/components/PlanCard.fixtures.js';
   import usageMeterFx        from '@conusai/ui/components/UsageMeter.fixtures.js';
@@ -57,16 +67,24 @@
   }
 
   const REGISTRY: RegistryEntry[] = [
-    { name: 'Type',              component: Type,              fixtures: typeFx                           },
-    { name: 'PlanBadge',         component: PlanBadge,         fixtures: planBadgeFx                     },
-    { name: 'UsageMeter',        component: UsageMeter,        fixtures: usageMeterFx,   fullWidth: true  },
-    { name: 'PlanCard',          component: PlanCard,          fixtures: planCardFx,     fullWidth: true  },
-    { name: 'CapabilityCard',    component: CapabilityCard,    fixtures: capabilityCardFx                 },
-    { name: 'AgentChatComposer', component: AgentChatComposer, fixtures: composerFx,     fullWidth: true  },
-    { name: 'AppTopBar',         component: AppTopBar,         fixtures: appTopBarFx,    fullWidth: true  },
-    { name: 'ThemeSwitcher',     component: ThemeSwitcher,     fixtures: themeSwitcherFx                  },
-    { name: 'ToastHost',         component: ToastHost,         fixtures: toastHostFx,    fullWidth: true  },
-    { name: 'QuotaBanner',       component: QuotaBanner,       fixtures: quotaBannerFx,  fullWidth: true  },
+    // ── Phase 2.2-2.4 primitives ──────────────────────────────────────────
+    { name: 'Type',              component: Type,              fixtures: typeFx                            },
+    { name: 'Icon',              component: Icon,              fixtures: iconFx                            },
+    // ── Phase 2.7 cross-cutting primitives ───────────────────────────────
+    { name: 'Button',            component: Button,            fixtures: buttonFx                          },
+    { name: 'Field',             component: Field,             fixtures: fieldFx                           },
+    { name: 'Chip',              component: Chip,              fixtures: chipFx                            },
+    { name: 'EmptyState',        component: EmptyState,        fixtures: emptyStateFx,   fullWidth: true   },
+    // ── Billing components ────────────────────────────────────────────────
+    { name: 'PlanBadge',         component: PlanBadge,         fixtures: planBadgeFx                      },
+    { name: 'UsageMeter',        component: UsageMeter,        fixtures: usageMeterFx,   fullWidth: true   },
+    { name: 'PlanCard',          component: PlanCard,          fixtures: planCardFx,     fullWidth: true   },
+    { name: 'CapabilityCard',    component: CapabilityCard,    fixtures: capabilityCardFx                  },
+    { name: 'AgentChatComposer', component: AgentChatComposer, fixtures: composerFx,     fullWidth: true   },
+    { name: 'AppTopBar',         component: AppTopBar,         fixtures: appTopBarFx,    fullWidth: true   },
+    { name: 'ThemeSwitcher',     component: ThemeSwitcher,     fixtures: themeSwitcherFx                   },
+    { name: 'ToastHost',         component: ToastHost,         fixtures: toastHostFx,    fullWidth: true   },
+    { name: 'QuotaBanner',       component: QuotaBanner,       fixtures: quotaBannerFx,  fullWidth: true   },
   ];
 
   // ── State ─────────────────────────────────────────────────────────────────
