@@ -1,100 +1,218 @@
+/* GENERATED — do not hand-edit.
+ * Source of truth: packages/ui/tokens/tokens.json
+ * Regenerate with: node scripts/build-tokens.mjs
+ * Hand-editing tokens.css is forbidden after Phase 2.1a (2026-05-23).
+ */
+
+/* ── 1. Paper theme (light) ─────────────────────────────────────────────── */
 :root,
 :root[data-theme="paper"] {
-  --ink:    #111111;
-  --ink-2:  #3A3A3A;
-  --ink-3:  #767676;
-  --paper:  #F8F8F8;
-  --paper-2:#F0F0F0;
-  --paper-3:#E8E8E8;
-  --rule:   #E0E0E0;
-  --seam:   #C8C8C8;
+  --ink: #111111;
+  --ink-2: #3A3A3A;
+  --ink-3: #767676;
+  --paper: #F8F8F8;
+  --paper-2: #F0F0F0;
+  --paper-3: #E8E8E8;
+  --rule: #E0E0E0;
+  --seam: #C8C8C8;
 }
 
+/* ── 2. Forge theme (dark) ─────────────────────────────────────────────── */
 :root[data-theme="forge"] {
-  --ink:    #F8F8F8;
-  --ink-2:  #C0C0C0;
-  --ink-3:  #888888;
-  --paper:  #111111;
-  --paper-2:#1A1A1A;
-  --paper-3:#222222;
-  --rule:   #2A2A2A;
-  --seam:   #3A3A3A;
-
-  /* Accent overrides — brighter on dark */
-  --ember-2:    #FF7A20;
+  --ink: #F8F8F8;
+  --ink-2: #C0C0C0;
+  --ink-3: #888888;
+  --paper: #111111;
+  --paper-2: #1A1A1A;
+  --paper-3: #222222;
+  --rule: #2A2A2A;
+  --seam: #3A3A3A;
+  /* Accent overrides */
+  --ember-2: #FF7A20;
   --ember-soft: rgba(255, 98, 0, 0.12);
   --ember-glow: rgba(255, 98, 0, 0.28);
-  --cyan-soft:  rgba(0, 212, 255, 0.12);
-
-  /* Semantic overrides — brighter on dark */
-  --success:      #22a060;
+  --cyan-soft: rgba(0, 212, 255, 0.12);
+  /* Semantic overrides */
+  --success: #22a060;
   --success-soft: rgba(34, 160, 96, 0.15);
-  --danger:       #e03000;
-  --danger-soft:  rgba(224, 48, 0, 0.15);
-
-  /* Overlay overrides — stronger on dark */
+  --danger: #e03000;
+  --danger-soft: rgba(224, 48, 0, 0.15);
+  /* Overlay overrides */
   --shadow-sm: rgba(0, 0, 0, 0.30);
   --shadow-md: rgba(0, 0, 0, 0.50);
-  --backdrop:  rgba(0, 0, 0, 0.60);
+  --backdrop: rgba(0, 0, 0, 0.60);
 }
 
+/* ── 3. Brand scalars (theme-invariant) ─────────────────────────────────────────────── */
 :root {
-  /* Brand */
-  --ember:      #FF6200;
-  --ember-2:    #E05500;
+  --ember: #FF6200;
+  --ember-2: #E05500;
   --ember-soft: rgba(255, 98, 0, 0.10);
   --ember-glow: rgba(255, 98, 0, 0.22);
-
-  /* Secondary accent */
-  --cyan:      #00D4FF;
+  --cyan: #00D4FF;
   --cyan-soft: rgba(0, 212, 255, 0.10);
-
-  /* Semantic */
-  --success:      #1a7f4b;
+  --success: #1a7f4b;
   --success-soft: rgba(26, 127, 75, 0.13);
-  --danger:       #b32400;
-  --danger-soft:  rgba(179, 36, 0, 0.13);
-
-  /* Overlays */
+  --danger: #b32400;
+  --danger-soft: rgba(179, 36, 0, 0.13);
   --shadow-sm: rgba(0, 0, 0, 0.08);
   --shadow-md: rgba(0, 0, 0, 0.12);
-  --backdrop:  rgba(0, 0, 0, 0.40);
-
-  /* Typography */
-  --font-display: "Geist", system-ui, sans-serif;
-  --font-body:    "Geist", system-ui, sans-serif;
-  --font-mono:    "Geist Mono", ui-monospace, monospace;
-
-  /* Spacing scale */
-  --s-1: 4px;
-  --s-2: 8px;
-  --s-3: 12px;
-  --s-4: 16px;
-  --s-5: 24px;
-  --s-6: 32px;
-  --s-7: 48px;
-  --s-8: 64px;
-
-  /* Motion */
-  --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-in:     cubic-bezier(0.6, 0, 0.7, 0.2);
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --ease-ui:     cubic-bezier(0.4, 0, 0.2, 1);
-  --dur-1: 120ms;  /* hover paint, micro-feedback */
-  --dur-2: 200ms;  /* fast state changes */
-  --dur-2b: 240ms; /* staggered reveals, greeting animations */
-  --dur-3: 320ms;  /* sheet open, modal in */
-  --dur-4: 520ms;  /* page reveals */
-
-  /* Radius */
-  --r-xs:   6px;
-  --r-sm:   10px;
-  --r-md:   14px;
-  --r-lg:   20px;
-  --r-xl:   28px;
-  --r-full: 9999px;
+  --backdrop: rgba(0, 0, 0, 0.40);
+  /* Login poster */
+  --poster-gradient: linear-gradient(135deg, #FF6200 0%, #E05500 60%, #111111 100%);
+  --poster-hi: rgba(255, 150, 80, 0.22);
+  --poster-em: rgba(255, 255, 255, 0.92);
 }
 
+/* ── 4. Semantic color aliases
+      Component CSS uses only these — never --ink / --paper / --ember directly.
+      Theme files remap brand scalars; aliases stay stable across themes.
+   ─────────────────────────────────────────────────────────────── */
+:root {
+  --color-bg: var(--paper);
+  --color-bg-raised: var(--paper-2);
+  --color-bg-hover: var(--paper-3);
+  --color-fg: var(--ink);
+  --color-fg-muted: var(--ink-2);
+  --color-fg-subtle: var(--ink-3);
+  --color-border: var(--rule);
+  --color-border-strong: var(--seam);
+  --color-accent: var(--ember);
+  --color-accent-hover: var(--ember-2);
+  --color-accent-soft: var(--ember-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-shadow-sm: var(--shadow-sm);
+  --color-shadow-md: var(--shadow-md);
+  --color-backdrop: var(--backdrop);
+}
+
+/* ── 5. Typography ─────────────────────────────────────────────── */
+:root {
+  /* canonical font families */
+  --font-family-sans: "Geist", system-ui, sans-serif;
+  --font-family-mono: "Geist Mono", ui-monospace, monospace;
+  /* canonical font sizes */
+  --font-size-display: clamp(40px, 5.4vw, 56px);
+  --font-size-h1: 28px;
+  --font-size-h2: 20px;
+  --font-size-body: 15px;
+  --font-size-meta: 13px;
+  --font-size-label: 11px;
+  --font-size-mono: 13px;
+  /* compatibility aliases */
+  --font-display: var(--font-family-sans);
+  --font-body: var(--font-family-sans);
+  --font-sans: var(--font-family-sans);
+  --font-mono: var(--font-family-mono);
+  --t-display: var(--font-size-display);
+  --t-h1: var(--font-size-h1);
+  --t-h2: var(--font-size-h2);
+  --t-body: var(--font-size-body);
+  --t-meta: var(--font-size-meta);
+  --t-label: var(--font-size-label);
+  --t-mono: var(--font-size-mono);
+}
+
+/* ── 6. Spacing ─────────────────────────────────────────────── */
+:root {
+  /* canonical */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  /* compatibility aliases */
+  --s-1: var(--space-1);
+  --s-2: var(--space-2);
+  --s-3: var(--space-3);
+  --s-4: var(--space-4);
+  --s-5: var(--space-5);
+  --s-6: var(--space-6);
+  --s-7: var(--space-7);
+  --s-8: var(--space-8);
+}
+
+/* ── 7. Radius ─────────────────────────────────────────────── */
+:root {
+  /* canonical */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --radius-full: 9999px;
+  /* compatibility aliases */
+  --r-xs: var(--radius-xs);
+  --r-sm: var(--radius-sm);
+  --r-md: var(--radius-md);
+  --r-lg: var(--radius-lg);
+  --r-xl: var(--radius-xl);
+  --r-full: var(--radius-full);
+}
+
+/* ── 8. Duration ─────────────────────────────────────────────── */
+:root {
+  /* canonical */
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --duration-stagger: 240ms;
+  --duration-slow: 320ms;
+  --duration-page: 520ms;
+  /* compatibility aliases */
+  --dur-1: var(--duration-fast);
+  --dur-2: var(--duration-normal);
+  --dur-2b: var(--duration-stagger);
+  --dur-3: var(--duration-slow);
+  --dur-4: var(--duration-page);
+}
+
+/* ── 9. Easing
+      Phase 2.3 adds M3-aligned canonical names (--ease-standard, --ease-emphasized-*).
+   ─────────────────────────────────────────────────────────────── */
+:root {
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.6, 0, 0.7, 0.2);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-ui: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── 10. Layout tokens ─────────────────────────────────────────────── */
+:root {
+  --sidebar: 240px;
+  --sidebar-collapsed: 64px;
+  --composer-w: 720px;
+  --gutter: 64px;
+  --hit: 44px;
+  /* compat: --rail was the public name before Phase 2.1 */
+  --rail: var(--sidebar);
+}
+
+/* ── 11. Focus ring ─────────────────────────────────────────────── */
+:root {
+  --focus-ring: 2px solid var(--color-accent);
+  --focus-ring-offset: 2px;
+}
+
+/* ── 12. Safe area insets ─────────────────────────────────────────────── */
+:root {
+  --safe-top: env(safe-area-inset-top,    0px);
+  --safe-right: env(safe-area-inset-right,  0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left,   0px);
+}
+
+/* ── 13. Versioning ─────────────────────────────────────────────── */
+:root {
+  --foundry-version: "2026.05";
+}
+
+/* ── 14. Reduced motion ────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.01ms !important;

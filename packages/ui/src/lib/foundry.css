@@ -26,76 +26,10 @@
   font-display: swap;
 }
 
-/* Theme color tokens (--ink*, --paper*, --rule, --seam, plus Forge accent /
-   semantic / overlay overrides) live in ./tokens.css. They were duplicated
-   here until Phase 0.3 (2026-05-23) and have been removed. */
-
-/* ── Tokens · Shared (non-theme) ──────────────────────────────────────────── */
-:root {
-  /* Brand */
-  --ember:      #FF6200;
-  --ember-2:    #E05500;
-  --ember-soft: rgba(255, 98, 0, 0.10);
-  --ember-glow: rgba(255, 98, 0, 0.22);
-
-  /* Secondary accent */
-  --cyan:      #00D4FF;
-  --cyan-soft: rgba(0, 212, 255, 0.10);
-
-  /* Semantic */
-  --success:      #1a7f4b;
-  --success-soft: rgba(26, 127, 75, 0.13);
-  --danger:       #b32400;
-  --danger-soft:  rgba(179, 36, 0, 0.13);
-
-  /* Overlays */
-  --shadow-sm: rgba(0, 0, 0, 0.08);
-  --shadow-md: rgba(0, 0, 0, 0.12);
-  --backdrop:  rgba(0, 0, 0, 0.40);
-
-  /* Login poster */
-  --poster-gradient: linear-gradient(135deg, #FF6200 0%, #E05500 60%, #111111 100%);
-  --poster-hi:       rgba(255, 150, 80, 0.22);
-  --poster-em:       rgba(255, 255, 255, 0.92);
-
-  --font-display: "Geist", system-ui, sans-serif;
-  --font-body:    "Geist", system-ui, sans-serif;
-  --font-mono:    "Geist Mono", ui-monospace, monospace;
-
-  --t-display: clamp(40px, 5.4vw, 56px);
-  --t-h1:      28px;
-  --t-h2:      20px;
-  --t-body:    15px;
-  --t-meta:    13px;
-  --t-label:   11px;
-  --t-mono:    13px;
-
-  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px;
-  --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 64px;
-
-  --rail: 240px;
-  --gutter: 64px;
-  --composer-w: 720px;
-
-  --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-in:     cubic-bezier(0.6, 0, 0.7, 0.2);
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --ease-ui:     cubic-bezier(0.4, 0, 0.2, 1);
-  --dur-1: 120ms;   /* hover paint, micro-feedback */
-  --dur-2: 200ms;   /* fast state changes */
-  --dur-2b: 240ms;  /* staggered reveals, greeting animations */
-  --dur-3: 320ms;   /* sheet open, modal in */
-  --dur-4: 520ms;   /* page reveals */
-
-  --r-xs:   6px;
-  --r-sm:   10px;
-  --r-md:   14px;
-  --r-lg:   20px;
-  --r-xl:   28px;
-  --r-full: 9999px;
-
-  --foundry-version: "2026.05";
-}
+/* All design tokens (brand, semantic, spacing, typography, radius, duration,
+   easing, layout, focus, safe-area) live in ./tokens.css (GENERATED from
+   packages/ui/tokens/tokens.json). foundry.css is a pure consumer — it uses
+   tokens via var(), never defines them. Moved here in Phase 2.1a (2026-05-23). */
 
 /* ── Reset ────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
