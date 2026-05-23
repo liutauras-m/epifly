@@ -9,6 +9,9 @@
     define them.)
    ─────────────────────────────────────────────────────────────────────────── */
 
+/* ── Named keyframes (Phase 2.3) ─────────────────────────────────────────── */
+@import './motion/keyframes.css';
+
 /* ── Self-hosted fonts (CSP-safe, Tauri offline-friendly) ─────────────────── */
 @font-face {
   font-family: "Geist";

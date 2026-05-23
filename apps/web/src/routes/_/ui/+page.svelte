@@ -14,6 +14,7 @@
    */
 
   // ── Primitives ────────────────────────────────────────────────────────────
+  import Type               from '@conusai/ui/components/Type.svelte';
   import PlanBadge          from '@conusai/ui/components/PlanBadge.svelte';
   import PlanCard           from '@conusai/ui/components/PlanCard.svelte';
   import UsageMeter         from '@conusai/ui/components/UsageMeter.svelte';
@@ -32,6 +33,7 @@
   const theme = getContext<{ current: string; toggle: () => void }>('conusai.theme');
 
   // ── Fixtures ──────────────────────────────────────────────────────────────
+  import typeFx              from '@conusai/ui/components/Type.fixtures.js';
   import planBadgeFx         from '@conusai/ui/components/PlanBadge.fixtures.js';
   import planCardFx          from '@conusai/ui/components/PlanCard.fixtures.js';
   import usageMeterFx        from '@conusai/ui/components/UsageMeter.fixtures.js';
@@ -55,6 +57,7 @@
   }
 
   const REGISTRY: RegistryEntry[] = [
+    { name: 'Type',              component: Type,              fixtures: typeFx                           },
     { name: 'PlanBadge',         component: PlanBadge,         fixtures: planBadgeFx                     },
     { name: 'UsageMeter',        component: UsageMeter,        fixtures: usageMeterFx,   fullWidth: true  },
     { name: 'PlanCard',          component: PlanCard,          fixtures: planCardFx,     fullWidth: true  },

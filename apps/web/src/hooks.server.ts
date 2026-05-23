@@ -35,5 +35,23 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const raw = event.cookies.get(COOKIE_NAME);
 	event.locals.user = raw ? (verify(raw) ?? null) : null;
 
-	return resolve(event);
+	// ── Font preloads (Phase 2.2) ─────────────────────────────────────────────
+	// Vite content-hashes font files, so the hashed URL is only known at
+	// render time. We scan the <head> for the first font-face link Vite
+	// generated and emit a matching preload before it so the browser can start
+	// fetching Geist before it parses the stylesheet.
+	return resolve(event, {
+		transformPageChunk({ html }) {
+			// Find the first Geist woff2 URL already injected by Vite (looks like
+			// /_app/immutable/assets/Geist-Variable.HASH.woff2)
+			const m = html.match(/\/_app\/immutable\/assets\/Geist-Variable\.[^"']+\.woff2/);
+			const mMono = html.match(/\/_app\/immutable\/assets\/GeistMono-Variable\.[^"']+\.woff2/);
+			const preloads = [
+				m     ? `<link rel="preload" as="font" type="font/woff2" crossorigin href="${m[0]}">` : '',
+				mMono ? `<link rel="preload" as="font" type="font/woff2" crossorigin href="${mMono[0]}">` : '',
+			].filter(Boolean).join('\n\t');
+			if (!preloads) return html;
+			return html.replace('%sveltekit.head%', `${preloads}\n\t%sveltekit.head%`);
+		},
+	});
 };

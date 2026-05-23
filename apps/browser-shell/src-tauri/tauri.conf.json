@@ -12,7 +12,7 @@
   "app": {
     "withGlobalTauri": false,
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' http://localhost:* https: wss:; img-src 'self' http://localhost:* data: blob:"
+      "csp": "default-src 'self'; connect-src 'self' http://localhost:* http://127.0.0.1:* http://10.0.2.2:* https: wss:; img-src 'self' http://localhost:* http://127.0.0.1:* http://10.0.2.2:* data: blob:"
     },
     "windows": [
       {

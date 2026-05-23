@@ -5,6 +5,10 @@ export { default as UsageMeter } from "./components/UsageMeter.svelte";
 export { default as QuotaBanner } from "./components/QuotaBanner.svelte";
 
 // ── Primitive components ─────────────────────────────────────────────────────
+export { default as Type } from "./components/Type.svelte";
+export type { TypeVariant } from "./components/Type.svelte";
+export { default as Icon } from "./components/Icon.svelte";
+export type { IconSize } from "./components/Icon.svelte";
 export { default as AppShell } from "./components/AppShell.svelte";
 export { default as CapabilityCard } from "./components/CapabilityCard.svelte";
 export { default as ToastHost } from "./components/ToastHost.svelte";

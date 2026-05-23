@@ -1,290 +1,444 @@
 # ConusAI Platform — UI Design Guidelines
 
-**Foundry** aesthetic: editorial-industrial. Warm cream or carbon-ink ground, one teal accent (`#80cdc6`), hairline rules, generous negative space. All tokens live in [`crates/agent-gateway/assets/css/style.css`](../crates/agent-gateway/assets/css/style.css).
+> **Foundry** design system. Vibrant orange `--ember` + electric cyan `--cyan` accents on a near-neutral ground; Geist + Geist Mono typography; hairline rules; generous negative space; restrained, purposeful motion.
+>
+> **Single source of truth:** [`packages/ui/src/lib/tokens.css`](../packages/ui/src/lib/tokens.css) (theme + non-theme primitive tokens) and [`packages/ui/src/lib/foundry.css`](../packages/ui/src/lib/foundry.css) (resets, self-hosted fonts, shared layout classes). Every screen — web (`apps/web`), Tauri desktop, and mobile (`apps/browser-shell` on iOS/Android) — consumes the **same** tokens and the **same** primitives from `@conusai/ui`. Zero per-app design forks.
+>
+> **Companion docs:**
+> - [`docs/ui-plan.md`](ui-plan.md) — the migration plan that turns these guidelines into ship reality (phases, gates, audit cadence).
+> - [`docs/ui-landmarks.md`](ui-landmarks.md) — WCAG 2.2 landmark map (created in `ui-plan.md` Phase 3.1).
+>
+> When this doc and the code disagree, **the code wins** and this doc is the bug. Open a PR to reconcile.
 
 ---
 
 ## 1. Design Principles
 
-1. **Editorial, not corporate.** Treat the page like a printed workshop spread — headlines, eyebrows, hairline rules, mono captions.
-2. **One accent.** Teal `--ember` is the only saturated colour. Never introduce new hues without adding a token.
-3. **Intentional corners.** Radius tokens follow the nested-radius principle: inner elements use smaller radii than their outer container (`r_inner ≈ r_outer − gap`). Sharp corners on structural chrome; subtle rounding on interactive surfaces.
-4. **Whitespace earns attention.** Use the `--s-*` spacing scale; never crowd a section.
-5. **Motion is restrained.** Short (120–520 ms) easings, always honour `prefers-reduced-motion`.
+1. **Editorial, not corporate.** Treat each screen like a printed workshop spread — generous whitespace, mono eyebrows, hairline rules, headlines that earn their size.
+2. **One accent, one assist.** `--ember` (orange) is the primary saturated colour; `--cyan` is the secondary signal for streaming / live-data. No third hue without adding a token.
+3. **Intentional corners.** Radii follow the **nested-radius rule** (Apple/iOS squircle convention): an inner element's radius is approximately `r_outer − gap`, where `gap` is the padding between them. Sharp corners on structural chrome; softer on interactive surfaces.
+4. **Whitespace earns attention.** Use the `--s-*` scale; never crowd a section.
+5. **Motion communicates, never decorates.** Every animation serves one of four purposes — `[feedback]`, `[continuity]`, `[hierarchy]`, `[delight]` ([`ui-plan.md`](ui-plan.md) Principle #14). Anything untaggable doesn't ship. Durations 120–520 ms; `prefers-reduced-motion: reduce` clamps to ≤ 80 ms.
+6. **One token, one place.** No hex, no `px` line-heights, no inline shadows outside `tokens.css` / `foundry.css`. CI enforces this from Phase 1.2 onwards (see [`ui-plan.md`](ui-plan.md) §1.2).
+7. **Mobile-first.** Author at 360 px; layer up at the `--bp-compact / --bp-medium / --bp-expanded` container-query breakpoints (defined in [`ui-plan.md`](ui-plan.md) Phase 3.1).
+8. **A11y is a gate, not a polish.** WCAG 2.2 AA contrast, full keyboard parity, landmark roles, `prefers-reduced-motion`, `prefers-color-scheme`.
 
 ---
 
 ## 2. Colour Tokens
 
-### Paper theme (default)
+Theme tokens live under `:root[data-theme="paper"]` (light, default) and `:root[data-theme="forge"]` (dark). Non-theme tokens (brand, accents, semantics, overlays) live under `:root`, with overrides in the `forge` block where the dark surface needs more lift.
+
+### Paper theme (light, default)
 
 | Token | Value | Use |
 |---|---|---|
-| `--ink` | `#14110D` | Primary text, near-black, warm undertone |
-| `--ink-2` | `#3A332B` | Secondary text |
-| `--ink-3` | `#6E6357` | Muted labels, captions |
-| `--paper` | `#F4EEE3` | Page background — warm cream |
-| `--paper-2` | `#EBE3D4` | Sidebar, raised cards |
-| `--paper-3` | `#DFD4BF` | Hover surfaces |
-| `--rule` | `#D6CAB0` | Hairline borders, 1 px |
-| `--seam` | `#C2B391` | Stronger dividers |
+| `--ink` | `#111111` | Primary text |
+| `--ink-2` | `#3A3A3A` | Secondary text |
+| `--ink-3` | `#767676` | Muted labels, captions |
+| `--paper` | `#F8F8F8` | Page background |
+| `--paper-2` | `#F0F0F0` | Sidebar, raised cards |
+| `--paper-3` | `#E8E8E8` | Hover surfaces |
+| `--rule` | `#E0E0E0` | Hairline borders, 1 px |
+| `--seam` | `#C8C8C8` | Stronger dividers |
 
 ### Forge theme (dark)
 
 | Token | Value |
 |---|---|
-| `--ink` | `#F4EEE3` |
-| `--ink-2` | `#C8BFAE` |
-| `--ink-3` | `#8A8174` |
-| `--paper` | `#100E0B` |
-| `--paper-2` | `#181612` |
-| `--paper-3` | `#211E18` |
-| `--rule` | `#2A251E` |
-| `--seam` | `#3A3328` |
+| `--ink` | `#F8F8F8` |
+| `--ink-2` | `#C0C0C0` |
+| `--ink-3` | `#888888` |
+| `--paper` | `#111111` |
+| `--paper-2` | `#1A1A1A` |
+| `--paper-3` | `#222222` |
+| `--rule` | `#2A2A2A` |
+| `--seam` | `#3A3A3A` |
 
-### Shared accents (both themes)
+### Brand accent — ember (orange)
+
+| Token | Paper value | Forge value | Use |
+|---|---|---|---|
+| `--ember` | `#FF6200` | `#FF6200` | Primary accent — saturated orange |
+| `--ember-2` | `#E05500` | `#FF7A20` | Pressed / hover; brighter on dark |
+| `--ember-soft` | `rgba(255, 98, 0, 0.10)` | `rgba(255, 98, 0, 0.12)` | Focus rings, chip fills |
+| `--ember-glow` | `rgba(255, 98, 0, 0.22)` | `rgba(255, 98, 0, 0.28)` | Button shadows, cursor glow |
+
+### Secondary accent — cyan (electric)
+
+| Token | Paper value | Forge value | Use |
+|---|---|---|---|
+| `--cyan` | `#00D4FF` | `#00D4FF` | Streaming indicators, "live" badges |
+| `--cyan-soft` | `rgba(0, 212, 255, 0.10)` | `rgba(0, 212, 255, 0.12)` | Live-data backgrounds |
+
+### Semantic tokens
+
+| Token | Paper | Forge | Use |
+|---|---|---|---|
+| `--success` | `#1a7f4b` | `#22a060` | Tool success dot, "PAID" badge |
+| `--success-soft` | `rgba(26, 127, 75, 0.13)` | `rgba(34, 160, 96, 0.15)` | Soft success background |
+| `--danger` | `#b32400` | `#e03000` | Error states, destructive actions |
+| `--danger-soft` | `rgba(179, 36, 0, 0.13)` | `rgba(224, 48, 0, 0.15)` | "OVERDUE" badge, error fills |
+
+### Overlays & elevation
+
+| Token | Paper | Forge | Use |
+|---|---|---|---|
+| `--shadow-sm` | `rgba(0, 0, 0, 0.08)` | `rgba(0, 0, 0, 0.30)` | Resting card lift |
+| `--shadow-md` | `rgba(0, 0, 0, 0.12)` | `rgba(0, 0, 0, 0.50)` | Sheet / modal lift |
+| `--backdrop` | `rgba(0, 0, 0, 0.40)` | `rgba(0, 0, 0, 0.60)` | Drawer / dialog backdrop |
+
+### Login poster (paper + forge share)
 
 | Token | Value | Use |
 |---|---|---|
-| `--ember` | `#80cdc6` | Primary accent — teal |
-| `--ember-2` | `#5aada6` | Pressed / hover |
-| `--ember-soft` | `rgba(128,205,198,0.10)` | Focus rings, chip fills |
-| `--ember-glow` | `rgba(128,205,198,0.28)` | Button shadows, cursor glow |
-| `--steel` | `#5C6B7A` | Neutral — tool status idle |
-| `--rust` | `#8B2E0E` | Error / destructive |
-| `--moss` | `#4A6B3A` | Success (legacy; prefer `--success`) |
-| `--success` | `#1a7f4b` | Tool success dot |
-| `--success-soft` | `rgba(26,127,75,0.13)` | Invoice PAID badge bg |
-| `--danger` | `#b32400` | Error |
-| `--danger-soft` | `rgba(179,36,0,0.13)` | Invoice OVERDUE badge bg |
+| `--poster-gradient` | `linear-gradient(135deg, #FF6200 0%, #E05500 60%, #111111 100%)` | Login left pane |
+| `--poster-hi` | `rgba(255, 150, 80, 0.22)` | Radial highlight overlay |
+| `--poster-em` | `rgba(255, 255, 255, 0.92)` | Tagline copy on poster |
 
-**Rules**
-- Never hard-code hex outside `style.css`.
-- Selection uses `--ember-soft` bg + `--ink` text.
+### Rules
+
+- **Never hard-code hex outside `tokens.css` / `foundry.css`.** Phase 1.2's `scripts/check-design-tokens.mjs` fails CI on raw hex anywhere else.
+- **Selection** uses `--ember-soft` background + `--ink` text (set in `foundry.css ::selection`).
+- **Semantic aliases** (`--bg`, `--bg-raised`, `--fg`, `--fg-muted`, `--border`, `--accent`, `--danger`, `--success`) land in [`ui-plan.md`](ui-plan.md) Phase 2.1. After they ship, components reference **only** the aliases; theme files remap them. Until then, components use the concrete tokens above.
 
 ---
 
 ## 3. Typography
 
-Three families — loaded via Google Fonts + Fontshare CDN.
+Two self-hosted families (CSP-safe, Tauri-offline-friendly) loaded via `@font-face` in [`foundry.css`](../packages/ui/src/lib/foundry.css) from [`packages/ui/src/lib/assets/fonts/`](../packages/ui/src/lib/assets/fonts/).
 
-| Token | Family | Role |
-|---|---|---|
-| `--font-display` | `Fraunces` (variable) | Headings, greeting, login tagline |
-| `--font-body` | `Switzer` (Fontshare) | Body copy, nav labels, UI text |
-| `--font-mono` | `JetBrains Mono` | Eyebrows, labels, tool JSON, code |
+| Token | Family | Variable axes | Role |
+|---|---|---|---|
+| `--font-display` | `Geist` (variable) | `wght` 100–900 | Display, headlines, greetings |
+| `--font-body` | `Geist` (variable) | `wght` 100–900 | Body copy, nav labels, UI text |
+| `--font-mono` | `Geist Mono` (variable) | `wght` 100–900 | Eyebrows, labels, tool JSON, code |
+
+> **Typography lock:** Per [`ui-plan.md`](ui-plan.md) Phase 0.4, the choice of Geist is final. The sentinel comment at the top of `foundry.css` enforces it. Earlier brainstorming around Fraunces / Switzer / JetBrains Mono is retired — do not reintroduce.
 
 ### Scale
 
 | Token | Value | Usage |
 |---|---|---|
 | `--t-display` | `clamp(40px, 5.4vw, 56px)` | Greeting headline |
-| `--t-h1` | `28px` | Section titles |
-| `--t-h2` | `20px` | Message headers |
-| `--t-body` | `15px` | Chat copy |
-| `--t-meta` | `13px` | Timestamps, metadata |
-| `--t-label` | `11px` | Uppercase mono labels (`letter-spacing: 0.14em`) |
-| `--t-mono` | `13px` | Tool JSON, code blocks |
+| `--t-h1` | `28px` | Section titles, page headers |
+| `--t-h2` | `20px` | Message headers, dialog titles |
+| `--t-body` | `15px` | Chat copy, paragraphs |
+| `--t-meta` | `13px` | Timestamps, secondary metadata |
+| `--t-label` | `11px` | Uppercase mono eyebrows (`letter-spacing: 0.14em`) |
+| `--t-mono` | `13px` | Tool JSON, inline code |
 
-**Greeting** uses `font-variation-settings: "opsz" 96, "SOFT" 30, "WONK" 0` to engage Fraunces' display optical size — distinctive wedge serifs.
+### Component vs. utility split (Phase 2.2)
+
+- `<Type variant="display|h1|h2|label|meta|mono">` from [`packages/ui/src/lib/components/typography/`](../packages/ui/src/lib/components/) is the **only** place `font-variation-settings` lives. Display/h1/h2 variants set the `wght` axis for the rendered size.
+- Body copy uses semantic elements (`<p>`, `<li>`) with the token classes `t-body` / `t-body-strong`. **Don't wrap every paragraph in `<Type variant="body">`** — that's component soup with no benefit.
+- The discipline is "no inline `font-*` declarations and no untokenized `font-variation-settings`," not "everything is a component."
 
 ---
 
 ## 4. Spacing Scale
 
 ```css
---s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
---s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 72px;
---rail: 260px;       /* sidebar width */
---gutter: 64px;      /* main column inset */
---composer-w: 720px; /* max input width */
+--s-1: 4px;   --s-2: 8px;   --s-3: 12px;  --s-4: 16px;
+--s-5: 24px;  --s-6: 32px;  --s-7: 48px;  --s-8: 64px;
+
+--rail:        240px;   /* sidebar full width */
+--gutter:       64px;   /* main column inset */
+--composer-w:  720px;   /* max input width */
 ```
+
+Future layout tokens (`--rail-collapsed: 64px`, `--hit: 44px`, `--safe-top/-bottom/-left/-right`, `--bp-compact / -medium / -expanded`) land in [`ui-plan.md`](ui-plan.md) Phase 2.1 / 3.1.
 
 ---
 
 ## 5. Border Radius Scale
 
-All radii use tokens — no arbitrary values.
-
 | Token | Value | Use |
 |---|---|---|
-| `--r-xs` | `3px` | Badges, micro elements (inv-badge, plan labels, submit) |
-| `--r-sm` | `6px` | Buttons, pills, attachments, toasts, chips, tool cards |
-| `--r-md` | `10px` | Composer (outer container), invoice card |
-| `--r-lg` | `16px` | Reserved for large panels |
-| `--r-full` | `9999px` | Avatar circle, cursor caret, thinking dots |
+| `--r-xs` | `6px` | Badges, micro elements |
+| `--r-sm` | `10px` | Buttons, pills, attachments, toasts, chips, tool cards |
+| `--r-md` | `14px` | Composer outer container, invoice card |
+| `--r-lg` | `20px` | Sheets, large panels, profile cards |
+| `--r-xl` | `28px` | Hero surfaces |
+| `--r-full` | `9999px` | Avatar circle, cursor caret, thinking dots, progress bars |
 
-**Nested radius rule:** send button (`--r-sm`) sits inside the composer (`--r-md`). The gap between them (≈ 4 px) is the difference between the two radii — visually harmonic, following iOS squircle convention.
+**Nested radius rule:** the send button (`--r-sm`, 10 px) sits inside the composer (`--r-md`, 14 px) with a ~4 px inset gap — `r_outer − gap ≈ r_inner`. Same principle for any nested rounded surface.
 
 ---
 
 ## 6. Motion
 
+### Easing curves
+
 ```css
---ease-out:    cubic-bezier(0.2, 0.8, 0.2, 1);
---ease-in:     cubic-bezier(0.6, 0, 0.7, 0.2);
---ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* slight overshoot */
---dur-1: 120ms; --dur-2: 200ms; --dur-3: 320ms; --dur-4: 520ms;
+--ease-out:    cubic-bezier(0.22, 1, 0.36, 1);     /* default — elements settling into rest */
+--ease-in:     cubic-bezier(0.6, 0, 0.7, 0.2);     /* elements leaving */
+--ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);  /* slight overshoot — confirmations only */
+--ease-ui:     cubic-bezier(0.4, 0, 0.2, 1);       /* legacy Material ease — neutral state changes */
 ```
 
-### Page-load orchestration (staggered)
+Phase 2.1 of [`ui-plan.md`](ui-plan.md) renames these to `--ease-standard / --ease-emphasized-decelerate / --ease-emphasized-accelerate / --ease-linear` and introduces spring physics tokens (`--spring-snappy`, `--spring-gentle`, `--spring-bouncy`). Treat the rename as a strict superset — same physics, clearer vocabulary.
+
+### Durations
+
+```css
+--dur-1:  120ms;  /* hover paint, micro-feedback */
+--dur-2:  200ms;  /* fast state changes */
+--dur-2b: 240ms;  /* staggered reveals, greeting animations */
+--dur-3:  320ms;  /* sheet open, modal in */
+--dur-4:  520ms;  /* page reveals */
+```
+
+Per-animation hard ceiling: **400 ms**, except the page-load cascade (intentional `[hierarchy]` animation). Per-task total ceiling: **3 000 ms** wall-time, summed across all animations on the user-initiated path. Both enforced in CI from Phase 6 onwards (see [`ui-plan.md`](ui-plan.md) §6).
+
+### Page-load orchestration (cascade)
+
+`[hierarchy]` — guides the eye through the loading shell so each region announces itself in turn.
 
 | Delay | Element |
 |---|---|
-| `0.08s` | Brand logo |
-| `0.16–0.32s` | Sidebar nav sections (cascading) |
-| `0.36s` | User chip |
-| `0.42s` | Greeting (opacity + 8px rise) |
-| `0.56s` | Composer (opacity + 8px rise) |
-| `0.68–0.92s` | Quick chips (40 ms stagger) |
+| `80 ms` | Brand logo / sigil |
+| `160–320 ms` | Rail sections (cascading) |
+| `360 ms` | User chip |
+| `420 ms` | Greeting (opacity + 8 px rise) |
+| `560 ms` | Composer (opacity + 8 px rise) |
+| `680–920 ms` | Suggestion chips (40 ms stagger) |
+
+Total cascade ≤ 920 ms, well under the 3 s task budget.
 
 ### Chat animations
 
-| Moment | Animation |
-|---|---|
-| User message arrives | `msg-in-user` — slide from right + fade |
-| AI message arrives | `msg-in` — rise from below + fade |
-| AI streaming | Left rail pulses (traveling ember gradient) |
-| Waiting for first token | 3-dot wave (`dot-wave`) |
-| Cursor in streaming AI | `cursor-pulse` — scale + opacity + glow |
-| Tool card running | Teal border + radial glow ring on dot |
-| Tool card done | `card-flash-success` / `card-flash-error` radial pulse |
-| View transition | `view-fade-in` — 320ms fade + 4px rise |
-| Toast in | `toast-in` — spring scale + fade |
-| Send button active | `scale(0.93)` spring rebound |
-| Chip hover | `translateY(-1px)` lift + teal border |
+Each entry is tagged with its purpose per [`ui-plan.md`](ui-plan.md) Principle #14.
 
-**All animations gated by `@media (prefers-reduced-motion: reduce)` → durations clamped to 80 ms.**
+| Moment | Tag | Animation |
+|---|---|---|
+| User message arrives | `[feedback]` | `msg-in-user` — slide from right + fade |
+| AI message arrives | `[continuity]` | `msg-in` — rise from below + fade |
+| AI streaming | `[continuity]` | Left rail traveling ember gradient (~1.4 s loop) |
+| Waiting for first token | `[continuity]` | 3-dot wave (`dot-wave`, 1.3 s, 0 / 0.18 / 0.36 s stagger) |
+| Cursor in streaming AI | `[continuity]` | `cursor-pulse` — scale + opacity + glow (1 s loop) |
+| Tool card running | `[continuity]` | Ember border + `0 0 0 2px var(--ember-soft)` glow ring on dot |
+| Tool card done | `[feedback]` | `card-flash-success` / `card-flash-error` radial pulse (~280 ms) |
+| View transition | `[continuity]` | `document.startViewTransition` → fallback `view-fade-in` (200 ms) |
+| Toast in | `[feedback]` | `toast-in` — spring scale + fade |
+| Send button press | `[feedback]` | `scale(0.93)` spring rebound (~180 ms, `--spring-snappy`) |
+| Chip hover (pointer-fine) | `[feedback]` | `translateY(-1px)` + ember border (120 ms) |
+| Capability unlock | `[delight]` | Spring badge appearance (≤ 320 ms, once per session per milestone) |
+
+### Reduced motion
+
+```css
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+```
+
+Phase 6 replaces the brute `0.01ms` clamp with a deliberate 80 ms opacity cross-fade per animated element, so the UI still acknowledges state changes without motion. Verified by [`apps/web/e2e/visual/reduced-motion.spec.ts`](../apps/web/e2e/visual/) (per [`ui-plan.md`](ui-plan.md) §6).
+
+### Animation library policy
+
+Default is **zero-dep** — Svelte's built-in `transition:` + the keyframes / helpers in [`packages/ui/src/lib/motion/`](../packages/ui/src/lib/motion/) cover ~95% of the surface. **Motion One** (~9 KB) is the only sanctioned escalation, gated on the three triggers in [`ui-plan.md`](ui-plan.md) §2.3. **GSAP and any library > 30 KB are forbidden** — the bundle budget (Phase 8.3) rejects them automatically.
 
 ---
 
 ## 7. Surfaces & Elevation
 
-Depth comes from typography weight and hairline rules — not box shadows.
+Depth comes from typography weight and hairline rules, with minimal shadow assistance.
 
 | Element | Recipe |
 |---|---|
-| Sidebar | `var(--paper-2)` + `1px solid var(--rule)` right border |
-| Sidebar left accent | 1px ember seam (animates `scaleY(0→1)` on load) |
-| Composer (rest) | `var(--paper)` + `1px solid var(--rule)` + `border-radius: var(--r-md)` + light `box-shadow` |
-| Composer (focus) | `border-color: var(--ember)` + `0 0 0 3px var(--ember-soft)` |
-| Composer (chat bottom) | deeper shadow — `0 -2px 24px var(--shadow-sm)` |
-| Login poster | `radial-gradient + linear-gradient` teal → dark with noise overlay |
+| Sidebar / rail | `background: var(--paper-2)` + `border-right: 1px solid var(--rule)` |
+| Sidebar left accent | 1 px `--ember` seam (`::before`, animates `scaleY(0→1)` on load) |
+| Composer (rest) | `var(--paper-2)` + `border: 1.5px solid var(--rule)` + `border-radius: var(--r-lg)` |
+| Composer (focus) | `border-color: var(--ember)` + `box-shadow: 0 0 0 3px var(--ember-soft)` |
+| Composer (sticky chat) | Deeper resting shadow: `0 -2px 24px var(--shadow-sm)` |
+| Card hover lift | `transform: translateY(-1px)` + `box-shadow: 0 4px 12px var(--shadow-sm)` |
+| Sheet / modal | `box-shadow: 0 8px 24px var(--shadow-md)` |
+| Login poster | `--poster-gradient` + radial highlight (`--poster-hi`) overlay |
 
 ---
 
 ## 8. Components
 
-### 8.1 Composer
+The current production primitives are exported from [`@conusai/ui`](../packages/ui/src/lib/index.ts). [`ui-plan.md`](ui-plan.md) Phase 3 promotes the chrome (`AppTopBar`, `AppDrawer`, `AppBottomSheet`) into top-level primitives (`TopBar` / `Drawer` / `Sheet`), and Phase 2.7 extracts the missing cross-cutting primitives (`Button`, `Field`, `Chip`, `EmptyState`). Naming aliases per Principle #13: `Rail ↔ Sidebar`, `TopBar ↔ Header`.
 
-`border-radius: var(--r-md)` with `overflow: hidden` — child elements clip cleanly. Send button uses `var(--r-sm)` (nested radius). Focus ring follows the outer curve.
+### 8.1 AppShell (Phase 3.1)
 
-### 8.2 Messages
+Single shell, named slots: `topbar`, `rail`, `main`, `composer`, `overlay`. Adapts via **container queries** on `app-shell` (not viewport media), so the layout works at any Tauri window size:
 
-- **User bubble**: `border-radius: 0 var(--r-md) var(--r-md) var(--r-xs)` — sharp top-left (anchors to left), softened elsewhere. Left border `2.5px solid var(--ember)`. Max-width 78%.
-- **AI message**: Full-width with `padding-left: var(--s-5)` and a persistent 1.5px left rail (`var(--rule)` at rest, traveling ember gradient while streaming).
+| Breakpoint | Threshold | Rail behaviour | Composer placement |
+|---|---|---|---|
+| Compact | `< --bp-compact` (768 px) | Hidden behind hamburger → drawer slides in from **left** | Fixed bottom |
+| Medium | `--bp-medium` (1024 px) | Icons only (`--rail-collapsed: 64px`), expandable on hover | Inline |
+| Expanded | `≥ --bp-expanded` (1440 px) | Full `--rail` (240 px), persistent | Inline |
 
-### 8.3 Thinking Indicator
+WCAG landmark roles per slot: `<header role="banner">` for `topbar`, `<nav role="navigation">` (or `<aside role="complementary">` per [`docs/ui-landmarks.md`](ui-landmarks.md)) for `rail`, `<main role="main">` for `main`, `<form role="search">` for composer.
 
-Shown immediately when a message is sent, before the first streaming token. Three teal dots in a `dot-wave` stagger (1.3s, delays 0 / 0.18s / 0.36s). Removed automatically when the first token or tool event arrives.
+### 8.2 Composer
 
-### 8.4 Tool Cards
+`border-radius: var(--r-md)` outer, `overflow: hidden`. Send button uses `--r-sm` (nested radius — 14 px outer, 10 px inner, ~4 px gap). States: rest → focus (`var(--ember)` border + 3 px `--ember-soft` ring) → submitting (skeleton shimmer) → disabled → error. iOS: `font-size: max(16px, var(--t-body))` to prevent input zoom. The textarea height grows via the `autoGrow` action ([`packages/ui/src/lib/utils/actions.ts`](../packages/ui/src/lib/utils/actions.ts)).
 
-`border-radius: var(--r-sm)`. Three states:
-- **running**: teal border + `0 0 0 2px var(--ember-soft)` glow. Dot is ember with expanding pulse ring (`dot-pulse`).
-- **success**: `card-flash-success` radial green pulse → settles. Dot is `var(--success)` with green ring.
-- **error**: `card-flash-error` radial rust pulse. Left border 2.5px rust. Dot is `var(--rust)` with danger ring.
+### 8.3 Messages
 
-### 8.5 Quick Chips
+- **User bubble** — `border-radius: 0 var(--r-md) var(--r-md) var(--r-xs)` (sharp top-left anchors to left edge); 2.5 px `var(--ember)` left rail; `max-width: 78%`.
+- **AI message** — full-width with `padding-left: var(--s-5)`; persistent 1.5 px left rail (`var(--rule)` at rest, traveling-ember gradient while streaming).
 
-`border-radius: var(--r-sm)`. Transparent border at rest; hover reveals teal border + `var(--ember-soft)` fill + 1px lift. No underline animation (replaced).
+`<MessageList role="log" aria-live="polite">` keeps the latest message in scroll lock unless the user scrolls away (then a "jump to latest" pill appears).
 
-### 8.6 Avatar
+### 8.4 Thinking Indicator
 
-`border-radius: var(--r-full)` — fully circular, 30×30 px.
+Three `--ember` dots in a `dot-wave` stagger. Shown immediately on submit; removed automatically on the first streaming token *or* the first tool event.
 
-### 8.7 Nav Items
+### 8.5 Tool Cards
 
-`border-radius: var(--r-xs)` on hover/active background. Accent left edge flash: `::before` grows `width: 0 → 2px` with matching `border-radius: 0 var(--r-xs) var(--r-xs) 0`.
+`border-radius: var(--r-sm)`. Three states (the dot in the head signals state):
 
-### 8.8 Toasts
+| State | Border | Dot | Animation |
+|---|---|---|---|
+| running | `var(--ember)` + 2 px `--ember-soft` glow | `var(--ember)` + expanding pulse ring | `dot-pulse` loop |
+| success | `var(--rule)` | `var(--success)` + soft ring | `card-flash-success` radial (~280 ms) |
+| error | `var(--danger)` left 2.5 px | `var(--danger)` + danger ring | `card-flash-error` radial |
 
-`border-radius: var(--r-sm)`. Entrance: `toast-in` (`--ease-spring` scale + fade). Exit: opacity + translateY fade-out with `transition`.
+`role="status"` on the dot; `aria-label` carries the state.
 
-### 8.9 Login
+### 8.6 Chip / Suggestion chip
 
-Submit button: `border-radius: var(--r-xs)`, lifts `translateY(-1px)` on hover with ember glow. Plan radio labels: `border-radius: var(--r-xs)`, lifts on hover, ember tint when checked.
+`border-radius: var(--r-full)`, transparent border at rest. Hover (pointer-fine only): `--ember-glow` border + `--paper-3` fill + `translateY(-1px)`. Entry animation: `chip-in` (220 ms, `--ease-out`, opacity + 8 px rise). Stagger 40 ms when rendered in a list.
 
-### 8.10 Invoice Card
+### 8.7 Avatar
 
-`border-top: 3px solid var(--ember)`, `border-radius: 0 0 var(--r-sm) var(--r-sm)` (bottom corners only). Badge: `border-radius: var(--r-xs)`. Shadow: `0 4px 20px var(--shadow-sm)`.
+`border-radius: var(--r-full)`. Default 28 × 28 px in the rail, 48 × 48 px on the account page. Ember tint background (`--ember-soft`), ember-glow border, `--ember-2` text.
+
+### 8.8 Nav Items (rail)
+
+`border-radius: var(--r-xs)` on hover / active background. Accent left edge: `::before` grows from `width: 0 → 2px` on hover, color `var(--ember)`, with matching `border-radius: 0 var(--r-xs) var(--r-xs) 0`.
+
+### 8.9 Drawer & Sheet
+
+Both are backed by the native `<dialog>` element with a focus trap and `inert` background (Phase 3.2). Both carry explicit `aria-modal="true"` + `aria-label` (or `aria-labelledby`) — required props on the Svelte component, so the type checker fails the build if a consumer omits them.
+
+- **Drawer** — slides from the **left** edge (HIG default for primary-nav drawers; never right). Holds rail content on compact viewports. `transform var(--dur-3) var(--ease-out)`.
+- **Sheet** — bottom modal on mobile (centered modal on `≥ --bp-compact`), `border-radius: var(--r-lg) var(--r-lg) 0 0`. Drag handle on mobile. Both honor `--safe-*` insets.
+
+### 8.10 Toast
+
+`border-radius: var(--r-sm)`. Entrance: `toast-in` (spring scale + fade). Border-left 3 px in the semantic colour (success / danger / warning). Bottom-stacked on mobile (above the home indicator via `env(safe-area-inset-bottom)`); top-right-stacked on desktop (above `--bp-compact`).
+
+> **Note:** `<LiveAnnouncer />` is the SR-only `aria-live` region. **It must not render visible toast UI** — `<ToastHost />` owns that. The current overlap ([`packages/ui/src/lib/utils/LiveAnnouncer.svelte`](../packages/ui/src/lib/utils/LiveAnnouncer.svelte)) is a known defect tracked for fix in Phase 4.10.
+
+### 8.11 Login
+
+Two-column on `≥ --bp-medium` (1024 px): left = poster (`--poster-gradient` + noise overlay), right = form. Single column on compact; poster shrinks to a 30 vh header.
+
+- Form fields use the `<Field>` primitive (Phase 2.7) with floating label and `aria-describedby` for errors.
+- Submit button: `border-radius: var(--r-md)`, `translateY(-1px)` on hover with ember glow.
+- Plan radios: `border-radius: var(--r-md)`, lift on hover, `--ember-soft` fill when checked.
+
+### 8.12 Invoice card & InvoiceBadge (Phase 4.5)
+
+Invoice card: `border-top: 3px solid var(--ember)`, `border-radius: 0 0 var(--r-sm) var(--r-sm)` (bottom only); shadow `0 4px 20px var(--shadow-sm)`.
+
+`<InvoiceBadge status="paid|due|overdue">`:
+
+| Status | Background | Text |
+|---|---|---|
+| `paid` | `--success-soft` | `--success` |
+| `due` | `--ember-soft` | `--ember` |
+| `overdue` | `--danger-soft` | `--danger` |
 
 ---
 
 ## 9. File Structure
 
 ```
-crates/agent-gateway/
-├── assets/
-│   ├── css/style.css          # ~1320 lines — design tokens + all components incl. workspace tree
-│   ├── js/app.js              # ~660 lines — streaming, animations, composer
-│   ├── js/workspace.js        # ~750 lines — tree, search, dialogs, context menu
-│   ├── icons/icons.svg        # SVG sprite (one <symbol> per icon)
-│   └── images/
-│       ├── favicon.png        # Brand sigil (used in head + greeting screen)
-│       ├── conusai-logo-lightmode.png
-│       └── conusai-logo-darkmode.png
-└── templates/
-    ├── app.html               # Full shell (sidebar + main + composer + chips)
-    ├── login.html             # Split layout — poster + form
-    ├── partials/
-    │   └── composer.html      # Textarea + toolbar + send button
-    └── shared/
-        └── head.html          # Meta, fonts, CSS link, theme bootstrap
+packages/ui/
+└── src/lib/
+    ├── tokens.css                 # Theme + non-theme primitive tokens (source of truth)
+    ├── foundry.css                # Self-hosted Geist, reset, shared layout classes
+    ├── index.ts                   # Public barrel
+    ├── components/                # Primitives (no business logic)
+    │   ├── AppShell.svelte        # Single shell w/ named slots — built in Phase 3.1
+    │   ├── ThemeProvider.svelte
+    │   ├── ThemeSwitcher.svelte
+    │   ├── ToastHost.svelte
+    │   ├── PlanCard.svelte / PlanBadge.svelte / UsageMeter.svelte / QuotaBanner.svelte
+    │   ├── WorkspaceTree.svelte
+    │   └── (Phase 2.7) Button, Field, Chip, EmptyState
+    ├── features/                  # Composed screens & flows (consume primitives + stores)
+    │   ├── chrome/                # AppTopBar, AppDrawer, AppBottomSheet (moves to components/ in Phase 0.1)
+    │   ├── AgentChatComposer.svelte / AgentChatStream.svelte / ToolCallCard.svelte
+    │   ├── CapabilityBrowser.svelte / CapabilityRow.svelte / CapabilityPinChip.svelte
+    │   ├── WorkspaceExplorer.svelte / DrawerRecentChats.svelte
+    │   ├── SuggestionChips.svelte / ContextChip.svelte / HostedProjectCard.svelte
+    │   └── screens/               # ChatScreen, CapabilitiesScreen, ArtifactsScreen, etc.
+    ├── motion/                    # springAnimate, recordRect/playFlip, stagger, tap, viewTransition
+    ├── stores/                    # Theme, drawer, screen, recents, breadcrumbs, toast, mode, featureFlags
+    ├── utils/                     # actions (autoGrow), motion-prefs, md, LiveAnnouncer (SR-only)
+    ├── routing/                   # initialRoute, applyInitialRoute (deep-link handling)
+    └── assets/                    # fonts/ (Geist Variable woff2), icons/, images/ (sigil, logos)
+
+apps/
+├── web/                           # SvelteKit web build (Chromium target)
+│   └── src/routes/                # +layout.svelte mounts <ThemeProvider>+<LiveAnnouncer>+<ToastHost>
+└── browser-shell/                 # Tauri 2 shell (iOS, Android, macOS, Windows)
+    ├── src/lib/mobile/            # MobileShell.svelte + parts/ (first consumer of AppShell in Phase 3.1)
+    └── src-tauri/                 # Rust side, capabilities/, tauri.conf.json
 ```
+
+> **Components vs features (Principle #10 of [`ui-plan.md`](ui-plan.md)):** `components/` = primitives with no business logic; `features/` = composed screens that pull from stores or the SDK. A file graduates from `features/` → `components/` only when its API has no app-domain coupling left. New code defaults to `components/` unless it composes ≥ 2 primitives **and** reads app state.
 
 ---
 
-## 10. Invoice File Detection
+## 10. Invoice File Detection (composer attachments)
 
-The "Extract invoice" button in the attachment chip only appears when the filename matches **both** conditions:
+The "Extract invoice" affordance on an attachment chip appears only when both conditions match — keeps the UI clean for generic uploads.
 
-```js
+```ts
 const INVOICE_EXTS  = /\.(png|jpg|jpeg|pdf)$/i;
 const INVOICE_NAMES = /invoice|receipt|bill|facture/i;
 
-function isInvoiceFile(a) {
+function isInvoiceFile(a: Attachment) {
   return INVOICE_EXTS.test(a.filename) && INVOICE_NAMES.test(a.filename);
 }
 ```
 
-Generic files (e.g. `photo.png`, `report.pdf`) remain plain attachments.
+`photo.png` and `report.pdf` remain plain attachments; `invoice-2026-05.pdf` exposes the extraction action.
 
 ---
 
 ## 11. Focus & Accessibility
 
-- `:focus-visible` → `2px solid var(--ember)`, `outline-offset: 2px`.
-- `role="log"` on `.messages`; `aria-live="polite" aria-atomic="false"` for streaming.
-- `role="status"` + `aria-label="running|complete|error"` on tool card dots.
-- All interactive elements: visible focus ring + hover state.
-- `prefers-reduced-motion` disables all transforms, clamps durations to 80 ms.
-- WCAG AA: `--ink` on `--paper` ≈ 14:1.
+- **Focus ring** — `outline: 2px solid var(--ember); outline-offset: 2px;` on every `:focus-visible`. The unified `--focus-ring: 0 0 0 3px var(--ember-soft)` shadow ring lands in Phase 7. Never remove an outline without a token-backed replacement.
+- **Skip links** — "Skip to main", "Skip to composer" injected by `AppShell` (Phase 7).
+- **ARIA** — `<MessageList role="log" aria-live="polite">`, `<ToolCard role="status">` on the state dot, dialogs use native `<dialog>` + explicit `aria-modal="true"` + `aria-label` (Principle #13).
+- **Landmarks** — `banner`, `navigation` (or `complementary`), `main`, `contentinfo`, `search` — exactly one each per screen unless documented in [`docs/ui-landmarks.md`](ui-landmarks.md). axe-core 0 violations is a CI gate.
+- **Keyboard parity** — every mouse action reproducible by keyboard. `/` focuses composer; `Cmd/Ctrl+K` opens command palette; `Esc` closes any sheet / drawer; `Cmd/Ctrl+N` opens a new chat.
+- **Contrast** — WCAG 2.2 AA on both themes. `--ink` on `--paper` measures ≈ 16:1 (paper) / ≈ 17:1 (forge).
+- **Reduced motion** — every animation clamps to the 80 ms cross-fade described in §6.
+- **Touch targets** — every interactive element ≥ 44 × 44 pt (Apple HIG); ≥ 48 × 48 dp on Android. Enforced by Playwright assertions per Phase 4 audit.
+- **i18n** — all user-visible strings wrapped in `t('key')` from `packages/ui/utils/i18n.ts`. RTL mirrors the layout (rail to the right).
 
 ---
 
 ## 12. Do / Don't
 
 **Do**
-- Use `var(--r-*)` tokens — never a raw pixel radius.
-- Apply nested radius: inner element radius ≤ outer − gap.
-- Reuse `--s-*` spacing scale.
-- Gate every animation behind `prefers-reduced-motion`.
-- Keep the teal accent purposeful — focus rings, streaming states, interactive signals only.
+
+- Use `var(--r-*)`, `var(--s-*)`, `var(--ease-*)`, `var(--dur-*)` tokens — never a raw value.
+- Apply the **nested-radius rule** at every level of nesting.
+- Reuse the `--s-*` spacing scale; reach for `--s-7` / `--s-8` before inventing a number.
+- Gate every animation behind `prefers-reduced-motion` and tag it with one of the four Principle #14 purposes.
+- Keep `--ember` purposeful — focus rings, streaming states, primary actions only. Cyan is reserved for live-data signals.
+- Author at 360 px first; let container queries layer up.
+- Co-locate a `.fixtures.ts` next to every new primitive (Phase 2.6 — auto-discovered by `/_/ui`).
 
 **Don't**
-- Hard-code hex colours outside `style.css`.
-- Add new radii, shadow stacks, or colours without adding a token.
-- Use `border-radius: 12px` everywhere — this is not a soft/rounded app.
-- Animate longer than 520 ms.
-- Introduce purple gradients, glass blur panels, or Inter/Roboto.
+
+- Hard-code hex outside `tokens.css` / `foundry.css`.
+- Add a new radius, shadow stack, easing curve, or colour without adding a token (then regenerate from `tokens.json` per Phase 2.1).
+- Use `border-radius: 12px` everywhere — this is not a soft / rounded app; radii are intentional and discrete.
+- Animate longer than 400 ms per element, or longer than 3 000 ms total per task.
+- Add components to `apps/*/src/lib/components/**` — they belong in `packages/ui`. CI enforces from Phase 0.
+- Import `lucide-svelte` outside `packages/ui/src/lib/components/icons/`. Use the curated `<Icon>` primitive (Phase 2.4).
+- Use viewport `@media` queries on shell layout — use container queries on `app-shell` so Tauri windows of any size work.
+- Reintroduce Fraunces / Switzer / JetBrains Mono, purple gradients, glass blur panels, or warm-cream backgrounds. Geist + ember/cyan on near-neutral is the brand.
