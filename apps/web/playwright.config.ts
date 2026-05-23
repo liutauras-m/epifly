@@ -13,6 +13,20 @@ export default defineConfig({
   },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    {
+      // Visual regression project — run with `just visual` (Docker) or
+      // `pnpm --filter web exec playwright test --project=visual`.
+      // Snapshots are stored under e2e/__screenshots__/ and committed.
+      name: "visual",
+      testMatch: "**/visual/**/*.spec.ts",
+      use: {
+        ...devices["Desktop Chrome"],
+        // Screenshots stored per project/theme/viewport, set in spec via
+        // the toHaveScreenshot() filename argument.
+      },
+      snapshotDir: "./e2e/__screenshots__",
+      snapshotPathTemplate: "{snapshotDir}/{testFilePath}/{arg}{ext}",
+    },
   ],
   webServer: {
     command: "pnpm preview",
