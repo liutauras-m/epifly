@@ -54,13 +54,17 @@
 		cursor: pointer;
 		width: 100%;
 		text-align: left;
-		border-bottom: 1px solid var(--rule);
-		transition: background var(--duration-fast);
+		border-bottom: 1px solid var(--color-border);
+		min-height: var(--hit, 44px);
+		transition: background var(--duration-fast) var(--ease-standard);  /* [feedback] */
 	}
-	.artifact-row:hover { background: var(--paper-2); }
-	.artifact-row:focus-visible { outline: 2px solid var(--ember); outline-offset: -2px; }
+	.artifact-row:hover { background: var(--color-bg-hover); }
+	.artifact-row:focus-visible {
+		outline:        var(--focus-ring);
+		outline-offset: var(--focus-ring-offset);
+	}
 
-	.file-icon { color: var(--ink-3); flex-shrink: 0; }
+	.file-icon { color: var(--color-fg-subtle); flex-shrink: 0; }
 
 	.artifact-info {
 		flex: 1;
@@ -74,7 +78,7 @@
 	.artifact-name {
 		font-family: var(--font-family-sans);
 		font-size: var(--font-size-body);
-		color: var(--ink);
+		color: var(--color-fg);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -83,10 +87,10 @@
 	.artifact-meta {
 		font-family: var(--font-mono);
 		font-size: var(--font-size-label);
-		color: var(--ink-3);
+		color: var(--color-fg-subtle);
 	}
 
-	.row-arrow { color: var(--ink-3); flex-shrink: 0; }
+	.row-arrow { color: var(--color-fg-subtle); flex-shrink: 0; }
 
 	@media (prefers-reduced-motion: reduce) {
 		.artifact-row { transition: none; }

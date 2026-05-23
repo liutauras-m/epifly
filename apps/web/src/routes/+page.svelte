@@ -1,5 +1,6 @@
+<svelte:options runes={true} />
 <script lang="ts">
-	import { goto, afterNavigate } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import type { PageData } from './$types';
 	import type { WorkspaceNode } from '@conusai/types';
@@ -14,8 +15,6 @@
 	import { provideCapabilityRendererRegistry } from '@conusai/ui/capabilities';
 	import {
 		WorkspaceExplorer,
-		AppTopBar,
-		AppDrawer,
 		ChatScreen,
 		CapabilitiesScreen,
 		ArtifactsScreen,
@@ -26,7 +25,19 @@
 		applyInitialRoute,
 		type CapEntry,
 	} from '@conusai/ui/features';
-	import { ThemeSwitcher } from '@conusai/ui';
+	import {
+		AppShell,
+		AppHeader,
+		Drawer,
+		Sidebar,
+		SidebarSection,
+		SidebarItem,
+		ThemeSwitcher,
+		Icon,
+		Button,
+	} from '@conusai/ui';
+	import { LayoutGrid, FileText, Menu, ArrowLeft, Plus } from 'lucide-svelte';
+	import { registerKeyboardShortcuts } from '@conusai/ui/utils/keyboard.js';
 	import favicon from '@conusai/ui/assets/images/favicon.png';
 
 	let { data }: { data: PageData } = $props();
@@ -38,6 +49,7 @@
 	let workspaceNodes = $state<WorkspaceNode[]>(data.workspaceTree ?? []);
 	let selectedNodeId = $state<string | undefined>();
 	let selectedNode = $state<WorkspaceNode | null>(null);
+	let composerRef = $state<{ focus(): void } | undefined>();
 
 	// ── Derived screen title (mirrors shell) ─────────────────────────
 	const screenTitle = $derived(
@@ -87,9 +99,6 @@
 
 	function handleInvokeCapability(cap: CapEntry) {
 		screenStore.setActive('chat');
-		// PR 2.A: pass forced_capability as structured data so the gateway pins
-		// those tools before semantic routing. The prompt is now a brief natural
-		// description — the semantic weight is carried by the structured hint.
 		const prompt = buildInvocationPrompt(cap);
 		chatStream.send(prompt, {
 			workspaceNodeId: selectedNodeId,
@@ -99,16 +108,24 @@
 	}
 
 	// ── Keyboard shortcuts ───────────────────────────────────────────
+	$effect(() => {
+		return registerKeyboardShortcuts({
+			onFocusComposer: () => composerRef?.focus(),
+			onEscape: () => {
+				if (drawerStore.open) { drawerStore.close(); return; }
+				if (screenStore.active !== 'chat') screenStore.setActive('chat');
+			},
+			onCommandPalette: () => { /* future */ },
+		});
+	});
+
+	// ── Cmd+N new chat ───────────────────────────────────────────────
 	function onKeydown(e: KeyboardEvent) {
 		const mod = e.metaKey || e.ctrlKey;
 		if (mod && e.key === 'n') { e.preventDefault(); handleNewChat(); }
-		if (e.key === 'Escape') {
-			if (screenStore.active !== 'chat') screenStore.setActive('chat');
-			else drawerStore.close();
-		}
 	}
 
-	// ── Restore state from URL params on mount (PR 3.C / 3.C.5) ─────
+	// ── Restore state from URL params on mount ───────────────────────
 	onMount(async () => {
 		const route = await initialRoute();
 		await applyInitialRoute<WorkspaceNode>(sdk, route, {
@@ -119,14 +136,11 @@
 			},
 		});
 		if (route.cap) {
-			// Pre-select a capability for the first send
 			screenStore.setActive('chat');
 		}
 	});
 
-	// ── Workspace revalidation on resource_invalidated (PR 3.A) ─────
-	// When the agent writes workspace artifacts, re-fetch the workspace tree
-	// so WorkspaceExplorer reflects the new files without a manual refresh.
+	// ── Workspace revalidation on resource_invalidated ───────────────
 	let lastInvalidationKey = $state<string | null>(null);
 	$effect(() => {
 		const inv = chatStream.lastInvalidation;
@@ -147,103 +161,96 @@
 <svelte:window onkeydown={onKeydown} />
 <svelte:head><title>Workshop · ConusAI</title></svelte:head>
 
-<div class="app">
-	<!-- ── Drawer / Sidebar (responsive — overlay on mobile, persistent on desktop) ── -->
-	<AppDrawer open={drawerStore.open} onClose={() => drawerStore.close()}>
-		{#snippet children()}
-			<WorkspaceExplorer
-				{sdk}
-				bind:nodes={workspaceNodes}
-				bind:selectedNodeId
-				{onSelectNode}
-			/>
+<!-- ── Shared sidebar content (rendered in shell sidebar + mobile drawer) ── -->
+{#snippet navContent()}
+	<WorkspaceExplorer
+		{sdk}
+		bind:nodes={workspaceNodes}
+		bind:selectedNodeId
+		{onSelectNode}
+	/>
 
-			<!-- Recent chats (live; refreshes on `resource_invalidated: "threads"`) -->
-			<DrawerRecentChats
-				{sdk}
-				tenantId={data.user?.tenantId ?? null}
-				{chatStream}
-				onSelect={(thread) => {
-					chatStream.loadThread(thread.id);
-					breadcrumbsStore.clear();
-					selectedNode = null;
-					selectedNodeId = undefined;
-					screenStore.setActive('chat');
-					drawerStore.close();
-				}}
-			/>
+	<DrawerRecentChats
+		{sdk}
+		tenantId={data.user?.tenantId ?? null}
+		{chatStream}
+		onSelect={(thread) => {
+			chatStream.loadThread(thread.id);
+			breadcrumbsStore.clear();
+			selectedNode = null;
+			selectedNodeId = undefined;
+			screenStore.setActive('chat');
+			drawerStore.close();
+		}}
+	/>
 
-			<!-- Secondary nav: Capabilities, Artifacts -->
-			<div class="drawer-links">
+	<SidebarSection>
+		<ul role="list" class="nav-list">
+			<SidebarItem
+				icon={LayoutGrid}
+				active={screenStore.active === 'capabilities'}
+				onclick={handleCapabilitiesNav}
+			>Capabilities</SidebarItem>
+			<SidebarItem
+				icon={FileText}
+				active={screenStore.active === 'artifacts'}
+				onclick={handleArtifactsNav}
+			>Artifacts</SidebarItem>
+		</ul>
+	</SidebarSection>
+{/snippet}
+
+{#snippet userFooter()}
+	<a href="/account" class="user-chip" aria-label="Open account settings">
+		<div class="avatar" aria-hidden="true">
+			{data.user?.initials ?? '?'}
+		</div>
+		<div class="user-meta">
+			<span class="user-name">{data.user?.name ?? ''}</span>
+			<span class="user-plan">{data.user?.plan ?? ''}</span>
+		</div>
+		<Icon icon={ArrowLeft} size="sm" class="user-chevron" />
+	</a>
+{/snippet}
+
+<AppShell>
+	<!-- ── Topbar ────────────────────────────────────────────────── -->
+	{#snippet topbar()}
+		<AppHeader>
+			{#snippet leading()}
+				<!-- Compact: hamburger. Medium+: back button or nothing. -->
 				<button
-					class="drawer-link"
-					class:active={screenStore.active === 'capabilities'}
-					onclick={handleCapabilitiesNav}
+					class="icon-btn shell-hamburger"
+					aria-label="Open navigation"
+					aria-expanded={drawerStore.open}
+					onclick={() => drawerStore.toggle()}
 				>
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-						stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
-						width="18" height="18" aria-hidden="true">
-						<rect x="2" y="3" width="6" height="6" rx="1"/>
-						<rect x="16" y="3" width="6" height="6" rx="1"/>
-						<rect x="2" y="15" width="6" height="6" rx="1"/>
-						<rect x="16" y="15" width="6" height="6" rx="1"/>
-					</svg>
-					Capabilities
+					<Icon icon={Menu} size="md" />
 				</button>
-				<button
-					class="drawer-link"
-					class:active={screenStore.active === 'artifacts'}
-					onclick={handleArtifactsNav}
-				>
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-						stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
-						width="18" height="18" aria-hidden="true">
-						<path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/>
-						<polyline points="13 2 13 9 20 9"/>
-					</svg>
-					Artifacts
-				</button>
-			</div>
+				{#if screenStore.canGoBack}
+					<button
+						class="icon-btn"
+						aria-label="Go back"
+						onclick={() => screenStore.pop()}
+					>
+						<Icon icon={ArrowLeft} size="md" />
+					</button>
+				{/if}
+			{/snippet}
 
-			<!-- User chip — clickable, links to account -->
-			<a href="/account" class="user-chip" aria-label="Open account settings">
-				<div class="avatar">{data.user?.initials ?? '?'}</div>
-				<div class="user-meta">
-					<span class="user-name">{data.user?.name ?? ''}</span>
-					<span class="user-plan">{data.user?.plan ?? ''}</span>
-				</div>
-				<svg class="user-chip-chevron" viewBox="0 0 16 16" fill="none"
-					stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
-					width="12" height="12" aria-hidden="true">
-					<path d="M6 4l4 4-4 4"/>
-				</svg>
-			</a>
-		{/snippet}
-	</AppDrawer>
+			{#snippet title()}
+				{screenTitle}
+			{/snippet}
 
-	<!-- ── Main ─────────────────────────────────────────────────────── -->
-	<main class="main">
-		<AppTopBar
-			onMenuToggle={() => drawerStore.toggle()}
-			canGoBack={screenStore.canGoBack}
-			onBack={() => screenStore.pop()}
-			title={screenTitle}
-		>
-			{#snippet rightAction()}
+			{#snippet trailing()}
 				{#if screenStore.active === 'chat'}
 					<button
-						class="topbar-action"
-						aria-label="New conversation"
+						class="icon-btn"
+						aria-label="New conversation (⌘N)"
 						title="New conversation (⌘N)"
 						onclick={handleNewChat}
 					>
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-							stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
-							width="20" height="20" aria-hidden="true">
-							<path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
-							<line x1="12" y1="9" x2="12" y2="13"/>
-							<line x1="10" y1="11" x2="14" y2="11"/>
-						</svg>
+						<Icon icon={Plus} size="md" />
 					</button>
 				{/if}
 
@@ -251,176 +258,170 @@
 
 				<a
 					href="/logout"
-					class="topbar-action"
+					class="icon-btn"
 					aria-label="Sign out"
 					data-sveltekit-reload
 				>
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-						stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
-						width="20" height="20" aria-hidden="true">
-						<path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
-						<polyline points="16 17 21 12 16 7"/>
-						<line x1="21" y1="12" x2="9" y2="12"/>
-					</svg>
+					<Icon icon={ArrowLeft} size="md" />
 				</a>
 			{/snippet}
-		</AppTopBar>
+		</AppHeader>
+	{/snippet}
 
-		<!-- Screen host -->
-		<div class="screen-host">
-			{#if screenStore.active === 'chat'}
-				<ChatScreen
-					{sdk}
-					{chatStream}
-					selectedNode={selectedNode}
-					onSelectNode={(n) => {
-						selectedNode = n;
-						selectedNodeId = n?.id;
-						breadcrumbsStore.set(n);
-					}}
-					userName={data.user?.name ?? 'there'}
-					sigil={favicon}
-				/>
-			{:else if screenStore.active === 'capabilities'}
-				<CapabilitiesScreen {sdk} onInvoke={handleInvokeCapability} />
-			{:else if screenStore.active === 'artifacts'}
-				<ArtifactsScreen {sdk} />
-			{/if}
-		</div>
-	</main>
-</div>
+	<!-- ── Persistent sidebar (medium ≥768px) ────────────────────── -->
+	{#snippet sidebar()}
+		<Sidebar>
+			{@render navContent()}
+			{#snippet footer()}
+				{@render userFooter()}
+			{/snippet}
+		</Sidebar>
+	{/snippet}
+
+	<!-- ── Main content ──────────────────────────────────────────── -->
+	{#snippet main()}
+		{#if screenStore.active === 'chat'}
+			<ChatScreen
+				{sdk}
+				{chatStream}
+				selectedNode={selectedNode}
+				onSelectNode={(n) => {
+					selectedNode = n;
+					selectedNodeId = n?.id;
+					breadcrumbsStore.set(n);
+				}}
+				userName={data.user?.name ?? 'there'}
+				sigil={favicon}
+			/>
+		{:else if screenStore.active === 'capabilities'}
+			<CapabilitiesScreen {sdk} onInvoke={handleInvokeCapability} />
+		{:else if screenStore.active === 'artifacts'}
+			<ArtifactsScreen {sdk} />
+		{/if}
+	{/snippet}
+</AppShell>
+
+<!-- ── Mobile drawer (compact <768px) ────────────────────────────────── -->
+<Drawer
+	open={drawerStore.open}
+	onclose={() => drawerStore.close()}
+	label="Navigation"
+>
+	<Sidebar>
+		{@render navContent()}
+		{#snippet footer()}
+			{@render userFooter()}
+		{/snippet}
+	</Sidebar>
+</Drawer>
 
 <style>
-	/* ── Layout ─────────────────────────────────────────────────────────── */
-	.app {
-		display: flex;
-		height: 100dvh;
-		overflow: hidden;
-		background: var(--paper);
-	}
-
-	.main {
-		flex: 1;
-		display: flex;
-		flex-direction: column;
-		overflow: hidden;
-		min-width: 0;
-	}
-
-	.screen-host {
-		flex: 1;
-		display: flex;
-		flex-direction: column;
-		overflow: hidden;
-	}
-
-	/* ── Topbar actions ─────────────────────────────────────────────────── */
-	.topbar-action {
-		display: flex;
-		align-items: center;
+	/* ── Icon button (topbar actions, hamburger) ──────────────────────────── */
+	.icon-btn {
+		display:         flex;
+		align-items:     center;
 		justify-content: center;
-		width: 36px;
-		height: 36px;
-		border: none;
-		background: none;
-		color: var(--ink-3);
-		cursor: pointer;
-		border-radius: var(--radius-sm);
+		width:           var(--hit, 44px);
+		height:          var(--hit, 44px);
+		border:          none;
+		background:      transparent;
+		color:           var(--color-fg-muted);
+		cursor:          pointer;
+		border-radius:   var(--radius-sm);
 		text-decoration: none;
-		transition: background var(--duration-fast), color var(--duration-fast);
+		padding:         0;
+		transition:
+			background var(--duration-fast) var(--ease-standard),
+			color      var(--duration-fast) var(--ease-standard);
 	}
-	.topbar-action:hover { background: var(--paper-3); color: var(--ink); }
-	.topbar-action:focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }
+	.icon-btn:hover {
+		background: var(--color-bg-hover);
+		color:      var(--color-fg);
+	}
+	.icon-btn:focus-visible {
+		outline:        var(--focus-ring);
+		outline-offset: var(--focus-ring-offset);
+	}
 
-	/* ── Drawer / sidebar content ──────────────────────────────────────── */
-	.drawer-links {
+	/* Hamburger hides on medium+ (sidebar is persistent there) */
+	.shell-hamburger {
 		display: flex;
-		flex-direction: column;
-		border-top: 1px solid var(--rule);
-		padding: var(--space-2) 0;
+	}
+	@container app-shell (min-width: 768px) {
+		.shell-hamburger {
+			display: none;
+		}
 	}
 
-	.drawer-link {
-		display: flex;
-		align-items: center;
-		gap: var(--space-3);
-		height: 40px;
-		padding: 0 var(--space-4);
-		border: none;
-		background: none;
-		font-family: var(--font-family-sans);
-		font-size: var(--font-size-body);
-		color: var(--ink-2);
-		cursor: pointer;
-		width: 100%;
-		text-align: left;
-		transition: background var(--duration-fast), color var(--duration-fast);
-	}
-	.drawer-link:hover { background: var(--paper-3); color: var(--ink); }
-	.drawer-link.active {
-		background: var(--ember-soft);
-		color: var(--ink);
-		font-weight: 500;
-	}
-	.drawer-link:focus-visible {
-		outline: 2px solid var(--ember);
-		outline-offset: -2px;
+	/* ── Nav list ─────────────────────────────────────────────────────────── */
+	.nav-list {
+		list-style: none;
+		margin:     0;
+		padding:    0;
 	}
 
-	/* ── User chip ─────────────────────────────────────────────────────── */
+	/* ── User chip (sidebar/drawer footer) ────────────────────────────────── */
 	.user-chip {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		padding: var(--space-3) var(--space-4);
-		border-top: 1px solid var(--rule);
-		margin-top: auto;
+		display:        flex;
+		align-items:    center;
+		gap:            var(--space-2);
+		padding:        var(--space-2) var(--space-3);
 		text-decoration: none;
-		color: inherit;
-		transition: background var(--duration-fast);
+		color:          inherit;
+		border-radius:  var(--radius-sm);
+		min-height:     var(--hit, 44px);
+		transition:     background var(--duration-fast) var(--ease-standard);
 	}
-	.user-chip:hover { background: var(--paper-3); }
-	.user-chip:focus-visible { outline: 2px solid var(--ember); outline-offset: -2px; }
+	.user-chip:hover      { background: var(--color-bg-hover); }
+	.user-chip:focus-visible {
+		outline:        var(--focus-ring);
+		outline-offset: var(--focus-ring-offset);
+	}
 
 	.avatar {
-		width: 28px;
-		height: 28px;
-		border-radius: 50%;
-		background: var(--ember-soft);
-		border: 1px solid var(--ember-glow);
-		display: flex;
-		align-items: center;
+		width:           28px;
+		height:          28px;
+		border-radius:   50%;
+		background:      var(--color-accent-soft);
+		border:          1px solid var(--color-accent-border, var(--color-border));
+		display:         flex;
+		align-items:     center;
 		justify-content: center;
-		font-size: var(--font-size-label);
-		font-weight: 600;
-		color: var(--ember-2);
-		flex-shrink: 0;
+		font-size:       var(--font-size-label);
+		font-weight:     600;
+		color:           var(--color-accent);
+		flex-shrink:     0;
+		user-select:     none;
 	}
+
 	.user-meta {
-		display: flex;
+		display:        flex;
 		flex-direction: column;
-		flex: 1;
-		min-width: 0;
+		flex:           1;
+		min-width:      0;
 	}
 	.user-name {
-		font-size: var(--font-size-meta);
-		color: var(--ink);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+		font-size:      var(--font-size-meta);
+		color:          var(--color-fg);
+		overflow:       hidden;
+		text-overflow:  ellipsis;
+		white-space:    nowrap;
 	}
 	.user-plan {
-		font-size: var(--font-size-label);
-		color: var(--ink-3);
+		font-size:      var(--font-size-label);
+		color:          var(--color-fg-subtle);
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
 	}
-	.user-chip-chevron {
-		color: var(--ink-3);
-		flex-shrink: 0;
+
+	/* Hide user meta in icon-only rail (medium breakpoint, 768–1023px) */
+	@container app-shell (max-width: 1023px) {
+		.user-meta,
+		.user-chevron { display: none; }
+		.avatar       { margin: auto; }
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.topbar-action, .drawer-link, .user-chip { transition: none; }
+		.icon-btn, .user-chip { transition: none; }
 	}
 </style>

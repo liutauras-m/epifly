@@ -36,10 +36,11 @@
     loading     = false,
     disabled    = false,
     maxRows     = 8,
-    attachments = [] as Attachment[],
+    attachments = $bindable([] as Attachment[]),
     onsubmit,
     onattach,
     onremoveattachment,
+    onUpload,
     class: cls  = '',
   }: {
     value?:               string;
@@ -48,9 +49,12 @@
     disabled?:            boolean;
     maxRows?:             number;
     attachments?:         Attachment[];
-    onsubmit?:            (value: string) => void;
+    /** Called on submit with text + current attachments. */
+    onsubmit?:            (value: string, attachments: Attachment[]) => void;
     onattach?:            () => void;
     onremoveattachment?:  (id: string) => void;
+    /** Upload handler — receives File[] and returns resolved Attachment[]. */
+    onUpload?:            (files: File[]) => Promise<Attachment[]>;
     class?:               string;
   } = $props();
 
@@ -59,12 +63,19 @@
   function submit() {
     const trimmed = value.trim();
     if (!trimmed || loading || disabled) return;
-    onsubmit?.(trimmed);
+    const atts = attachments.slice();
+    onsubmit?.(trimmed, atts);
     value = '';
+    attachments = [];
     // Reset textarea height
     if (textareaEl) {
       textareaEl.style.height = '';
     }
+  }
+
+  /** Focus the textarea — exposed so parent can call composerRef.focus(). */
+  export function focus() {
+    textareaEl?.focus();
   }
 
   function handleKeydown(e: KeyboardEvent) {

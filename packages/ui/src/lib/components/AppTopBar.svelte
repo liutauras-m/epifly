@@ -58,13 +58,13 @@
 </header>
 
 <style>
+	/* @deprecated — use AppHeader (Phase 3.3). Shim deleted at Phase 4 close. */
 	.topbar {
-		/* Expand to fill safe area above — the inset area shows only background, no tappable content. */
-		padding-top: env(safe-area-inset-top);
-		background: var(--paper);
-		border-bottom: 1px solid var(--rule);
+		padding-top: var(--safe-top, env(safe-area-inset-top, 0px));
+		background: var(--color-bg);
+		border-bottom: 1px solid var(--color-border);
 		flex-shrink: 0;
-		z-index: 100;
+		z-index: var(--z-topbar, 100);
 	}
 
 	.topbar-inner {
@@ -83,13 +83,16 @@
 		height: 44px;
 		border: none;
 		background: none;
-		color: var(--ink);
+		color: var(--color-fg);
 		cursor: pointer;
 		border-radius: var(--radius-sm);
 		flex-shrink: 0;
 	}
-	.topbar-btn:hover { background: var(--paper-3); }
-	.topbar-btn:focus-visible { outline: 2px solid var(--ember); outline-offset: -2px; }
+	.topbar-btn:hover { background: var(--color-bg-hover); }
+	.topbar-btn:focus-visible {
+		outline: var(--focus-ring);
+		outline-offset: var(--focus-ring-offset);
+	}
 
 	.topbar-title {
 		flex: 1;
@@ -97,7 +100,7 @@
 		font-size: var(--font-size-h2);
 		font-weight: 600;
 		letter-spacing: -0.4px;
-		color: var(--ink);
+		color: var(--color-fg);
 		text-align: center;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -114,8 +117,8 @@
 		flex-shrink: 0;
 	}
 
-	/* Desktop: smaller buttons, left-aligned title, hide hamburger when sidebar persistent */
-	@media (min-width: 641px) {
+	/* Desktop: smaller buttons, left-aligned title */
+	@container app-shell (min-width: 641px) {
 		.topbar-inner { padding: 0 var(--space-3); }
 		.topbar-btn { width: 36px; height: 36px; }
 		.topbar-title { text-align: left; font-size: var(--font-size-body); font-weight: 500; }

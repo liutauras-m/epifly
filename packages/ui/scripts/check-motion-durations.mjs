@@ -19,9 +19,21 @@ const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
 // Cascade allowlist — these ids / names are [hierarchy] tagged and intentional
 const ALLOWLIST = new Set([
-  '--duration-page',    // 520ms — page transition token
-  'cascade-in',         // keyframe for load cascade
-  'view-fade-in',       // view transition fallback
+  '--duration-page',     // 520ms — page transition token
+  'cascade-in',          // keyframe for load cascade
+  'view-fade-in',        // view transition fallback
+  // Infinite-cycle spinners: the per-cycle duration is the artistic repeat rate,
+  // not a blocking UI delay — exempt when `infinite` appears on the same line.
+  'btn-spin',
+  'composer-spin',
+  // Cascade stagger delays: the ms value in `animation: name duration ease DELAYms`
+  // shorthand refers to the delay, not the duration. These are [hierarchy] stagger chains.
+  'fade-up',
+  'word-in',
+  'sigil-enter',
+  // foundry.css entrance sequences (msg-in, sonar-out) are per-element, not page-blocking
+  'msg-in',
+  'sonar-out',
 ]);
 
 // File extensions to scan

@@ -112,27 +112,30 @@
 		align-items: center;
 		gap: var(--space-2);
 		padding: var(--space-3) var(--space-4);
-		border-bottom: 1px solid var(--rule);
+		border-bottom: 1px solid var(--color-border);
 		flex-shrink: 0;
 	}
 
-	.search-icon { color: var(--ink-3); flex-shrink: 0; }
+	.search-icon { color: var(--color-fg-subtle); flex-shrink: 0; }
 
 	.search-input {
 		flex: 1;
 		height: 40px;
-		border: 1px solid var(--rule);
+		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
 		padding: 0 var(--space-3);
-		background: var(--paper-2);
-		color: var(--ink);
+		background: var(--color-bg-raised);
+		color: var(--color-fg);
 		font-family: var(--font-family-sans);
-		font-size: 15px;
+		font-size: var(--font-size-body);
+		/* Prevent iOS zoom on focus */
+		font-size: max(16px, var(--font-size-body));
 	}
 
 	.search-input:focus {
 		outline: none;
-		border-color: var(--ember);
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 20%, transparent);
 	}
 
 	.caps-list {
@@ -149,9 +152,9 @@
 
 	.skeleton-cap {
 		height: 64px;
-		background: var(--paper-2);
+		background: var(--color-bg-raised);
 		border-radius: var(--radius-sm);
-		animation: shimmer 1.2s ease-in-out infinite;
+		animation: shimmer 1.2s ease-in-out infinite;  /* [feedback] */
 	}
 
 	@keyframes shimmer {
@@ -168,9 +171,9 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		color: var(--ink-3);
+		color: var(--color-fg-subtle);
 		font-family: var(--font-family-sans);
-		font-size: 15px;
+		font-size: var(--font-size-body);
 		padding: var(--space-8);
 	}
 	.empty p { margin: 0; }

@@ -1,11 +1,11 @@
 <script lang="ts">
 	import AgentChatStream from '../AgentChatStream.svelte';
-	import AgentChatComposer from '../../components/AgentChatComposer.svelte';
+	import Composer from '../../components/Composer.svelte';
+	import type { Attachment } from '../../components/Composer.svelte';
 	import SuggestionChips from '../SuggestionChips.svelte';
 	import ContextChip from '../ContextChip.svelte';
 	import CapabilityBrowser, { type CapEntry } from '../CapabilityBrowser.svelte';
-	import AppBottomSheet from '../../components/AppBottomSheet.svelte';
-	import type { Attachment } from '../../components/AgentChatComposer.svelte';
+	import Sheet from '../../components/Sheet.svelte';
 	import type { ConusSdk } from '@conusai/sdk';
 	import type { WorkspaceNode } from '@conusai/types';
 	import { recordRect, playFlip } from '../../motion/index.js';
@@ -109,7 +109,7 @@
 
 	function handleSuggestion(text: string) {
 		chipsUsed = true;
-		handleSubmit(text);
+		handleSubmit(text, []);
 	}
 
 	$effect(() => {
@@ -122,15 +122,15 @@
 		}
 	});
 
-	async function handleUpload(files: File[]): Promise<Attachment[]> {
+	async function onUpload(files: File[]): Promise<Attachment[]> {
 		const results: Attachment[] = [];
 		for (const file of files) {
 			const res = await sdk.workspaces.upload(file);
 			if (res.data) {
 				results.push({
-					id: res.data.id,
-					filename: res.data.filename,
-					size: res.data.size,
+					id:       res.data.id,
+					name:     res.data.filename ?? file.name,
+					mimeType: file.type || undefined,
 				});
 			}
 		}
@@ -161,12 +161,12 @@
 						<ContextChip node={selectedNode} onClear={() => onSelectNode(null)} />
 					</div>
 				{/if}
-				<AgentChatComposer
+				<Composer
 					bind:value={inputValue}
 					bind:attachments
-					inFlight={chatStream.inFlight}
-					onsubmit={handleSubmit}
-					onUpload={handleUpload}
+					loading={chatStream.inFlight}
+					onsubmit={(v, atts) => handleSubmit(v, atts)}
+					{onUpload}
 				/>
 			</div>
 
@@ -194,12 +194,12 @@
 					<ContextChip node={selectedNode} onClear={() => onSelectNode(null)} />
 				</div>
 			{/if}
-			<AgentChatComposer
+			<Composer
 				bind:value={inputValue}
 				bind:attachments
-				inFlight={chatStream.inFlight}
-				onsubmit={handleSubmit}
-				onUpload={handleUpload}
+				loading={chatStream.inFlight}
+				onsubmit={(v, atts) => handleSubmit(v, atts)}
+				{onUpload}
 			/>
 		</div>
 	{/if}
@@ -207,14 +207,14 @@
 	<!-- Retry-with-capability picker (PR 3.B.2). Opens when the assistant turn
 	     served zero tools or the LLM said it doesn't have the needed tool. -->
 	{#if retryPickerOpen}
-		<AppBottomSheet open onClose={() => (retryPickerOpen = false)}>
+		<Sheet open={retryPickerOpen} onclose={() => (retryPickerOpen = false)} label="Pick a capability">
 			{#snippet children()}
 				<div class="picker-wrap">
 					<h2 class="picker-title">Pick a capability</h2>
 					<CapabilityBrowser {sdk} onSelect={handlePickCapabilityForRetry} />
 				</div>
 			{/snippet}
-		</AppBottomSheet>
+		</Sheet>
 	{/if}
 </div>
 
@@ -224,7 +224,7 @@
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
-		background: var(--paper);
+		background: var(--color-bg);
 	}
 
 	/* ── Empty state ────────────────────────────────────────────────────── */
@@ -242,9 +242,9 @@
 		width: 68px;
 		height: 68px;
 		border-radius: var(--radius-lg);
-		background: var(--paper-2);
+		background: var(--color-bg-raised);
 		object-fit: contain;
-		animation: sigil-enter var(--duration-slow) var(--ease-spring) both;
+		animation: sigil-enter var(--duration-slow) var(--ease-spring) both;  /* [delight] */
 	}
 	@keyframes sigil-enter {
 		0%   { opacity: 0; transform: scale(0.72) rotate(-8deg); filter: blur(4px); }
@@ -258,7 +258,7 @@
 		font-weight: 700;
 		letter-spacing: -1px;
 		line-height: 1.05;
-		color: var(--ink);
+		color: var(--color-fg);
 		text-align: center;
 		margin: 0;
 		display: flex;
@@ -269,7 +269,7 @@
 	.word {
 		display: inline-block;
 		opacity: 0;
-		animation: word-in var(--duration-stagger) var(--ease-out) both;
+		animation: word-in var(--duration-stagger) var(--ease-out) both;  /* [hierarchy] */
 	}
 	.word-space { display: none; }
 	@keyframes word-in {
@@ -280,10 +280,10 @@
 	.sub {
 		font-family: var(--font-family-sans);
 		font-size: var(--font-size-body);
-		color: var(--ink-2);
+		color: var(--color-fg-muted);
 		text-align: center;
 		margin: 0;
-		animation: fade-up var(--duration-stagger) var(--ease-out) 380ms both;
+		animation: fade-up var(--duration-stagger) var(--ease-out) 380ms both;  /* [hierarchy] */
 	}
 	@keyframes fade-up {
 		from { opacity: 0; transform: translateY(6px); }
@@ -294,6 +294,7 @@
 		.sigil { animation: none; opacity: 1; }
 		.word  { animation: none; opacity: 1; }
 		.sub   { animation: none; opacity: 1; }
+		.centred-composer { animation: none; opacity: 1; }
 	}
 
 	.centred-composer {
@@ -302,10 +303,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2);
-		animation: fade-up var(--duration-stagger) var(--ease-out) 420ms both;
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.centred-composer { animation: none; opacity: 1; }
+		animation: fade-up var(--duration-stagger) var(--ease-out) 420ms both;  /* [hierarchy] */
 	}
 
 	.context-row {
@@ -328,9 +326,9 @@
 
 	.composer-dock {
 		flex-shrink: 0;
-		border-top: 1px solid var(--rule);
-		background: var(--paper);
-		padding-bottom: env(safe-area-inset-bottom);
+		border-top: 1px solid var(--color-border);
+		background: var(--color-bg);
+		padding-bottom: var(--safe-bottom, env(safe-area-inset-bottom, 0px));
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2);
@@ -344,14 +342,14 @@
 
 	.picker-wrap {
 		padding: var(--space-3) 0;
-		max-height: 70vh;
+		max-height: 70dvh;
 		overflow-y: auto;
 	}
 	.picker-title {
 		margin: 0 0 var(--space-2);
 		padding: 0 var(--space-4);
-		font-size: var(--t-h3);
+		font-size: var(--font-size-h3);
 		font-weight: 600;
-		color: var(--ink);
+		color: var(--color-fg);
 	}
 </style>

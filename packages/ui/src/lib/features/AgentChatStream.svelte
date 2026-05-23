@@ -241,16 +241,19 @@
     align-items: center;
     padding: 4px 10px;
     border-radius: var(--radius-md);
-    border: 1px solid color-mix(in srgb, var(--ember) 50%, transparent);
-    background: color-mix(in srgb, var(--ember) 12%, transparent);
-    color: var(--ember);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 50%, transparent);
+    background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+    color: var(--color-accent);
     font-family: var(--font-family-sans);
     font-size: var(--font-size-meta);
     cursor: pointer;
-    transition: filter var(--duration-fast);
+    transition: filter var(--duration-fast) var(--ease-standard);  /* [feedback] */
   }
   .retry-btn:hover { filter: brightness(1.08); }
-  .retry-btn:focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }
+  .retry-btn:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+  }
 
   .user-row {
     justify-content: flex-end;
@@ -273,8 +276,9 @@
   }
 
   /* ── User bubble ─────────────────────────────────── */
+  /* Design spec §8.2: accent fill, asymmetric radii (ember left rail) */
   .user-bubble {
-    background: var(--ember);
+    background: var(--color-accent);
     color: #fff;
     border-radius: 18px 18px 4px 18px;
     padding: 10px 14px;
@@ -282,7 +286,7 @@
     line-height: 1.55;
     white-space: pre-wrap;
     word-break: break-word;
-    max-width: min(480px, 78vw);
+    max-width: min(480px, 78cqi);  /* container query unit: no viewport dependency */
   }
 
   /* ── AI avatar mark ──────────────────────────────── */
@@ -290,8 +294,8 @@
     width: 22px;
     height: 22px;
     border-radius: 50%;
-    background: var(--paper-3);
-    color: var(--ink-3);
+    background: var(--color-bg-hover);
+    color: var(--color-fg-subtle);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -303,7 +307,7 @@
   .ai-bubble {
     font-size: var(--font-size-body);
     line-height: 1.65;
-    color: var(--ink);
+    color: var(--color-fg);
     word-break: break-word;
     min-width: 0;
   }
@@ -319,7 +323,7 @@
     font-family: var(--font-family-sans);
     font-size: var(--font-size-h2);
     margin: 0.6em 0 0.3em;
-    color: var(--ink);
+    color: var(--color-fg);
   }
   .ai-bubble :global(.md-h2) {
     font-size: var(--font-size-body);
@@ -329,7 +333,7 @@
   .ai-bubble :global(.md-h3) {
     font-size: var(--font-size-body);
     font-weight: 600;
-    color: var(--ink-2);
+    color: var(--color-fg-muted);
     margin: 0.6em 0 0.2em;
   }
   .ai-bubble :global(.md-ul),
@@ -345,8 +349,8 @@
     line-height: 1.55;
   }
   .ai-bubble :global(.md-pre) {
-    background: var(--paper-2);
-    border: 1px solid var(--rule);
+    background: var(--color-bg-raised);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     padding: var(--space-3);
     overflow-x: auto;
@@ -360,30 +364,30 @@
   .ai-bubble :global(code) {
     font-family: var(--font-mono);
     font-size: 0.88em;
-    background: var(--paper-2);
-    border: 1px solid var(--rule);
+    background: var(--color-bg-raised);
+    border: 1px solid var(--color-border);
     border-radius: 4px;
     padding: 1px 5px;
   }
   .ai-bubble :global(.md-hr) {
     border: none;
-    border-top: 1px solid var(--rule);
+    border-top: 1px solid var(--color-border);
     margin: 0.75em 0;
   }
   .ai-bubble :global(strong) { font-weight: 700; }
   .ai-bubble :global(em) { font-style: italic; }
 
-  /* Streaming word animation */
+  /* Streaming word animation [feedback] */
   .ai-text { display: inline; }
-  .tok { display: inline; animation: tok-in 120ms ease both; }
+  .tok { display: inline; animation: tok-in 120ms ease both; }  /* [feedback] */
   @keyframes tok-in { from { opacity: 0; } to { opacity: 1; } }
   .stream-cursor {
     display: inline-block;
     width: 2px;
     height: 1em;
-    background: var(--ember);
+    background: var(--color-accent);
     margin-left: 2px;
-    animation: blink 1s step-end infinite;
+    animation: blink 1s step-end infinite;  /* [feedback] */
     vertical-align: text-bottom;
   }
   @keyframes blink { 50% { opacity: 0; } }
@@ -402,14 +406,14 @@
     position: absolute;
     inset: 25%;
     border-radius: 50%;
-    background: var(--ember);
+    background: var(--color-accent);
   }
   .sonar-ring {
     position: absolute;
     inset: 0;
     border-radius: 50%;
-    border: 1.5px solid var(--ember);
-    animation: sonar-out 1.8s ease-out infinite;
+    border: 1.5px solid var(--color-accent);
+    animation: sonar-out 1.8s ease-out infinite;  /* [feedback] */
   }
   .sonar-r2 { animation-delay: 0.6s; }
   @keyframes sonar-out {
@@ -424,18 +428,18 @@
 
   /* ── Markdown links ──────────────────────────────── */
   .ai-bubble :global(.md-link) {
-    color: var(--ember);
+    color: var(--color-accent);
     text-decoration: underline;
     text-underline-offset: 2px;
     border-radius: 2px;
-    transition: color 120ms;
+    transition: color var(--duration-fast) var(--ease-standard);  /* [feedback] */
   }
   .ai-bubble :global(.md-link:hover) {
-    color: var(--ember-2);
+    color: var(--color-accent-dim, var(--color-accent));
   }
   .ai-bubble :global(.md-link:focus-visible) {
-    outline: 2px solid var(--ember);
-    outline-offset: 2px;
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
   }
 
   /* ── Invoice stub ────────────────────────────────── */
@@ -443,21 +447,21 @@
     display: flex;
     gap: var(--space-3);
     align-items: baseline;
-    border: 1px solid var(--rule);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     padding: var(--space-2) var(--space-3);
     font-size: var(--font-size-meta);
   }
-  .inv-label { color: var(--ink-3); }
+  .inv-label { color: var(--color-fg-subtle); }
   .inv-total { font-family: var(--font-mono); font-weight: 600; }
 
   /* ── Bottom spacer ───────────────────────────────── */
   .bottom-spacer { height: var(--space-4); flex-shrink: 0; }
 
-  /* ── Mobile tweaks ───────────────────────────────── */
-  @media (max-width: 640px) {
+  /* ── Compact tweaks (container query — no viewport dependency) ─── */
+  @container app-shell (max-width: 639px) {
     .user-row { padding-left: var(--space-7); }
     .ai-row   { padding-right: var(--space-6); }
-    .user-bubble { max-width: min(340px, 80vw); }
+    .user-bubble { max-width: min(340px, 80cqi); }
   }
 </style>

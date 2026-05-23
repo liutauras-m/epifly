@@ -54,32 +54,32 @@
     align-items: center;
   }
 
-  /* Free — neutral ink */
+  /* Free — neutral */
   .badge-free {
-    background: var(--paper-2);
-    color: var(--ink-3);
-    border: 1px solid var(--rule);
+    background: var(--color-bg-raised);
+    color:      var(--color-fg-subtle);
+    border:     1px solid var(--color-border);
   }
 
-  /* Pro — ember accent */
+  /* Pro — accent */
   .badge-pro {
-    background: var(--ember-soft);
-    color: var(--ember);
-    border: 1px solid var(--ember-glow);
+    background: var(--color-accent-soft);
+    color:      var(--color-accent);
+    border:     1px solid var(--color-accent-border, var(--color-border));
   }
 
-  /* Team — cyan accent */
+  /* Team — info */
   .badge-team {
-    background: var(--cyan-soft);
-    color: var(--cyan);
-    border: 1px solid rgba(0, 212, 255, 0.28);
+    background: var(--color-info-soft, var(--color-accent-soft));
+    color:      var(--color-info, var(--color-accent));
+    border:     1px solid var(--color-info-border, var(--color-border));
   }
 
-  /* Enterprise — ember with stronger presence */
+  /* Enterprise — accent with stronger weight */
   .badge-enterprise {
-    background: var(--ember-soft);
-    color: var(--ember);
-    border: 1px solid var(--ember-glow);
+    background:  var(--color-accent-soft);
+    color:       var(--color-accent);
+    border:      1px solid var(--color-accent-border, var(--color-border));
     font-weight: 700;
   }
 

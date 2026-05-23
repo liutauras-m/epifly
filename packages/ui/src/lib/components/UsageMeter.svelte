@@ -76,39 +76,40 @@
   .meter-label {
     font-family: var(--font-family-sans);
     font-weight: 600;
-    font-size: 0.875rem;
-    color: var(--ink);
+    font-size:   var(--font-size-meta);
+    color:       var(--color-fg);
   }
 
   .meter-value {
-    font-family: var(--font-family-sans);
-    font-size: 0.875rem;
-    font-weight: 600;
+    font-family:    var(--font-family-sans);
+    font-size:      var(--font-size-meta);
+    font-weight:    600;
     letter-spacing: -0.02em;
-    color: var(--ink-2);
-    transition: color 180ms cubic-bezier(0.4, 0, 0.2, 1);
+    color:          var(--color-fg-muted);
+    transition:     color var(--duration-fast) var(--ease-standard);  /* [feedback] */
   }
 
-  .meter-value.warn    { color: #d97706; }   /* amber-600 — warning, not brand orange */
-  .meter-value.exceeded { color: var(--danger); font-weight: 700; }
+  .meter-value.warn     { color: var(--color-warning, #d97706); }
+  .meter-value.exceeded { color: var(--color-danger);  font-weight: 700; }
 
   .bar-track {
-    height: 6px;
-    background: var(--paper-3);
+    height:        6px;
+    background:    var(--color-bg-hover);
     border-radius: var(--radius-full);
-    overflow: hidden;
+    overflow:      hidden;
   }
 
   .bar-fill {
-    height: 100%;
-    background: var(--ember);
+    height:        100%;
+    background:    var(--color-accent);
     border-radius: var(--radius-full);
-    transition: width 300ms cubic-bezier(0.4, 0, 0.2, 1),
-                background 180ms cubic-bezier(0.4, 0, 0.2, 1);
+    transition:
+      width      var(--duration-normal) var(--ease-standard),  /* [feedback] */
+      background var(--duration-fast)   var(--ease-standard);
   }
 
-  .bar-fill.warn     { background: #d97706; }
-  .bar-fill.exceeded { background: var(--danger); }
+  .bar-fill.warn     { background: var(--color-warning, #d97706); }
+  .bar-fill.exceeded { background: var(--color-danger); }
 
   .meter-footer {
     display: flex;

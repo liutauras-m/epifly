@@ -43,6 +43,6 @@
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
-		background: var(--paper);
+		background: var(--color-bg);
 	}
 </style>

@@ -156,15 +156,15 @@
   }
 
   /* ── On expanded screens: centered dialog ───────────────────────────────── */
-  @media (min-width: 1024px) {
+  @container app-shell (min-width: 1024px) {
     .sheet-panel {
       position:      relative;
       margin:        auto;
       left:          auto;
       right:         auto;
       bottom:        auto;
-      width:         min(560px, 90vw);
-      max-height:    min(var(--sheet-max-height, 85dvh), 80vh);
+      width:         min(560px, 90cqi);
+      max-height:    min(var(--sheet-max-height, 85dvh), 80dvh);
       border-radius: var(--radius-xl);
       border:        1px solid var(--color-border);
       transform:     scale(0.96) translateY(8px);
@@ -195,7 +195,7 @@
     margin:       var(--space-2) auto var(--space-1);
     flex-shrink:  0;
   }
-  @media (min-width: 1024px) {
+  @container app-shell (min-width: 1024px) {
     .sheet-handle { display: none; }
   }
 

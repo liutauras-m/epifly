@@ -131,15 +131,16 @@
     align-items: center;
     gap: 0.25rem;
     padding: 0.3rem 0.7rem;
-    background: var(--ember);
-    color: #fff;
+    background:    var(--color-accent);
+    color:         #fff;
     border-radius: var(--radius-md);
     text-decoration: none;
-    font-size: 0.78rem;
-    font-weight: 600;
-    transition: transform 120ms cubic-bezier(0.4, 0, 0.2, 1),
-                box-shadow 120ms cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 2px 8px var(--ember-glow);
+    font-size:     var(--font-size-label);
+    font-weight:   600;
+    transition:
+      transform  var(--duration-fast) var(--ease-standard),  /* [feedback] */
+      box-shadow var(--duration-fast) var(--ease-standard);
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--color-accent) 25%, transparent);
   }
 
   .btn-upgrade:hover {

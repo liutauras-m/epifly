@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { ConusSdk } from '@conusai/sdk';
 	import ArtifactRow from './ArtifactRow.svelte';
+	import EmptyState from '../../components/EmptyState.svelte';
 
 	let { sdk }: { sdk: ConusSdk } = $props();
 
@@ -38,9 +39,11 @@
 			{/each}
 		</div>
 	{:else if artifacts.length === 0}
-		<div class="empty">
-			<p>No artifacts yet — files attached to conversations will appear here.</p>
-		</div>
+		<EmptyState
+			kind="no-artifacts"
+			title="No artifacts yet"
+			body="Files attached to conversations will appear here."
+		/>
 	{:else}
 		<div class="artifacts-list">
 			{#each artifacts as a (a.id)}
@@ -61,7 +64,7 @@
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
-		background: var(--paper);
+		background: var(--color-bg);
 	}
 
 	.artifacts-list { flex: 1; overflow-y: auto; }
@@ -75,31 +78,15 @@
 
 	.skeleton-row {
 		height: 60px;
-		background: var(--paper-2);
+		background: var(--color-bg-raised);
 		border-radius: var(--radius-sm);
-		animation: shimmer 1.2s ease-in-out infinite;
+		animation: shimmer 1.2s ease-in-out infinite;  /* [feedback] */
 	}
 
 	@keyframes shimmer {
 		0%, 100% { opacity: 1; }
 		50%      { opacity: 0.5; }
 	}
-
-	.empty {
-		flex: 1;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: var(--space-8);
-		color: var(--ink-3);
-		font-family: var(--font-family-sans);
-		font-size: var(--font-size-body);
-		text-align: center;
-		max-width: 480px;
-		margin: 0 auto;
-	}
-
-	.empty p { margin: 0; }
 
 	@media (prefers-reduced-motion: reduce) {
 		.skeleton-row { animation: none; }

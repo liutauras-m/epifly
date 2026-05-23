@@ -32,12 +32,13 @@
 
 <style>
   .capability-card {
-    padding: var(--space-4);
-    border: 1px solid var(--rule);
-    border-radius: 8px;
-    background: var(--paper-2);
-    transition: border-color var(--duration-fast) var(--ease-out),
-                box-shadow var(--duration-fast) var(--ease-out);
+    padding:    var(--space-4);
+    border:     1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-raised);
+    transition:
+      border-color var(--duration-fast) var(--ease-standard),  /* [feedback] */
+      box-shadow   var(--duration-fast) var(--ease-standard);
   }
 
   .capability-card[role="button"] {
@@ -46,60 +47,60 @@
 
   .capability-card[role="button"]:hover,
   .capability-card[role="button"]:focus-visible {
-    border-color: var(--ember);
-    box-shadow: 0 0 0 3px var(--ember-glow);
-    outline: none;
+    border-color: var(--color-accent);
+    box-shadow:   0 0 0 3px color-mix(in srgb, var(--color-accent) 20%, transparent);
+    outline:      none;
   }
 
   header {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-2);
+    display:       flex;
+    align-items:   baseline;
+    gap:           var(--space-2);
     margin-bottom: var(--space-2);
   }
 
   .kind {
-    font-family: var(--font-mono);
-    font-size: 10px;
+    font-family:    var(--font-mono);
+    font-size:      var(--font-size-label);
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: var(--ember-2);
-    background: var(--ember-soft);
-    padding: 2px 6px;
-    border-radius: 4px;
-    flex-shrink: 0;
+    color:          var(--color-accent);
+    background:     var(--color-accent-soft);
+    padding:        2px 6px;
+    border-radius:  var(--radius-xs);
+    flex-shrink:    0;
   }
 
   .name {
-    margin: 0;
+    margin:      0;
     font-family: var(--font-family-sans);
-    font-size: 14px;
+    font-size:   var(--font-size-meta);
     font-weight: 600;
-    color: var(--ink);
+    color:       var(--color-fg);
   }
 
   .description {
-    margin: 0 0 var(--space-3);
-    font-size: 13px;
-    color: var(--ink-2);
+    margin:      0 0 var(--space-3);
+    font-size:   var(--font-size-meta);
+    color:       var(--color-fg-muted);
     line-height: 1.5;
   }
 
   .tags {
     list-style: none;
-    padding: 0;
-    margin: 0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-1);
+    padding:    0;
+    margin:     0;
+    display:    flex;
+    flex-wrap:  wrap;
+    gap:        var(--space-1);
   }
 
   .tag {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--ink-3);
-    border: 1px solid var(--rule);
-    padding: 1px 6px;
-    border-radius: 4px;
+    font-family:   var(--font-mono);
+    font-size:     var(--font-size-label);
+    color:         var(--color-fg-subtle);
+    border:        1px solid var(--color-border);
+    padding:       1px 6px;
+    border-radius: var(--radius-xs);
   }
 </style>

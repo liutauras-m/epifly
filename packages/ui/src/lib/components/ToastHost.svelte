@@ -52,8 +52,8 @@
     align-items: center;
   }
 
-  /* Desktop: top-right corner */
-  @media (min-width: 768px) {
+  /* Medium+: top-right corner — container query so it works inside Tauri windows */
+  @container app-shell (min-width: 768px) {
     .toast-host {
       top:        var(--space-5);
       left:       auto;
