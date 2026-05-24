@@ -21,6 +21,11 @@
 
 import type { Options } from '@wdio/types';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
+
+// ESM-safe __dirname equivalent
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const IOS_DEVICE_UDID = process.env.IOS_DEVICE_UDID;
 const IOS_PLATFORM_VERSION = process.env.IOS_PLATFORM_VERSION ?? '18.4';

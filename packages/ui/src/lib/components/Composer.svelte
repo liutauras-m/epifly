@@ -194,6 +194,7 @@
 
     <!-- Textarea -->
     <textarea
+      id="agent-prompt"
       bind:this={textareaEl}
       bind:value
       {placeholder}
