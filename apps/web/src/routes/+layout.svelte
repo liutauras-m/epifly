@@ -1,6 +1,7 @@
 <script lang="ts">
+	// app.css imports foundry.css into a low-priority @layer (see app.css),
+	// so Tailwind utilities (.bg-primary, .bg-card, etc.) always win the cascade.
 	import '../app.css';
-	import '@conusai/ui/foundry.css';
 	import { ThemeProvider, LiveAnnouncer, ToastHost, setI18n, createI18n, enMessages } from '@conusai/ui';
 	import type { LayoutData } from './$types';
 	let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();

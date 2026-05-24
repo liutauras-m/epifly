@@ -1,45 +1,78 @@
+/*
+ * apps/web — global stylesheet entry.
+ *
+ * Cascade-layer order (low → high priority):
+ *   foundry < theme < base < components < utilities
+ *
+ * Foundry CSS is imported into its own layer so its `:where(button)` reset
+ * never beats Tailwind utility classes like `.bg-primary`. Tailwind v4
+ * itself defines `theme, base, components, utilities` internally.
+ */
+@layer foundry, theme, base, components, utilities;
+
+@import "@conusai/ui/foundry.css" layer(foundry);
 @import "tailwindcss";
 
 /*
  * shadcn-svelte + Foundry token bridge.
- *
- * Tailwind v4 uses @theme to define CSS custom properties that map to utility
- * classes. We point them at the Foundry token system so `bg-sidebar`,
- * `text-sidebar-foreground` etc. resolve correctly without duplicating values.
- *
- * Foundry tokens live in packages/ui/src/lib/tokens.css (imported via
- * @conusai/ui/foundry.css in +layout.svelte).
+ * Tailwind v4 reads `@theme inline` and generates utility classes from each
+ * variable. Every shadcn name resolves through a Foundry token so colors,
+ * radii, etc. live in exactly one place (packages/ui/src/lib/tokens.css).
  */
-
 @theme inline {
-  /* ── Sidebar ────────────────────────────────────────────────── */
+  /* ── Surfaces ──────────────────────────────────────────────────── */
+  --color-background: var(--color-bg, #fafaf9);
+  --color-foreground: var(--color-fg, #1a1a1a);
+
+  --color-card: var(--color-bg-raised, #ffffff);
+  --color-card-foreground: var(--color-fg, #1a1a1a);
+
+  --color-popover: var(--color-bg-raised, #ffffff);
+  --color-popover-foreground: var(--color-fg, #1a1a1a);
+
+  --color-muted: var(--color-bg-raised, #f4f4f3);
+  --color-muted-foreground: var(--color-fg-muted, #737373);
+
+  /* ── Brand / actions ──────────────────────────────────────────── */
+  /* shadcn uses `--color-accent` for a muted hover surface, but Foundry
+   * uses `--color-accent` for the brand color itself. We bridge via
+   * `--ember` (Foundry's raw brand color) to avoid the naming collision. */
+  --color-primary: var(--ember, #ff6200);
+  --color-primary-foreground: #ffffff;
+
+  --color-secondary: var(--color-bg-raised, #f4f4f3);
+  --color-secondary-foreground: var(--color-fg, #1a1a1a);
+
+  --color-accent: var(--color-bg-hover, #e8e8e6);
+  --color-accent-foreground: var(--color-fg, #1a1a1a);
+
+  --color-destructive: var(--color-danger, #c52f2f);
+  --color-destructive-foreground: #ffffff;
+
+  /* ── Form / chrome ────────────────────────────────────────────── */
+  --color-border: var(--color-border, #e2e2e0);
+  --color-input: var(--color-border, #e2e2e0);
+  --color-ring: var(--ember, #ff6200);
+
+  /* ── Sidebar (shadcn Sidebar sub-namespace) ───────────────────── */
   --color-sidebar: var(--color-bg-raised, #f4f4f3);
   --color-sidebar-foreground: var(--color-fg, #1a1a1a);
-  --color-sidebar-primary: var(--color-accent, #ff6200);
+  --color-sidebar-primary: var(--ember, #ff6200);
   --color-sidebar-primary-foreground: #ffffff;
   --color-sidebar-accent: var(--color-bg-hover, #e8e8e6);
   --color-sidebar-accent-foreground: var(--color-fg, #1a1a1a);
   --color-sidebar-border: var(--color-border, #e2e2e0);
-  --color-sidebar-ring: var(--color-accent, #ff6200);
+  --color-sidebar-ring: var(--ember, #ff6200);
 
-  /* ── Core shadcn tokens ─────────────────────────────────────── */
-  --color-background: var(--color-bg, #fafaf9);
-  --color-foreground: var(--color-fg, #1a1a1a);
-  --color-muted: var(--color-bg-raised, #f4f4f3);
-  --color-muted-foreground: var(--color-fg-muted, #737373);
-  --color-border: var(--color-border, #e2e2e0);
-  --color-input: var(--color-border, #e2e2e0);
-  --color-primary: var(--color-accent, #ff6200);
-  --color-primary-foreground: #ffffff;
-  --color-secondary: var(--color-bg-raised, #f4f4f3);
-  --color-secondary-foreground: var(--color-fg, #1a1a1a);
-  --color-accent: var(--color-bg-hover, #e8e8e6);
-  --color-accent-foreground: var(--color-fg, #1a1a1a);
-  --color-ring: var(--color-accent, #ff6200);
+  /* ── Radii ────────────────────────────────────────────────────── */
   --radius: var(--radius-md, 0.5rem);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* ── Forge (dark) theme overrides ───────────────────────────────────────── */
+/* ── Forge (dark) theme ──────────────────────────────────────────────────── */
 :root[data-theme="forge"] {
   color-scheme: dark;
 }

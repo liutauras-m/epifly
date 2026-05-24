@@ -1,13 +1,16 @@
 <svelte:options runes={true} />
 <script lang="ts">
   /**
-   * Account page — Phase 4.4
-   * Profile card + nav links. Consumes PlanBadge + Button primitives.
-   * Local CSS replaced with semantic design tokens.
+   * Account page — refactored to shadcn-svelte primitives.
+   * Card + Avatar + Badge + Item replace the previous 166 lines of custom CSS.
    */
-  import { CreditCard, BarChart3, LogOut } from 'lucide-svelte';
-  import { PlanBadge, Button, Icon } from '@conusai/ui';
-  import type { PageData } from './$types';
+  import { CreditCard, BarChart3, LogOut, ChevronRight } from '@lucide/svelte';
+  import { PlanBadge } from '@conusai/ui';
+  import * as Avatar from '$lib/components/ui/avatar/index.js';
+  import * as Card from '$lib/components/ui/card/index.js';
+  import * as Item from '$lib/components/ui/item/index.js';
+  import { Badge } from '$lib/components/ui/badge/index.js';
+  import type { PageData } from './$types.js';
 
   let { data }: { data: PageData } = $props();
 
@@ -17,262 +20,93 @@
   const statusLabel = $derived(subscription?.status ?? 'active');
   const showStatus  = $derived(statusLabel !== 'active' && statusLabel !== 'trialing');
   const logoutHref  = $derived(authProvider === 'zitadel' ? '/auth/logout' : '/logout');
+  const initial     = $derived((user?.name ?? '?')[0].toUpperCase());
 </script>
 
-<svelte:head>
-  <title>Account — ConusAI</title>
-</svelte:head>
+<svelte:head><title>Account — ConusAI</title></svelte:head>
 
-<div class="account-page">
+<div class="mx-auto max-w-xl px-4 py-10 sm:py-14 flex flex-col gap-6">
 
-  <!-- Page header -->
-  <header class="page-header">
-    <p class="page-eyebrow">Settings</p>
-    <h1 class="page-title">Account</h1>
+  <!-- ── Page heading ───────────────────────────────────────────── -->
+  <header class="flex flex-col gap-1">
+    <span class="text-xs font-medium uppercase tracking-wider text-muted-foreground">Settings</span>
+    <h1 class="text-3xl font-semibold tracking-tight text-foreground">Account</h1>
   </header>
 
-  <!-- Profile card -->
-  <section class="profile-card" aria-label="Profile">
-    <div class="avatar" aria-label="User avatar: {(user?.name ?? '?')[0].toUpperCase()}">
-      {(user?.name ?? '?')[0].toUpperCase()}
-    </div>
-    <div class="profile-info">
-      <p class="profile-name">{user?.name ?? 'Unknown'}</p>
-      <div class="profile-badges">
-        <PlanBadge plan={planLabel} />
-        {#if showStatus}
-          <span class="status-pill status-{statusLabel}">
-            {statusLabel.replace('_', ' ')}
-          </span>
-        {/if}
+  <!-- ── Profile card ───────────────────────────────────────────── -->
+  <Card.Root>
+    <Card.Content class="flex items-center gap-4 py-5">
+      <Avatar.Root class="size-12">
+        <Avatar.Fallback class="bg-primary text-primary-foreground text-base font-semibold">
+          {initial}
+        </Avatar.Fallback>
+      </Avatar.Root>
+      <div class="flex flex-col gap-1.5 min-w-0">
+        <p class="font-medium text-foreground truncate">{user?.name ?? 'Unknown'}</p>
+        <div class="flex items-center gap-2 flex-wrap">
+          <PlanBadge tier={planLabel} />
+          {#if showStatus}
+            <Badge variant="destructive" class="uppercase tracking-wide text-[10px]">
+              {statusLabel.replace('_', ' ')}
+            </Badge>
+          {/if}
+        </div>
       </div>
-    </div>
-  </section>
+    </Card.Content>
+  </Card.Root>
 
-  <!-- Nav links -->
-  <nav class="account-links" aria-label="Account navigation">
-    <a href="/account/billing" class="link-card">
-      <span class="link-icon" aria-hidden="true">
-        <Icon icon={CreditCard} size="md" />
-      </span>
-      <div class="link-body">
-        <strong class="link-title">Billing &amp; Plans</strong>
-        <p class="link-desc">Manage your subscription, upgrade, or view invoices.</p>
-      </div>
-      <span class="link-arrow" aria-hidden="true">›</span>
-    </a>
+  <!-- ── Nav links ──────────────────────────────────────────────── -->
+  <Item.Group aria-label="Account navigation">
+    <Item.Root variant="outline">
+      {#snippet child({ props })}
+        <a href="/account/billing" {...props}>
+          <Item.Media variant="icon" class="bg-primary/10 text-primary size-9 rounded-md">
+            <CreditCard class="size-4" />
+          </Item.Media>
+          <Item.Content>
+            <Item.Title>Billing &amp; Plans</Item.Title>
+            <Item.Description>Manage your subscription, upgrade, or view invoices.</Item.Description>
+          </Item.Content>
+          <Item.Actions>
+            <ChevronRight class="size-4 text-muted-foreground" />
+          </Item.Actions>
+        </a>
+      {/snippet}
+    </Item.Root>
 
-    <a href="/account/usage" class="link-card">
-      <span class="link-icon" aria-hidden="true">
-        <Icon icon={BarChart3} size="md" />
-      </span>
-      <div class="link-body">
-        <strong class="link-title">Usage</strong>
-        <p class="link-desc">View agent turns, token consumption, and storage.</p>
-      </div>
-      <span class="link-arrow" aria-hidden="true">›</span>
-    </a>
+    <Item.Root variant="outline">
+      {#snippet child({ props })}
+        <a href="/account/usage" {...props}>
+          <Item.Media variant="icon" class="bg-primary/10 text-primary size-9 rounded-md">
+            <BarChart3 class="size-4" />
+          </Item.Media>
+          <Item.Content>
+            <Item.Title>Usage</Item.Title>
+            <Item.Description>View agent turns, token consumption, and storage.</Item.Description>
+          </Item.Content>
+          <Item.Actions>
+            <ChevronRight class="size-4 text-muted-foreground" />
+          </Item.Actions>
+        </a>
+      {/snippet}
+    </Item.Root>
 
-    <a href={logoutHref} class="link-card link-destructive">
-      <span class="link-icon" aria-hidden="true">
-        <Icon icon={LogOut} size="md" />
-      </span>
-      <div class="link-body">
-        <strong class="link-title">Sign out</strong>
-        <p class="link-desc">End your session.</p>
-      </div>
-      <span class="link-arrow" aria-hidden="true">›</span>
-    </a>
-  </nav>
+    <Item.Root variant="outline" class="[a]:hover:bg-destructive/10 [a]:hover:text-destructive border-destructive/30">
+      {#snippet child({ props })}
+        <a href={logoutHref} {...props} data-sveltekit-reload>
+          <Item.Media variant="icon" class="bg-destructive/10 text-destructive size-9 rounded-md">
+            <LogOut class="size-4" />
+          </Item.Media>
+          <Item.Content>
+            <Item.Title class="text-destructive">Sign out</Item.Title>
+            <Item.Description>End your session.</Item.Description>
+          </Item.Content>
+          <Item.Actions>
+            <ChevronRight class="size-4 text-destructive/60" />
+          </Item.Actions>
+        </a>
+      {/snippet}
+    </Item.Root>
+  </Item.Group>
 
 </div>
-
-<style>
-  /* ── Page layout ─────────────────────────────────────────────────────────── */
-  .account-page {
-    max-width: 600px;
-    margin:    0 auto;
-    padding:   var(--space-7) var(--space-4);
-  }
-
-  /* ── Page header ─────────────────────────────────────────────────────────── */
-  .page-header {
-    margin-bottom: var(--space-6);
-  }
-
-  .page-eyebrow {
-    margin:         0 0 var(--space-1);
-    font-family:    var(--font-family-mono);
-    font-size:      var(--font-size-label);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color:          var(--color-fg-subtle);
-  }
-
-  .page-title {
-    margin:         0;
-    font-size:      var(--font-size-h1);     /* 28px */
-    font-weight:    620;
-    letter-spacing: -0.025em;
-    color:          var(--color-fg);
-    line-height:    1.2;
-  }
-
-  /* ── Profile card ────────────────────────────────────────────────────────── */
-  .profile-card {
-    display:       flex;
-    align-items:   center;
-    gap:           var(--space-4);
-    padding:       var(--space-4) var(--space-5);
-    border:        1px solid var(--color-border);
-    border-radius: var(--radius-lg);
-    margin-bottom: var(--space-4);
-    background:    var(--color-bg-raised);
-  }
-
-  .avatar {
-    width:          48px;
-    height:         48px;
-    border-radius:  var(--radius-full);
-    background:     var(--color-accent);
-    color:          #fff;
-    display:        flex;
-    align-items:    center;
-    justify-content: center;
-    font-weight:    700;
-    font-size:      18px;
-    letter-spacing: -0.02em;
-    flex-shrink:    0;
-    user-select:    none;
-  }
-
-  .profile-info {
-    display:        flex;
-    flex-direction: column;
-    gap:            var(--space-2);
-  }
-
-  .profile-name {
-    margin:      0;
-    font-weight: 550;
-    font-size:   var(--font-size-body);
-    color:       var(--color-fg);
-  }
-
-  .profile-badges {
-    display:     flex;
-    align-items: center;
-    gap:         var(--space-2);
-    flex-wrap:   wrap;
-  }
-
-  .status-pill {
-    display:        inline-flex;
-    align-items:    center;
-    padding:        2px var(--space-2);
-    border-radius:  var(--radius-full);
-    font-family:    var(--font-family-mono);
-    font-size:      var(--font-size-label);
-    font-weight:    600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    background:     var(--color-danger-soft);
-    color:          var(--color-danger);
-    border:         1px solid var(--color-danger);
-  }
-
-  /* ── Nav links ───────────────────────────────────────────────────────────── */
-  .account-links {
-    display:        flex;
-    flex-direction: column;
-    gap:            var(--space-2);
-  }
-
-  .link-card {
-    display:       flex;
-    align-items:   center;
-    gap:           var(--space-4);
-    padding:       var(--space-4) var(--space-5);
-    border:        1px solid var(--color-border);
-    border-radius: var(--radius-lg);
-    text-decoration: none;
-    color:         inherit;
-    background:    var(--color-bg-raised);
-    min-height:    var(--hit);
-
-    transition:
-      background   var(--duration-fast) var(--ease-standard),
-      border-color var(--duration-fast) var(--ease-standard),
-      box-shadow   var(--duration-fast) var(--ease-standard);
-  }
-
-  .link-card:hover {
-    background:   var(--color-bg-hover);
-    border-color: var(--color-border-strong);
-    box-shadow:   0 2px 8px var(--color-shadow-sm);
-  }
-
-  .link-card:focus-visible {
-    outline:        var(--focus-ring);
-    outline-offset: var(--focus-ring-offset);
-  }
-
-  /* Icon pip */
-  .link-icon {
-    display:        flex;
-    align-items:    center;
-    justify-content: center;
-    width:          36px;
-    height:         36px;
-    border-radius:  var(--radius-sm);
-    background:     var(--color-accent-soft);
-    color:          var(--color-accent);
-    flex-shrink:    0;
-  }
-
-  /* Body */
-  .link-body {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .link-title {
-    display:        block;
-    font-weight:    550;
-    font-size:      var(--font-size-body);
-    color:          var(--color-fg);
-    margin-bottom:  2px;
-  }
-
-  .link-desc {
-    margin:      0;
-    font-size:   var(--font-size-meta);
-    color:       var(--color-fg-subtle);
-    line-height: 1.45;
-  }
-
-  /* Arrow */
-  .link-arrow {
-    font-size:   18px;
-    color:       var(--color-fg-subtle);
-    flex-shrink: 0;
-  }
-
-  /* Destructive */
-  .link-destructive {
-    border-color: var(--color-danger-soft);
-  }
-  .link-destructive .link-icon {
-    background: var(--color-danger-soft);
-    color:      var(--color-danger);
-  }
-  .link-destructive:hover {
-    background:   var(--color-danger-soft);
-    border-color: var(--color-danger);
-  }
-  .link-destructive .link-title { color: var(--color-danger); }
-
-  @media (prefers-reduced-motion: reduce) {
-    .link-card { transition: none; }
-  }
-</style>

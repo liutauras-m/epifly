@@ -1,13 +1,16 @@
 <svelte:options runes={true} />
 <script lang="ts">
   /**
-   * Billing page — Phase 4.5
-   * Plan cards + invoices. Consumes PlanBadge, StatusBadge, Button primitives.
-   * Local CSS replaced with design-system tokens; raw buttons replaced with Button.
+   * Billing page — refactored to shadcn-svelte primitives.
+   * Card + Badge + Alert + Breadcrumb replace ~189 lines of custom CSS.
    */
   import { enhance } from '$app/forms';
-  import { Layers, Zap, Users, Building2, Check, ArrowUpRight } from '@lucide/svelte';
-  import { PlanBadge, StatusBadge, Button, PageHeader, Breadcrumbs } from '@conusai/ui';
+  import { Layers, Zap, Users, Building2, Check, ArrowUpRight, AlertCircle } from '@lucide/svelte';
+  import { PlanBadge, StatusBadge } from '@conusai/ui';
+  import * as Breadcrumb from '$lib/components/ui/breadcrumb/index.js';
+  import * as Card from '$lib/components/ui/card/index.js';
+  import * as Alert from '$lib/components/ui/alert/index.js';
+  import { Button } from '$lib/components/ui/button/index.js';
   import type { ActionData, PageData } from './$types.js';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -34,307 +37,147 @@
   };
 </script>
 
-<svelte:head>
-  <title>Billing — ConusAI</title>
-</svelte:head>
+<svelte:head><title>Billing — ConusAI</title></svelte:head>
 
-<div class="billing-page">
+<div class="mx-auto max-w-4xl px-4 py-10 sm:py-14 flex flex-col gap-8">
 
-  <Breadcrumbs items={[{ label: 'Account', href: '/account' }, { label: 'Billing' }]} />
+  <!-- ── Breadcrumb + heading ─────────────────────────────────────── -->
+  <div class="flex flex-col gap-4">
+    <Breadcrumb.Root>
+      <Breadcrumb.List>
+        <Breadcrumb.Item>
+          <Breadcrumb.Link href="/account">Account</Breadcrumb.Link>
+        </Breadcrumb.Item>
+        <Breadcrumb.Separator />
+        <Breadcrumb.Item>
+          <Breadcrumb.Page>Billing</Breadcrumb.Page>
+        </Breadcrumb.Item>
+      </Breadcrumb.List>
+    </Breadcrumb.Root>
 
-  <PageHeader eyebrow="Billing" title="Billing & Plans" />
+    <header class="flex flex-col gap-1">
+      <span class="text-xs font-medium uppercase tracking-wider text-muted-foreground">Billing</span>
+      <h1 class="text-3xl font-semibold tracking-tight text-foreground">Billing &amp; Plans</h1>
+    </header>
+  </div>
 
+  <!-- ── Error banner ─────────────────────────────────────────────── -->
   {#if form?.error}
-    <p class="error-banner" role="alert">{form.error}</p>
+    <Alert.Root variant="destructive">
+      <AlertCircle class="size-4" />
+      <Alert.Description>{form.error}</Alert.Description>
+    </Alert.Root>
   {/if}
 
   <!-- ── Current plan ─────────────────────────────────────────────── -->
   {#if subscription}
-    <section class="current-plan" aria-label="Current plan">
-      <h2 class="section-heading">Current Plan</h2>
-      <div class="plan-summary">
-        <PlanBadge tier={currentPlan} />
-        <StatusBadge
-          status={subscriptionStatus()}
-          label={subscription.status.replace('_', ' ')}
-        />
-        {#if subscription.current_period_end}
-          <span class="period-text">
-            Renews {new Date(subscription.current_period_end).toLocaleDateString()}
-          </span>
-        {/if}
-      </div>
-      <div class="portal-actions">
+    <Card.Root>
+      <Card.Header>
+        <Card.Title class="text-base">Current Plan</Card.Title>
+      </Card.Header>
+      <Card.Content class="flex flex-col gap-4">
+        <div class="flex items-center gap-3 flex-wrap">
+          <PlanBadge tier={currentPlan} />
+          <StatusBadge
+            status={subscriptionStatus()}
+            label={subscription.status.replace('_', ' ')}
+          />
+          {#if subscription.current_period_end}
+            <span class="font-mono text-xs text-muted-foreground tracking-wide">
+              Renews {new Date(subscription.current_period_end).toLocaleDateString()}
+            </span>
+          {/if}
+        </div>
+      </Card.Content>
+      <Card.Footer class="gap-3 flex-wrap">
         <form method="POST" action="?/portal" use:enhance>
-          <Button type="submit" variant="secondary" size="sm" text="Manage Billing" />
+          <Button type="submit" variant="secondary" size="sm">Manage Billing</Button>
         </form>
         {#if isActive && currentPlan !== 'free'}
           <form method="POST" action="?/cancel" use:enhance>
-            <Button type="submit" variant="danger" size="sm" text="Cancel Subscription" />
+            <Button type="submit" variant="destructive" size="sm">Cancel Subscription</Button>
           </form>
         {/if}
-      </div>
-    </section>
+      </Card.Footer>
+    </Card.Root>
   {/if}
 
   <!-- ── Plan cards ───────────────────────────────────────────────── -->
-  <section class="plans-section" aria-label="Available plans">
-    <h2 class="section-heading">Available Plans</h2>
-    <div class="plans-grid">
+  <section aria-label="Available plans" class="flex flex-col gap-4">
+    <h2 class="text-base font-semibold tracking-tight text-foreground">Available Plans</h2>
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
       {#each plans as plan (plan.key)}
-        {@const isCurrent   = plan.key === currentPlan}
-        {@const PlanIcon    = planIcons[plan.key] ?? Layers}
-        <article class="plan-card" class:current={isCurrent} aria-label="{plan.display_name} plan">
-          <header class="plan-header">
-            <span class="plan-icon" aria-hidden="true">
-              <PlanIcon size={20} strokeWidth={1.5} />
-            </span>
-            <h3 class="plan-name">{plan.display_name}</h3>
-            <div class="plan-price">
-              {#if plan.monthly_price_cents === 0}
-                <strong class="price-amount">Free</strong>
-              {:else}
-                <strong class="price-amount">${(plan.monthly_price_cents / 100).toFixed(0)}</strong>
-                <span class="price-unit">/mo</span>
-              {/if}
+        {@const isCurrent = plan.key === currentPlan}
+        {@const PlanIcon  = planIcons[plan.key] ?? Layers}
+        <Card.Root class={isCurrent ? 'border-primary ring-2 ring-primary/20' : ''}>
+          <Card.Header>
+            <div class="flex items-center gap-2 text-primary">
+              <PlanIcon class="size-5" strokeWidth={1.5} />
             </div>
-          </header>
-
-          <ul class="feature-list">
-            {#if plan.max_turns_per_day}
-              <li><Check size={12} strokeWidth={2} aria-hidden="true" />{plan.max_turns_per_day.toLocaleString()} agent turns/day</li>
+            <Card.Title>{plan.display_name}</Card.Title>
+            <Card.Description class="text-2xl font-bold tracking-tight text-foreground">
+              {#if plan.monthly_price_cents === 0}
+                Free
+              {:else}
+                ${(plan.monthly_price_cents / 100).toFixed(0)}<span class="text-sm font-normal text-muted-foreground">/mo</span>
+              {/if}
+            </Card.Description>
+          </Card.Header>
+          <Card.Content class="flex-1">
+            <ul class="flex flex-col gap-1.5 text-sm text-muted-foreground">
+              <li class="flex items-center gap-2">
+                <Check class="size-3.5 text-emerald-600 shrink-0" strokeWidth={2.5} />
+                {plan.max_turns_per_day ? `${plan.max_turns_per_day.toLocaleString()} agent turns/day` : 'Unlimited agent turns'}
+              </li>
+              <li class="flex items-center gap-2">
+                <Check class="size-3.5 text-emerald-600 shrink-0" strokeWidth={2.5} />
+                {plan.max_storage_gb ? `${plan.max_storage_gb} GB storage` : 'Unlimited storage'}
+              </li>
+              <li class="flex items-center gap-2">
+                <Check class="size-3.5 text-emerald-600 shrink-0" strokeWidth={2.5} />
+                {plan.max_tokens.toLocaleString()} tokens/request
+              </li>
+              <li class="flex items-center gap-2">
+                <Check class="size-3.5 text-emerald-600 shrink-0" strokeWidth={2.5} />
+                {plan.rate_limit_rpm} requests/min
+              </li>
+            </ul>
+          </Card.Content>
+          <Card.Footer>
+            {#if !isCurrent && plan.key !== 'enterprise'}
+              <form method="POST" action="?/upgrade" use:enhance class="w-full">
+                <input type="hidden" name="plan_key" value={plan.key} />
+                <Button type="submit" size="sm" class="w-full">
+                  {plan.monthly_price_cents > 0 ? 'Upgrade' : 'Downgrade'}
+                  <ArrowUpRight class="size-3.5" />
+                </Button>
+              </form>
+            {:else if isCurrent}
+              <div class="w-full text-center font-mono text-xs uppercase tracking-widest text-primary font-semibold">
+                Current Plan
+              </div>
             {:else}
-              <li><Check size={12} strokeWidth={2} aria-hidden="true" />Unlimited agent turns</li>
+              <Button href="mailto:sales@conusai.com" variant="outline" size="sm" class="w-full">
+                Contact Sales
+              </Button>
             {/if}
-            {#if plan.max_storage_gb}
-              <li><Check size={12} strokeWidth={2} aria-hidden="true" />{plan.max_storage_gb} GB storage</li>
-            {:else}
-              <li><Check size={12} strokeWidth={2} aria-hidden="true" />Unlimited storage</li>
-            {/if}
-            <li><Check size={12} strokeWidth={2} aria-hidden="true" />{plan.max_tokens.toLocaleString()} tokens/request</li>
-            <li><Check size={12} strokeWidth={2} aria-hidden="true" />{plan.rate_limit_rpm} requests/min</li>
-          </ul>
-
-          {#if plan.key !== currentPlan && plan.key !== 'enterprise'}
-            <form method="POST" action="?/upgrade" use:enhance>
-              <input type="hidden" name="plan_key" value={plan.key} />
-              <Button
-                type="submit"
-                variant="primary"
-                size="sm"
-                fullWidth
-                text={plan.monthly_price_cents > 0 ? 'Upgrade' : 'Downgrade'}
-                iconTrailing={ArrowUpRight}
-              />
-            </form>
-          {:else if isCurrent}
-            <div class="current-badge" aria-label="Your current plan">Current Plan</div>
-          {:else}
-            <a href="mailto:sales@conusai.com" class="contact-link">Contact Sales</a>
-          {/if}
-        </article>
+          </Card.Footer>
+        </Card.Root>
       {/each}
     </div>
   </section>
 
-  <!-- ── Invoices ──────────────────────────────────────────────────── -->
-  <section class="invoices-section" aria-label="Invoices">
-    <h2 class="section-heading">Invoices</h2>
-    <p class="invoices-hint">View and download invoices from the billing portal.</p>
-    <form method="POST" action="?/portal" use:enhance>
-      <Button type="submit" variant="ghost" size="sm" text="Open billing portal" />
-    </form>
-  </section>
+  <!-- ── Invoices ─────────────────────────────────────────────────── -->
+  <Card.Root>
+    <Card.Header>
+      <Card.Title class="text-base">Invoices</Card.Title>
+      <Card.Description>View and download invoices from the billing portal.</Card.Description>
+    </Card.Header>
+    <Card.Footer>
+      <form method="POST" action="?/portal" use:enhance>
+        <Button type="submit" variant="ghost" size="sm">Open billing portal</Button>
+      </form>
+    </Card.Footer>
+  </Card.Root>
 
 </div>
-
-<style>
-  /* ── Page ────────────────────────────────────────────────────────────────── */
-  .billing-page {
-    max-width: 820px;
-    margin:    0 auto;
-    padding:   var(--space-7) var(--space-4);
-    display:   flex;
-    flex-direction: column;
-    gap:       var(--space-6);
-  }
-
-
-  /* ── Section headings ────────────────────────────────────────────────────── */
-  .section-heading {
-    margin:         0 0 var(--space-3);
-    font-size:      var(--font-size-body);
-    font-weight:    580;
-    letter-spacing: -0.01em;
-    color:          var(--color-fg);
-  }
-
-  /* ── Error banner ────────────────────────────────────────────────────────── */
-  .error-banner {
-    margin:        0;
-    background:    var(--color-danger-soft);
-    color:         var(--color-danger);
-    padding:       var(--space-3) var(--space-4);
-    border-radius: var(--radius-md);
-    border:        1px solid var(--color-danger);
-    font-size:     var(--font-size-meta);
-  }
-
-  /* ── Current plan ────────────────────────────────────────────────────────── */
-  .current-plan {
-    padding:       var(--space-5);
-    border:        1px solid var(--color-border);
-    border-radius: var(--radius-lg);
-    background:    var(--color-bg-raised);
-  }
-
-  .plan-summary {
-    display:     flex;
-    gap:         var(--space-3);
-    align-items: center;
-    margin-bottom: var(--space-4);
-    flex-wrap:   wrap;
-  }
-
-  .period-text {
-    font-family:    var(--font-family-mono);
-    font-size:      var(--font-size-meta);
-    color:          var(--color-fg-subtle);
-    letter-spacing: 0.03em;
-  }
-
-  .portal-actions {
-    display: flex;
-    gap:     var(--space-3);
-    flex-wrap: wrap;
-  }
-
-  /* ── Plans grid ──────────────────────────────────────────────────────────── */
-  .plans-grid {
-    display:               grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap:                   var(--space-4);
-  }
-
-  /* ── Plan card ───────────────────────────────────────────────────────────── */
-  .plan-card {
-    padding:        var(--space-5);
-    border:         1px solid var(--color-border);
-    border-radius:  var(--radius-lg);
-    display:        flex;
-    flex-direction: column;
-    gap:            var(--space-3);
-    background:     var(--color-bg-raised);
-
-    transition: box-shadow var(--duration-fast) var(--ease-standard);
-  }
-
-  .plan-card.current {
-    border-color: var(--color-accent);
-    box-shadow:   0 0 0 2px var(--color-accent-soft);
-  }
-
-  .plan-card:not(.current):hover {
-    box-shadow: 0 4px 16px var(--color-shadow-sm);
-  }
-
-  .plan-header {
-    display:        flex;
-    flex-direction: column;
-    gap:            var(--space-1);
-  }
-
-  .plan-icon {
-    display: inline-flex;
-    color:   var(--color-accent);
-    margin-bottom: 2px;
-  }
-
-  .plan-name {
-    margin:         0;
-    font-size:      var(--font-size-body);
-    font-weight:    580;
-    letter-spacing: -0.012em;
-    color:          var(--color-fg);
-  }
-
-  .plan-price {
-    display:     flex;
-    align-items: baseline;
-    gap:         2px;
-  }
-
-  .price-amount {
-    font-size:      22px;
-    font-weight:    700;
-    letter-spacing: -0.04em;
-    color:          var(--color-fg);
-  }
-
-  .price-unit {
-    font-size: var(--font-size-meta);
-    color:     var(--color-fg-subtle);
-  }
-
-  .feature-list {
-    list-style: none;
-    padding:    0;
-    margin:     0;
-    font-size:  var(--font-size-meta);
-    color:      var(--color-fg-muted);
-    flex:       1;
-    display:    flex;
-    flex-direction: column;
-    gap:        var(--space-1);
-  }
-
-  .feature-list li {
-    display:     flex;
-    align-items: center;
-    gap:         var(--space-2);
-  }
-
-  .feature-list li :global(svg) {
-    color:       var(--color-success);
-    flex-shrink: 0;
-  }
-
-  /* Current plan badge */
-  .current-badge {
-    text-align:     center;
-    font-family:    var(--font-family-mono);
-    font-size:      var(--font-size-label);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color:          var(--color-accent);
-    font-weight:    600;
-    padding:        var(--space-2) 0;
-    border-top:     1px solid var(--color-accent-soft);
-  }
-
-  /* Contact sales link */
-  .contact-link {
-    display:         block;
-    text-align:      center;
-    padding:         var(--space-2) var(--space-3);
-    border:          1px solid var(--color-border);
-    border-radius:   var(--radius-sm);
-    text-decoration: none;
-    font-size:       var(--font-size-meta);
-    font-weight:     500;
-    color:           var(--color-fg-muted);
-    transition:      background var(--duration-fast) var(--ease-standard);
-  }
-  .contact-link:hover { background: var(--color-bg-hover); }
-
-  /* ── Invoices ────────────────────────────────────────────────────────────── */
-  .invoices-hint {
-    margin:      0 0 var(--space-3);
-    font-size:   var(--font-size-meta);
-    color:       var(--color-fg-subtle);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .plan-card { transition: none; }
-  }
-</style>
