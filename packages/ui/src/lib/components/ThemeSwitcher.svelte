@@ -57,8 +57,8 @@
     display:         flex;
     align-items:     center;
     justify-content: center;
-    width:           32px;
-    height:          32px;
+    width:           var(--chip-h-md);
+    height:          var(--chip-h-md);
     border:          1px solid var(--color-border);
     border-radius:   var(--radius-sm);
     background:      transparent;
@@ -66,9 +66,9 @@
     cursor:          pointer;
     outline:         none;
     transition:
-      color        var(--duration-fast) var(--ease-standard),
-      border-color var(--duration-fast) var(--ease-standard),
-      background   var(--duration-fast) var(--ease-standard);
+      color        var(--duration-fast) var(--ease-standard),   /* [feedback] */
+      border-color var(--duration-fast) var(--ease-standard),   /* [feedback] */
+      background   var(--duration-fast) var(--ease-standard);   /* [feedback] */
   }
 
   .theme-switcher:hover {
@@ -87,7 +87,7 @@
   .theme-forge  { color: var(--color-fg-muted); }
 
   .theme-switcher svg {
-    width:  16px;
-    height: 16px;
+    width:  var(--icon-sm);
+    height: var(--icon-sm);
   }
 </style>

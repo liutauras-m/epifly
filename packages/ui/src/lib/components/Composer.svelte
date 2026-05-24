@@ -20,6 +20,7 @@
    */
   import type { Snippet } from 'svelte';
   import { autoGrow } from '../utils/actions.js';
+  import { t } from '../utils/i18n.js';
   import Icon from './Icon.svelte';
   import Chip from './Chip.svelte';
   import { Send, Paperclip, X } from 'lucide-svelte';
@@ -32,7 +33,7 @@
 
   let {
     value       = $bindable(''),
-    placeholder = 'Ask anything…',
+    placeholder = t('composer.placeholder'),
     loading     = false,
     disabled    = false,
     maxRows     = 8,
@@ -62,6 +63,8 @@
   let composerEl  = $state<HTMLElement | undefined>(undefined);
   // iOS keyboard offset — set via visualViewport API (Phase 5.4)
   let keyboardOffset = $state(0);
+  // [feedback] Chat send rebound — true for ~180ms after submit fires
+  let rebounding  = $state(false);
 
   /**
    * Phase 5.4 — visual viewport listener.
@@ -98,6 +101,10 @@
     if (textareaEl) {
       textareaEl.style.height = '';
     }
+    // [feedback] Send rebound — scale 0.93 spring-snap back ~180ms
+    rebounding = true;
+    // Clear after animation completes so it can re-trigger on next send
+    setTimeout(() => { rebounding = false; }, 220);
   }
 
   /** Focus the textarea — exposed so parent can call composerRef.focus(). */
@@ -119,6 +126,7 @@
   bind:this={composerEl}
   class="composer{loading ? ' composer-loading' : ''}{cls ? ` ${cls}` : ''}"
   style:padding-bottom={keyboardOffset > 0 ? `${keyboardOffset}px` : undefined}
+  data-rebounding={rebounding || undefined}
 >
 
   <!-- Attachments row -->
@@ -136,14 +144,14 @@
   {/if}
 
   <!-- Input row -->
-  <div class="composer-row">
+  <div class="composer-row{rebounding ? ' composer-row-rebound' : ''}">
 
     <!-- Attach button -->
     {#if onattach}
       <button
         type="button"
         class="composer-btn"
-        aria-label="Attach file"
+        aria-label={t('composer.attach')}
         disabled={disabled || loading}
         onclick={onattach}
       >
@@ -165,19 +173,15 @@
       onkeydown={handleKeydown}
     ></textarea>
 
-    <!-- Send button -->
+    <!-- Send button — never spins; the rebound is the send acknowledgement [feedback] -->
     <button
       type="submit"
       class="composer-send"
-      aria-label="Send message"
+      aria-label={t('composer.send')}
       disabled={!canSend}
       onclick={submit}
     >
-      {#if loading}
-        <span class="send-spinner" aria-hidden="true"></span>
-      {:else}
-        <Icon icon={Send} size="md" />
-      {/if}
+      <Icon icon={Send} size="md" />
     </button>
 
   </div>
@@ -208,8 +212,8 @@
     padding:        var(--space-2) var(--space-2) var(--space-2) var(--space-3);
 
     transition:
-      border-color var(--duration-fast) var(--ease-standard),
-      box-shadow   var(--duration-fast) var(--ease-standard);
+      border-color var(--duration-fast) var(--ease-standard),  /* [feedback] */
+      box-shadow   var(--duration-fast) var(--ease-standard);   /* [feedback] */
   }
   .composer-row:focus-within {
     border-color: var(--color-accent);
@@ -246,13 +250,13 @@
     display:        flex;
     align-items:    center;
     justify-content: center;
-    width:          36px;
-    height:         36px;
+    width:          var(--hit-sm);
+    height:         var(--hit-sm);
     border:         none;
     border-radius:  var(--radius-sm);
     cursor:         pointer;
     flex-shrink:    0;
-    transition:     background var(--duration-fast) var(--ease-standard);
+    transition:     background var(--duration-fast) var(--ease-standard);  /* [feedback] */
     outline:        none;
   }
   .composer-btn:focus-visible,
@@ -278,7 +282,7 @@
   /* Send */
   .composer-send {
     background:  var(--color-accent);
-    color:       #ffffff;
+    color:       var(--color-on-accent);
   }
   .composer-send:hover:not(:disabled) {
     background: var(--color-accent-hover);
@@ -289,21 +293,19 @@
     cursor:     not-allowed;
   }
 
-  /* ── Spinner ─────────────────────────────────────────────────────────────── */
-  .send-spinner {
-    display:      inline-block;
-    width:        16px;
-    height:       16px;
-    border:       2px solid currentColor;
-    border-top-color: transparent;
-    border-radius: 50%;
-    animation:    composer-spin 600ms linear infinite;
+  /* ── Send rebound [feedback] — scale spring-snap 0.93→1.02→1 ───────────── */
+  .composer-row-rebound {
+    animation: send-rebound 180ms var(--ease-emphasized-decelerate, cubic-bezier(0.05, 0.7, 0.1, 1)) both;
+    transform-origin: center bottom;
   }
-  @keyframes composer-spin {
-    to { transform: rotate(360deg); }
+  @keyframes send-rebound {
+    0%   { transform: scale(1);    }
+    30%  { transform: scale(0.93); }   /* press trough */
+    72%  { transform: scale(1.02); }   /* spring overshoot */
+    100% { transform: scale(1);    }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .send-spinner { animation-duration: 0.01ms !important; }
+    .composer-row-rebound { animation: none !important; }
   }
 </style>

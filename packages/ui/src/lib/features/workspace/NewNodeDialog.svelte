@@ -54,17 +54,19 @@
 </div>
 
 <style>
-	.dialog-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-	.dialog { background: var(--surface, #fff); border-radius: 0.5rem; padding: 1.5rem; max-width: 24rem; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.15); }
-	.dialog-title { font-size: 1rem; font-weight: 600; margin: 0 0 1rem; }
-	.kind-group { border: none; padding: 0; margin: 0 0 1rem; display: flex; gap: 1rem; }
-	.kind-legend { font-size: 0.8125rem; opacity: 0.65; margin-bottom: 0.375rem; float: left; width: 100%; }
-	.kind-option { font-size: 0.875rem; display: flex; align-items: center; gap: 0.375rem; cursor: pointer; }
-	.dialog-field { display: flex; flex-direction: column; gap: 0.375rem; margin-bottom: 1rem; }
-	.label-text { font-size: 0.8125rem; opacity: 0.65; }
-	.dialog-input { border: 1px solid var(--border, #d1cdc8); border-radius: 0.25rem; padding: 0.5rem 0.625rem; font-size: 0.875rem; width: 100%; }
-	.dialog-error { color: #dc2626; font-size: 0.8125rem; margin: 0 0 0.75rem; }
-	.dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.25rem; }
-	.btn-ghost { background: none; border: 1px solid var(--border, #d1cdc8); border-radius: 0.25rem; padding: 0.375rem 0.875rem; cursor: pointer; font-size: 0.875rem; }
-	.btn-primary { background: var(--ember-2, #0d9488); color: #fff; border: none; border-radius: 0.25rem; padding: 0.375rem 0.875rem; cursor: pointer; font-size: 0.875rem; }
+	.dialog-backdrop { position: fixed; inset: 0; background: var(--color-backdrop); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+	.dialog { background: var(--color-bg-raised); border-radius: var(--radius-md); padding: var(--space-5); max-width: 24rem; width: 90%; box-shadow: 0 8px 32px var(--color-shadow-md); }
+	.dialog-title { font-size: var(--font-size-body); font-weight: 600; margin: 0 0 var(--space-3); }
+	.kind-group { border: none; padding: 0; margin: 0 0 var(--space-3); display: flex; gap: var(--space-4); }
+	.kind-legend { font-size: var(--font-size-meta); opacity: 0.65; margin-bottom: var(--space-1); float: left; width: 100%; }
+	.kind-option { font-size: var(--font-size-meta); display: flex; align-items: center; gap: var(--space-1); cursor: pointer; }
+	.dialog-field { display: flex; flex-direction: column; gap: var(--space-1); margin-bottom: var(--space-3); }
+	.label-text { font-size: var(--font-size-meta); opacity: 0.65; }
+	.dialog-input { border: 1px solid var(--color-border); border-radius: var(--radius-xs); padding: var(--space-2) var(--space-2); font-size: var(--font-size-meta); width: 100%; }
+	.dialog-input:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset); border-color: var(--color-accent); }
+	.dialog-error { color: var(--color-danger); font-size: var(--font-size-meta); margin: 0 0 var(--space-2); }
+	.dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
+	.btn-ghost { background: none; border: 1px solid var(--color-border); border-radius: var(--radius-xs); padding: var(--space-1) var(--space-3); cursor: pointer; font-size: var(--font-size-meta); }
+	.btn-primary { background: var(--color-accent); color: var(--color-on-accent); border: none; border-radius: var(--radius-xs); padding: var(--space-1) var(--space-3); cursor: pointer; font-size: var(--font-size-meta); }
+	.btn-primary:hover { background: var(--color-accent-hover); }
 </style>

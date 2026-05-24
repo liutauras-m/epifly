@@ -17,10 +17,12 @@
 
 import { describe, it, expect } from 'vitest';
 import { existsSync } from 'node:fs';
-import { join, fileURLToPath } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const ROOT = join(fileURLToPath(import.meta.url), '../../../../..');
+// From: packages/ui/tests/exports.test.ts
+// Go up 4 levels: tests/ → packages/ui/ → packages/ → conusai-platform/
+const ROOT = join(fileURLToPath(import.meta.url), '../../../..');
 const UI_ROOT = join(ROOT, 'packages/ui/src/lib');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -61,6 +63,10 @@ describe('@conusai/ui main index exports', async () => {
   const expectedExports = [
     // Primitives
     'Type', 'Icon', 'Button', 'Field', 'Chip', 'EmptyState', 'StatusBadge',
+    // Page-level (Phase 4)
+    'PageHeader', 'DataTable', 'Breadcrumbs',
+    // Chat primitives (Phase 4.2)
+    'ThinkingIndicator', 'MessageBubble', 'MessageList', 'ToolCard',
     // Shell
     'AppShell', 'AppHeader', 'Drawer', 'Sheet', 'Sidebar', 'SidebarSection', 'SidebarItem',
     'Composer',
@@ -96,8 +102,11 @@ describe('@conusai/ui component files exist', () => {
   const components = [
     'AppShell', 'AppHeader', 'Drawer', 'Sheet', 'Sidebar', 'SidebarSection', 'SidebarItem',
     'Type', 'Icon', 'Button', 'Field', 'Chip', 'EmptyState', 'StatusBadge',
-    'Composer', 'ThemeProvider', 'ThemeSwitcher', 'ToastHost', 'WorkspaceTree',
+    'PageHeader', 'DataTable', 'Breadcrumbs',
+    'Composer', 'ThemeProvider', 'ThemeSwitcher', 'ToastHost',
     'PlanBadge', 'PlanCard', 'UsageMeter', 'QuotaBanner', 'CapabilityCard',
+    // Phase 4.2 chat primitives
+    'ThinkingIndicator', 'MessageBubble', 'MessageList', 'ToolCard',
   ];
 
   for (const name of components) {
@@ -116,8 +125,15 @@ describe('@conusai/ui component files exist', () => {
 describe('@conusai/ui feature files exist', () => {
   const features = [
     'AgentChatStream', 'SuggestionChips', 'ContextChip', 'CapabilityBrowser',
-    'CapabilityRow', 'WorkspaceExplorer', 'DrawerRecentChats',
+    'CapabilityRow', 'DrawerRecentChats',
+    'ShellScreen', 'ShellLoginScreen',
+    'QuotaList', 'ProfileSheet',
+    // Phase 3.5: AttachmentSheet migrated from browser-shell
+    'AttachmentSheet',
+    // Phase 4.7: WorkspaceTree is the canonical name; WorkspaceExplorer shim deleted at Phase 4 close
+    'WorkspaceTree',
   ];
+  const billingFeatures = ['InvoiceStatusBadge'];
   const screens = [
     'ChatScreen', 'CapabilitiesScreen', 'ArtifactsScreen',
     'ArtifactRow', 'CapabilityDetailSheet',
@@ -126,6 +142,12 @@ describe('@conusai/ui feature files exist', () => {
   for (const name of features) {
     it(`features/${name}.svelte exists`, () => {
       expect(fileExists('features', `${name}.svelte`)).toBe(true);
+    });
+  }
+
+  for (const name of billingFeatures) {
+    it(`features/billing/${name}.svelte exists`, () => {
+      expect(fileExists('features', 'billing', `${name}.svelte`)).toBe(true);
     });
   }
 

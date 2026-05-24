@@ -26,11 +26,19 @@
   import PlanCard           from '@conusai/ui/components/PlanCard.svelte';
   import UsageMeter         from '@conusai/ui/components/UsageMeter.svelte';
   import CapabilityCard     from '@conusai/ui/components/CapabilityCard.svelte';
-  import AgentChatComposer  from '@conusai/ui/components/AgentChatComposer.svelte';
-  import AppTopBar          from '@conusai/ui/components/AppTopBar.svelte';
   import ThemeSwitcher      from '@conusai/ui/components/ThemeSwitcher.svelte';
   import ToastHost          from '@conusai/ui/components/ToastHost.svelte';
   import QuotaBanner        from '@conusai/ui/components/QuotaBanner.svelte';
+  // ── Phase 3 shell primitives ──────────────────────────────────────────────
+  import AppShell           from '@conusai/ui/components/AppShell.svelte';
+  import AppHeader          from '@conusai/ui/components/AppHeader.svelte';
+  import Sidebar            from '@conusai/ui/components/Sidebar.svelte';
+  import SidebarSection     from '@conusai/ui/components/SidebarSection.svelte';
+  import SidebarItem        from '@conusai/ui/components/SidebarItem.svelte';
+  import Drawer             from '@conusai/ui/components/Drawer.svelte';
+  import Sheet              from '@conusai/ui/components/Sheet.svelte';
+  import WorkspaceTree      from '@conusai/ui/features/WorkspaceTree.svelte';
+  import ThemeProvider      from '@conusai/ui/components/ThemeProvider.svelte';
   import { toasts }         from '@conusai/ui/stores';
   import { getContext }     from 'svelte';
 
@@ -52,22 +60,45 @@
   import planCardFx          from '@conusai/ui/components/PlanCard.fixtures.js';
   import usageMeterFx        from '@conusai/ui/components/UsageMeter.fixtures.js';
   import capabilityCardFx    from '@conusai/ui/components/CapabilityCard.fixtures.js';
-  import agentChatComposerFx from '@conusai/ui/components/AgentChatComposer.fixtures.js';
-  import appTopBarFx         from '@conusai/ui/components/AppTopBar.fixtures.js';
   import themeSwitcherFx     from '@conusai/ui/components/ThemeSwitcher.fixtures.js';
   import toastHostFx         from '@conusai/ui/components/ToastHost.fixtures.js';
   import quotaBannerFx       from '@conusai/ui/components/QuotaBanner.fixtures.js';
+  import appShellFx          from '@conusai/ui/components/AppShell.fixtures.js';
+  import appHeaderFx         from '@conusai/ui/components/AppHeader.fixtures.js';
+  import sidebarFx           from '@conusai/ui/components/Sidebar.fixtures.js';
+  import sidebarSectionFx    from '@conusai/ui/components/SidebarSection.fixtures.js';
+  import sidebarItemFx       from '@conusai/ui/components/SidebarItem.fixtures.js';
+  import drawerFx            from '@conusai/ui/components/Drawer.fixtures.js';
+  import sheetFx             from '@conusai/ui/components/Sheet.fixtures.js';
+  import workspaceTreeFx     from '@conusai/ui/features/WorkspaceTree.fixtures.js';
+  import themeProviderFx     from '@conusai/ui/components/ThemeProvider.fixtures.js';
+  // ── Phase 4 primitives ────────────────────────────────────────────────────
+  import PageHeader          from '@conusai/ui/components/PageHeader.svelte';
+  import DataTable           from '@conusai/ui/components/DataTable.svelte';
+  import Breadcrumbs         from '@conusai/ui/components/Breadcrumbs.svelte';
+  import ThinkingIndicator   from '@conusai/ui/components/ThinkingIndicator.svelte';
+  import MessageBubble       from '@conusai/ui/components/MessageBubble.svelte';
+  import MessageList         from '@conusai/ui/components/MessageList.svelte';
+  import ToolCard            from '@conusai/ui/components/ToolCard.svelte';
+  import pageHeaderFx        from '@conusai/ui/components/PageHeader.fixtures.js';
+  import dataTableFx         from '@conusai/ui/components/DataTable.fixtures.js';
+  import breadcrumbsFx       from '@conusai/ui/components/Breadcrumbs.fixtures.js';
+  import thinkingIndicatorFx from '@conusai/ui/components/ThinkingIndicator.fixtures.js';
+  import messageBubbleFx     from '@conusai/ui/components/MessageBubble.fixtures.js';
+  import messageListFx       from '@conusai/ui/components/MessageList.fixtures.js';
+  import toolCardFx          from '@conusai/ui/components/ToolCard.fixtures.js';
 
   import type { Component } from 'svelte';
   import type { ComponentFixtureSet } from '@conusai/ui/gallery.types';
 
   // ── Registry ──────────────────────────────────────────────────────────────
   interface RegistryEntry {
-    name:       string;
+    name:        string;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    component:  Component<any>;
-    fixtures:   ComponentFixtureSet;
-    fullWidth?: boolean;    // stretch to container width
+    component:   Component<any>;
+    fixtures:    ComponentFixtureSet;
+    fullWidth?:  boolean;    // stretch to container width
+    deprecated?: boolean;    // @deprecated alias — rendered with a badge
   }
 
   const REGISTRY: RegistryEntry[] = [
@@ -81,16 +112,35 @@
     { name: 'EmptyState',        component: EmptyState,        fixtures: emptyStateFx,   fullWidth: true   },
     { name: 'StatusBadge',       component: StatusBadge,       fixtures: statusBadgeFx                     },
     { name: 'Composer',          component: Composer,          fixtures: composerFx2,    fullWidth: true   },
+    // ── Phase 4 page primitives ───────────────────────────────────────────
+    { name: 'PageHeader',        component: PageHeader,        fixtures: pageHeaderFx,   fullWidth: true   },
+    { name: 'DataTable',         component: DataTable,         fixtures: dataTableFx,    fullWidth: true   },
+    { name: 'Breadcrumbs',       component: Breadcrumbs,       fixtures: breadcrumbsFx                     },
+    // ── Phase 4.2 chat primitives ─────────────────────────────────────────
+    { name: 'ThinkingIndicator', component: ThinkingIndicator, fixtures: thinkingIndicatorFx               },
+    { name: 'MessageBubble',     component: MessageBubble,     fixtures: messageBubbleFx                   },
+    { name: 'MessageList',       component: MessageList,       fixtures: messageListFx,  fullWidth: true   },
+    { name: 'ToolCard',          component: ToolCard,          fixtures: toolCardFx,     fullWidth: true   },
+    // ── Phase 3 shell primitives ──────────────────────────────────────────
+    { name: 'AppShell',          component: AppShell,          fixtures: appShellFx,     fullWidth: true   },
+    { name: 'AppHeader',         component: AppHeader,         fixtures: appHeaderFx,    fullWidth: true   },
+    { name: 'Sidebar',           component: Sidebar,           fixtures: sidebarFx,      fullWidth: true   },
+    { name: 'SidebarSection',    component: SidebarSection,    fixtures: sidebarSectionFx                  },
+    { name: 'SidebarItem',       component: SidebarItem,       fixtures: sidebarItemFx                     },
+    { name: 'Drawer',            component: Drawer,            fixtures: drawerFx,       fullWidth: true   },
+    { name: 'Sheet',             component: Sheet,             fixtures: sheetFx,        fullWidth: true   },
+    { name: 'WorkspaceTree',     component: WorkspaceTree,     fixtures: workspaceTreeFx                   },
+    // ── Theme / meta ──────────────────────────────────────────────────────
+    { name: 'ThemeProvider',     component: ThemeProvider,     fixtures: themeProviderFx                   },
+    { name: 'ThemeSwitcher',     component: ThemeSwitcher,     fixtures: themeSwitcherFx                   },
     // ── Billing components ────────────────────────────────────────────────
     { name: 'PlanBadge',         component: PlanBadge,         fixtures: planBadgeFx                      },
     { name: 'UsageMeter',        component: UsageMeter,        fixtures: usageMeterFx,   fullWidth: true   },
     { name: 'PlanCard',          component: PlanCard,          fixtures: planCardFx,     fullWidth: true   },
     { name: 'CapabilityCard',    component: CapabilityCard,    fixtures: capabilityCardFx                  },
-    { name: 'AgentChatComposer', component: AgentChatComposer, fixtures: agentChatComposerFx, fullWidth: true   },
-    { name: 'AppTopBar',         component: AppTopBar,         fixtures: appTopBarFx,    fullWidth: true   },
-    { name: 'ThemeSwitcher',     component: ThemeSwitcher,     fixtures: themeSwitcherFx                   },
-    { name: 'ToastHost',         component: ToastHost,         fixtures: toastHostFx,    fullWidth: true   },
     { name: 'QuotaBanner',       component: QuotaBanner,       fixtures: quotaBannerFx,  fullWidth: true   },
+    { name: 'ToastHost',         component: ToastHost,         fixtures: toastHostFx,    fullWidth: true   },
+    // Phase 4 close: AppTopBar/AppDrawer/AppBottomSheet/AgentChatComposer shims deleted.
   ];
 
   // ── State ─────────────────────────────────────────────────────────────────
@@ -124,9 +174,11 @@
           <button
             class="nav-item"
             class:active={r.name === activeSection}
+            class:deprecated={r.deprecated}
             onclick={() => activeSection = r.name}
           >
             {r.name}
+            {#if r.deprecated}<span class="dep-badge" aria-label="deprecated">@dep</span>{/if}
           </button>
         </li>
       {/each}
@@ -139,7 +191,10 @@
     <!-- Section heading + toolbar -->
     <div class="section-header">
       <div class="heading-row">
-        <h1 class="component-name">{entry.name}</h1>
+        <h1 class="component-name">
+          {entry.name}
+          {#if entry.deprecated}<span class="deprecated-notice">@deprecated — delete at Phase 4 close</span>{/if}
+        </h1>
         <ThemeSwitcher />
       </div>
       {#if entry.fixtures.note}
@@ -197,26 +252,26 @@
     display: grid;
     grid-template-columns: 200px 1fr;
     min-height: 100dvh;
-    background: var(--bg, var(--paper));
-    color: var(--ink);
+    background: var(--color-bg);
+    color: var(--color-fg);
   }
 
   /* ── Sidebar ─────────────────────────────────────────────────────────────── */
   .sidebar {
-    border-right: 1px solid var(--rule);
+    border-right: 1px solid var(--color-border);
     padding: var(--space-4) 0;
     position: sticky;
     top: 0;
     height: 100dvh;
     overflow-y: auto;
-    background: var(--paper-2);
+    background: var(--color-bg-raised);
   }
   .sidebar-header {
     display: flex;
     align-items: baseline;
     gap: var(--space-2);
     padding: 0 var(--space-4) var(--space-3);
-    border-bottom: 1px solid var(--rule);
+    border-bottom: 1px solid var(--color-border);
     margin-bottom: var(--space-2);
   }
   .eyebrow {
@@ -224,12 +279,12 @@
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--ink-3);
+    color: var(--color-fg-subtle);
   }
   .count {
     font-size: 11px;
-    color: var(--ink-3);
-    background: var(--paper-3);
+    color: var(--color-fg-subtle);
+    background: var(--color-bg-hover);
     padding: 1px 6px;
     border-radius: 99px;
   }
@@ -242,12 +297,12 @@
     background: transparent;
     border: none;
     font-size: 13px;
-    color: var(--ink-2);
+    color: var(--color-fg-muted);
     cursor: pointer;
     transition: background var(--duration-fast);
   }
-  .nav-item:hover  { background: var(--paper-3); }
-  .nav-item.active { background: var(--ember); color: #fff; font-weight: 500; }
+  .nav-item:hover  { background: var(--color-bg-hover); }
+  .nav-item.active { background: var(--color-accent); color: var(--color-on-accent); font-weight: 500; }
 
   /* ── Canvas ──────────────────────────────────────────────────────────────── */
   .canvas { padding: var(--space-6); overflow-y: auto; }
@@ -263,11 +318,11 @@
     font-size: 22px;
     font-weight: 600;
     margin: 0;
-    color: var(--ink);
+    color: var(--color-fg);
   }
   .note {
     font-size: 13px;
-    color: var(--ink-3);
+    color: var(--color-fg-subtle);
     margin: 0 0 var(--space-3);
     max-width: 560px;
   }
@@ -283,12 +338,12 @@
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: var(--ink-3);
+    color: var(--color-fg-subtle);
   }
   .toolbar-sep {
     width: 1px;
     height: 16px;
-    background: var(--rule);
+    background: var(--color-border);
     margin: 0 var(--space-1);
   }
   .toggle-chip {
@@ -296,17 +351,17 @@
     align-items: center;
     gap: 4px;
     font-size: 12px;
-    color: var(--ink-2);
+    color: var(--color-fg-muted);
     cursor: pointer;
     padding: 3px 10px;
-    border: 1px solid var(--rule);
+    border: 1px solid var(--color-border);
     border-radius: 99px;
-    background: var(--paper);
+    background: var(--color-bg);
     transition: background var(--duration-fast), color var(--duration-fast);
   }
   .toggle-chip:has(input:checked) {
-    background: var(--ink);
-    color: var(--paper);
+    background: var(--color-fg);
+    color: var(--color-bg);
     border-color: transparent;
   }
   .toggle-chip input { display: none; }
@@ -315,10 +370,10 @@
     font-size: 11px;
     padding: 3px 10px;
     border-radius: 99px;
-    border: 1px solid var(--rule);
+    border: 1px solid var(--color-border);
     background: transparent;
     cursor: pointer;
-    color: var(--ink-2);
+    color: var(--color-fg-muted);
     transition: background var(--duration-fast);
   }
   .chip-btn.success { border-color: var(--success); color: var(--success); }
@@ -329,11 +384,11 @@
     margin-left: auto;
     font-size: 11px;
     font-family: var(--font-mono, ui-monospace, monospace);
-    color: var(--ink-3);
-    background: var(--paper-3);
+    color: var(--color-fg-subtle);
+    background: var(--color-bg-hover);
     padding: 2px 8px;
     border-radius: 99px;
-    border: 1px solid var(--rule);
+    border: 1px solid var(--color-border);
   }
 
   /* ── Fixture grid ────────────────────────────────────────────────────────── */
@@ -356,18 +411,44 @@
 
   .fixture-label {
     font-size: 11px;
-    color: var(--ink-3);
+    color: var(--color-fg-subtle);
     font-family: var(--font-mono, ui-monospace, monospace);
   }
 
   .fixture-stage {
     padding: var(--space-4);
-    background: var(--paper);
-    border: 1px solid var(--rule);
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     display: flex;
     align-items: flex-start;
     justify-content: flex-start;
   }
   .fixture-frame.full-width .fixture-stage { display: block; }
+
+  /* ── Deprecated component indicators ───────────────────────────────────── */
+  .nav-item.deprecated { opacity: 0.55; }
+  .nav-item.deprecated:hover { opacity: 0.85; }
+  .dep-badge {
+    display: inline-block;
+    margin-left: var(--space-1);
+    font-size: 9px;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    padding: 1px 4px;
+    border-radius: 4px;
+    background: rgba(217, 119, 6, 0.15);
+    color: var(--color-warning, #d97706);
+    vertical-align: middle;
+  }
+  .deprecated-notice {
+    display: inline-block;
+    margin-left: var(--space-3);
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--color-warning, #d97706);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    background: rgba(217, 119, 6, 0.10);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-xs);
+  }
 </style>

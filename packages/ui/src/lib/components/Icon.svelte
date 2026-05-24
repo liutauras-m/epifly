@@ -15,22 +15,20 @@
    *   <Icon icon={Search} size={32} />          ← explicit px
    *   <Icon icon={Search} label="Search" />     ← standalone — adds role="img"
    */
-  import type { Component } from 'svelte';
-
-  export type IconSize = 'sm' | 'md' | 'lg';
+  import type { IconSize, IconComponent } from './Icon.types.js';
+  export type { IconSize, IconComponent };
 
   const SIZE_PX: Record<IconSize, number> = { sm: 16, md: 20, lg: 24 };
 
   let {
-    icon:       IconComponent,
+    icon:       IconComp,
     size   = 'md' as IconSize | number,
     label,
     class: cls = '',
     strokeWidth = 1.5,
     color,
   }: {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    icon:         Component<any>;
+    icon:         IconComponent;
     size?:        IconSize | number;
     /** Accessible label — when provided the icon gets role="img" instead of aria-hidden. */
     label?:       string;
@@ -48,7 +46,7 @@
 </script>
 
 <span class="icon icon-{typeof size === 'string' ? size : 'custom'}{cls ? ` ${cls}` : ''}" {...a11y}>
-  <IconComponent size={px} strokeWidth={strokeWidth} color={color ?? 'currentColor'} />
+  <IconComp size={px} strokeWidth={strokeWidth} color={color ?? 'currentColor'} />
 </span>
 
 <style>

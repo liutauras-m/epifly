@@ -18,7 +18,7 @@
    *   <Chip label="Beta" variant="outlined" />
    *   <Chip label="science" onremove={handleRemove} />
    */
-  import type { Component } from 'svelte';
+  import type { IconComponent } from './Icon.types.js';
   import Icon from './Icon.svelte';
   import { X } from 'lucide-svelte';
 
@@ -31,7 +31,6 @@
     size      = 'md'     as ChipSize,
     selected  = false,
     disabled  = false,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     icon,
     class: cls = '',
     onclick,
@@ -44,8 +43,7 @@
     selected?:    boolean;
     disabled?:    boolean;
     /** Optional leading icon (lucide-svelte component) */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    icon?:        Component<any>;
+    icon?:        IconComponent;
     class?:       string;
     onclick?:     (e: MouseEvent) => void;
     /** When provided the chip renders a ✕ remove button */
@@ -53,8 +51,11 @@
     [key: string]: unknown;
   } = $props();
 
-  const interactive  = $derived(Boolean(onclick));
   const removable    = $derived(Boolean(onremove));
+  // A removable chip always renders as <span> (the remove <button> inside is the interactive element).
+  // An interactive chip (onclick-only) renders as <button>.
+  // A chip cannot be both — <button> inside <button> is invalid HTML.
+  const interactive  = $derived(Boolean(onclick) && !removable);
   const iconSz       = $derived(size === 'sm' ? 'sm' : 'sm');  // chips always use sm icons
 </script>
 
@@ -63,9 +64,10 @@
   The remove button is always a nested <button> regardless of parent.
 -->
 {#if interactive}
+  <!-- interactive=true means removable=false, so no nested <button> ever rendered -->
   <button
     type="button"
-    class="chip chip-{variant} chip-{size}{selected ? ' chip-selected' : ''}{removable ? ' chip-removable' : ''}{cls ? ` ${cls}` : ''}"
+    class="chip chip-{variant} chip-{size}{selected ? ' chip-selected' : ''}{cls ? ` ${cls}` : ''}"
     {disabled}
     aria-pressed={selected}
     {onclick}
@@ -73,17 +75,6 @@
   >
     {#if icon}<Icon {icon} size={iconSz} />{/if}
     <span class="chip-label">{label}</span>
-    {#if removable}
-      <button
-        type="button"
-        class="chip-remove"
-        tabindex="-1"
-        aria-label="Remove {label}"
-        onclick={(e) => { e.stopPropagation(); onremove?.(e); }}
-      >
-        <Icon icon={X} size="sm" />
-      </button>
-    {/if}
   </button>
 {:else}
   <span
@@ -124,7 +115,8 @@
     transition:
       background   var(--duration-fast) var(--ease-standard),
       border-color var(--duration-fast) var(--ease-standard),
-      color        var(--duration-fast) var(--ease-standard);
+      color        var(--duration-fast) var(--ease-standard),
+      transform    var(--duration-fast) var(--ease-standard);  /* [feedback] */
   }
 
   /* Interactive chips */
@@ -143,14 +135,14 @@
 
   /* ── Sizes ───────────────────────────────────────────────────────────────── */
   .chip-sm {
-    height:    24px;
+    height:    var(--chip-h-sm);
     padding:   0 var(--space-2);
     font-size: var(--font-size-label);    /* 11px */
-    gap:       3px;
+    gap:       var(--space-1);
   }
 
   .chip-md {
-    height:    32px;
+    height:    var(--chip-h-md);
     padding:   0 var(--space-3);
     font-size: var(--font-size-meta);     /* 13px */
   }
@@ -212,4 +204,21 @@
     transition:     opacity var(--duration-fast);
   }
   .chip-remove:hover { opacity: 1; }
+
+  /* ── Hover lift [feedback] — pointer-fine devices only (not touch) ──────── */
+  @media (hover: hover) and (pointer: fine) {
+    button.chip:not(:disabled):hover {
+      transform: translateY(-1px);
+    }
+    button.chip:not(:disabled):active {
+      transform: translateY(0);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* [feedback] reduced-motion: keep color/background only, drop transform */
+    .chip { transition: background var(--duration-fast) var(--ease-standard),
+                        border-color var(--duration-fast) var(--ease-standard),
+                        color var(--duration-fast) var(--ease-standard) !important; }
+  }
 </style>

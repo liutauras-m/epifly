@@ -1,8 +1,13 @@
-// GENERATED — do not hand-edit.
-// Source of truth: packages/ui/tokens/tokens.json
-// Regenerate with: node scripts/build-tokens.mjs
-
-export type FoundryToken =
+/** Auto-generated design token names. Run `node scripts/build-tokens.mjs` to regenerate. */
+export type TokenName =
+  | '--ink'
+  | '--ink-2'
+  | '--ink-3'
+  | '--paper'
+  | '--paper-2'
+  | '--paper-3'
+  | '--rule'
+  | '--seam'
   | '--ink'
   | '--ink-2'
   | '--ink-3'
@@ -23,7 +28,18 @@ export type FoundryToken =
   | '--shadow-md'
   | '--backdrop'
   | '--ember'
+  | '--ember-2'
+  | '--ember-soft'
+  | '--ember-glow'
   | '--cyan'
+  | '--cyan-soft'
+  | '--success'
+  | '--success-soft'
+  | '--danger'
+  | '--danger-soft'
+  | '--shadow-sm'
+  | '--shadow-md'
+  | '--backdrop'
   | '--poster-gradient'
   | '--poster-hi'
   | '--poster-em'
@@ -42,6 +58,13 @@ export type FoundryToken =
   | '--color-danger-soft'
   | '--color-success'
   | '--color-success-soft'
+  | '--color-warning'
+  | '--color-warning-text'
+  | '--color-warning-soft'
+  | '--color-warning-border'
+  | '--color-on-accent'
+  | '--color-on-danger'
+  | '--color-on-success'
   | '--color-shadow-sm'
   | '--color-shadow-md'
   | '--color-backdrop'
@@ -65,6 +88,8 @@ export type FoundryToken =
   | '--t-meta'
   | '--t-label'
   | '--t-mono'
+  | '--space-px'
+  | '--space-half'
   | '--space-1'
   | '--space-2'
   | '--space-3'
@@ -119,9 +144,24 @@ export type FoundryToken =
   | '--composer-w'
   | '--gutter'
   | '--hit'
+  | '--hit-sm'
+  | '--hit-xs'
+  | '--icon-xs'
   | '--icon-sm'
   | '--icon-md'
   | '--icon-lg'
+  | '--topbar-height'
+  | '--topbar-height-compact'
+  | '--topbar-height-expanded'
+  | '--chip-h-sm'
+  | '--chip-h-md'
+  | '--dot-sm'
+  | '--dot-md'
+  | '--sheet-handle-w'
+  | '--sheet-handle-h'
+  | '--toast-max-w'
+  | '--toast-dismiss-size'
+  | '--meter-track-h'
   | '--bp-compact'
   | '--bp-medium'
   | '--bp-expanded'
@@ -138,7 +178,8 @@ export type FoundryToken =
   | '--safe-left'
   | '--foundry-version';
 
-declare module '*.css' {
-  const content: Record<string, string>;
-  export default content;
-}
+export type SpacingToken   = '--space-1' | '--space-2' | '--space-3' | '--space-4' | '--space-5' | '--space-6' | '--space-7' | '--space-8';
+export type RadiusToken    = '--radius-xs' | '--radius-sm' | '--radius-md' | '--radius-lg' | '--radius-xl' | '--radius-full';
+export type DurationToken  = '--duration-fast' | '--duration-normal' | '--duration-stagger' | '--duration-slow' | '--duration-page';
+export type ColorToken     = '--color-bg' | '--color-bg-raised' | '--color-bg-hover' | '--color-fg' | '--color-fg-muted' | '--color-fg-subtle' | '--color-border' | '--color-border-strong' | '--color-accent' | '--color-accent-hover' | '--color-accent-soft' | '--color-danger' | '--color-danger-soft' | '--color-success' | '--color-success-soft' | '--color-warning' | '--color-warning-text' | '--color-warning-soft' | '--color-warning-border' | '--color-on-accent' | '--color-on-danger' | '--color-on-success' | '--color-shadow-sm' | '--color-shadow-md' | '--color-backdrop';
+export type SpringToken    = '--spring-snappy' | '--spring-gentle' | '--spring-bouncy';

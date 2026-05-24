@@ -44,7 +44,8 @@ export function createI18n(locale: string, messages: I18nMessages): I18nInstance
       let msg = messages[key];
       if (msg === undefined) {
         // Development: warn once per missing key
-        if (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (typeof (globalThis as any).process !== 'undefined' && (globalThis as any).process?.env?.NODE_ENV !== 'production') {
           // eslint-disable-next-line no-console
           console.warn(`[i18n] Missing key: "${key}" for locale "${locale}"`);
         }
@@ -109,6 +110,8 @@ export const enMessages: I18nMessages = {
   'nav.close_navigation': 'Close navigation',
   'nav.go_back':          'Go back',
   'nav.new_chat':         'New conversation',
+  'nav.account_settings': 'Open account settings',
+  'nav.sign_out':         'Sign out',
 
   // Screens
   'screen.capabilities': 'Capabilities',

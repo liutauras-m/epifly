@@ -76,10 +76,12 @@
   onclose={handleClose}
   onclick={handleBackdropClick}
 >
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="drawer-panel"
     role="document"
     onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => e.stopPropagation()}
   >
     {#if children}
       {@render children()}
@@ -106,7 +108,7 @@
     &::backdrop {
       background: var(--color-backdrop, rgba(0, 0, 0, 0.4));
       opacity:    0;
-      transition: opacity var(--duration-normal) var(--ease-standard);
+      transition: opacity var(--duration-normal) var(--ease-standard);  /* [continuity] */
     }
 
     &[open]::backdrop {
@@ -126,11 +128,11 @@
     display:     flex;
     flex-direction: column;
 
-    transition: transform var(--duration-normal) var(--ease-emphasized-decelerate);
+    transition: transform var(--duration-normal) var(--ease-emphasized-decelerate);  /* [continuity] */
     will-change: transform;
   }
 
-  /* ── Left drawer ─────────────────────────────────────────────────────────── */
+  /* ── Left drawer (LTR: slides from left; RTL: slides from right) ─────────── */
   .drawer-left .drawer-panel {
     left:         0;
     padding-left: var(--safe-left, 0px);
@@ -141,8 +143,22 @@
   .drawer-left[open] .drawer-panel {
     transform: translateX(0);
   }
+  /* RTL: left-drawer becomes start-edge (right side) */
+  :dir(rtl) .drawer-left .drawer-panel {
+    left:          auto;
+    right:         0;
+    padding-left:  0;
+    padding-right: var(--safe-right, 0px);
+    border-right:  none;
+    border-left:   1px solid var(--color-border);
+    transform:     translateX(100%);
+    box-shadow:    -4px 0 24px var(--color-shadow-md, rgba(0,0,0,0.12));
+  }
+  :dir(rtl) .drawer-left[open] .drawer-panel {
+    transform: translateX(0);
+  }
 
-  /* ── Right drawer ────────────────────────────────────────────────────────── */
+  /* ── Right drawer (LTR: slides from right; RTL: slides from left) ──────── */
   .drawer-right .drawer-panel {
     right:         0;
     padding-right: var(--safe-right, 0px);
@@ -151,6 +167,20 @@
     box-shadow:    -4px 0 24px var(--color-shadow-md, rgba(0,0,0,0.12));
   }
   .drawer-right[open] .drawer-panel {
+    transform: translateX(0);
+  }
+  /* RTL: right-drawer becomes start-edge (left side) */
+  :dir(rtl) .drawer-right .drawer-panel {
+    right:        auto;
+    left:         0;
+    padding-right: 0;
+    padding-left:  var(--safe-left, 0px);
+    border-left:   none;
+    border-right:  1px solid var(--color-border);
+    transform:     translateX(-100%);
+    box-shadow:    4px 0 24px var(--color-shadow-md, rgba(0,0,0,0.12));
+  }
+  :dir(rtl) .drawer-right[open] .drawer-panel {
     transform: translateX(0);
   }
 

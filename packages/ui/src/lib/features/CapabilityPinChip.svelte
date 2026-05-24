@@ -18,7 +18,7 @@
    */
   import type { RoutingMeta } from '@conusai/sdk';
   import { Pin, Info, X } from 'lucide-svelte';
-  import AppBottomSheet from '../components/AppBottomSheet.svelte';
+  import Sheet from '../components/Sheet.svelte';
 
   let {
     routingMeta,
@@ -35,7 +35,7 @@
     routingMeta.forced_capability
       ? routingMeta.forced_capability
           .replace(/[-_]/g, ' ')
-          .replace(/\b\w/g, (c) => c.toUpperCase())
+          .replace(/\b\w/g, (c: string) => c.toUpperCase())
       : 'Routing'
   );
 
@@ -116,7 +116,7 @@
 </button>
 
 {#if popoverOpen && isMobile}
-  <AppBottomSheet open onClose={closePopover}>
+  <Sheet open={true} onclose={closePopover} label="Routing details">
     {#snippet children()}
       <div class="popover-content">
         <h3 class="popover-title">Routing details</h3>
@@ -134,7 +134,7 @@
         </dl>
       </div>
     {/snippet}
-  </AppBottomSheet>
+  </Sheet>
 {:else if popoverOpen && popoverPos}
   <dialog
     bind:this={popoverEl}
@@ -171,18 +171,18 @@
     gap: var(--space-1);
     padding: 2px var(--space-2);
     border-radius: var(--radius-full, 9999px);
-    border: 1px solid color-mix(in srgb, var(--accent, var(--ember)) 40%, transparent);
-    background: color-mix(in srgb, var(--accent, var(--ember)) 10%, transparent);
-    color: var(--accent, var(--ember));
+    border: 1px solid color-mix(in srgb, var(--accent, var(--color-accent)) 40%, transparent);
+    background: color-mix(in srgb, var(--accent, var(--color-accent)) 10%, transparent);
+    color: var(--accent, var(--color-accent));
     font-size: var(--font-size-meta);
     font-family: var(--font-sans, var(--font-family-sans));
     line-height: 1.4;
     cursor: pointer;
     user-select: none;
-    transition: filter var(--duration-fast);
+    transition: filter var(--duration-fast); /* [feedback] */
   }
   .pin-chip:hover { filter: brightness(1.08); }
-  .pin-chip:focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }
+  .pin-chip:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
   .pin-label { font-weight: 500; }
   .dismiss-btn {
     display: inline-flex;
@@ -202,10 +202,10 @@
     z-index: 1000;
     margin: 0;
     padding: 0;
-    border: 1px solid var(--rule);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    background: var(--paper);
-    color: var(--ink);
+    background: var(--color-bg);
+    color: var(--color-fg);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
     min-width: 280px;
     max-width: 360px;
@@ -220,14 +220,14 @@
     align-items: center;
     justify-content: space-between;
     padding-bottom: var(--space-2);
-    border-bottom: 1px solid var(--rule);
+    border-bottom: 1px solid var(--color-border);
     margin-bottom: var(--space-2);
   }
   .popover-title {
     margin: 0;
     font-size: var(--font-size-meta);
     font-weight: 600;
-    color: var(--ink);
+    color: var(--color-fg);
   }
   .popover-close {
     display: inline-flex;
@@ -235,13 +235,13 @@
     justify-content: center;
     background: none;
     border: none;
-    color: var(--ink-3);
+    color: var(--color-fg-subtle);
     cursor: pointer;
     padding: 2px;
     border-radius: var(--radius-sm);
     line-height: 1;
   }
-  .popover-close:hover { color: var(--ink); }
+  .popover-close:hover { color: var(--color-fg); }
 
   .popover-list {
     display: grid;
@@ -251,16 +251,16 @@
     font-size: var(--font-size-meta);
   }
   .popover-list dt {
-    color: var(--ink-3);
+    color: var(--color-fg-subtle);
     font-weight: 500;
   }
   .popover-list dd {
     margin: 0;
-    color: var(--ink);
+    color: var(--color-fg);
     word-break: break-word;
   }
   .popover-list dd.mono {
-    font-family: var(--font-mono);
+    font-family: var(--font-family-mono);
     font-size: 0.92em;
   }
 </style>

@@ -28,7 +28,8 @@ export function realtime(client: InternalClient) {
       return new Proxy({} as WebSocket, {
         get(_, prop) {
           if (prop === 'close') return () => { closed = true; ws?.close(); };
-          const val = (ws as never)[prop];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const val = (ws as any)[prop];
           return typeof val === 'function' ? val.bind(ws) : val;
         },
       });

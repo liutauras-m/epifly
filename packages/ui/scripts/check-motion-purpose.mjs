@@ -8,13 +8,13 @@
  *   - A data-motion-purpose="…" attribute on the same element
  *   - OR the file is in the motion/ helpers allowlist (tags live on keyframe defs)
  *
- * Currently runs as WARNING (exits 0) — flips to ERROR (exits 1) at Phase 7 close.
- * Set env var MOTION_PURPOSE_ENFORCE=1 to enable hard failure now.
+ * Phase 7 close: now runs as ERROR by default (exits 1 on failure).
+ * Set env var MOTION_PURPOSE_ENFORCE=0 to revert to warning-only mode.
  *
  * Usage:
  *   node packages/ui/scripts/check-motion-purpose.mjs
  *
- * Exit code: 0 = pass (or warnings only), 1 = hard failure when enforced.
+ * Exit code: 0 = pass, 1 = hard failure (missing purpose tags).
  */
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -22,7 +22,7 @@ import { join, relative, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT   = fileURLToPath(new URL('../../..', import.meta.url));
-const ENFORCE = process.env.MOTION_PURPOSE_ENFORCE === '1';
+const ENFORCE = process.env.MOTION_PURPOSE_ENFORCE !== '0';
 
 // Files in these directories self-document purpose on the keyframe definitions
 const ALLOWED_DIRS = [
@@ -32,8 +32,11 @@ const ALLOWED_DIRS = [
 
 const PURPOSE_TAG_RE = /\[(feedback|continuity|hierarchy|delight)\]/i;
 const DATA_ATTR_RE   = /data-motion-purpose\s*=\s*["'](feedback|continuity|hierarchy|delight)/i;
-const TRANSITION_RE  = /transition\s*:|animation\s*:/;
-const SVELTE_DIR_RE  = /(?:transition:|in:|out:|use:animate)/;
+// Match CSS transition:/animation: property declarations (not CSS variables `--*:`)
+const TRANSITION_RE  = /(?<![a-zA-Z0-9_-])(transition|animation)\s*:/;
+// Match Svelte template directives — use word boundaries to avoid false positives
+// (e.g. `main:` must not match `in:`, `contain:` must not match `in:`)
+const SVELTE_DIR_RE  = /\b(transition|in|out):[a-zA-Z]|use:animate\b/;
 
 const SCAN_EXTS = new Set(['.svelte', '.css']);
 
@@ -95,7 +98,7 @@ console[level === 'error' ? 'error' : 'warn'](
   `${ENFORCE ? '✖' : '⚠'} check-motion-purpose: ${warnings.length} animation(s) missing purpose tag [feedback|continuity|hierarchy|delight]`
 );
 if (!ENFORCE) {
-  console.warn(`  (Running as WARNING — set MOTION_PURPOSE_ENFORCE=1 to enforce at Phase 7 close)\n`);
+  console.warn(`  (Running as WARNING — remove MOTION_PURPOSE_ENFORCE=0 to restore enforcement)\n`);
 }
 for (const w of warnings) {
   console[level === 'error' ? 'error' : 'warn'](`  ${w.file}:${w.line}  "${w.snippet}"`);

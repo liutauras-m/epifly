@@ -11,3 +11,4 @@ export { breadcrumbsStore } from './breadcrumbs.svelte.js';
 export { screenStore } from './screen.svelte.js';
 export type { Screen } from './screen.svelte.js';
 export { drawerStore } from './drawer.svelte.js';
+export { pinsStore } from './pins.svelte.js';

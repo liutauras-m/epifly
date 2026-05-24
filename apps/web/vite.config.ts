@@ -6,6 +6,12 @@ const BACKEND = process.env.CONUSAI_BACKEND_URL ?? 'http://localhost:8080';
 
 export default defineConfig({
 	plugins: [tailwindcss(), sveltekit()],
+	ssr: {
+		// Force workspace packages through Vite's resolver instead of Node's
+		// ESM loader chain (where @tailwindcss/node's loader can't map
+		// the `.js` extensions in source `.ts` re-exports).
+		noExternal: ['@conusai/sdk', '@conusai/ui', '@conusai/types'],
+	},
 	server: {
 		port: 5173,
 		fs: {

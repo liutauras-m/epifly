@@ -21,7 +21,7 @@
    *   <Button variant="danger" disabled>Delete account</Button>
    */
   import type { Snippet } from 'svelte';
-  import type { Component } from 'svelte';
+  import type { IconComponent } from './Icon.types.js';
   import Icon from './Icon.svelte';
 
   export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline';
@@ -49,11 +49,9 @@
     disabled?:     boolean;
     fullWidth?:    boolean;
     /** Lucide-svelte component to render before the label */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    iconLeading?:  Component<any>;
+    iconLeading?:  IconComponent;
     /** Lucide-svelte component to render after the label */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    iconTrailing?: Component<any>;
+    iconTrailing?: IconComponent;
     class?:        string;
     /** Convenience plain-text label (for fixture files) */
     text?:         string;
@@ -74,7 +72,7 @@
   {...rest}
 >
   {#if iconLeading && !loading}
-    <Icon icon={iconLeading} size={iconSize} aria-hidden="true" />
+    <Icon icon={iconLeading} size={iconSize} />
   {/if}
 
   {#if loading}
@@ -86,7 +84,7 @@
   </span>
 
   {#if iconTrailing && !loading}
-    <Icon icon={iconTrailing} size={iconSize} aria-hidden="true" />
+    <Icon icon={iconTrailing} size={iconSize} />
   {/if}
 </button>
 
@@ -114,13 +112,14 @@
     cursor:         pointer;
     text-decoration: none;
 
-    /* transitions */
+    /* transitions [feedback] */
     transition:
       background     var(--duration-fast) var(--ease-standard),
       border-color   var(--duration-fast) var(--ease-standard),
       color          var(--duration-fast) var(--ease-standard),
       box-shadow     var(--duration-fast) var(--ease-standard),
-      opacity        var(--duration-fast) var(--ease-standard);
+      opacity        var(--duration-fast) var(--ease-standard),
+      transform      var(--duration-fast) var(--ease-standard);
 
     /* focus ring */
     outline:        none;
@@ -141,16 +140,16 @@
   .btn-full { width: 100%; }
 
   /* ── Sizes ───────────────────────────────────────────────────────────────── */
-  .btn-sm { height: 32px; padding: 0 var(--space-3); border-radius: var(--radius-xs); }
-  .btn-md { height: 40px; padding: 0 var(--space-4); }
-  .btn-lg { height: 48px; padding: 0 var(--space-5); font-size: var(--font-size-body); }
+  .btn-sm { height: var(--chip-h-md); padding: 0 var(--space-3); border-radius: var(--radius-xs); }
+  .btn-md { height: var(--hit-sm); padding: 0 var(--space-4); }
+  .btn-lg { height: var(--topbar-height); padding: 0 var(--space-5); font-size: var(--font-size-body); }
 
   /* ── Variants ────────────────────────────────────────────────────────────── */
 
   /* primary — filled ember */
   .btn-primary {
     background:   var(--color-accent);
-    color:        #ffffff;
+    color:        var(--color-on-accent);
     border-color: var(--color-accent);
   }
   .btn-primary:hover:not(:disabled) {
@@ -187,7 +186,7 @@
   /* danger — filled red */
   .btn-danger {
     background:   var(--color-danger);
-    color:        #ffffff;
+    color:        var(--color-on-danger);
     border-color: var(--color-danger);
   }
   .btn-danger:hover:not(:disabled) {
@@ -209,8 +208,8 @@
 
   .spinner {
     display:        inline-block;
-    width:          14px;
-    height:         14px;
+    width:          var(--icon-xs);
+    height:         var(--icon-xs);
     border:         2px solid currentColor;
     border-top-color: transparent;
     border-radius:  50%;
@@ -221,7 +220,21 @@
     to { transform: rotate(360deg); }
   }
 
+  /* ── Hover lift [feedback] — pointer-fine devices only (not touch) ──────── */
+  @media (hover: hover) and (pointer: fine) {
+    .btn:not(:disabled):hover {
+      transform: translateY(-1px);
+    }
+    .btn:not(:disabled):active {
+      transform: translateY(0);
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .spinner { animation-duration: 0.01ms !important; }
+    /* [feedback] reduced-motion: keep color/background only, drop transform */
+    .btn { transition: background var(--duration-fast) var(--ease-standard),
+                       border-color var(--duration-fast) var(--ease-standard),
+                       color var(--duration-fast) var(--ease-standard) !important; }
   }
 </style>

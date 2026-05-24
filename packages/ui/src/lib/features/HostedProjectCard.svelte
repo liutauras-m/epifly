@@ -74,12 +74,12 @@
 
 <style>
   .hosted-card {
-    border: 1px solid var(--rule);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius-md, 10px);
     overflow: hidden;
     margin: var(--space-2, 8px) 0;
-    background: var(--paper, #fff);
-    transition: box-shadow 160ms var(--ease-out, ease);
+    background: var(--color-bg);
+    transition: box-shadow var(--duration-normal) var(--ease-out);  /* [feedback] */
     max-width: 480px;
   }
 
@@ -93,8 +93,8 @@
     align-items: center;
     gap: var(--space-2, 8px);
     padding: var(--space-2, 8px) var(--space-3, 12px);
-    background: var(--paper-2, #f5f5f5);
-    border-bottom: 1px solid var(--rule);
+    background: var(--color-bg-raised);
+    border-bottom: 1px solid var(--color-border);
     font-size: var(--font-size-meta, 0.75rem);
   }
 
@@ -117,7 +117,7 @@
     height: 6px;
     border-radius: 50%;
     background: var(--success, #1a7f4b);
-    animation: live-pulse 2.4s ease-in-out infinite;
+    animation: live-pulse 2.4s ease-in-out infinite; /* [continuity] */
     flex-shrink: 0;
   }
 
@@ -137,7 +137,7 @@
   }
 
   .path {
-    color: var(--ink-3, #888);
+    color: var(--color-fg-subtle);
     font-family: var(--font-mono, monospace);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -158,7 +158,7 @@
     flex: 1;
     font-family: var(--font-mono, monospace);
     font-size: var(--font-size-meta, 0.75rem);
-    color: var(--ink-2, #555);
+    color: var(--color-fg-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -169,8 +169,8 @@
     display: inline-flex;
     align-items: center;
     gap: var(--space-1, 4px);
-    background: var(--ember, #FF6200);
-    color: #fff;
+    background: var(--color-accent);
+    color: var(--color-on-accent);
     border-radius: var(--radius-sm, 6px);
     padding: 6px 14px;
     font-size: var(--font-size-meta, 0.75rem);
@@ -178,13 +178,13 @@
     text-decoration: none;
     white-space: nowrap;
     flex-shrink: 0;
-    transition: background 120ms var(--ease-out, ease), transform 80ms ease;
+    transition: background var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);  /* [feedback] */
   }
 
-  .open-btn:hover  { background: var(--ember-2, #E05500); }
+  .open-btn:hover  { background: var(--color-accent-hover); }
   .open-btn:active { transform: scale(0.97); }
   .open-btn:focus-visible {
-    outline: 2px solid var(--ember, #FF6200);
+    outline: 2px solid var(--color-accent);
     outline-offset: 2px;
   }
 

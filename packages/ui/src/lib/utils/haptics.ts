@@ -39,8 +39,9 @@ async function getTauriHaptics(): Promise<TauriHapticsPlugin | null> {
   if (!isTauriRuntime()) return null;
   if (_tauriHaptics) return _tauriHaptics;
   try {
-    // Dynamic import — bundler tree-shakes when plugin is absent
-    const mod = await import('@tauri-apps/plugin-haptics' as string);
+    // @vite-ignore suppresses import-analysis — this is intentionally a
+    // runtime-only Tauri plugin import that must not be statically bundled.
+    const mod = await import(/* @vite-ignore */ '@tauri-apps/plugin-haptics');
     _tauriHaptics = mod as unknown as TauriHapticsPlugin;
     return _tauriHaptics;
   } catch {

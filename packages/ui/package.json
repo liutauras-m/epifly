@@ -49,7 +49,7 @@
     }
   },
   "scripts": {
-    "build": "vite build",
+    "build": "pnpm tokens:build",
     "check-types": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "assets:verify": "node scripts/assets-verify.js",
@@ -60,7 +60,9 @@
     "tokens:build": "node scripts/build-tokens.mjs"
   },
   "dependencies": {
-    "@conusai/types": "workspace:*"
+    "@conusai/types": "workspace:*",
+    "@conusai/sdk": "workspace:*",
+    "@tauri-apps/plugin-haptics": "^2.3.2"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^4.0.0",
@@ -74,6 +76,7 @@
     "vitest": "^2.0.0"
   },
   "peerDependencies": {
+    "@conusai/sdk": "workspace:*",
     "svelte": "^5.0.0"
   }
 }

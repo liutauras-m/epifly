@@ -9,6 +9,7 @@
     "core:event:default",
     "dialog:default",
     "http:default",
-    "stronghold:default"
+    "stronghold:default",
+    "haptics:default"
   ]
 }

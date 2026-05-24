@@ -1,6 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { COOKIE_NAME, sign, timeGreeting, verify } from '$lib/server/session';
+import { COOKIE_NAME, sessionAdapter, timeGreeting, verify } from '$lib/server/session';
 
 export const load: PageServerLoad = ({ cookies }) => {
 	const raw = cookies.get(COOKIE_NAME);
@@ -18,7 +18,9 @@ export const actions: Actions = {
 			return fail(400, { error: 'Name must be between 1 and 60 characters.', name });
 		}
 
-		cookies.set(COOKIE_NAME, sign(name, plan), {
+		const token = await sessionAdapter.issue(name, plan);
+
+		cookies.set(COOKIE_NAME, token, {
 			path: '/',
 			httpOnly: true,
 			sameSite: 'lax',

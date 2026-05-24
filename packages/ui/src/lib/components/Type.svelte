@@ -106,7 +106,7 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     font-variation-settings: "wght" 580;
-    color: var(--ink-3);
+    color: var(--color-fg-subtle);
   }
 
   /* meta — secondary text, timestamps, badges */
@@ -114,7 +114,7 @@
     font-size: var(--font-size-meta);      /* 13px */
     line-height: 1.5;
     font-variation-settings: "wght" 400;
-    color: var(--ink-2);
+    color: var(--color-fg-muted);
   }
 
   /* mono — code, IDs, monospaced values */

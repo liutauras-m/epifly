@@ -51,12 +51,12 @@
 		cursor: pointer;
 		width: 100%;
 		text-align: left;
-		border-bottom: 1px solid var(--rule);
-		transition: background var(--duration-fast);
+		border-bottom: 1px solid var(--color-border);
+		transition: background var(--duration-fast); /* [feedback] */
 	}
 
-	.cap-row:hover { background: var(--paper-2); }
-	.cap-row:focus-visible { outline: 2px solid var(--ember); outline-offset: -2px; }
+	.cap-row:hover { background: var(--color-bg-raised); }
+	.cap-row:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset); }
 
 	.cap-main { flex: 1; min-width: 0; }
 
@@ -69,16 +69,16 @@
 
 	.cap-name {
 		font-family: var(--font-family-sans);
-		font-size: 15px;
+		font-size: var(--font-size-body);
 		font-weight: 600;
-		color: var(--ink);
+		color: var(--color-fg);
 	}
 
 	.cap-kind {
-		font-family: var(--font-mono);
-		font-size: 11px;
-		background: var(--ember-soft);
-		color: var(--ember-2);
+		font-family: var(--font-family-mono);
+		font-size: var(--font-size-label);
+		background: var(--color-accent-soft);
+		color: var(--color-accent-hover);
 		padding: 2px var(--space-2);
 		border-radius: var(--radius-sm);
 		flex-shrink: 0;
@@ -87,8 +87,8 @@
 
 	.cap-desc {
 		font-family: var(--font-family-sans);
-		font-size: 13px;
-		color: var(--ink-2);
+		font-size: var(--font-size-meta);
+		color: var(--color-fg-muted);
 		margin-top: 2px;
 		overflow: hidden;
 		display: -webkit-box;
@@ -98,13 +98,13 @@
 	}
 
 	.cap-tools {
-		font-family: var(--font-mono);
+		font-family: var(--font-family-mono);
 		font-size: var(--font-size-label, 11px);
-		color: var(--ink-3);
+		color: var(--color-fg-subtle);
 		flex-shrink: 0;
 	}
 
-	.cap-arrow { color: var(--ink-3); flex-shrink: 0; }
+	.cap-arrow { color: var(--color-fg-subtle); flex-shrink: 0; }
 
 	@media (prefers-reduced-motion: reduce) {
 		.cap-row { transition: none; }

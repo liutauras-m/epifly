@@ -165,7 +165,7 @@
 
   .current-tag {
     text-align:     center;
-    font-family:    var(--font-mono);
+    font-family:    var(--font-family-mono);
     font-size:      var(--font-size-label);
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -180,7 +180,7 @@
     width:         100%;
     padding:       0.55rem;
     background:    var(--color-accent);
-    color:         #fff;
+    color:         var(--color-on-accent);
     border:        none;
     border-radius: var(--radius-md);
     font-family:   var(--font-family-sans);
@@ -217,6 +217,6 @@
   }
 
   .btn-contact:hover {
-    background: var(--paper-2);
+    background: var(--color-bg-raised);
   }
 </style>

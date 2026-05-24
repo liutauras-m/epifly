@@ -1,5 +1,4 @@
-import type { ChatStreamDelta, ConusSdk, RoutingMeta } from '@conusai/sdk';
-import type { StreamChatParams } from '@conusai/sdk';
+import type { ChatStreamDelta, ConusSdk, RoutingMeta, StreamChatParams } from '@conusai/sdk';
 import { toasts } from '../stores/toast.svelte.js';
 
 export interface ChatMessage {
@@ -25,7 +24,8 @@ export interface ToolCardEntry {
 const INACTIVITY_TIMEOUT_MS = 45_000;
 let wordSeq = 0;
 
-export type CustomStreamFn = (params: StreamChatParams) => AsyncGenerator<ChatStreamDelta>;
+/** Stream function used by tests or custom gateways. `baseUrl` is NOT required — SDK fills it. */
+export type CustomStreamFn = (params: Omit<StreamChatParams, 'baseUrl' | 'fetch'>) => AsyncGenerator<ChatStreamDelta>;
 
 export interface CreateChatStreamOptions {
   streamFn?: CustomStreamFn;
@@ -144,7 +144,7 @@ export function createChatStream(sdk: ConusSdk, options?: CreateChatStreamOption
     try {
       messages = [...messages.filter(m => m.role !== 'thinking'), { role: 'thinking', text: '' }];
 
-      const streamParams: StreamChatParams = {
+      const streamParams: Omit<StreamChatParams, 'baseUrl' | 'fetch'> = {
         message: prompt,
         threadId: activeThreadId,
         workspaceNodeId: opts.workspaceNodeId,

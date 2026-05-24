@@ -105,7 +105,7 @@
 
 <style>
 	.recents-section {
-		border-top: 1px solid var(--rule);
+		border-top: 1px solid var(--color-border);
 		display: flex;
 		flex-direction: column;
 	}
@@ -115,11 +115,11 @@
 	}
 
 	.section-label {
-		font-family: var(--font-mono);
+		font-family: var(--font-family-mono);
 		font-size: 11px;
 		font-weight: 500;
 		letter-spacing: 0.14em;
-		color: var(--ink-3);
+		color: var(--color-fg-subtle);
 		text-transform: uppercase;
 	}
 
@@ -127,7 +127,7 @@
 		padding: var(--space-2) var(--space-4) var(--space-3);
 		font-family: var(--font-family-sans);
 		font-size: 13px;
-		color: var(--ink-3);
+		color: var(--color-fg-subtle);
 	}
 	.state-row.loading {
 		display: flex;
@@ -137,8 +137,8 @@
 		color: var(--danger, #c44);
 	}
 	.spinner {
-		color: var(--ink-3);
-		animation: spin 1s linear infinite;
+		color: var(--color-fg-subtle);
+		animation: spin 1s linear infinite; /* [feedback] */
 	}
 	@keyframes spin {
 		to { transform: rotate(360deg); }
@@ -158,15 +158,15 @@
 		cursor: pointer;
 		width: 100%;
 		text-align: left;
-		transition: background var(--duration-fast);
+		transition: background var(--duration-fast);  /* [feedback] */
 	}
 
 	.recent-row:hover {
-		background: var(--paper-3);
+		background: var(--color-bg-hover);
 	}
 
 	.recent-icon {
-		color: var(--ink-3);
+		color: var(--color-fg-subtle);
 		flex-shrink: 0;
 	}
 
@@ -180,16 +180,16 @@
 		flex: 1;
 		font-family: var(--font-family-sans);
 		font-size: 15px;
-		color: var(--ink);
+		color: var(--color-fg);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
 	.recent-time {
-		font-family: var(--font-mono);
+		font-family: var(--font-family-mono);
 		font-size: 11px;
-		color: var(--ink-3);
+		color: var(--color-fg-subtle);
 		flex-shrink: 0;
 	}
 </style>

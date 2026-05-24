@@ -27,6 +27,7 @@
 			inFlight: boolean;
 			lastRoutingMeta?: any;
 			lastInvalidation?: any;
+			lastSend?: any;
 			send: (p: string, opts?: any) => void;
 			newSession: () => void;
 		};
@@ -148,7 +149,7 @@
 
 			<h1 class="greeting" aria-label="{greeting()}, {userName.split(' ')[0]}.">
 				{#each greetingWords as word, i}
-					<span class="word" style="animation-delay: {200 + i * 40}ms">{word}</span>
+					<span class="word" style="animation-delay: {420 + i * 40}ms">{word}</span>
 					{#if i < greetingWords.length - 1}<span class="word-space"> </span>{/if}
 				{/each}
 			</h1>
@@ -171,7 +172,8 @@
 			</div>
 
 			{#if !chipsUsed}
-				<SuggestionChips suggestions={SUGGESTIONS} onSelect={handleSuggestion} />
+				<!-- Phase 6 cascade: chips start at 680ms (composer settles at 560ms) -->
+			<SuggestionChips suggestions={SUGGESTIONS} onSelect={handleSuggestion} baseDelay={680} />
 			{/if}
 		</div>
 	{:else}
@@ -244,7 +246,8 @@
 		border-radius: var(--radius-lg);
 		background: var(--color-bg-raised);
 		object-fit: contain;
-		animation: sigil-enter var(--duration-slow) var(--ease-spring) both;  /* [delight] */
+		/* Phase 6: logo 80ms — first element to appear in the page-load cascade [delight] */
+		animation: sigil-enter var(--duration-slow) var(--ease-spring) 80ms both;  /* [delight] */
 	}
 	@keyframes sigil-enter {
 		0%   { opacity: 0; transform: scale(0.72) rotate(-8deg); filter: blur(4px); }
@@ -283,7 +286,8 @@
 		color: var(--color-fg-muted);
 		text-align: center;
 		margin: 0;
-		animation: fade-up var(--duration-stagger) var(--ease-out) 380ms both;  /* [hierarchy] */
+		/* Phase 6: sub-greeting fades up 510ms — between greeting (420ms) and composer (560ms) [hierarchy] */
+		animation: fade-up var(--duration-stagger) var(--ease-out) 510ms both;  /* [hierarchy] */
 	}
 	@keyframes fade-up {
 		from { opacity: 0; transform: translateY(6px); }
@@ -303,7 +307,8 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-2);
-		animation: fade-up var(--duration-stagger) var(--ease-out) 420ms both;  /* [hierarchy] */
+		/* Phase 6: composer enters at 560ms in the page-load cascade [hierarchy] */
+		animation: fade-up var(--duration-stagger) var(--ease-out) 560ms both;  /* [hierarchy] */
 	}
 
 	.context-row {

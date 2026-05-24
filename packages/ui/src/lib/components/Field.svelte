@@ -55,7 +55,7 @@
     /** Render a <textarea> instead of <input>. */
     multiline?:    boolean;
     rows?:         number;
-    autocomplete?: string;
+    autocomplete?: HTMLInputElement['autocomplete'];
     class?:        string;
     oninput?:      (e: Event) => void;
     onchange?:     (e: Event) => void;
@@ -162,8 +162,8 @@
     line-height:    1.5;
 
     transition:
-      border-color  var(--duration-fast) var(--ease-standard),
-      box-shadow    var(--duration-fast) var(--ease-standard);
+      border-color  var(--duration-fast) var(--ease-standard),  /* [feedback] */
+      box-shadow    var(--duration-fast) var(--ease-standard);   /* [feedback] */
 
     /* prevent iOS zoom (font-size must be ≥ 16px effective) */
     font-size: max(16px, var(--font-size-body));

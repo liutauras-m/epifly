@@ -37,12 +37,15 @@ function walk(dir, exts = ['.svelte', '.ts', '.js']) {
 function rel(p) { return relative(ROOT, p); }
 
 function runesStatus(src) {
+  const hasRunesDirective = /svelte:options\s+runes=\{true\}/.test(src);
   const hasProps  = /\$props\s*\(/.test(src);
   const hasState  = /\$state\s*[(<]/.test(src);
+  const hasEffect = /\$effect\s*\(/.test(src);
   const hasExport = /export\s+let\s+/.test(src);
   const hasDollar = /\$:/.test(src);
-  if (hasProps && !hasExport) return '✅ runes';
-  if (!hasProps && (hasExport || hasDollar)) return '⚠️  legacy';
+  // Explicit runes opt-in covers components that use context/stores but not $props()
+  if ((hasRunesDirective || hasProps || hasState || hasEffect) && !hasExport) return '✅ runes';
+  if (!hasProps && !hasRunesDirective && (hasExport || hasDollar)) return '⚠️  legacy';
   if (hasProps && hasExport) return '🔀 mixed';
   return '—';
 }

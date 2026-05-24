@@ -33,7 +33,7 @@
 <CapabilityDetailSheet
 	open={sheetOpen}
 	capability={selectedCap}
-	onClose={() => sheetOpen = false}
+	onclose={() => sheetOpen = false}
 	onInvoke={(cap) => { onInvoke(cap); sheetOpen = false; }}
 />
 

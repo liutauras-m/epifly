@@ -190,7 +190,7 @@
     gap:            var(--space-5);
     padding:        var(--space-8) var(--space-6);
     width:          100%;
-    max-width:      480px;
+    max-width:      var(--empty-state-max-w, 480px);
     margin:         0 auto;
   }
 
@@ -202,8 +202,9 @@
   /* ── Illustration ────────────────────────────────────────────────────────── */
   .illustration {
     --accent: var(--color-accent);
-    width:  88px;
-    height: 80px;
+    /* --empty-state-icon-w/h: component-scoped illustration size tokens */
+    width:  var(--empty-state-icon-w, 88px);
+    height: var(--empty-state-icon-h, 80px);
     flex-shrink: 0;
     opacity: 0.9;
   }
@@ -212,8 +213,8 @@
     height: 100%;
   }
   .compact .illustration {
-    width:  64px;
-    height: 58px;
+    width:  var(--empty-state-icon-w-compact, 64px);
+    height: var(--empty-state-icon-h-compact, 58px);
   }
 
   /* ── Text ────────────────────────────────────────────────────────────────── */
@@ -241,7 +242,7 @@
     font-size:   var(--font-size-meta);      /* 13px */
     color:       var(--color-fg-subtle);
     line-height: 1.55;
-    max-width:   360px;
+    max-width:   var(--empty-state-body-max-w, 360px);
   }
 
   .empty-children {

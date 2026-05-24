@@ -94,5 +94,8 @@
     border-top:   1px solid var(--color-border);
     padding:      var(--space-2);
     padding-bottom: calc(var(--space-2) + var(--safe-bottom, 0px));
+
+    /* [hierarchy] Page-load cascade — user chip enters at 360ms */
+    animation: cascade-in var(--duration-stagger, 240ms) var(--ease-emphasized-decelerate, ease-out) 360ms both;
   }
 </style>

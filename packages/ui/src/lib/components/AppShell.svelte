@@ -29,6 +29,7 @@
    */
   import type { Snippet } from 'svelte';
   import '../tokens.css';
+  import { t } from '../utils/i18n.js';
 
   let {
     topbar,
@@ -67,15 +68,15 @@
 
   <!-- Skip navigation links (Phase 7 a11y) ───────────────── -->
   <nav class="skip-links" aria-label="Skip navigation">
-    <a class="skip-link" href="#main-content">Skip to main content</a>
+    <a class="skip-link" href="#main-content">{t('nav.skip_to_main')}</a>
     {#if composer}
-      <a class="skip-link" href="#composer-input">Skip to composer</a>
+      <a class="skip-link" href="#composer-input">{t('nav.skip_to_composer')}</a>
     {/if}
   </nav>
 
   <!-- Topbar ──────────────────────────────────────────────── -->
   {#if topbar}
-    <header class="shell-topbar" role="banner">
+    <header class="shell-topbar">
       {@render topbar()}
     </header>
   {/if}
@@ -129,23 +130,23 @@
 <style>
   /* ── Skip links (Phase 7) ───────────────────────────────────────────────── */
   .skip-links {
-    position: absolute;
-    z-index:  9999;
-    left:     0;
-    top:      0;
-    display:  flex;
-    gap:      var(--space-2);
+    position:        absolute;
+    z-index:         9999;
+    inset-inline-start: 0;
+    top:             0;
+    display:         flex;
+    gap:             var(--space-2);
   }
 
   .skip-link {
     /* Visually hidden until focused */
     position:    absolute;
-    left:        var(--space-3);
+    inset-inline-start: var(--space-3);
     top:         var(--space-3);
     transform:   translateY(-200%);
     padding:     var(--space-2) var(--space-4);
     background:  var(--color-accent);
-    color:       #fff;
+    color:       var(--color-on-accent);
     font-size:   var(--font-size-meta);
     font-weight: 600;
     border-radius: var(--radius-sm);
@@ -160,7 +161,7 @@
   }
 
   .skip-links .skip-link:nth-child(2):focus {
-    left: calc(var(--space-3) + 180px);
+    inset-inline-start: calc(var(--space-3) + 180px);
   }
 
   /* ── Container setup ─────────────────────────────────────────────────────── */
@@ -195,16 +196,16 @@
 
   /* ── Sidebar ─────────────────────────────────────────────────────────────── */
   .shell-sidebar {
-    flex-shrink:    0;
-    overflow-y:     auto;
-    overflow-x:     hidden;
-    background:     var(--color-bg-raised);
-    border-right:   1px solid var(--color-border);
+    flex-shrink:      0;
+    overflow-y:       auto;
+    overflow-x:       hidden;
+    background:       var(--color-bg-raised);
+    border-inline-end: 1px solid var(--color-border);  /* logical — RTL flips to border-left */
 
     /* Compact: hidden by default — Drawer opens it */
-    display:        none;
-    width:          0;
-    transition:     width var(--duration-normal) var(--ease-standard);
+    display:          none;
+    width:            0;
+    transition:       width var(--duration-normal) var(--ease-standard);  /* [continuity] */
   }
 
   /* Medium breakpoint: collapsed icon rail */

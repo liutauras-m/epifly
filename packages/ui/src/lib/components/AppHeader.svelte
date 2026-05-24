@@ -44,6 +44,12 @@
   class="app-header{cls ? ` ${cls}` : ''}"
   data-tauri-drag-region
 >
+  <!--
+    HTML spec §4.3.3: <header> outside <article>/<aside>/<main>/<nav>/<section>
+    carries implicit role="banner" per the HTML AAM. Explicit role is redundant
+    and triggers svelte/a11y-no-redundant-roles. The landmark is correctly exposed
+    to assistive technology without the attribute.
+  -->
   <!-- Safe-area top fill (iOS notch / Dynamic Island / Android status bar) -->
   <div class="header-safe" aria-hidden="true"></div>
 
@@ -90,7 +96,7 @@
   .header-inner {
     display:        flex;
     align-items:    center;
-    height:         48px;
+    height:         var(--topbar-height);
     padding:        0 var(--space-2);
     gap:            var(--space-1);
   }
@@ -134,7 +140,7 @@
   /* ── Medium / expanded: left-align title, smaller height ───────────────── */
   @container app-shell (min-width: 768px) {
     .header-inner {
-      height:  44px;
+      height:  var(--topbar-height-compact);
       padding: 0 var(--space-3);
     }
     .header-title {
@@ -147,7 +153,7 @@
   /* ── Expanded: even less chrome ─────────────────────────────────────────── */
   @container app-shell (min-width: 1024px) {
     .header-inner {
-      height:  40px;
+      height:  var(--topbar-height-expanded);
       padding: 0 var(--space-4);
       gap:     var(--space-2);
     }

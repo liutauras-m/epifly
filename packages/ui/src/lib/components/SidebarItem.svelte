@@ -87,8 +87,8 @@
     overflow:       hidden;
 
     transition:
-      background  var(--duration-fast) var(--ease-standard),
-      color       var(--duration-fast) var(--ease-standard);
+      background  var(--duration-fast) var(--ease-standard),  /* [feedback] */
+      color       var(--duration-fast) var(--ease-standard);   /* [feedback] */
 
     outline: none;
   }
@@ -115,8 +115,8 @@
     min-width:   0;
     overflow:    hidden;
     text-overflow: ellipsis;
-    transition:  opacity var(--duration-fast) var(--ease-standard),
-                 max-width var(--duration-fast) var(--ease-standard);
+    transition:  opacity   var(--duration-fast) var(--ease-standard),   /* [continuity] */
+                 max-width var(--duration-fast) var(--ease-standard);   /* [continuity] */
   }
 
   @container app-shell (max-width: 1023px) {

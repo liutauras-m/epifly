@@ -40,7 +40,7 @@
     gap: 0.3rem;
     padding: 0.15rem 0.55rem;
     border-radius: var(--radius-full);
-    font-family: var(--font-mono);
+    font-family: var(--font-family-mono);
     font-size: 0.68rem;
     font-weight: 600;
     letter-spacing: 0.08em;

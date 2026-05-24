@@ -36,17 +36,15 @@ const ROUTE_FILES = new Set([
   '+layout.server.ts',
 ]);
 
-// Files explicitly excluded from checking (Phase 3 migration in-progress)
-// Remove entries once the corresponding Phase 3/4 work lands.
+// Files explicitly excluded from checking (Phase 3 migration complete)
+// All 7 mobile/parts/* files resolved — ALLOWLIST is now empty.
+// Phase 3.1 DONE: MobileShell.svelte deleted; ShellScreen + ShellLoginScreen in packages/ui.
+// Phase 3.2 DONE: ProfileSheet.svelte → packages/ui/features/.
+// Phase 3.3 DONE: Breadcrumbs.svelte → packages/ui/components/.
+// Phase 3.4 DONE: DrawerWorkspaceTree, DrawerProfileHeader, WorkspaceCreateMenu, WorkspaceTreeRow deleted (orphaned).
+// Phase 3.5 DONE: AttachmentSheet.svelte → packages/ui/features/; app-local copy deleted.
 const ALLOWLIST = new Set([
-  'apps/browser-shell/src/lib/mobile/MobileShell.svelte',          // Phase 3.1 — pending migration
-  'apps/browser-shell/src/lib/mobile/parts/ProfileSheet.svelte',   // Phase 3.2 — pending migration
-  'apps/browser-shell/src/lib/mobile/parts/AttachmentSheet.svelte',// Phase 3.5 — pending migration
-  'apps/browser-shell/src/lib/mobile/parts/WorkspaceCreateMenu.svelte', // Phase 3.2
-  'apps/browser-shell/src/lib/mobile/parts/DrawerWorkspaceTree.svelte', // Phase 3.4
-  'apps/browser-shell/src/lib/mobile/parts/DrawerProfileHeader.svelte', // Phase 3.4
-  'apps/browser-shell/src/lib/mobile/parts/Breadcrumbs.svelte',    // Phase 3.3
-  'apps/browser-shell/src/lib/mobile/parts/WorkspaceTreeRow.svelte',// Phase 3.4
+  // Empty — all Phase 3 migrations complete.
 ]);
 
 const STYLE_BLOCK_RE = /<style[^>]*>([\s\S]*?)<\/style>/g;

@@ -45,23 +45,23 @@
 		align-items: center;
 		gap: var(--space-1);
 		padding: 4px var(--space-2) 4px var(--space-2);
-		background: var(--ember-soft);
-		border: 1px solid var(--ember-glow);
+		background: var(--color-accent-soft);
+		border: 1px solid var(--color-accent-border, var(--color-border));
 		border-radius: var(--radius-full);
 		cursor: pointer;
-		font-family: var(--font-mono);
+		font-family: var(--font-family-mono);
 		font-size: 12px;
-		color: var(--ink-2);
-		transition: background var(--duration-fast), border-color var(--duration-fast);
+		color: var(--color-fg-muted);
+		transition: background var(--duration-fast), border-color var(--duration-fast); /* [feedback] */
 	}
 
 	.context-chip:hover {
-		background: var(--paper-3);
-		border-color: var(--rule);
+		background: var(--color-bg-hover);
+		border-color: var(--color-border);
 	}
 
 	.context-chip:focus-visible {
-		outline: 2px solid var(--ember);
+		outline: 2px solid var(--color-accent);
 		outline-offset: 2px;
 	}
 
@@ -73,7 +73,7 @@
 	}
 
 	.chip-x {
-		color: var(--ink-3);
+		color: var(--color-fg-subtle);
 		flex-shrink: 0;
 		margin-left: 2px;
 	}

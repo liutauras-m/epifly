@@ -103,7 +103,7 @@
 
   .banner-quota_warning {
     background: rgba(217, 119, 6, 0.08);
-    color: #92400e;
+    color: var(--color-warning-text);
     border: 1px solid rgba(217, 119, 6, 0.24);
   }
 
@@ -132,7 +132,7 @@
     gap: 0.25rem;
     padding: 0.3rem 0.7rem;
     background:    var(--color-accent);
-    color:         #fff;
+    color:         var(--color-on-accent);
     border-radius: var(--radius-md);
     text-decoration: none;
     font-size:     var(--font-size-label);
@@ -145,7 +145,7 @@
 
   .btn-upgrade:hover {
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px var(--ember-glow);
+    box-shadow: 0 4px 12px var(--color-accent-border, var(--color-border));
   }
 
   .btn-dismiss {
@@ -159,15 +159,15 @@
     opacity: 0.5;
     padding: 0.2rem;
     border-radius: var(--radius-xs);
-    transition: opacity 120ms cubic-bezier(0.4, 0, 0.2, 1);
-    min-width: 24px;
-    min-height: 24px;
+    transition: opacity var(--duration-fast) var(--ease-standard);  /* [feedback] */
+    min-width: var(--chip-h-sm);
+    min-height: var(--chip-h-sm);
   }
 
   .btn-dismiss:hover { opacity: 1; }
 
   .btn-dismiss:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px var(--ember-glow);
+    box-shadow: 0 0 0 2px var(--color-accent-border, var(--color-border));
   }
 </style>

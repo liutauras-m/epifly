@@ -32,8 +32,8 @@
   .status-badge {
     display:        inline-flex;
     align-items:    center;
-    gap:            5px;
-    padding:        2px var(--space-2);
+    gap:            var(--space-1);
+    padding:        var(--space-half) var(--space-2);
     border-radius:  var(--radius-full);
     font-family:    var(--font-family-mono);
     font-size:      var(--font-size-label);   /* 11px */
@@ -46,8 +46,8 @@
 
   /* Dot indicator */
   .status-dot {
-    width:         6px;
-    height:        6px;
+    width:         var(--dot-sm);
+    height:        var(--dot-sm);
     border-radius: var(--radius-full);
     background:    currentColor;
     flex-shrink:   0;
@@ -61,9 +61,9 @@
   }
 
   .status-warning {
-    background: rgba(217, 119, 6, 0.12);
-    color:      #d97706;
-    border-color: rgba(217, 119, 6, 0.24);
+    background: var(--color-warning-soft);
+    color:      var(--color-warning);
+    border-color: var(--color-warning-border);
   }
 
   .status-danger {

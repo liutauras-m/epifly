@@ -1,8 +1,9 @@
 # UI Landmark Map
 
-**Source of truth for ARIA landmark roles across all routes.**
+**Source of truth for ARIA landmark roles across all routes.**  
+Companion docs: [`docs/ui-design.md`](ui-design.md) §11 (focus & a11y), [`ui-plan.md`](ui-plan.md) §8.1 (axe CI gate).
 
-Auditors reference this during Phase 3+ reviews. Phase 8.4 expands it with per-route axe reports.
+Auditors reference this during Phase 3+ reviews. Updated at Phase 8.4 with per-route axe reports.
 
 ---
 

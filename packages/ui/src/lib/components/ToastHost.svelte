@@ -12,11 +12,8 @@
    * can use `<ToastHost />` with no props and get automatic reactivity.
    */
   import { toasts } from '../stores/toast.svelte.js';
-  import type { ToastKind } from '../stores/toast.svelte.js';
+  import { t } from '../utils/i18n.js';
   import { X } from 'lucide-svelte';
-
-  // Re-export Toast type for consumers
-  export type Toast = { id: string; kind: ToastKind; message: string; };
 </script>
 
 {#if toasts.items.length > 0}
@@ -26,7 +23,7 @@
       <span class="message">{toast.message}</span>
       <button
         class="dismiss"
-        aria-label="Dismiss notification"
+        aria-label={t('toast.dismiss')}
         onclick={() => toasts.dismiss(toast.id)}
       >
         <X size={16} strokeWidth={1.75} aria-hidden="true" />
@@ -58,7 +55,7 @@
       top:        var(--space-5);
       left:       auto;
       right:      var(--space-5);
-      max-width:  380px;
+      max-width:  var(--toast-max-w);
       align-items: flex-end;
     }
   }
@@ -78,9 +75,9 @@
     box-shadow:  0 4px 16px var(--color-shadow-md);
     pointer-events: auto;
     width:       100%;
-    max-width:   380px;
+    max-width:   var(--toast-max-w);
 
-    animation: toast-enter var(--duration-normal) var(--ease-emphasized-decelerate) both;
+    animation: toast-enter var(--duration-normal) var(--ease-emphasized-decelerate) both;  /* [feedback] */
   }
 
   .toast.success {
@@ -96,7 +93,7 @@
   .toast.warning {
     border-color: rgba(217, 119, 6, 0.4);
     background:   rgba(217, 119, 6, 0.10);
-    color:        #b45309;
+    color:        var(--color-warning-text);
   }
 
   /* ── Parts ───────────────────────────────────────────────────────────────── */
@@ -116,8 +113,8 @@
     display:         inline-flex;
     align-items:     center;
     justify-content: center;
-    width:           28px;
-    height:          28px;
+    width:           var(--toast-dismiss-size);
+    height:          var(--toast-dismiss-size);
     border:          none;
     background:      transparent;
     color:           currentColor;
@@ -126,7 +123,7 @@
     padding:         0;
     flex-shrink:     0;
     opacity:         0.6;
-    transition:      opacity var(--duration-fast), background var(--duration-fast);
+    transition:      opacity var(--duration-fast), background var(--duration-fast);  /* [feedback] */
     outline:         none;
   }
   .dismiss:hover { opacity: 1; background: rgba(0,0,0,0.06); }

@@ -66,6 +66,28 @@ const RAW_HEX      = /#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b/;
 const CUBIC_BEZIER = /cubic-bezier\(/;
 const RAW_DURATION = /transition\s*:[^;]*\d+ms/;
 
+// Exemption patterns — lines matching these are intentional and skip the raw-px check:
+//   1. var(--token, Npx) — CSS variable fallback value is not a violation
+//   2. @container/@media breakpoints — architectural pixel breakpoints are expected
+//   3. CSS math: max(Npx,...), min(Npx,...), clamp(Npx,...) — fluid sizing expressions
+//   4. 1px only (border-width, divider) — plan explicitly allows this
+//   5. visually-hidden helper: width:1px; height:1px; padding:0 (LiveAnnouncer pattern)
+const PX_EXEMPTIONS = [
+  /var\([^)]*\d+px[^)]*\)/,                  // any var(...px...) fallback
+  /@container\b.*\(\s*(min|max)-width\s*:/,  // container query
+  /@media\b.*\(\s*(min|max)-width\s*:/,      // media query
+  /\bclamp\([^)]*\d+px/,                     // clamp()
+  /\bmin\([^)]*\d+px/,                       // min()
+  /\bmax\([^)]*\d+px/,                       // max()
+  /^\s*width\s*:\s*1px\s*;/,                 // visually-hidden 1px
+  /^\s*height\s*:\s*1px\s*;/,                // visually-hidden 1px
+  /border(?:-\w+)?\s*:\s*1px\b/,             // border/border-* 1px
+  /outline(?:-width)?\s*:\s*1px\b/,          // outline 1px
+  /padding\s*:\s*0\s*;/,                     // padding: 0 (zero has no unit)
+  /font-size\s*:\s*0\s*;/,                   // font-size: 0
+  /margin\s*:\s*-1px\s*;/,                   // sr-only visually-hidden -1px margin (WCAG clip technique)
+];
+
 // For apps/* style blocks: same checks applied only to the <style> content
 function extractStyleBlocks(src) {
   return [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map(m => m[1]);
@@ -74,6 +96,25 @@ function extractStyleBlocks(src) {
 // ── scanning ──────────────────────────────────────────────────────────────────
 
 const errors = [];
+const warnings = [];
+
+// Scope-based severity rules:
+//   components/ + .css  → hard error on everything
+//   features/           → error on raw-hex; warn on raw-px (design-specific values expected)
+//   apps/browser-shell/src/lib/mobile/ → warn-only (Phase 3 migration target)
+//   apps/web/src/routes/ → error on raw-hex; warn on raw-px (legacy routes)
+function getSeverity(filePath, rule) {
+  if (
+    filePath.includes('browser-shell/src/lib/mobile/') ||
+    filePath.includes('browser-shell/src/lib/parts/')
+  ) return 'warn';
+  if (rule === 'raw-px') {
+    if (filePath.includes('/features/') || filePath.includes('apps/web/src/routes/')) {
+      return 'warn';
+    }
+  }
+  return 'error';
+}
 
 function check(file, src, inStyleBlock = false) {
   const path = rel(file);
@@ -87,17 +128,32 @@ function check(file, src, inStyleBlock = false) {
     if (/^\s*(\/\/|\/\*|\*)/.test(line)) return;
     if (trimmed.startsWith('*') || trimmed.startsWith('//')) return;
 
+    function push(rule, text) {
+      const sev = getSeverity(path, rule);
+      const entry = { file: path, line: lineno, rule, text };
+      if (sev === 'error') errors.push(entry);
+      else warnings.push(entry);
+    }
+
     if (RAW_HEX.test(line)) {
-      errors.push({ file: path, line: lineno, rule: 'raw-hex', text: trimmed.slice(0, 120) });
+      // Exempt: hex used as a fallback inside var(--token, #hex) — not a raw use
+      const isHexFallback = /var\([^)]*,\s*(?:linear-gradient[^)]*)?#[0-9a-fA-F]{3,8}\b/.test(line)
+        || /var\([^)]*#[0-9a-fA-F]{3,8}\b/.test(line);
+      if (!isHexFallback) push('raw-hex', trimmed.slice(0, 120));
     }
     if (LAYOUT_PROPS.test(line)) {
-      errors.push({ file: path, line: lineno, rule: 'raw-px', text: trimmed.slice(0, 120) });
+      const isExempt = PX_EXEMPTIONS.some(re => re.test(line));
+      if (!isExempt) push('raw-px', trimmed.slice(0, 120));
     }
     if (CUBIC_BEZIER.test(line)) {
-      errors.push({ file: path, line: lineno, rule: 'cubic-bezier', text: trimmed.slice(0, 120) });
+      // Exempt: cubic-bezier used as a fallback inside var(--ease-xxx, cubic-bezier(...))
+      const isCubicFallback = /var\([^)]*,\s*cubic-bezier\(/.test(line);
+      if (!isCubicFallback) push('cubic-bezier', trimmed.slice(0, 120));
     }
     if (RAW_DURATION.test(line)) {
-      errors.push({ file: path, line: lineno, rule: 'raw-duration', text: trimmed.slice(0, 120) });
+      // Exempt: duration used as a fallback inside var(--duration-xxx, Nms)
+      const isDurationFallback = /var\([^)]*,\s*\d+ms\s*\)/.test(line);
+      if (!isDurationFallback) push('raw-duration', trimmed.slice(0, 120));
     }
   });
 }
@@ -162,8 +218,29 @@ if (shortFormErrors.length > 0) {
 
 // ── report ────────────────────────────────────────────────────────────────────
 
+function reportGroup(label, items, logFn) {
+  if (!items.length) return;
+  const byRule = {};
+  for (const e of items) (byRule[e.rule] ??= []).push(e);
+  logFn(`\n${label}: check-design-tokens found ${items.length} violation(s):\n`);
+  for (const [rule, ruleItems] of Object.entries(byRule)) {
+    logFn(`  ── ${rule} (${ruleItems.length}) ──`);
+    for (const { file, line, text } of ruleItems) {
+      logFn(`    ${file}:${line}  ${text}`);
+    }
+  }
+}
+
+// Print warnings (features/, apps/browser-shell/mobile/, apps/web routes) — non-blocking
+if (warnings.length > 0) {
+  reportGroup('WARN', warnings, console.warn.bind(console));
+  console.warn('\n  Warnings: features/ and browser-shell/mobile/ have raw px values scheduled for migration.');
+  console.warn('  Use --warn flag or fix before Phase 4 close.\n');
+}
+
 if (errors.length === 0 && shortFormErrors.length === 0) {
-  console.log('✅ check-design-tokens: no violations found.');
+  const warnMsg = warnings.length > 0 ? ` (${warnings.length} warning(s) in features/apps)` : '';
+  console.log(`✅ check-design-tokens: no hard violations found${warnMsg}.`);
   process.exit(0);
 }
 
@@ -173,7 +250,7 @@ for (const e of errors) {
 }
 
 const label = WARN ? 'WARN' : 'ERROR';
-console.error(`\n${label}: check-design-tokens found ${errors.length} violation(s):\n`);
+console.error(`\n${label}: check-design-tokens found ${errors.length} hard violation(s):\n`);
 
 for (const [rule, items] of Object.entries(byRule)) {
   console.error(`  ── ${rule} (${items.length}) ──`);

@@ -82,10 +82,12 @@
   onclose={handleClose}
   onclick={handleBackdropClick}
 >
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="sheet-panel"
     role="document"
     onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => e.stopPropagation()}
   >
     <!-- Drag handle (visual only, decorative) -->
     <div class="sheet-handle" aria-hidden="true"></div>
@@ -121,7 +123,7 @@
     &::backdrop {
       background: var(--color-backdrop, rgba(0, 0, 0, 0.4));
       opacity:    0;
-      transition: opacity var(--duration-normal) var(--ease-standard);
+      transition: opacity var(--duration-normal) var(--ease-standard);  /* [continuity] */
     }
     &[open]::backdrop {
       opacity: 1;
@@ -147,7 +149,7 @@
     padding-bottom: var(--safe-bottom, 0px);
 
     transform:      translateY(100%);
-    transition:     transform var(--duration-normal) var(--ease-emphasized-decelerate);
+    transition:     transform var(--duration-normal) var(--ease-emphasized-decelerate);  /* [continuity] */
     will-change:    transform;
   }
 
@@ -170,8 +172,8 @@
       transform:     scale(0.96) translateY(8px);
       opacity:       0;
       transition:
-        transform var(--duration-normal) var(--ease-emphasized-decelerate),
-        opacity   var(--duration-fast)   var(--ease-standard);
+        transform var(--duration-normal) var(--ease-emphasized-decelerate),  /* [continuity] */
+        opacity   var(--duration-fast)   var(--ease-standard);                /* [continuity] */
     }
     .sheet[open] .sheet-panel {
       transform: scale(1) translateY(0);
@@ -188,8 +190,8 @@
 
   /* ── Drag handle ─────────────────────────────────────────────────────────── */
   .sheet-handle {
-    width:        40px;
-    height:       4px;
+    width:        var(--sheet-handle-w);
+    height:       var(--sheet-handle-h);
     background:   var(--color-border-strong);
     border-radius: var(--radius-full);
     margin:       var(--space-2) auto var(--space-1);

@@ -19,6 +19,7 @@ tauri              = { version = "2", features = ["unstable"] }
 tauri-plugin-dialog     = "2"
 tauri-plugin-stronghold = "2"
 tauri-plugin-http       = "2"
+tauri-plugin-haptics    = "2"
 
 common    = { path = "../../backend/crates/common" }
 

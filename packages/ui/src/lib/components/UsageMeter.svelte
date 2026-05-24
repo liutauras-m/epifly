@@ -93,7 +93,7 @@
   .meter-value.exceeded { color: var(--color-danger);  font-weight: 700; }
 
   .bar-track {
-    height:        6px;
+    height:        var(--meter-track-h);
     background:    var(--color-bg-hover);
     border-radius: var(--radius-full);
     overflow:      hidden;
@@ -116,12 +116,12 @@
   }
 
   .status {
-    font-family: var(--font-mono);
+    font-family: var(--font-family-mono);
     font-size: 0.72rem;
     letter-spacing: 0.04em;
-    color: var(--ink-3);
+    color: var(--color-fg-subtle);
   }
 
-  .status.warn     { color: #d97706; }
+  .status.warn     { color: var(--color-warning); }
   .status.exceeded { color: var(--danger); font-weight: 600; }
 </style>

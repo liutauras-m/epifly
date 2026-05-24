@@ -23,13 +23,13 @@
 		z-index: 1000;
 	}
 	.dialog {
-		background: var(--surface, #fff); border-radius: 0.5rem;
-		padding: 1.5rem; max-width: 24rem; width: 90%;
-		box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+		background: var(--color-bg-raised, var(--color-bg-raised)); border-radius: var(--radius-md);
+		padding: var(--space-5); max-width: 24rem; width: 90%;
+		box-shadow: 0 8px 32px var(--color-shadow-md, rgba(0,0,0,0.15));
 	}
-	.dialog-message { margin: 0 0 1.25rem; font-size: 0.9375rem; }
-	.dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
-	.btn-ghost { background: none; border: 1px solid var(--border, #d1cdc8); border-radius: 0.25rem; padding: 0.375rem 0.875rem; cursor: pointer; font-size: 0.875rem; }
-	.btn-danger { background: #dc2626; color: #fff; border: none; border-radius: 0.25rem; padding: 0.375rem 0.875rem; cursor: pointer; font-size: 0.875rem; }
-	.btn-danger:hover { background: #b91c1c; }
+	.dialog-message { margin: 0 0 var(--space-4); font-size: var(--font-size-body); }
+	.dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+	.btn-ghost { background: none; border: 1px solid var(--color-border); border-radius: var(--radius-xs); padding: var(--space-1) var(--space-3); cursor: pointer; font-size: var(--font-size-meta); }
+	.btn-danger { background: var(--color-danger); color: var(--color-on-danger); border: none; border-radius: var(--radius-xs); padding: var(--space-1) var(--space-3); cursor: pointer; font-size: var(--font-size-meta); }
+	.btn-danger:hover { filter: brightness(1.1); }
 </style>

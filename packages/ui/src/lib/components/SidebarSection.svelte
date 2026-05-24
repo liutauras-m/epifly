@@ -38,7 +38,17 @@
 <style>
   .sidebar-section {
     padding: var(--space-1) 0;
+
+    /* [hierarchy] Page-load cascade — stagger 160–320ms, ease-emphasized-decelerate */
+    animation: cascade-in var(--duration-stagger, 240ms) var(--ease-emphasized-decelerate, ease-out) 160ms both;
   }
+  /* Stagger each successive section by 40ms within the 160–320ms window */
+  .sidebar-section:nth-of-type(2) { animation-delay: 200ms; }
+  .sidebar-section:nth-of-type(3) { animation-delay: 240ms; }
+  .sidebar-section:nth-of-type(4) { animation-delay: 280ms; }
+  .sidebar-section:nth-of-type(n+5) { animation-delay: 320ms; }
+
+  /* svelte-ignore css_unused_selector */
   .sidebar-section + .sidebar-section {
     border-top: 1px solid var(--color-border);
     padding-top: var(--space-2);
@@ -57,7 +67,7 @@
     white-space:    nowrap;
     overflow:       hidden;
     /* In icon-only mode (medium breakpoint) the eyebrow hides */
-    transition:     opacity var(--duration-fast) var(--ease-standard);
+    transition:     opacity var(--duration-fast) var(--ease-standard);  /* [continuity] */
   }
 
   /* Hide eyebrow text when sidebar is collapsed (icons only) */

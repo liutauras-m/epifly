@@ -79,6 +79,7 @@ pub fn run() {
             .build(),
         )
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_haptics::init())
         .manage(tabs_state)
         .manage(recorder_state)
         .manage(token_state)

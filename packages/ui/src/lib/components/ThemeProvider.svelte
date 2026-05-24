@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { setContext } from 'svelte';
+  import { setContext, untrack } from 'svelte';
   import { createThemeStore } from '../stores/themeStore.svelte.js';
   import type { ThemeAdapter } from '../stores/themeStore.svelte.js';
 
@@ -13,7 +13,8 @@
     onThemeChange?: (theme: string) => void;
   } = $props();
 
-  const theme = createThemeStore(adapter);
+  // adapter is an initialization-only prop — untrack() signals intentional static capture.
+  const theme = createThemeStore(untrack(() => adapter));
   setContext('conusai.theme', theme);
 
   $effect(() => {

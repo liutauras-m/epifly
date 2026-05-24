@@ -29,3 +29,57 @@ Every new domain element (extraction, transformation, classification, delivery, 
 3. **Lint the manifest** — run `cargo xtask capabilities lint` to validate schema, taxonomy compliance, required fields, and `accepts`/`emits` consistency.
 
 4. **Reload** — the `ManifestWatcher` picks up the new directory within 250 ms and registers the capability without restarting the gateway. Verify with `GET /v1/capabilities` or `GET /admin/capabilities`.
+
+---
+
+## Where to add UI
+
+When writing frontend code, the **golden rule** is: `packages/ui` first, always. `apps/*` is for wiring only — data loading, routing, auth guards. Full guidelines are in [docs/ui-plan.md](docs/ui-plan.md) and [docs/ui-design.md](docs/ui-design.md).
+
+```
+Need UI?
+│
+├─ Is it reusable across screens with no domain coupling?
+│  └─ YES → packages/ui/src/lib/components/  (primitives)
+│     Examples: Button, Field, Chip, EmptyState, StatusBadge, Drawer
+│     Rule: Props in, callbacks out. No store reads. No SDK calls.
+│
+├─ Does it compose primitives AND read workspace/billing/capability state?
+│  └─ YES → packages/ui/src/lib/features/  (product UI)
+│     Examples: WorkspaceTree, CapabilityBrowser, QuotaList
+│     Rule: May use stores/ and capabilities/. No route ownership.
+│
+└─ Is it page-level wiring — layouts, data loading, auth guards?
+   └─ YES → apps/web/src/routes/  or  apps/browser-shell/src/routes/
+      Rule: No <style> blocks with color/font/radius values.
+            If it grows a style block → extract a primitive.
+```
+
+**Naming rules (Principle #13 / #15 of ui-plan.md):**
+- Components: `PascalCase.svelte` — `AppShell`, `MessageBubble`, `StatusBadge`
+- Props: generic vocabulary — `variant="primary|secondary|ghost|danger"`, `size="sm|md|lg"`
+- Never: `variant="ember"`, `<RailUserChip>`, brand names in component APIs
+- CSS tokens: canonical long form — `--color-accent`, `--space-4`, `--radius-md`, `--duration-fast`
+
+**Token rules (one token, one place):**
+- No hex outside `packages/ui/src/lib/tokens.css` / `foundry.css`
+- No `px` in layout props outside tokens (use `--space-*`, `--radius-*`, etc.)
+- CI gate: `node scripts/check-design-tokens.mjs` fails on violations
+
+**Primitive gallery:** `pnpm --filter web dev` → open [`/_/ui`](http://localhost:5173/_/ui) to see every primitive with fixtures.
+
+**CI gate (run before every PR):**
+```bash
+pnpm ui:gates
+# Runs: ui:contracts + design-tokens + motion:durations + motion:purpose + no-local + test:exports
+# All must be green — zero exit code — before a PR merges.
+```
+
+| Gate script | What it enforces |
+|---|---|
+| `pnpm ui:contracts` | 8 architectural rules (brand scalars, viewport media, fixtures, font-variation-settings, raw element styling) |
+| `pnpm ui:tokens:check` | No hex / raw px / cubic-bezier outside token files |
+| `pnpm ui:motion:durations` | No animation > 400 ms (except cascade allowlist) |
+| `pnpm ui:motion:purpose` | Every animation tagged `[feedback\|continuity\|hierarchy\|delight]` |
+| `pnpm ui:no-local` | No app-local UI components (> 20 style lines outside routes) |
+| `pnpm test:exports` | Every `@conusai/ui` export map entry resolves to a defined value |

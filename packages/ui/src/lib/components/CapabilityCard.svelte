@@ -9,6 +9,7 @@
   let { card, onclick }: Props = $props();
 </script>
 
+<!-- svelte-ignore a11y_no_noninteractive_tabindex — tabindex applied only when role="button" (onclick present) -->
 <article
   class="capability-card"
   role={onclick ? "button" : undefined}
@@ -60,13 +61,13 @@
   }
 
   .kind {
-    font-family:    var(--font-mono);
+    font-family:    var(--font-family-mono);
     font-size:      var(--font-size-label);
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color:          var(--color-accent);
     background:     var(--color-accent-soft);
-    padding:        2px 6px;
+    padding:        var(--space-half) var(--space-1);
     border-radius:  var(--radius-xs);
     flex-shrink:    0;
   }
@@ -96,11 +97,11 @@
   }
 
   .tag {
-    font-family:   var(--font-mono);
+    font-family:   var(--font-family-mono);
     font-size:     var(--font-size-label);
     color:         var(--color-fg-subtle);
     border:        1px solid var(--color-border);
-    padding:       1px 6px;
+    padding:       var(--space-half) var(--space-1);
     border-radius: var(--radius-xs);
   }
 </style>
