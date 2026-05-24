@@ -2,7 +2,7 @@
  * GET /auth/logout — RP-initiated logout from Zitadel.
  */
 import { redirect } from '@sveltejs/kit';
-import type { RequestHandler } from './$types';
+import type { RequestHandler } from './$types.js';
 import { buildLogoutUrl, revokeToken, COOKIE_NAME } from '$lib/server/oidc.js';
 
 export const GET: RequestHandler = async ({ cookies }) => {

@@ -61,7 +61,7 @@ test.describe('URL state restoration (PR 3.C)', () => {
 
 		// Toast appears within 1.5s.
 		await expect(
-			page.getByText('Workspace not found, returning to root'),
+			page.getByText('Workspace not found, returning to root').first(),
 		).toBeVisible({ timeout: 1500 });
 		// URL is cleared to root.
 		await expect(page).toHaveURL('/');

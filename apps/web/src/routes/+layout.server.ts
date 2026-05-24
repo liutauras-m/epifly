@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
-import type { LayoutServerLoad } from './$types';
-import { firstName, initials } from '$lib/server/session';
+import type { LayoutServerLoad } from './$types.js';
+import { firstName, initials } from '$lib/server/session.js';
 
 export const load: LayoutServerLoad = ({ locals, url }) => {
 	if (!locals.user && url.pathname !== '/login' && url.pathname !== '/_/ui') redirect(302, '/login');

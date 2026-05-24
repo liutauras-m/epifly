@@ -20,7 +20,7 @@
    */
   import type { IconComponent } from './Icon.types.js';
   import Icon from './Icon.svelte';
-  import { X } from 'lucide-svelte';
+  import { X } from '@lucide/svelte';
 
   export type ChipVariant = 'tonal' | 'outlined';
   export type ChipSize    = 'sm' | 'md';
@@ -74,7 +74,7 @@
     {...rest}
   >
     {#if icon}<Icon {icon} size={iconSz} />{/if}
-    <span class="chip-label">{label}</span>
+    <span class="chip-label {cls.includes('attachment') ? 'attachment-name' : ''}">{label}</span>
   </button>
 {:else}
   <span
@@ -82,7 +82,7 @@
     {...rest}
   >
     {#if icon}<Icon {icon} size={iconSz} />{/if}
-    <span class="chip-label">{label}</span>
+    <span class="chip-label {cls.includes('attachment') ? 'attachment-name' : ''}">{label}</span>
     {#if removable}
       <button
         type="button"

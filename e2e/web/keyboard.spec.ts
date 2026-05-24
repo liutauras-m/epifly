@@ -37,12 +37,17 @@ test.describe('keyboard parity', () => {
   });
 
   test('/ focuses composer textarea from body', async ({ page }) => {
-    // Click outside any input to ensure focus is on body
-    await page.click('body');
+    page.on('console', msg => console.log('  [BROWSER] ->', msg.text()));
+    // Wait for the composer to be enabled first (avoids focusing a disabled element)
+    const composer = page.getByRole('textbox', { name: /message/i });
+    await expect(composer).toBeEnabled();
+
+    // Blur any active element to ensure focus is on body/document
+    await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+    await page.waitForTimeout(300);
     await page.keyboard.press('/');
 
     // Composer textarea should be focused
-    const composer = page.getByRole('textbox', { name: /message/i });
     await expect(composer).toBeFocused();
   });
 
@@ -77,7 +82,7 @@ test.describe('keyboard parity', () => {
 
   test('Esc closes open drawer', async ({ page }) => {
     // Open the hamburger menu if on compact (unlikely in desktop viewport, but test it)
-    const hamburger = page.getByRole('button', { name: 'Open navigation' });
+    const hamburger = page.getByRole('button', { name: 'Toggle nav' });
     if (await hamburger.isVisible()) {
       await hamburger.click();
       // Wait for drawer to open

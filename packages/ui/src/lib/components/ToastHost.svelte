@@ -13,7 +13,7 @@
    */
   import { toasts } from '../stores/toast.svelte.js';
   import { t } from '../utils/i18n.js';
-  import { X } from 'lucide-svelte';
+  import { X } from '@lucide/svelte';
 </script>
 
 {#if toasts.items.length > 0}

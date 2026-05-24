@@ -26,6 +26,7 @@ function sseLines(...lines: string[]): string {
 
 test.describe('live resources — workspace & recents', () => {
 	test('chat-driven workspace mutation refreshes sidebar', async ({ page }) => {
+		page.on('console', msg => console.log('  [BROWSER] ->', msg.text()));
 		// Mock the initial tree (empty) and a second tree that includes the new node.
 		let treeCallCount = 0;
 		await page.route('**/v1/workspaces/tree', async (route) => {
@@ -71,8 +72,11 @@ test.describe('live resources — workspace & recents', () => {
 		await page.getByRole('textbox').fill('save notes/test.md');
 		await page.getByRole('textbox').press('Meta+Enter');
 
+		// Wait for stream to complete (composer becomes enabled again)
+		await expect(page.getByRole('textbox')).toBeEnabled();
+
 		// Sidebar shows the new folder within ~1.5s after the SSE delta.
-		await expect(page.getByText('notes')).toBeVisible({ timeout: 1500 });
+		await expect(page.locator('.node-name', { hasText: 'notes' })).toBeVisible({ timeout: 1500 });
 		expect(treeCallCount).toBeGreaterThanOrEqual(2);
 	});
 

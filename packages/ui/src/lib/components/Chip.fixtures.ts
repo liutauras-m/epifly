@@ -1,5 +1,5 @@
 import type { ComponentFixtureSet } from '../gallery.types.js';
-import { Zap, FlaskConical, Globe } from 'lucide-svelte';
+import { Zap, FlaskConical, Globe } from '@lucide/svelte';
 
 const fixtures: ComponentFixtureSet = {
   label: 'Chip',

@@ -290,8 +290,8 @@
     border:          none;
     cursor:          pointer;
     color:           var(--color-fg-subtle);
-    width:           28px;
-    height:          28px;
+    width:           32px;
+    height:          32px;
     border-radius:   var(--radius-xs);
     transition:      background var(--duration-fast) var(--ease-standard);  /* [feedback] */
   }

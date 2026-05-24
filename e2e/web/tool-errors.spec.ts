@@ -60,7 +60,7 @@ test.describe('tool error toast', () => {
 
 		// Toast appears within 2s with the gateway's message.
 		await expect(
-			page.getByText(/node 01HFAKE0000000000000000000 not found/),
+			page.locator('[data-testid="toast"]').getByText(/node 01HFAKE0000000000000000000 not found/),
 		).toBeVisible({ timeout: 2000 });
 	});
 });

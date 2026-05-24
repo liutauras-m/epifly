@@ -9,7 +9,7 @@
    *   • aria-hidden="true" by default (decorative); pass label for standalone icons
    *
    * Usage:
-   *   import { Search } from 'lucide-svelte';
+   *   import { Search } from '@lucide/svelte';
    *   <Icon icon={Search} />                    ← md (20px), decorative
    *   <Icon icon={Search} size="lg" />          ← lg (24px)
    *   <Icon icon={Search} size={32} />          ← explicit px

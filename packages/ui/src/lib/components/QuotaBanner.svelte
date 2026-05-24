@@ -1,7 +1,7 @@
 <svelte:options runes={true} />
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { AlertTriangle, Ban, Check, X, ArrowUpRight } from 'lucide-svelte';
+  import { AlertTriangle, Ban, Check, X, ArrowUpRight } from '@lucide/svelte';
 
   let {
     apiBase = '',

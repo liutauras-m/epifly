@@ -26,7 +26,7 @@ test.describe('auth', () => {
     await page.getByLabel('Operator name').fill('E2E Operator');
     await page.getByRole('button', { name: 'Begin' }).click();
     await expect(page).toHaveURL('/');
-    await page.getByRole('link', { name: 'Logout' }).click();
+    await page.getByRole('link', { name: 'Logout' }).first().click();
     await expect(page).toHaveURL(/\/login/);
   });
 });

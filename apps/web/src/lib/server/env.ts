@@ -1,4 +1,4 @@
-import { COOKIE_NAME } from './session';
+import { COOKIE_NAME } from './session.js';
 
 export const BACKEND_URL = process.env.CONUSAI_BACKEND_URL ?? 'http://localhost:8080';
 

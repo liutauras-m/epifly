@@ -20,10 +20,11 @@
    */
   import type { Snippet } from 'svelte';
   import { autoGrow } from '../utils/actions.js';
+  import { focusOnSlash } from '../utils/keyboard.js';
   import { t } from '../utils/i18n.js';
   import Icon from './Icon.svelte';
   import Chip from './Chip.svelte';
-  import { Send, Paperclip, X } from 'lucide-svelte';
+  import { Send, Paperclip, X } from '@lucide/svelte';
 
   export type Attachment = {
     id:       string;
@@ -90,6 +91,37 @@
     };
   });
 
+  $effect(() => {
+    if (!composerEl) return;
+    const form = composerEl.closest('form');
+    if (!form) return;
+
+    async function handleDrop(e: DragEvent) {
+      if (!onUpload || disabled || loading) return;
+      e.preventDefault();
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) {
+        const uploaded = await onUpload(Array.from(files));
+        if (uploaded && uploaded.length > 0) {
+          attachments = [...attachments, ...uploaded];
+        }
+      }
+    }
+
+    function handleDragOver(e: DragEvent) {
+      if (!onUpload || disabled || loading) return;
+      e.preventDefault();
+    }
+
+    form.addEventListener('drop', handleDrop);
+    form.addEventListener('dragover', handleDragOver);
+
+    return () => {
+      form.removeEventListener('drop', handleDrop);
+      form.removeEventListener('dragover', handleDragOver);
+    };
+  });
+
   function submit() {
     const trimmed = value.trim();
     if (!trimmed || loading || disabled) return;
@@ -134,6 +166,7 @@
     <div class="composer-attachments" aria-label="Attached files">
       {#each attachments as att (att.id)}
         <Chip
+          class="attachment"
           label={att.name}
           variant="tonal"
           size="sm"
@@ -170,6 +203,7 @@
       aria-label="Message"
       aria-multiline="true"
       use:autoGrow={{ maxRows }}
+      use:focusOnSlash
       onkeydown={handleKeydown}
     ></textarea>
 
@@ -258,6 +292,22 @@
     flex-shrink:    0;
     transition:     background var(--duration-fast) var(--ease-standard);  /* [feedback] */
     outline:        none;
+  }
+  @container app-shell (max-width: 767px) {
+    .composer-btn,
+    .composer-send {
+      width:        var(--hit, 44px);
+      height:       var(--hit, 44px);
+    }
+  }
+  /* Touch-capable devices at medium/expanded breakpoints (iPads, hybrid laptops)
+     also need 44px targets — use coarse-pointer to detect touch hardware. */
+  @media (pointer: coarse) {
+    .composer-btn,
+    .composer-send {
+      width:        var(--hit, 44px);
+      height:       var(--hit, 44px);
+    }
   }
   .composer-btn:focus-visible,
   .composer-send:focus-visible {

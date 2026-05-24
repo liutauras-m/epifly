@@ -1,5 +1,5 @@
 import type { ComponentFixtureSet } from '../gallery.types.js';
-import { ArrowRight, Trash2, Check, Loader2, Send, Plus } from 'lucide-svelte';
+import { ArrowRight, Trash2, Check, Loader2, Send, Plus } from '@lucide/svelte';
 
 const fixtures: ComponentFixtureSet = {
   label: 'Button',

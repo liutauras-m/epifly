@@ -1,6 +1,6 @@
 <svelte:options runes={true} />
 <script lang="ts">
-  import { Layers, Zap, Users, Building2 } from 'lucide-svelte';
+  import { Layers, Zap, Users, Building2 } from '@lucide/svelte';
 
   let {
     tier = 'free',

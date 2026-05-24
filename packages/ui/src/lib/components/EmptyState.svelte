@@ -21,7 +21,7 @@
    */
   import type { Snippet } from 'svelte';
   import Button from './Button.svelte';
-  import { RotateCcw, MessageSquarePlus, FolderOpen, Zap, FileText, Receipt, ShieldOff } from 'lucide-svelte';
+  import { RotateCcw, MessageSquarePlus, FolderOpen, Zap, FileText, Receipt, ShieldOff } from '@lucide/svelte';
 
   export type EmptyStateKind =
     | 'no-chats'

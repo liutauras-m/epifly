@@ -3,7 +3,7 @@
  * Exchanges the authorization code for tokens and sets session cookie.
  */
 import { redirect, error } from '@sveltejs/kit';
-import type { RequestHandler } from './$types';
+import type { RequestHandler } from './$types.js';
 import { exchangeCode, COOKIE_NAME } from '$lib/server/oidc.js';
 
 export const GET: RequestHandler = async ({ url, cookies }) => {

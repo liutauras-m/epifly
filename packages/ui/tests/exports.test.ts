@@ -56,7 +56,8 @@ describe('@conusai/ui main index exports', async () => {
   let mod: Record<string, any>;
   try {
     mod = await import(url);
-  } catch {
+  } catch (err) {
+    console.error("DYNAMIC IMPORT FAILED:", err);
     mod = {};
   }
 

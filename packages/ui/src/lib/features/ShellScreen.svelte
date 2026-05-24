@@ -3,10 +3,10 @@
   /**
    * ShellScreen — authenticated application shell (Phase 3.1)
    *
-   * Composes AppShell + AppHeader + Drawer + Sidebar + screen-routing into a
+   * Composes AppShell + AppHeader + Sidebar + screen-routing into a
    * single reusable feature component consumed by:
    *   - apps/browser-shell/src/routes/+page.svelte   (Tauri mobile/desktop)
-   *   - (future) apps/web can also opt in to reduce duplication
+   *   - apps/web/src/routes/+page.svelte             (SvelteKit web)
    *
    * Props
    *   sdk         — ConusSdk instance (data loading)
@@ -16,23 +16,8 @@
    *   sigil       — optional logo image URL for the greeting empty state
    *   appTitle    — page / tab title (default "ConusAI")
    *
-   * Snippets  (all optional)
-   *   drawerHeader  — content above the workspace tree (e.g. <DrawerProfileHeader>)
-   *   drawerFooter  — content below recents / nav links (e.g. sign-out button)
-   *
    * Callbacks
-   *   onLogout      — called when user taps sign-out in the drawer footer
-   *
-   * Layout
-   *   - compact (< 768 px): AppHeader with hamburger, Drawer slides from left
-   *   - medium  (768–1023 px): icon-only Sidebar + Drawer still available
-   *   - expanded (≥ 1024 px): full Sidebar, Drawer hidden
-   *
-   * Screens
-   *   'chat'         — ChatScreen (default)
-   *   'capabilities' — CapabilitiesScreen
-   *   'artifacts'    — ArtifactsScreen
-   *   Routed via screenStore; view-transitions tag each switch as [continuity].
+   *   onLogout      — called when user clicks sign-out
    */
   import type { ConusSdk } from '@conusai/sdk';
   import type { WorkspaceNode } from '@conusai/types';
@@ -40,12 +25,12 @@
 
   import AppShell          from '../components/AppShell.svelte';
   import AppHeader         from '../components/AppHeader.svelte';
-  import Drawer            from '../components/Drawer.svelte';
   import Sidebar           from '../components/Sidebar.svelte';
   import SidebarSection    from '../components/SidebarSection.svelte';
   import SidebarItem       from '../components/SidebarItem.svelte';
   import WorkspaceTree from './WorkspaceTree.svelte';
   import DrawerRecentChats from './DrawerRecentChats.svelte';
+  import ThemeSwitcher     from '../components/ThemeSwitcher.svelte';
 
   import ChatScreen         from './screens/ChatScreen.svelte';
   import CapabilitiesScreen from './screens/CapabilitiesScreen.svelte';
@@ -53,8 +38,9 @@
   import { buildInvocationPrompt } from './screens/buildInvocationPrompt.js';
   import type { CapEntry }         from './CapabilityBrowser.svelte';
 
-  // Nav icons for capabilities + artifacts sidebar items (inline SVG — avoids
-  // lucide Component<any> type variance across Svelte 4/5 check contexts).
+  import { registerKeyboardShortcuts } from '../utils/keyboard.js';
+
+  // Nav icons for capabilities + artifacts sidebar items
   const svgCapabilities = `<rect x="2" y="3" width="6" height="6" rx="1"/><rect x="16" y="3" width="6" height="6" rx="1"/><rect x="2" y="15" width="6" height="6" rx="1"/><rect x="16" y="15" width="6" height="6" rx="1"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="18" x2="16" y2="18"/><line x1="5" y1="9" x2="5" y2="15"/><line x1="19" y1="9" x2="19" y2="15"/>`;
   const svgArtifacts    = `<path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/>`;
 
@@ -80,28 +66,47 @@
     sigil,
     appTitle = 'ConusAI',
     onLogout,
-    drawerHeader,
-    drawerFooter,
     selectedNode = $bindable<WorkspaceNode | null>(null),
   }: {
     sdk:          ConusSdk;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     chatStream:   any;
     userName:   string;
     userPlan?:  string;
     sigil?:     string;
     appTitle?:  string;
     onLogout?:  () => void;
-    drawerHeader?: Snippet;
-    drawerFooter?: Snippet;
-    /** Bindable: lets the parent seed the selected workspace node (e.g. from applyInitialRoute). */
+    /** Bindable: lets the parent seed the selected workspace node. */
     selectedNode?: WorkspaceNode | null;
   } = $props();
 
   // ── State ─────────────────────────────────────────────────────────────────
   let workspaceNodes    = $state<WorkspaceNode[]>([]);
-  let wsRefreshKey      = $state(0);
   let lastInvalidKey    = $state<string | null>(null);
+  let composerRef       = $state<{ focus(): void } | undefined>();
+  /** Ref to the hamburger button — focus restored here when drawer closes. */
+  let hamburgerEl       = $state<HTMLButtonElement | undefined>();
+
+  async function refreshWorkspace() {
+    const result = await sdk.workspaces.tree();
+    if (!result.error && Array.isArray(result.data)) {
+      workspaceNodes = result.data;
+    }
+  }
+
+  // Load tree on mount
+  $effect(() => {
+    refreshWorkspace();
+  });
+
+  // ── Initials calculation helper ──────────────────────────────────────────
+  function getInitials(name: string): string {
+    if (!name) return '?';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return name.slice(0, 2).toUpperCase();
+  }
 
   // ── Derived screen title ──────────────────────────────────────────────────
   const screenTitle = $derived(
@@ -109,6 +114,28 @@
     screenStore.active === 'artifacts'    ? 'Artifacts' :
     breadcrumbsStore.node?.name ?? appTitle
   );
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────
+  $effect(() => {
+    return registerKeyboardShortcuts({
+      onFocusComposer: () => {
+        if (composerRef) {
+          composerRef.focus();
+        } else if (typeof document !== 'undefined') {
+          (document.querySelector('textarea.composer-input') as HTMLTextAreaElement | null)?.focus();
+        }
+      },
+      onEscape: () => {
+        if (drawerStore.open) {
+          drawerStore.close();
+          hamburgerEl?.focus();   // restore focus to the trigger element (WCAG 2.4.3)
+          return;
+        }
+        if (screenStore.active !== 'chat') screenStore.setActive('chat');
+      },
+      onCommandPalette: () => { /* future */ },
+    });
+  });
 
   // ── Navigation callbacks ──────────────────────────────────────────────────
   function onSelectNode(node: WorkspaceNode) {
@@ -120,7 +147,7 @@
     } else if (node.kind === 'conversation') {
       chatStream.newSession();
     }
-    startViewTransition(() => screenStore.setActive('chat'));  /* [continuity] */
+    startViewTransition(() => screenStore.setActive('chat'));
     drawerStore.close();
   }
 
@@ -128,17 +155,17 @@
     chatStream.newSession();
     selectedNode = null;
     breadcrumbsStore.clear();
-    startViewTransition(() => screenStore.setActive('chat'));  /* [continuity] */
+    startViewTransition(() => screenStore.setActive('chat'));
     drawerStore.close();
   }
 
   function handleCapabilitiesNav() {
-    startViewTransition(() => screenStore.setActive('capabilities'));  /* [continuity] */
+    startViewTransition(() => screenStore.setActive('capabilities'));
     drawerStore.close();
   }
 
   function handleArtifactsNav() {
-    startViewTransition(() => screenStore.setActive('artifacts'));  /* [continuity] */
+    startViewTransition(() => screenStore.setActive('artifacts'));
     drawerStore.close();
   }
 
@@ -158,7 +185,7 @@
       const key = JSON.stringify(inv);
       if (key !== lastInvalidKey) {
         lastInvalidKey = key;
-        wsRefreshKey++;
+        refreshWorkspace();
       }
     }
   });
@@ -166,19 +193,44 @@
 
 <svelte:head><title>{screenTitle} · {appTitle}</title></svelte:head>
 
-<!--
-  Shared sidebar / drawer nav content
-  Rendered in both the persistent Sidebar (medium+) and the mobile Drawer (compact).
--->
+<svelte:window onkeydown={(e) => {
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && e.key === 'n') {
+    e.preventDefault();
+    handleNewChat();
+  }
+}} />
+
+<!-- Sidebar footer: user chip → logout.
+     Defined at top-level snippet scope so it can be passed into
+     <Sidebar footer={...}> without Svelte treating it as an AppShell prop. -->
+{#snippet footerSnippet()}
+  <a
+    href="/logout"
+    class="user-chip"
+    aria-label="Logout — {userName}"
+    title="Logout"
+    onclick={(e) => {
+      e.preventDefault();
+      onLogout?.();
+    }}
+  >
+    <div class="avatar" aria-hidden="true">{getInitials(userName)}</div>
+    <div class="user-meta">
+      <span class="user-name">{userName}</span>
+      {#if userPlan}<span class="user-plan">{userPlan}</span>{/if}
+    </div>
+  </a>
+{/snippet}
+
+<!-- Shared sidebar nav content -->
 {#snippet navContent()}
-  {#key wsRefreshKey}
-    <WorkspaceTree
-      {sdk}
-      bind:nodes={workspaceNodes}
-      selectedNodeId={selectedNode?.id}
-      {onSelectNode}
-    />
-  {/key}
+  <WorkspaceTree
+    {sdk}
+    bind:nodes={workspaceNodes}
+    selectedNodeId={selectedNode?.id}
+    {onSelectNode}
+  />
 
   <DrawerRecentChats
     {sdk}
@@ -219,14 +271,20 @@
   </SidebarSection>
 {/snippet}
 
-<AppShell>
+<AppShell
+  sidebarRole="navigation"
+  sidebarLabel="Workshop navigation"
+  bind:open={drawerStore.open}
+  onclose={() => hamburgerEl?.focus()}
+>
   <!-- ── Topbar ──────────────────────────────────────────────────────────── -->
   {#snippet topbar()}
     <AppHeader>
       {#snippet leading()}
         <button
+          bind:this={hamburgerEl}
           class="icon-btn shell-hamburger"
-          aria-label="Open navigation"
+          aria-label="Toggle nav"
           aria-expanded={drawerStore.open}
           onclick={() => drawerStore.toggle()}
         >
@@ -255,12 +313,22 @@
             </svg>
           </button>
         {/if}
+        <ThemeSwitcher />
         {#if onLogout}
-          <button class="icon-btn" aria-label="Sign out" onclick={onLogout}>
+          <a
+            href="/logout"
+            class="icon-btn"
+            aria-label="Sign out"
+            title="Sign out"
+            onclick={(e) => {
+              e.preventDefault();
+              onLogout();
+            }}
+          >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="22" height="22" aria-hidden="true">
               {@html iconLogOut}
             </svg>
-          </button>
+          </a>
         {/if}
       {/snippet}
     </AppHeader>
@@ -268,19 +336,8 @@
 
   <!-- ── Persistent sidebar (medium ≥ 768px) ──────────────────────────────── -->
   {#snippet sidebar()}
-    <Sidebar>
+    <Sidebar footer={onLogout ? footerSnippet : undefined}>
       {@render navContent()}
-      {#if onLogout}
-        {#snippet footer()}
-          <button class="user-chip" onclick={onLogout} aria-label="Sign out">
-            <div class="avatar" aria-hidden="true">{userName.slice(0, 2).toUpperCase()}</div>
-            <div class="user-meta">
-              <span class="user-name">{userName}</span>
-              {#if userPlan}<span class="user-plan">{userPlan}</span>{/if}
-            </div>
-          </button>
-        {/snippet}
-      {/if}
     </Sidebar>
   {/snippet}
 
@@ -297,6 +354,7 @@
           }}
           userName={userName}
           {sigil}
+          bind:composerRef
         />
       {:else if screenStore.active === 'capabilities'}
         <CapabilitiesScreen {sdk} onInvoke={handleInvoke} />
@@ -306,30 +364,6 @@
     </div>
   {/snippet}
 </AppShell>
-
-<!-- ── Mobile drawer (compact < 768px) ───────────────────────────────────── -->
-<Drawer
-  open={drawerStore.open}
-  onclose={() => drawerStore.close()}
-  label="Navigation"
->
-  {#if drawerHeader}{@render drawerHeader()}{/if}
-
-  {@render navContent()}
-
-  {#if drawerFooter}
-    {@render drawerFooter()}
-  {:else if onLogout}
-    <div class="drawer-footer-default">
-      <button class="drawer-signout" onclick={onLogout} aria-label="Sign out">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" aria-hidden="true">
-          {@html iconLogOut}
-        </svg>
-        Sign out
-      </button>
-    </div>
-  {/if}
-</Drawer>
 
 <style>
   /* ── Icon button (topbar actions) ─────────────────────────────────────────── */
@@ -345,9 +379,10 @@
     cursor:          pointer;
     border-radius:   var(--radius-sm);
     padding:         0;
+    text-decoration: none;
     transition:
-      background var(--duration-fast) var(--ease-standard),  /* [feedback] */
-      color      var(--duration-fast) var(--ease-standard);
+      background var(--duration-fast) var(--ease-standard), /* [feedback] */
+      color      var(--duration-fast) var(--ease-standard); /* [feedback] */
   }
   .icon-btn:hover        { background: var(--color-bg-hover); color: var(--color-fg); }
   .icon-btn:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset); }
@@ -375,7 +410,8 @@
     border-radius:  var(--radius-sm);
     min-height:     var(--hit, 44px);
     width:          100%;
-    transition:     background var(--duration-fast) var(--ease-standard);  /* [feedback] */
+    text-decoration: none;
+    transition:     background var(--duration-fast) var(--ease-standard); /* [feedback] */
   }
   .user-chip:hover        { background: var(--color-bg-hover); }
   .user-chip:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset); }
@@ -422,31 +458,6 @@
     .avatar     { margin: auto; }
   }
 
-  /* ── Drawer footer (default sign-out) ─────────────────────────────────────── */
-  .drawer-footer-default {
-    border-top:     1px solid var(--color-border);
-    margin-top:     auto;
-    padding-top:    var(--space-2);
-  }
-  .drawer-signout {
-    display:     flex;
-    align-items: center;
-    gap:         var(--space-3);
-    height:      var(--hit, 44px);
-    padding:     0 var(--space-4);
-    border:      none;
-    background:  none;
-    font-family: var(--font-family-sans);
-    font-size:   var(--font-size-body);
-    color:       var(--color-danger);
-    cursor:      pointer;
-    width:       100%;
-    text-align:  left;
-    transition:  background var(--duration-fast) var(--ease-standard);  /* [feedback] */
-  }
-  .drawer-signout:hover { background: var(--color-bg-hover); }
-  .drawer-signout:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset); }
-
   /* ── Main-content view-transition wrapper ─────────────────────────────────── */
   .main-transition-root {
     display:              contents;
@@ -486,6 +497,6 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .icon-btn, .user-chip, .drawer-signout { transition: none; }
+    .icon-btn, .user-chip { transition: none; }
   }
 </style>

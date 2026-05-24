@@ -1,6 +1,6 @@
-import type { PageServerLoad } from './$types';
-import { COOKIE_NAME } from '$lib/server/session';
-import { createServerFetch } from '$lib/server/env';
+import type { PageServerLoad } from './$types.js';
+import { COOKIE_NAME } from '$lib/server/session.js';
+import { createServerFetch } from '$lib/server/env.js';
 import { createConusSdk } from '@conusai/sdk';
 import type { WorkspaceNode } from '@conusai/types';
 export type { WorkspaceNode };

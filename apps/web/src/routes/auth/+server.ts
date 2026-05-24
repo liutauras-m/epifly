@@ -3,7 +3,7 @@
  * Only active when AUTH_PROVIDER=zitadel.
  */
 import { redirect } from '@sveltejs/kit';
-import type { RequestHandler } from './$types';
+import type { RequestHandler } from './$types.js';
 import {
 	buildAuthUrl,
 	generateCodeVerifier,

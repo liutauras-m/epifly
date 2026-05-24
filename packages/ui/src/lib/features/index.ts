@@ -21,6 +21,7 @@ export { default as ArtifactRow } from './screens/ArtifactRow.svelte';
 export { buildInvocationPrompt } from './screens/buildInvocationPrompt.js';
 
 export { createChatStream } from './createChatStream.svelte.js';
+export type { CustomStreamFn } from './createChatStream.svelte.js';
 export type { ToolCardEntry } from './AgentChatStream.svelte';
 export type { ChatMessage } from '../components/MessageList.svelte';
 export type { Attachment } from '../components/Composer.svelte';
@@ -35,6 +36,9 @@ export type { ApplyInitialRouteHandlers } from '../routing/applyInitialRoute.js'
 // Full authenticated + login screens for browser-shell / Tauri consumers.
 export { default as ShellScreen }      from './ShellScreen.svelte';
 export { default as ShellLoginScreen } from './ShellLoginScreen.svelte';
+// ShellPage = single mount-point: wraps ShellScreen with deep-link restore
+// and workspace-URL sync. Both apps' root +page.svelte use this.
+export { default as ShellPage }        from './ShellPage.svelte';
 
 // ── Domain features ──────────────────────────────────────────────────────────
 export { default as QuotaList } from './QuotaList.svelte';

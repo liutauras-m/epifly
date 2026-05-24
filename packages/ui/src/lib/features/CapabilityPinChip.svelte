@@ -17,7 +17,7 @@
    * is consumed identically by `apps/web` and `apps/browser-shell`.
    */
   import type { RoutingMeta } from '@conusai/sdk';
-  import { Pin, Info, X } from 'lucide-svelte';
+  import { Pin, Info, X } from '@lucide/svelte';
   import Sheet from '../components/Sheet.svelte';
 
   let {

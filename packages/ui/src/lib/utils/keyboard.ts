@@ -39,8 +39,10 @@ export function registerKeyboardShortcuts(handlers: KeyboardShortcutHandlers): (
       || target.tagName === 'SELECT'
       || target.isContentEditable;
 
+    console.log('[KEYBOARD UTILS] Key down on document:', e.key, 'target:', target.tagName, 'inInput:', inInput);
     // `/` — focus composer (not inside inputs)
     if (e.key === '/' && !inInput && !e.metaKey && !e.ctrlKey) {
+      console.log('[KEYBOARD UTILS] "/" shortcut triggered! Calling onFocusComposer.');
       e.preventDefault();
       handlers.onFocusComposer?.();
       return;

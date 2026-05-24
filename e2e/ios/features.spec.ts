@@ -51,8 +51,9 @@ async function mockStream(page: Page, ...sseChunks: string[]) {
 }
 
 async function submitComposer(page: Page) {
-  // Meta+Enter is the keyboard shortcut; plain Enter only inserts a newline
-  await page.getByRole('textbox').press('Meta+Enter');
+  const sendBtn = page.getByRole('button', { name: /send/i }).first();
+  await expect(sendBtn).toBeEnabled({ timeout: 4_000 });
+  await sendBtn.click();
 }
 
 // ─── 1. Login ────────────────────────────────────────────────────────────────
@@ -123,7 +124,7 @@ test.describe('2 · Workspace elements', () => {
   });
 
   test('logout link is present in topbar', async ({ page }) => {
-    await expect(page.getByRole('link', { name: 'Logout' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Logout' }).first()).toBeVisible();
   });
 });
 
@@ -384,7 +385,7 @@ test.describe('7 · Workspace persistence (SSR)', () => {
     } else {
       // No folders yet — verify workspace explorer is shown (not a blank/broken page)
       const emptyState = page.locator('text=/No folders yet|Add a folder/i');
-      await expect(emptyState.or(explorer)).toBeVisible();
+      await expect(emptyState.or(explorer).first()).toBeVisible();
       await snap(page, '07b-workspace-empty');
     }
   });
@@ -415,6 +416,7 @@ test.describe('7 · Workspace persistence (SSR)', () => {
     await page.getByRole('button', { name: 'Toggle nav' }).click();
     const sidebar = page.getByRole('complementary', { name: 'Workshop navigation' });
     await expect(sidebar).toHaveClass(/open/, { timeout: 3_000 });
+    await page.waitForTimeout(300);
 
     // Open new-node form and create a folder
     const addBtn = page.getByRole('button', { name: 'New folder or conversation' });

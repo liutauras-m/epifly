@@ -28,8 +28,4 @@ export default defineConfig({
 			'/metrics': { target: BACKEND, changeOrigin: true }
 		}
 	},
-	test: {
-		include: ['src/tests/**/*.{test,spec}.ts'],
-		environment: 'node',
-	}
 });

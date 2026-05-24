@@ -19,8 +19,11 @@ export interface ShellUser {
 const STORAGE_USER  = 'conusai_shell_user';
 const STORAGE_TOKEN = 'conusai_shell_token';
 
-// ── Reactive auth state ──────────────────────────────────────────────────────
-export let user = $state<ShellUser | null>(null);
+// ── Reactive auth class ──────────────────────────────────────────────────────
+class Auth {
+  user = $state<ShellUser | null>(null);
+}
+export const auth = new Auth();
 
 // ── Session cookie issuance ──────────────────────────────────────────────────
 async function issueSessionCookie(name: string, plan: string): Promise<void> {
@@ -66,7 +69,7 @@ export async function initAuth(): Promise<void> {
     try {
       const stored = JSON.parse(raw) as ShellUser;
       if (stored?.name) {
-        user = stored;
+        auth.user = stored;
         issueSessionCookie(stored.name, stored.plan).catch(() => {});
       }
     } catch { /* corrupt storage — ignore */ }
@@ -75,7 +78,7 @@ export async function initAuth(): Promise<void> {
 
 /** Log in with a name + plan tier. Issues a new session cookie. */
 export async function login(name: string, plan: string): Promise<void> {
-  user = { name, plan };
+  auth.user = { name, plan };
   localStorage.setItem(STORAGE_USER, JSON.stringify({ name, plan }));
   await issueSessionCookie(name, plan);
 }
@@ -89,7 +92,7 @@ export function logout(): void {
   localStorage.removeItem(STORAGE_USER);
   localStorage.removeItem(STORAGE_TOKEN);
   setSessionToken(null);
-  user = null;
+  auth.user = null;
 
   // Reset navigation stores so the next login starts clean.
   breadcrumbsStore.clear();

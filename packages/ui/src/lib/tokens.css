@@ -4,7 +4,8 @@
  * Hand-editing tokens.css is forbidden after Phase 2.1a (2026-05-23).
  */
 
-/* ── 1. Paper theme (light) ─────────────────────────────────────────────── */
+
+/* ── 1. Paper theme (light) ──────────────────────────── */
 :root,
 :root[data-theme="paper"] {
   --ink: #111111;
@@ -17,7 +18,7 @@
   --seam: #C8C8C8;
 }
 
-/* ── 2. Forge theme (dark) ─────────────────────────────────────────────── */
+/* ── 2. Forge theme (dark) ───────────────────────────── */
 :root[data-theme="forge"] {
   --ink: #F8F8F8;
   --ink-2: #C0C0C0;
@@ -27,23 +28,20 @@
   --paper-3: #222222;
   --rule: #2A2A2A;
   --seam: #3A3A3A;
-  /* Accent overrides */
   --ember-2: #FF7A20;
   --ember-soft: rgba(255, 98, 0, 0.12);
   --ember-glow: rgba(255, 98, 0, 0.28);
   --cyan-soft: rgba(0, 212, 255, 0.12);
-  /* Semantic overrides */
   --success: #22a060;
   --success-soft: rgba(34, 160, 96, 0.15);
   --danger: #e03000;
   --danger-soft: rgba(224, 48, 0, 0.15);
-  /* Overlay overrides */
   --shadow-sm: rgba(0, 0, 0, 0.30);
   --shadow-md: rgba(0, 0, 0, 0.50);
   --backdrop: rgba(0, 0, 0, 0.60);
 }
 
-/* ── 3. Brand scalars (theme-invariant) ─────────────────────────────────────────────── */
+/* ── 3. Brand scalars (theme-invariant) ──────────────── */
 :root {
   --ember: #FF6200;
   --ember-2: #E05500;
@@ -58,16 +56,14 @@
   --shadow-sm: rgba(0, 0, 0, 0.08);
   --shadow-md: rgba(0, 0, 0, 0.12);
   --backdrop: rgba(0, 0, 0, 0.40);
-  /* Login poster */
   --poster-gradient: linear-gradient(135deg, #FF6200 0%, #E05500 60%, #111111 100%);
   --poster-hi: rgba(255, 150, 80, 0.22);
   --poster-em: rgba(255, 255, 255, 0.92);
 }
 
 /* ── 4. Semantic color aliases
-      Component CSS uses only these — never --ink / --paper / --ember directly.
-      Theme files remap brand scalars; aliases stay stable across themes.
-   ─────────────────────────────────────────────────────────────── */
+   Component CSS uses only these — never --ink / --paper / --ember directly.
+   Theme files remap brand scalars; aliases stay stable across themes.  */
 :root {
   --color-bg: var(--paper);
   --color-bg-raised: var(--paper-2);
@@ -84,12 +80,10 @@
   --color-danger-soft: var(--danger-soft);
   --color-success: var(--success);
   --color-success-soft: var(--success-soft);
-  /* Warning / amber */
   --color-warning: #d97706;
   --color-warning-text: #92400e;
   --color-warning-soft: rgba(217, 119, 6, 0.12);
   --color-warning-border: rgba(217, 119, 6, 0.24);
-  /* On-accent (text on filled accent/danger/success buttons) */
   --color-on-accent: #ffffff;
   --color-on-danger: #ffffff;
   --color-on-success: #ffffff;
@@ -98,7 +92,7 @@
   --color-backdrop: var(--backdrop);
 }
 
-/* ── 5. Typography ─────────────────────────────────────────────── */
+/* ── 5. Typography ───────────────────────────────────── */
 :root {
   /* canonical font families */
   --font-family-sans: "Geist", system-ui, sans-serif;
@@ -125,7 +119,7 @@
   --t-mono: var(--font-size-mono);
 }
 
-/* ── 6. Spacing ─────────────────────────────────────────────── */
+/* ── 6. Spacing ──────────────────────────────────────── */
 :root {
   /* canonical */
   --space-px: 1px;
@@ -149,7 +143,7 @@
   --s-8: var(--space-8);
 }
 
-/* ── 7. Radius ─────────────────────────────────────────────── */
+/* ── 7. Radius ───────────────────────────────────────── */
 :root {
   /* canonical */
   --radius-xs: 6px;
@@ -167,7 +161,7 @@
   --r-full: var(--radius-full);
 }
 
-/* ── 8. Duration ─────────────────────────────────────────────── */
+/* ── 8. Duration ─────────────────────────────────────── */
 :root {
   /* canonical */
   --duration-fast: 120ms;
@@ -184,79 +178,64 @@
 }
 
 /* ── 9. Easing — M3-aligned canonical names (Phase 2.3).
-      Pick by PURPOSE, not by feel. See comment on each curve.
-      Use --spring-* tokens for anything M3 would tag 'emphasized' (hero sheets, screen morphs).
-   ─────────────────────────────────────────────────────────────── */
+   Pick by PURPOSE, not by feel. See comment on each curve.
+   Use --spring-* tokens for anything M3 would tag 'emphasized' (hero sheets, screen morphs).  */
 :root {
-  /* -- M3 canonical curves -- */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --ease-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
   --ease-emphasized-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
   --ease-linear: linear;
-  /* -- Spring physics tokens: [stiffness damping mass] read by tokenSpring() -- */
   --spring-snappy: 380 30 1;
   --spring-gentle: 170 26 1;
   --spring-bouncy: 280 14 1;
-  /* -- Legacy aliases (keep for existing consumers) -- */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-in: cubic-bezier(0.6, 0, 0.7, 0.2);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-ui: var(--ease-standard);
 }
 
-/* ── 10. Layout tokens ─────────────────────────────────────────────── */
+/* ── 10. Layout tokens ───────────────────────────────── */
 :root {
   --sidebar: 260px;
   --sidebar-collapsed: 64px;
   --composer-w: 720px;
   --gutter: 64px;
-  /* Hit targets */
   --hit: 44px;
   --hit-sm: 36px;
   --hit-xs: 28px;
-  /* Icon sizes */
   --icon-xs: 14px;
   --icon-sm: 16px;
   --icon-md: 20px;
   --icon-lg: 24px;
-  /* Topbar heights */
   --topbar-height: 48px;
   --topbar-height-compact: 44px;
   --topbar-height-expanded: 40px;
-  /* Chip heights */
   --chip-h-sm: 24px;
   --chip-h-md: 32px;
-  /* Status indicator dots */
   --dot-sm: 6px;
   --dot-md: 8px;
-  /* Sheet handle */
   --sheet-handle-w: 40px;
   --sheet-handle-h: 4px;
-  /* Toast */
   --toast-max-w: 380px;
   --toast-dismiss-size: 28px;
-  /* Progress/meter track */
   --meter-track-h: 6px;
-  /* Breakpoints (used in @container queries on AppShell) */
   --bp-compact: 768px;
   --bp-medium: 1024px;
   --bp-expanded: 1440px;
-  /* z-index scale */
   --z-drawer: 300;
   --z-sheet: 300;
   --z-overlay: 200;
   --z-topbar: 100;
-  /* compat: --rail was the public name before Phase 2.1 */
   --rail: var(--sidebar);
 }
 
-/* ── 11. Focus ring ─────────────────────────────────────────────── */
+/* ── 11. Focus ring ──────────────────────────────────── */
 :root {
   --focus-ring: 2px solid var(--color-accent);
   --focus-ring-offset: 2px;
 }
 
-/* ── 12. Safe area insets ─────────────────────────────────────────────── */
+/* ── 12. Safe area insets ────────────────────────────── */
 :root {
   --safe-top: env(safe-area-inset-top,    0px);
   --safe-right: env(safe-area-inset-right,  0px);
@@ -264,12 +243,12 @@
   --safe-left: env(safe-area-inset-left,   0px);
 }
 
-/* ── 13. Versioning ─────────────────────────────────────────────── */
+/* ── 13. Versioning ──────────────────────────────────── */
 :root {
   --foundry-version: "2026.05";
 }
 
-/* ── 14. Reduced motion ────────────────────────────────────────────── */
+/* ── 14. Reduced motion ──────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.01ms !important;

@@ -1,5 +1,5 @@
 import type { ComponentFixtureSet } from '../gallery.types.js';
-import { Search, Settings, ChevronRight, X, Plus, Send, Paperclip, Zap, LayoutGrid, User } from 'lucide-svelte';
+import { Search, Settings, ChevronRight, X, Plus, Send, Paperclip, Zap, LayoutGrid, User } from '@lucide/svelte';
 
 const fixtures: ComponentFixtureSet = {
   label: 'Icon',

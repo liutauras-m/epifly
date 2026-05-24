@@ -18,6 +18,7 @@
 		userName,
 		sigil,
 		suggestions,
+		composerRef = $bindable(),
 	}: {
 		sdk: ConusSdk;
 		chatStream: {
@@ -38,6 +39,7 @@
 		sigil?: string;
 		/** Optional override for the 4 suggestion chips. */
 		suggestions?: string[];
+		composerRef?: { focus(): void } | undefined;
 	} = $props();
 
 	let inputValue = $state('');
@@ -147,7 +149,7 @@
 				<img class="sigil" src={sigil} alt="" aria-hidden="true" />
 			{/if}
 
-			<h1 class="greeting" aria-label="{greeting()}, {userName.split(' ')[0]}.">
+			<h1 class="greeting greeting-text" aria-label="{greeting()}, {userName.split(' ')[0]}.">
 				{#each greetingWords as word, i}
 					<span class="word" style="animation-delay: {420 + i * 40}ms">{word}</span>
 					{#if i < greetingWords.length - 1}<span class="word-space"> </span>{/if}
@@ -156,20 +158,22 @@
 
 			<p class="sub">How can I help you today?</p>
 
-			<div class="centred-composer" bind:this={centredComposerEl}>
+			<form class="composer centred-composer" onsubmit={(e) => e.preventDefault()} bind:this={centredComposerEl}>
 				{#if selectedNode}
 					<div class="context-row">
 						<ContextChip node={selectedNode} onClear={() => onSelectNode(null)} />
 					</div>
 				{/if}
 				<Composer
+					bind:this={composerRef}
 					bind:value={inputValue}
 					bind:attachments
 					loading={chatStream.inFlight}
 					onsubmit={(v, atts) => handleSubmit(v, atts)}
 					{onUpload}
+					onattach={() => {}}
 				/>
-			</div>
+			</form>
 
 			{#if !chipsUsed}
 				<!-- Phase 6 cascade: chips start at 680ms (composer settles at 560ms) -->
@@ -190,20 +194,22 @@
 			/>
 		</div>
 
-		<div class="composer-dock" bind:this={dockedComposerEl}>
+		<form class="composer composer-dock" onsubmit={(e) => e.preventDefault()} bind:this={dockedComposerEl}>
 			{#if selectedNode}
 				<div class="context-row context-row--docked">
 					<ContextChip node={selectedNode} onClear={() => onSelectNode(null)} />
 				</div>
 			{/if}
 			<Composer
+				bind:this={composerRef}
 				bind:value={inputValue}
 				bind:attachments
 				loading={chatStream.inFlight}
 				onsubmit={(v, atts) => handleSubmit(v, atts)}
 				{onUpload}
+				onattach={() => {}}
 			/>
-		</div>
+		</form>
 	{/if}
 
 	<!-- Retry-with-capability picker (PR 3.B.2). Opens when the assistant turn

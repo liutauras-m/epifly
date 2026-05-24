@@ -60,15 +60,16 @@
     "tokens:build": "node scripts/build-tokens.mjs"
   },
   "dependencies": {
-    "@conusai/types": "workspace:*",
     "@conusai/sdk": "workspace:*",
+    "@conusai/types": "workspace:*",
     "@tauri-apps/plugin-haptics": "^2.3.2"
   },
   "devDependencies": {
+    "@lucide/svelte": "^1.16.0",
     "@sveltejs/vite-plugin-svelte": "^4.0.0",
+    "@tauri-apps/plugin-deep-link": "^2.4.9",
     "@testing-library/svelte": "^5.0.0",
     "jsdom": "^29.1.1",
-    "lucide-svelte": "^0.477.0",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "typescript": "^5.7.0",

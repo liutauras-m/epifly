@@ -1,6 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
-import type { Actions, PageServerLoad } from './$types';
-import { COOKIE_NAME, sessionAdapter, timeGreeting, verify } from '$lib/server/session';
+import type { Actions, PageServerLoad } from './$types.js';
+import { COOKIE_NAME, sessionAdapter, timeGreeting, verify } from '$lib/server/session.js';
 
 export const load: PageServerLoad = ({ cookies }) => {
 	const raw = cookies.get(COOKIE_NAME);

@@ -40,7 +40,7 @@
 
   <!-- ── Right: Form (shadcn primitives) ──────────────────────────── -->
   <section class="flex-1 flex items-center justify-center px-6 py-10 overflow-y-auto">
-    <form method="POST" aria-label="Sign in" class="w-full max-w-sm flex flex-col gap-6">
+    <form method="POST" aria-label="Sign in" class="login-form-wrap w-full max-w-sm flex flex-col gap-6">
 
       <header class="flex flex-col gap-1">
         <p class="font-mono text-xs uppercase tracking-wider text-muted-foreground">

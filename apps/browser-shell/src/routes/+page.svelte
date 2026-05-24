@@ -1,26 +1,18 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { modeStore, screenStore, breadcrumbsStore, recentsStore, toasts } from '@conusai/ui/stores';
-	import {
-		createChatStream,
-		ShellScreen,
-		ShellLoginScreen,
-		initialRoute,
-		applyInitialRoute,
-	} from '@conusai/ui/features';
-	import type { WorkspaceNode } from '@conusai/types';
+	import { replaceState } from '$app/navigation';
+	import { page } from '$app/state';
+	import { ShellPage, ShellLoginScreen, createChatStream, type CustomStreamFn } from '@conusai/ui/features';
 	import { sdk, getSessionToken } from '$lib/sdk.js';
 	import { isTauri, streamChatTauri } from '$lib/tauri-stream.js';
-	import { user, initAuth, login, logout } from '$lib/auth.svelte.js';
+	import { auth, initAuth, login, logout } from '$lib/auth.svelte.js';
 	import { setPlatformTag } from '$lib/mobile/platform/detect.js';
 	import logoDark from '@conusai/ui/assets/images/conusai-logo-darkmode.png';
 	import favicon from '@conusai/ui/assets/images/favicon.png';
 
-	modeStore.setMode('shell');
-
-	// ── Tauri streaming ──────────────────────────────────────────────────────
-	const tauriStreamFn = isTauri
-		? (params: import('@conusai/sdk').StreamChatParams) =>
+	// ── Tauri streaming (only when running inside the Tauri webview) ──────────
+	const tauriStreamFn: CustomStreamFn | undefined = isTauri
+		? (params) =>
 				streamChatTauri({
 					message: params.message,
 					sessionToken: getSessionToken() ?? '',
@@ -34,54 +26,44 @@
 
 	const chatStream = createChatStream(sdk, { streamFn: tauriStreamFn });
 
-	// ── Bindable selected node (seeded from deep-link restore) ───────────────
-	let selectedNode = $state<WorkspaceNode | null>(null);
-
 	function handleLogout() {
 		chatStream.newSession();
 		logout();
 	}
 
-	// ── Mount: platform tag + auth restore + deep-link route restore ─────────
+	function syncWorkspaceToUrl(wsId: string | null) {
+		if (typeof window === 'undefined') return;
+		const url = new URL(page.url);
+		if (wsId) {
+			if (url.searchParams.get('ws') === wsId) return;
+			url.searchParams.set('ws', wsId);
+		} else {
+			if (!url.searchParams.has('ws')) return;
+			url.searchParams.delete('ws');
+		}
+		replaceState(url, page.state);
+	}
+
 	onMount(async () => {
 		setPlatformTag();
 		await initAuth();
-
-		const route = await initialRoute();
-		await applyInitialRoute<WorkspaceNode>(sdk, route, {
-			onApplyNode(node) {
-				selectedNode = node;
-				breadcrumbsStore.set(node);
-				recentsStore.add(node.id);
-				screenStore.setActive('chat');
-				if (node.kind === 'conversation' && (node as any).metadata?.thread_id) {
-					chatStream.loadThread?.((node as any).metadata.thread_id);
-				}
-			},
-			onUnknown() {
-				toasts.warning('Workspace not found, returning to root');
-				if (typeof window !== 'undefined' && window.location.search.includes('ws=')) {
-					window.history.replaceState({}, '', window.location.pathname);
-				}
-			},
-		});
-		if (route.cap) screenStore.setActive('chat');
 	});
 </script>
 
-{#if !user}
+{#if !auth.user}
 	<ShellLoginScreen
 		onSubmit={async (name, plan) => { await login(name, plan); }}
 		logoSrc={logoDark}
 	/>
 {:else}
-	<ShellScreen
+	<ShellPage
 		{sdk}
 		{chatStream}
-		userName={user.name}
-		userPlan={user.plan}
+		userName={auth.user.name}
+		userPlan={auth.user.plan}
 		sigil={favicon}
 		onLogout={handleLogout}
-		bind:selectedNode
+		onWorkspaceChange={syncWorkspaceToUrl}
+		onUnknownRoute={() => syncWorkspaceToUrl(null)}
 	/>
 {/if}

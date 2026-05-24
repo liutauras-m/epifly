@@ -1,5 +1,5 @@
 import type { Handle } from '@sveltejs/kit';
-import { COOKIE_NAME, verify } from '$lib/server/session';
+import { COOKIE_NAME, verify } from '$lib/server/session.js';
 
 // Paths routed to the backend — exempt from SvelteKit CSRF origin check
 // (they are fetch() calls, not form submissions, so SvelteKit wouldn't check

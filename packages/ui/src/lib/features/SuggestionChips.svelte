@@ -67,7 +67,11 @@
 		background: var(--color-bg);
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-full);
-		padding: var(--space-2) var(--space-3);
+		padding: 0 var(--space-3);
+		min-height: var(--chip-h-md, 32px);
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		font-family: var(--font-family-sans);
 		font-size: var(--font-size-label, 13px);
 		color: var(--color-fg-muted);
