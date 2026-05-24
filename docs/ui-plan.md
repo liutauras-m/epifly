@@ -1,10 +1,12 @@
 # ConusAI — Pixel-Perfect UI Plan
 
-> **Mission:** Take the existing Foundry design system (`packages/ui`) and the two consumers (`apps/web`, `apps/browser-shell`) from "good" to **pixel-perfect, minimal, best-in-class**. No new stack — we double down on the Foundry tokens already shipped (`foundry.css`, `tokens.css`) and ruthlessly enforce them.
+> **Mission:** Take the existing Foundry design system (`packages/ui`) and the two consumers (`apps/web`, `apps/browser-shell`) from "good" to **pixel-perfect, minimal, best-in-class**. We double down on the Foundry tokens already shipped (`foundry.css`, `tokens.css`) and ruthlessly enforce them.
 >
-> **Non‑goals:** Adopting shadcn-svelte / Tailwind v4 (we have a stronger, more opinionated system already). Adding new colors, fonts, or radii. Visual redesigns beyond what's in [`docs/ui-design.md`](ui-design.md) and the screenshots referenced in [`docs/tasks/perfect-ui-task.md`](tasks/perfect-ui-task.md).
+> **shadcn-svelte integration (added):** `apps/web` adopts [shadcn-svelte](https://shadcn-svelte.com) v1+ with Tailwind v4 for high-complexity headless primitives (Sidebar, Sheet, Tooltip, Dropdown). These components live in `apps/web/src/lib/components/ui/` and are **token-bridged** via `app.css` `@theme inline` — every shadcn CSS variable resolves through a Foundry token, so both systems share one color, spacing, and radius palette. shadcn components consume Foundry tokens; Foundry primitives (`packages/ui`) remain the canonical source. The `check-no-local-components` gate is unaffected because shadcn components use Tailwind utilities, not `<style>` blocks.
 >
-> **Single source of truth:** `packages/ui` — every screen (web + mobile + desktop Tauri shell) must consume the same primitives. Zero per-app CSS forks.
+> **Non‑goals (updated):** Adding new colors, fonts, or radii. Visual redesigns beyond what's in [`docs/ui-design.md`](ui-design.md) and the screenshots referenced in [`docs/tasks/perfect-ui-task.md`](tasks/perfect-ui-task.md). Replacing Foundry `packages/ui` primitives with shadcn equivalents — shadcn is additive for headless complexity only.
+>
+> **Single source of truth:** `packages/ui` — every screen (web + mobile + desktop Tauri shell) must consume the same primitives. Zero per-app CSS forks (shadcn UI components are a library dependency at `apps/web/src/lib/components/ui/`, not a CSS fork).
 
 ---
 

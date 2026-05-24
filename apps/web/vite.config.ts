@@ -1,12 +1,16 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
+import tailwindcss from '@tailwindcss/vite';
 
 const BACKEND = process.env.CONUSAI_BACKEND_URL ?? 'http://localhost:8080';
 
 export default defineConfig({
-	plugins: [sveltekit()],
+	plugins: [tailwindcss(), sveltekit()],
 	server: {
 		port: 5173,
+		fs: {
+			allow: ['../../packages/ui'],
+		},
 		proxy: {
 			'/v1': { target: BACKEND, changeOrigin: true },
 			'/api': { target: BACKEND, changeOrigin: true },

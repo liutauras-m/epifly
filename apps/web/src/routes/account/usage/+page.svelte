@@ -5,9 +5,9 @@
    * Agent turns, tokens, storage meters. Consumes UsageMeter + Button primitives.
    * Local CSS replaced with semantic tokens.
    */
-  import { ArrowUpRight } from 'lucide-svelte';
-  import { UsageMeter, Button } from '@conusai/ui';
-  import type { PageData } from './$types';
+  import { ArrowUpRight } from '@lucide/svelte';
+  import { UsageMeter, Button, PageHeader, Breadcrumbs } from '@conusai/ui';
+  import type { PageData } from './$types.js';
 
   let { data }: { data: PageData } = $props();
   const { usage, subscription } = data;
@@ -34,17 +34,9 @@
 
 <div class="usage-page">
 
-  <!-- Breadcrumb -->
-  <nav class="breadcrumb" aria-label="Breadcrumb">
-    <a href="/account">Account</a>
-    <span aria-hidden="true">›</span>
-    <span aria-current="page">Usage</span>
-  </nav>
+  <Breadcrumbs items={[{ label: 'Account', href: '/account' }, { label: 'Usage' }]} />
 
-  <header class="page-header">
-    <h1 class="page-title">Usage</h1>
-    <p class="page-period">Today (UTC)</p>
-  </header>
+  <PageHeader eyebrow="Usage" title="Usage" subtitle="Today (UTC)" />
 
   <!-- Meter cards -->
   <div class="meters">
@@ -59,8 +51,8 @@
       </header>
       {#if limit.turns}
         <UsageMeter
-          value={usage.agent_turns}
-          max={limit.turns}
+          used={usage.agent_turns}
+          limit={limit.turns}
           label="Agent turns used"
         />
         <p class="meter-hint">
@@ -117,41 +109,6 @@
     gap:       var(--space-5);
   }
 
-  /* ── Breadcrumb ──────────────────────────────────────────────────────────── */
-  .breadcrumb {
-    display:     flex;
-    gap:         var(--space-2);
-    align-items: center;
-    font-family: var(--font-family-mono);
-    font-size:   var(--font-size-meta);
-    color:       var(--color-fg-subtle);
-  }
-  .breadcrumb a {
-    color:           var(--color-accent);
-    text-decoration: none;
-    font-weight:     500;
-  }
-  .breadcrumb a:hover { text-decoration: underline; }
-
-  /* ── Page header ─────────────────────────────────────────────────────────── */
-  .page-header { margin-bottom: calc(var(--space-4) * -1); }
-
-  .page-title {
-    margin:         0 0 var(--space-1);
-    font-size:      var(--font-size-h1);
-    font-weight:    620;
-    letter-spacing: -0.025em;
-    color:          var(--color-fg);
-  }
-
-  .page-period {
-    margin:         0;
-    font-family:    var(--font-family-mono);
-    font-size:      var(--font-size-label);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color:          var(--color-fg-subtle);
-  }
 
   /* ── Meter cards ─────────────────────────────────────────────────────────── */
   .meters {
@@ -227,7 +184,7 @@
     gap:             var(--space-1);
     padding:         var(--space-2) var(--space-4);
     background:      var(--color-accent);
-    color:           #fff;
+    color:           var(--color-on-accent);
     border-radius:   var(--radius-md);
     font-weight:     600;
     font-size:       var(--font-size-meta);

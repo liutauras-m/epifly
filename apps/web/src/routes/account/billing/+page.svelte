@@ -6,9 +6,9 @@
    * Local CSS replaced with design-system tokens; raw buttons replaced with Button.
    */
   import { enhance } from '$app/forms';
-  import { Layers, Zap, Users, Building2, Check, ArrowUpRight } from 'lucide-svelte';
-  import { PlanBadge, StatusBadge, Button } from '@conusai/ui';
-  import type { ActionData, PageData } from './$types';
+  import { Layers, Zap, Users, Building2, Check, ArrowUpRight } from '@lucide/svelte';
+  import { PlanBadge, StatusBadge, Button, PageHeader, Breadcrumbs } from '@conusai/ui';
+  import type { ActionData, PageData } from './$types.js';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -40,16 +40,9 @@
 
 <div class="billing-page">
 
-  <!-- Breadcrumb -->
-  <nav class="breadcrumb" aria-label="Breadcrumb">
-    <a href="/account">Account</a>
-    <span aria-hidden="true">›</span>
-    <span aria-current="page">Billing</span>
-  </nav>
+  <Breadcrumbs items={[{ label: 'Account', href: '/account' }, { label: 'Billing' }]} />
 
-  <header class="page-header">
-    <h1 class="page-title">Billing &amp; Plans</h1>
-  </header>
+  <PageHeader eyebrow="Billing" title="Billing & Plans" />
 
   {#if form?.error}
     <p class="error-banner" role="alert">{form.error}</p>
@@ -60,7 +53,7 @@
     <section class="current-plan" aria-label="Current plan">
       <h2 class="section-heading">Current Plan</h2>
       <div class="plan-summary">
-        <PlanBadge plan={currentPlan} />
+        <PlanBadge tier={currentPlan} />
         <StatusBadge
           status={subscriptionStatus()}
           label={subscription.status.replace('_', ' ')}
@@ -166,32 +159,6 @@
     gap:       var(--space-6);
   }
 
-  /* ── Breadcrumb ──────────────────────────────────────────────────────────── */
-  .breadcrumb {
-    display:     flex;
-    gap:         var(--space-2);
-    align-items: center;
-    font-family: var(--font-family-mono);
-    font-size:   var(--font-size-meta);
-    color:       var(--color-fg-subtle);
-  }
-  .breadcrumb a {
-    color:           var(--color-accent);
-    text-decoration: none;
-    font-weight:     500;
-  }
-  .breadcrumb a:hover { text-decoration: underline; }
-
-  /* ── Page header ─────────────────────────────────────────────────────────── */
-  .page-header { margin-bottom: calc(var(--space-5) * -1); }
-
-  .page-title {
-    margin:         0;
-    font-size:      var(--font-size-h1);
-    font-weight:    620;
-    letter-spacing: -0.025em;
-    color:          var(--color-fg);
-  }
 
   /* ── Section headings ────────────────────────────────────────────────────── */
   .section-heading {

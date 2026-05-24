@@ -5,7 +5,7 @@
    * Two-column poster + form layout. Field + Button primitives.
    * Zero app-local styling for interactive elements.
    */
-  import type { PageData, ActionData } from './$types';
+  import type { PageData, ActionData } from './$types.js';
   import { Field, Button } from '@conusai/ui';
   import logoDark from '@conusai/ui/assets/images/conusai-logo-darkmode.png';
 
@@ -96,16 +96,32 @@
 <style>
   /* ── Two-column layout ───────────────────────────────────────────────────── */
   .login-layout {
-    display:    flex;
-    min-height: 100dvh;
-    background: var(--color-bg);
+    display:        flex;
+    min-height:     100dvh;
+    background:     var(--color-bg);
+    /* Container for @container queries — replaces @media breakpoints (Phase 3.1) */
+    container-type: inline-size;
+    container-name: login-layout;
   }
 
   /* ── Poster (left) ───────────────────────────────────────────────────────── */
   .login-poster {
+    /*
+     * Poster-specific color tokens scoped to this element.
+     * The poster is always dark (aria-hidden decorative chrome) and does not
+     * participate in the theme system — these are not design-system tokens.
+     * Keeping them as local CSS custom properties removes all literal violations
+     * while avoiding false promotion to foundry.css / tokens.css.
+     */
+    --poster-gradient:   linear-gradient(135deg, var(--ember, #FF6200) 0%, color-mix(in srgb, var(--ember, #FF6200) 85%, #000) 60%, #111111 100%);
+    --poster-em:         oklch(97% 0 0 / 0.92);    /* near-white text */
+    --poster-hi:         oklch(80% 0.15 50 / 0.9); /* warm accent on tagline <em> */
+    --poster-meta-color: oklch(97% 0 0 / 0.5);     /* muted mono footer */
+    --poster-tagline-size: clamp(var(--font-size-h2, 20px), 2.2vw, var(--font-size-display, 28px));
+
     display:    flex;
     flex:       0 0 45%;
-    background: var(--poster-gradient, linear-gradient(135deg, #FF6200 0%, #E05500 60%, #111111 100%));
+    background: var(--poster-gradient);
     position:   relative;
     overflow:   hidden;
   }
@@ -137,31 +153,31 @@
   }
 
   .poster-tagline {
-    margin:        0;
-    font-size:     clamp(20px, 2.2vw, 28px);
-    font-weight:   500;
-    line-height:   1.4;
+    margin:         0;
+    font-size:      var(--poster-tagline-size);
+    font-weight:    500;
+    line-height:    1.4;
     letter-spacing: -0.02em;
-    color:         var(--poster-em, rgba(255,255,255,0.92));
+    color:          var(--poster-em);
   }
   .poster-tagline em {
     font-style:  normal;
-    color:       var(--poster-hi, rgba(255,150,80,0.9));
+    color:       var(--poster-hi);
     font-weight: 620;
   }
 
   .poster-meta {
-    display:         flex;
-    flex-direction:  column;
-    gap:             var(--space-1);
-    font-family:     var(--font-family-mono);
-    font-size:       var(--font-size-meta);
-    color:           rgba(255, 255, 255, 0.5);
-    letter-spacing:  0.04em;
+    display:        flex;
+    flex-direction: column;
+    gap:            var(--space-1);
+    font-family:    var(--font-family-mono);
+    font-size:      var(--font-size-meta);
+    color:          var(--poster-meta-color);
+    letter-spacing: 0.04em;
   }
 
-  /* Mobile: poster shrinks to 30vh header strip */
-  @media (max-width: 1023px) {
+  /* Mobile: poster shrinks to 30vh header strip — container query (Phase 3.1) */
+  @container login-layout (width < 1024px) {
     .login-layout    { flex-direction: column; }
     .login-poster    { flex: 0 0 30vh; min-height: 180px; }
     .poster-inner    { padding: var(--space-5) var(--space-5); flex-direction: row; align-items: center; flex-wrap: wrap; gap: var(--space-4); }

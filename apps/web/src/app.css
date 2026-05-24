@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+/*
+ * shadcn-svelte + Foundry token bridge.
+ *
+ * Tailwind v4 uses @theme to define CSS custom properties that map to utility
+ * classes. We point them at the Foundry token system so `bg-sidebar`,
+ * `text-sidebar-foreground` etc. resolve correctly without duplicating values.
+ *
+ * Foundry tokens live in packages/ui/src/lib/tokens.css (imported via
+ * @conusai/ui/foundry.css in +layout.svelte).
+ */
+
+@theme inline {
+  /* ── Sidebar ────────────────────────────────────────────────── */
+  --color-sidebar: var(--color-bg-raised, #f4f4f3);
+  --color-sidebar-foreground: var(--color-fg, #1a1a1a);
+  --color-sidebar-primary: var(--color-accent, #ff6200);
+  --color-sidebar-primary-foreground: #ffffff;
+  --color-sidebar-accent: var(--color-bg-hover, #e8e8e6);
+  --color-sidebar-accent-foreground: var(--color-fg, #1a1a1a);
+  --color-sidebar-border: var(--color-border, #e2e2e0);
+  --color-sidebar-ring: var(--color-accent, #ff6200);
+
+  /* ── Core shadcn tokens ─────────────────────────────────────── */
+  --color-background: var(--color-bg, #fafaf9);
+  --color-foreground: var(--color-fg, #1a1a1a);
+  --color-muted: var(--color-bg-raised, #f4f4f3);
+  --color-muted-foreground: var(--color-fg-muted, #737373);
+  --color-border: var(--color-border, #e2e2e0);
+  --color-input: var(--color-border, #e2e2e0);
+  --color-primary: var(--color-accent, #ff6200);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--color-bg-raised, #f4f4f3);
+  --color-secondary-foreground: var(--color-fg, #1a1a1a);
+  --color-accent: var(--color-bg-hover, #e8e8e6);
+  --color-accent-foreground: var(--color-fg, #1a1a1a);
+  --color-ring: var(--color-accent, #ff6200);
+  --radius: var(--radius-md, 0.5rem);
+}
+
+/* ── Forge (dark) theme overrides ───────────────────────────────────────── */
+:root[data-theme="forge"] {
+  color-scheme: dark;
+}
