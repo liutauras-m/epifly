@@ -105,7 +105,9 @@ const generators = {
 	LAGO_ENCRYPTION_SALT: () => password(32),
 	LAGO_ENCRYPTION_KEY: () => password(32),
 	LAGO_RSA_PRIVATE_KEY: () => rsaPrivateKeyBase64(),
-	AWS_ACCESS_KEY_ID: () => `rfs_${b64url(12).replace(/[-_]/g, "").toUpperCase().slice(0, 16)}`,
+	// b64url(12) yields 16 chars; stripping `-` and `_` can drop us below 16,
+	// so generate from a larger pool first and slice afterwards to guarantee 16.
+	AWS_ACCESS_KEY_ID: () => `rfs_${b64url(24).replace(/[-_]/g, "").toUpperCase().slice(0, 16)}`,
 	AWS_SECRET_ACCESS_KEY: () => b64url(30, 40),
 	UI_SESSION_KEY: () => hex(32),
 	PLATFORM_ADMIN_TOKEN: () => `pat_${b64url(32)}`,
@@ -180,14 +182,22 @@ const banner =
 		"",
 	].join("\n");
 
+// Strip only the leading contiguous banner block (comments + blank lines
+// before the first real `KEY=value` line) — that's what `banner` replaces.
+// The previous heuristic ("drop the first 9 lines if they look like
+// comments") silently truncated the inline service-URL comment block when
+// the template's banner was shorter than expected.
+let firstContentIdx = 0;
+for (let i = 0; i < rewritten.length; i++) {
+	const t = rewritten[i].trim();
+	if (t === "" || t.startsWith("#")) continue;
+	firstContentIdx = i;
+	break;
+}
+
 const output =
 	banner +
-	rewritten
-		.filter((_, i, arr) => {
-			if (i > 8) return true;
-			return !/^# /.test(arr[i]) && arr[i].trim() !== "";
-		})
-		.join("\n") +
+	rewritten.slice(firstContentIdx).join("\n") +
 	(rewritten.at(-1) === "" ? "" : "\n");
 
 writeFileSync(OUT_PATH, output, { encoding: "utf8" });

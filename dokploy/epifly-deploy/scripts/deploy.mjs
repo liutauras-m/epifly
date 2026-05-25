@@ -7,7 +7,11 @@
  *
  *   Phase 0  ensureVolumes()      Pre-create `external: true` named Docker
  *                                 volumes via the Engine API (data-safe)
- *   Phase 1  ensureSharedEnv()    Generate any missing secrets, PUT environment.env
+ *   Phase 1  ensureSharedEnv()    Generate any missing secrets, PUT project.env
+ *                                 (NOT environment.env — `${{project.X}}` refs
+ *                                 resolve against the project-level env, see
+ *                                 Dokploy/dokploy packages/server/src/utils/
+ *                                 docker/utils.ts → prepareEnvironmentVariables)
  *   Phase 2  ensureComposes()     Create infra/gateway/web/observability/capabilities
  *                                 composes if missing; copy git source from self;
  *                                 wire per-compose env to `${{project.VAR}}` refs
@@ -167,10 +171,16 @@ function dockerApi(method, path, body) {
 }
 
 // ── Phase 1: Shared Env ─────────────────────────────────────────────────────
-async function ensureSharedEnv({ api, environmentId, appDomain }) {
+// Writes to the **project**-level env (projects.env), because Dokploy resolves
+// `${{project.X}}` refs in per-compose env tabs against `compose.environment.
+// project.env`, NOT against `compose.environment.env`. Writing to the wrong
+// field causes deploys to abort with
+//   "Invalid project environment variable: project.X"
+// even though the key exists in the (wrong) env-level store.
+async function ensureSharedEnv({ api, projectId, appDomain }) {
   const example = parseDotenv(readFileSync(ENV_EXAMPLE, "utf8"));
-  const envRecord = await api.query("environment.one", { environmentId });
-  const current = parseDotenv(envRecord.env || "");
+  const projectRecord = await api.query("project.one", { projectId });
+  const current = parseDotenv(projectRecord.env || "");
 
   // Bootstrap vars from this orchestrator's own env — these MUST end up in
   // Shared Env so domain-sync init containers in every other stack can call
@@ -233,13 +243,13 @@ async function ensureSharedEnv({ api, environmentId, appDomain }) {
   }
 
   if (DRY_RUN) {
-    log(`(dry-run) would PUT ${Object.keys(merged).length} keys to environment.env`);
+    log(`(dry-run) would PUT ${Object.keys(merged).length} keys to project.env`);
     return;
   }
 
-  const envText = renderDotenv(merged, envRecord.env || "");
-  await api.mutate("environment.update", { environmentId, env: envText });
-  log(`✓ PUT Shared Env (${actions.length} new keys, ${Object.keys(merged).length} total)`);
+  const envText = renderDotenv(merged, projectRecord.env || "");
+  await api.mutate("project.update", { projectId, env: envText });
+  log(`✓ PUT Shared Env to project.env (${actions.length} new keys, ${Object.keys(merged).length} total)`);
 }
 
 // ── Phase 2: Ensure compose services exist ──────────────────────────────────
@@ -414,7 +424,7 @@ function buildVerifyChecks(appDomain) {
     { label: "rustfs S3 (anon)",      url: `https://s3.${appDomain}/`,                                                expectStatus: [200, 403] },
     { label: "rustfs console",        url: `https://s3-console.${appDomain}`,                                         expectStatus: [200, 301, 302, 307, 308] },
     { label: "jaeger UI",             url: `https://traces.${appDomain}`,                                             expectStatus: [200, 301, 302, 307, 308] },
-    { label: "gateway api healthz",   url: `https://api.${appDomain}/healthz`,                                        expectStatus: [200, 404] }, // 404 acceptable until route is added
+    { label: "gateway api health",    url: `https://api.${appDomain}/health`,                                         expectStatus: [200, 404] }, // 404 acceptable until route is added
   ];
 }
 
@@ -444,7 +454,9 @@ function loadConfig() {
   if (!apiKey)     fail("DOKPLOY_API_KEY is required");
   if (!environmentId) fail("DOKPLOY_ENVIRONMENT_ID is required");
   if (!appDomain)  fail("APP_DOMAIN is required");
-  return { dokployUrl, apiKey, environmentId, appDomain };
+  // projectId is resolved at runtime from environment.one (we only have the
+  // environmentId in our bootstrap env).
+  return { dokployUrl, apiKey, environmentId, projectId: null, appDomain };
 }
 
 function banner(cfg) {
@@ -452,6 +464,7 @@ function banner(cfg) {
   log("  epifly-deploy — Dokploy project orchestrator");
   log("─".repeat(72));
   log(`  Dokploy:        ${cfg.dokployUrl}`);
+  log(`  Project:        ${cfg.projectId}`);
   log(`  Environment:    ${cfg.environmentId}`);
   log(`  APP_DOMAIN:     ${cfg.appDomain}`);
   log(`  Mode:           ${DRY_RUN ? "DRY RUN" : "APPLY"}`);
@@ -570,9 +583,14 @@ async function discoverSelfComposeId(api, environmentId) {
 // Wrap main to inject selfComposeId after loadConfig (needs API call).
 (async () => {
   try {
-    // Pre-flight: load config, build client, look up self composeId.
+    // Pre-flight: load config, build client, look up projectId + self composeId.
     const cfg = loadConfig();
     const api = makeClient(cfg.dokployUrl, cfg.apiKey);
+    // Resolve projectId from environmentId — we don't get it in bootstrap env
+    // because Dokploy's UI only exposes the environment URL.
+    const envRec = await api.query("environment.one", { environmentId: cfg.environmentId });
+    cfg.projectId = envRec.projectId ?? envRec.project?.projectId;
+    if (!cfg.projectId) fail(`environment.one for ${cfg.environmentId} returned no projectId`);
     cfg.selfComposeId = await discoverSelfComposeId(api, cfg.environmentId);
     if (!cfg.selfComposeId) {
       fail(
