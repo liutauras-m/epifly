@@ -188,6 +188,19 @@ async function ensureSharedEnv({ api, environmentId, appDomain }) {
   const exampleKeys = new Set(Object.keys(example));
   for (const k of Object.keys(bootstrap)) exampleKeys.add(k);
 
+  // Every `${VAR}` referenced by any compose must also exist in Project
+  // Environment — Dokploy validates `${{project.VAR}}` references at deploy
+  // time and aborts with "Invalid project environment variable: project.X"
+  // if any is missing, even when the value is optional. We add blank entries
+  // here so operators can fill real values later in the UI.
+  const referenced = new Set();
+  for (const app of APPS) {
+    const composeFile = resolve(COMPOSES_ROOT, app.name, "docker-compose.yml");
+    if (!existsSync(composeFile)) continue;
+    for (const v of extractComposeVars(composeFile)) referenced.add(v);
+  }
+  for (const k of referenced) exampleKeys.add(k);
+
   for (const k of exampleKeys) {
     const existing = (merged[k] ?? "").trim();
     if (existing) continue; // never overwrite an existing value
@@ -201,9 +214,12 @@ async function ensureSharedEnv({ api, environmentId, appDomain }) {
     } else if ((example[k] ?? "").trim()) {
       merged[k] = example[k];
       actions.push({ key: k, action: "set", source: ".env.example" });
+    } else if (!(k in merged)) {
+      // Referenced by a compose but no value anywhere — write empty entry so
+      // Dokploy's `${{project.X}}` validation passes. Operator fills in UI.
+      merged[k] = "";
+      actions.push({ key: k, action: "set", source: "placeholder (empty)" });
     }
-    // else: leave blank (e.g. ZITADEL_CLIENT_ID, OPENAI_API_KEY) — operator
-    // fills these in Dokploy UI after services are running.
   }
 
   if (actions.length === 0) {
