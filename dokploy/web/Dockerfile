@@ -35,7 +35,7 @@ RUN pnpm --filter web build
 
 # Prune to production-only deps for the runtime stage
 RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
-    pnpm --filter web deploy --prod /out
+    pnpm --filter web deploy --prod --legacy /out
 
 # ── runtime ──────────────────────────────────────────────────────────────────
 FROM node:22-slim AS runtime
