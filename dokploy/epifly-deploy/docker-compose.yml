@@ -1,0 +1,74 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# epifly-deploy — orchestrator compose
+# ─────────────────────────────────────────────────────────────────────────────
+# A one-shot job that reconciles the entire Epifly project on every tag push:
+#
+#   1. Generates any missing secrets and PUTs the merged Shared Env via the
+#      Dokploy tRPC API (`environment.update`).
+#   2. Creates the `infra`, `gateway`, `web`, `observability`, `capabilities`
+#      compose services if they do not yet exist — copying its own git source
+#      (owner/repo/branch/githubId/triggerType) so all 5 are tag-driven from
+#      this same repo.
+#   3. Runs `scripts/sync-domains.mjs` for each app to register the public
+#      hostnames declared in `dokploy/domains.yaml`.
+#   4. Triggers `compose.deploy` in dependency order, polling composeStatus
+#      between each so failures surface immediately.
+#   5. Runs end-to-end verification (HTTPS reachability + Zitadel OIDC
+#      discovery + Lago health + RustFS list).
+#
+# Bootstrap (one-time, by hand in the Dokploy UI):
+#   • Project: Epifly  →  Add Compose
+#   • Name: epifly-deploy
+#   • Source: GitHub  →  this repo, branch `main`, path `./dokploy/epifly-deploy/docker-compose.yml`
+#   • Trigger type: tag    Auto deploy: on
+#   • Per-compose Environment (bootstrap-only):
+#       APP_DOMAIN=epifly.<env>.cloud.conusai.com
+#       DOKPLOY_URL=https://dokploy.<env>.cloud.conusai.com
+#       DOKPLOY_API_KEY=<paste once, then rotate>
+#       DOKPLOY_ENVIRONMENT_ID=<from project URL>
+#   • Click Deploy → it reconciles everything else.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  deploy:
+    image: node:22-alpine
+    restart: "no"
+    environment:
+      # ── Bootstrap vars (must be set in per-compose env on first deploy) ──
+      APP_DOMAIN: "${APP_DOMAIN:?APP_DOMAIN must be set in per-compose env}"
+      DOKPLOY_URL: "${DOKPLOY_URL:?DOKPLOY_URL must be set in per-compose env}"
+      DOKPLOY_API_KEY: "${DOKPLOY_API_KEY:?DOKPLOY_API_KEY must be set in per-compose env}"
+      DOKPLOY_ENVIRONMENT_ID: "${DOKPLOY_ENVIRONMENT_ID:?DOKPLOY_ENVIRONMENT_ID must be set in per-compose env}"
+      # ── Optional knobs ──
+      DEPLOY_SKIP_VERIFY: "${DEPLOY_SKIP_VERIFY:-false}"
+      DEPLOY_DRY_RUN: "${DEPLOY_DRY_RUN:-false}"
+      DEPLOY_TIMEOUT_SECS: "${DEPLOY_TIMEOUT_SECS:-600}"
+    volumes:
+      # The orchestrator + helper scripts + shared declarative configs.
+      # Relative paths resolve against this compose file's directory, so they
+      # point into the cloned repo that Dokploy made available on the host.
+      - ./scripts:/app/scripts:ro
+      - ../scripts/sync-domains.mjs:/app/sync-domains.mjs:ro
+      - ../domains.yaml:/app/domains.yaml:ro
+      - ../.env.example:/app/.env.example:ro
+      # Sibling compose files — Phase 2 parses these to derive the set of
+      # `${VAR}` references each stack needs, then writes a per-compose env
+      # block of `VAR=${{project.VAR}}` lines so Shared Env values flow into
+      # compose interpolation. (Dokploy does NOT auto-inject Shared Env into
+      # per-service `.env`; see https://docs.dokploy.com/docs/core/variables.)
+      - ../infra/docker-compose.yml:/app/composes/infra/docker-compose.yml:ro
+      - ../gateway/docker-compose.yml:/app/composes/gateway/docker-compose.yml:ro
+      - ../web/docker-compose.yml:/app/composes/web/docker-compose.yml:ro
+      - ../observability/docker-compose.yml:/app/composes/observability/docker-compose.yml:ro
+      - ../capabilities/docker-compose.yml:/app/composes/capabilities/docker-compose.yml:ro
+      # Phase 0 uses the Docker Engine API to pre-create `external: true`
+      # named volumes (Postgres / Redis / Qdrant / RustFS / Redb) so the
+      # first infra deploy doesn't fail with "external volume not found".
+      - /var/run/docker.sock:/var/run/docker.sock
+    working_dir: /app
+    command: ["node", "/app/scripts/deploy.mjs"]
+    networks: [dokploy-network]
+
+networks:
+  dokploy-network:
+    external: true

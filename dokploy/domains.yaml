@@ -1,0 +1,67 @@
+# Public routing for every Epifly Dokploy app — declarative.
+#
+# Consumed by `dokploy/scripts/sync-domains.ts`, which calls the Dokploy
+# tRPC API to create/update/delete domains. Whatever is listed here is the
+# source of truth; any domain attached to one of these apps in the Dokploy
+# UI that is NOT in this file will be deleted on sync.
+#
+# Placeholders:
+#   ${APP_DOMAIN}  → replaced with $APP_DOMAIN env var when the script runs
+#                    (defaults to epifly.beta.test.cloud.conusai.com).
+#
+# After editing, run:
+#   APP_DOMAIN=epifly.beta.test.cloud.conusai.com \
+#     node dokploy/scripts/sync-domains.mjs
+# then Redeploy each affected app in Dokploy (compose apps need a redeploy
+# to pick up new Traefik labels).
+#
+# `appName` below matches either the Dokploy app's display name (e.g. `infra`)
+# or its generated slug (e.g. `epifly-infra-ig0fno`).
+
+apps:
+  - appName: infra
+    domains:
+      - host: auth.${APP_DOMAIN}
+        serviceName: zitadel
+        port: 8080
+        https: true
+        certificateType: letsencrypt
+      - host: billing.${APP_DOMAIN}
+        serviceName: lago-api
+        port: 3000
+        https: true
+        certificateType: letsencrypt
+      - host: s3.${APP_DOMAIN}
+        serviceName: rustfs
+        port: 9000
+        https: true
+        certificateType: letsencrypt
+      - host: s3-console.${APP_DOMAIN}
+        serviceName: rustfs
+        port: 9001
+        https: true
+        certificateType: letsencrypt
+
+  - appName: gateway
+    domains:
+      - host: api.${APP_DOMAIN}
+        serviceName: agent-gateway
+        port: 8080
+        https: true
+        certificateType: letsencrypt
+
+  - appName: web
+    domains:
+      - host: ${APP_DOMAIN}        # bare apex
+        serviceName: web
+        port: 3000
+        https: true
+        certificateType: letsencrypt
+
+  - appName: observability
+    domains:
+      - host: traces.${APP_DOMAIN}
+        serviceName: jaeger
+        port: 16686
+        https: true
+        certificateType: letsencrypt

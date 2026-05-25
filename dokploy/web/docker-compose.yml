@@ -39,21 +39,26 @@ services:
       timeout: 5s
       retries: 5
     networks: [dokploy-network]
-    labels:
-      - traefik.enable=true
-      # Bare apex — Epifly main domain (no `app.` prefix)
-      - traefik.http.routers.web.rule=Host(`${APP_DOMAIN}`)
-      - traefik.http.routers.web.entrypoints=${TRAEFIK_ENTRYPOINT}
-      - traefik.http.routers.web.tls.certresolver=${TRAEFIK_CERTRESOLVER}
-      - traefik.http.services.web.loadbalancer.server.port=3000
-      # HSTS + secure headers
-      - traefik.http.routers.web.middlewares=web-secure-headers@docker
-      - traefik.http.middlewares.web-secure-headers.headers.stsSeconds=31536000
-      - traefik.http.middlewares.web-secure-headers.headers.stsIncludeSubdomains=true
-      - traefik.http.middlewares.web-secure-headers.headers.stsPreload=true
-      - traefik.http.middlewares.web-secure-headers.headers.contentTypeNosniff=true
-      - traefik.http.middlewares.web-secure-headers.headers.browserXssFilter=true
-      - traefik.http.middlewares.web-secure-headers.headers.referrerPolicy=strict-origin-when-cross-origin
+    # Public routing managed by Dokploy via dokploy/domains.yaml
+    # (sync with: node dokploy/scripts/sync-domains.mjs)
+    # HSTS / secure headers should be configured via Dokploy → Traefik
+    # File System middlewares once Domain UI supports referencing them.
+
+  # ── One-shot domain sync ────────────────────────────────────────────────
+  domain-sync:
+    image: node:22-alpine
+    restart: "no"
+    environment:
+      APP_DOMAIN: "${APP_DOMAIN:?APP_DOMAIN must be set}"
+      DOKPLOY_URL: "${DOKPLOY_URL:?DOKPLOY_URL must be set in Shared Env}"
+      DOKPLOY_API_KEY: "${DOKPLOY_API_KEY:?DOKPLOY_API_KEY must be set in Shared Env}"
+      DOKPLOY_ENVIRONMENT_ID: "${DOKPLOY_ENVIRONMENT_ID:?DOKPLOY_ENVIRONMENT_ID must be set in Shared Env}"
+      DOKPLOY_APP_NAME: web
+    volumes:
+      - ../scripts/sync-domains.mjs:/sync.mjs:ro
+      - ../domains.yaml:/domains.yaml:ro
+    command: ["node", "/sync.mjs", "--app", "web", "--trigger-redeploy"]
+    networks: [dokploy-network]
 
 networks:
   dokploy-network:

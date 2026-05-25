@@ -21,12 +21,24 @@ services:
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
     networks: [dokploy-network]
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.jaeger.rule=Host(`traces.${APP_DOMAIN}`)
-      - traefik.http.routers.jaeger.entrypoints=${TRAEFIK_ENTRYPOINT}
-      - traefik.http.routers.jaeger.tls.certresolver=${TRAEFIK_CERTRESOLVER}
-      - traefik.http.services.jaeger.loadbalancer.server.port=16686
+    # Public routing managed by Dokploy via dokploy/domains.yaml
+    # (sync with: node dokploy/scripts/sync-domains.mjs)
+
+  # ── One-shot domain sync ────────────────────────────────────────────────
+  domain-sync:
+    image: node:22-alpine
+    restart: "no"
+    environment:
+      APP_DOMAIN: "${APP_DOMAIN:?APP_DOMAIN must be set}"
+      DOKPLOY_URL: "${DOKPLOY_URL:?DOKPLOY_URL must be set in Shared Env}"
+      DOKPLOY_API_KEY: "${DOKPLOY_API_KEY:?DOKPLOY_API_KEY must be set in Shared Env}"
+      DOKPLOY_ENVIRONMENT_ID: "${DOKPLOY_ENVIRONMENT_ID:?DOKPLOY_ENVIRONMENT_ID must be set in Shared Env}"
+      DOKPLOY_APP_NAME: observability
+    volumes:
+      - ../scripts/sync-domains.mjs:/sync.mjs:ro
+      - ../domains.yaml:/domains.yaml:ro
+    command: ["node", "/sync.mjs", "--app", "observability", "--trigger-redeploy"]
+    networks: [dokploy-network]
 
 networks:
   dokploy-network:

@@ -79,26 +79,12 @@ services:
     command: ["--console-enable", "/data"]
     volumes:
       - rustfs_data:/data
-    healthcheck:
-      test: ["CMD", "sh", "-c", "true"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+    # No healthcheck: the rustfs:latest image is minimal (no curl/wget/bash)
+    # so we can't reliably probe inside the container. Rely on Docker's
+    # restart policy + Dokploy monitoring to detect failures.
     networks: [dokploy-network]
-    labels:
-      - traefik.enable=true
-      # S3 API
-      - traefik.http.routers.rustfs-s3.rule=Host(`s3.${APP_DOMAIN}`)
-      - traefik.http.routers.rustfs-s3.entrypoints=${TRAEFIK_ENTRYPOINT}
-      - traefik.http.routers.rustfs-s3.tls.certresolver=${TRAEFIK_CERTRESOLVER}
-      - traefik.http.routers.rustfs-s3.service=rustfs-s3
-      - traefik.http.services.rustfs-s3.loadbalancer.server.port=9000
-      # Web console (protect with Dokploy basic-auth middleware in UI)
-      - traefik.http.routers.rustfs-console.rule=Host(`s3-console.${APP_DOMAIN}`)
-      - traefik.http.routers.rustfs-console.entrypoints=${TRAEFIK_ENTRYPOINT}
-      - traefik.http.routers.rustfs-console.tls.certresolver=${TRAEFIK_CERTRESOLVER}
-      - traefik.http.routers.rustfs-console.service=rustfs-console
-      - traefik.http.services.rustfs-console.loadbalancer.server.port=9001
+    # Public routing managed by Dokploy via dokploy/domains.yaml
+    # (sync with: node dokploy/scripts/sync-domains.mjs)
 
   # ── Zitadel (identity provider) ──────────────────────────────────────────
   zitadel:
@@ -134,14 +120,10 @@ services:
       timeout: 5s
       retries: 30
     networks: [dokploy-network]
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.zitadel.rule=Host(`auth.${APP_DOMAIN}`)
-      - traefik.http.routers.zitadel.entrypoints=${TRAEFIK_ENTRYPOINT}
-      - traefik.http.routers.zitadel.tls.certresolver=${TRAEFIK_CERTRESOLVER}
-      - traefik.http.services.zitadel.loadbalancer.server.port=8080
-      # Zitadel speaks h2c upstream — required for gRPC admin API
-      - traefik.http.services.zitadel.loadbalancer.server.scheme=h2c
+    # Public routing managed by Dokploy via dokploy/domains.yaml
+    # Note: zitadel needs scheme=h2c for gRPC. Configure via Dokploy domain
+    # advanced setting once the API supports it; for now the HTTP/2 H2C
+    # autodetection in Traefik handles the OIDC/login flow correctly.
 
   # ── Lago API (billing) ───────────────────────────────────────────────────
   lago-api:
@@ -172,12 +154,7 @@ services:
       timeout: 10s
       retries: 10
     networks: [dokploy-network]
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.lago.rule=Host(`billing.${APP_DOMAIN}`)
-      - traefik.http.routers.lago.entrypoints=${TRAEFIK_ENTRYPOINT}
-      - traefik.http.routers.lago.tls.certresolver=${TRAEFIK_CERTRESOLVER}
-      - traefik.http.services.lago.loadbalancer.server.port=3000
+    # Public routing managed by Dokploy via dokploy/domains.yaml
 
   # ── Lago Worker (Sidekiq) ────────────────────────────────────────────────
   lago-worker:
@@ -197,6 +174,25 @@ services:
       ENCRYPTION_KEY_DERIVATION_SALT: "${LAGO_ENCRYPTION_SALT}"
       ENCRYPTION_PRIMARY_KEY: "${LAGO_ENCRYPTION_KEY}"
       LAGO_RSA_PRIVATE_KEY: "${LAGO_RSA_PRIVATE_KEY}"
+    networks: [dokploy-network]
+
+  # ── One-shot domain sync ────────────────────────────────────────────────
+  # On every deploy: registers this app's public hostnames in Dokploy from
+  # `dokploy/domains.yaml`. If anything changes, triggers a self-redeploy
+  # so Traefik labels are regenerated immediately. Runs once and exits.
+  domain-sync:
+    image: node:22-alpine
+    restart: "no"
+    environment:
+      APP_DOMAIN: "${APP_DOMAIN:?APP_DOMAIN must be set}"
+      DOKPLOY_URL: "${DOKPLOY_URL:?DOKPLOY_URL must be set in Shared Env}"
+      DOKPLOY_API_KEY: "${DOKPLOY_API_KEY:?DOKPLOY_API_KEY must be set in Shared Env}"
+      DOKPLOY_ENVIRONMENT_ID: "${DOKPLOY_ENVIRONMENT_ID:?DOKPLOY_ENVIRONMENT_ID must be set in Shared Env}"
+      DOKPLOY_APP_NAME: infra
+    volumes:
+      - ../scripts/sync-domains.mjs:/sync.mjs:ro
+      - ../domains.yaml:/domains.yaml:ro
+    command: ["node", "/sync.mjs", "--app", "infra", "--trigger-redeploy"]
     networks: [dokploy-network]
 
 volumes:

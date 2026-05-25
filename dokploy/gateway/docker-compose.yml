@@ -69,16 +69,24 @@ services:
       timeout: 5s
       retries: 10
     networks: [dokploy-network]
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.gateway.rule=Host(`api.${APP_DOMAIN}`)
-      - traefik.http.routers.gateway.entrypoints=${TRAEFIK_ENTRYPOINT}
-      - traefik.http.routers.gateway.tls.certresolver=${TRAEFIK_CERTRESOLVER}
-      - traefik.http.services.gateway.loadbalancer.server.port=8080
-      # WebSocket-friendly timeouts for long agent streams
-      - traefik.http.services.gateway.loadbalancer.sticky=false
-      - traefik.http.routers.gateway.middlewares=gateway-headers@docker
-      - traefik.http.middlewares.gateway-headers.headers.customrequestheaders.X-Forwarded-Proto=https
+    # Public routing managed by Dokploy via dokploy/domains.yaml
+    # (sync with: node dokploy/scripts/sync-domains.mjs)
+
+  # ── One-shot domain sync ────────────────────────────────────────────────
+  domain-sync:
+    image: node:22-alpine
+    restart: "no"
+    environment:
+      APP_DOMAIN: "${APP_DOMAIN:?APP_DOMAIN must be set}"
+      DOKPLOY_URL: "${DOKPLOY_URL:?DOKPLOY_URL must be set in Shared Env}"
+      DOKPLOY_API_KEY: "${DOKPLOY_API_KEY:?DOKPLOY_API_KEY must be set in Shared Env}"
+      DOKPLOY_ENVIRONMENT_ID: "${DOKPLOY_ENVIRONMENT_ID:?DOKPLOY_ENVIRONMENT_ID must be set in Shared Env}"
+      DOKPLOY_APP_NAME: gateway
+    volumes:
+      - ../scripts/sync-domains.mjs:/sync.mjs:ro
+      - ../domains.yaml:/domains.yaml:ro
+    command: ["node", "/sync.mjs", "--app", "gateway", "--trigger-redeploy"]
+    networks: [dokploy-network]
 
 volumes:
   redb_data:
