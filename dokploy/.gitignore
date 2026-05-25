@@ -1,0 +1,9 @@
+# Local Dokploy credentials (API key, project URL) — never commit
+.dokploy
+**/.dokploy
+
+# Env files
+*.env
+.env
+.env.local
+!.env.example

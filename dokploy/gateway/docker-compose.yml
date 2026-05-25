@@ -1,0 +1,87 @@
+# Conusai agent-gateway — Rust HTTP/WS API behind Traefik.
+# Built from the monorepo root via apps/backend/Dockerfile (target: gateway).
+# Set Dokploy "Build Context" = repo root, "Compose Path" = dokploy/gateway/docker-compose.yml.
+
+services:
+  agent-gateway:
+    build:
+      context: ../..
+      dockerfile: apps/backend/Dockerfile
+      target: gateway
+    image: conusai/agent-gateway:latest
+    hostname: conusai-gateway
+    restart: unless-stopped
+    environment:
+      # Storage + vector
+      QDRANT_URL: "http://conusai-qdrant:6334"
+      S3_ENDPOINT: "http://conusai-rustfs:9000"
+      S3_BUCKET: "workspace"
+      RUSTFS_ROOT_ACCESS_KEY: "${AWS_ACCESS_KEY_ID}"
+      RUSTFS_ROOT_SECRET_KEY: "${AWS_SECRET_ACCESS_KEY}"
+      RUSTFS_BOOTSTRAP: "on"
+      RUSTFS_VERSIONING: "${RUSTFS_VERSIONING:-on}"
+      RUSTFS_PER_TENANT_IAM: "${RUSTFS_PER_TENANT_IAM:-on}"
+      RUSTFS_REAL_PRESIGN: "on"
+      RUSTFS_SSE: "${RUSTFS_SSE:-on}"
+      RUSTFS_NOTIFICATIONS: "${RUSTFS_NOTIFICATIONS:-on}"
+      RUSTFS_QUOTAS: "${RUSTFS_QUOTAS:-on}"
+      RUSTFS_PRESIGN_TTL_SECS: "${RUSTFS_PRESIGN_TTL_SECS:-900}"
+      RUSTFS_IAM_ENC_KEY: "${RUSTFS_IAM_ENC_KEY}"
+      RUSTFS_WEBHOOK_SECRET: "${RUSTFS_WEBHOOK_SECRET}"
+      RUSTFS_NOTIFICATION_WEBHOOK_URL: "http://conusai-gateway:8080/internal/rustfs/events"
+
+      # Persistent embedded KV
+      REDB_PATH: "/data/conusai.redb"
+
+      # Optional Marker PDF extractor (deploy in its own Dokploy app if needed)
+      MARKER_URL: "${MARKER_URL:-}"
+
+      # Observability
+      OTLP_ENDPOINT: "${OTLP_ENDPOINT:-http://conusai-otel:4317}"
+
+      # Auth / sessions
+      UI_SESSION_KEY: "${UI_SESSION_KEY}"
+      PLATFORM_ADMIN_TOKEN: "${PLATFORM_ADMIN_TOKEN}"
+      ZITADEL_ISSUER: "${ZITADEL_ISSUER}"
+      ZITADEL_CLIENT_ID: "${ZITADEL_CLIENT_ID}"
+
+      # Billing
+      LAGO_API_URL: "http://conusai-lago-api:3000"
+      LAGO_API_KEY: "${LAGO_API_KEY}"
+
+      # CORS — web + Tauri origins (no localhost in prod)
+      WEB_ORIGIN: "https://app.${APP_DOMAIN},https://tauri.localhost,tauri://localhost"
+
+      # Embeddings / LLM providers
+      EMBEDDING_BACKEND: "${EMBEDDING_BACKEND:-openai}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+
+      RUST_LOG: "${RUST_LOG:-info,agent_gateway=info,tower_http=warn}"
+    volumes:
+      - redb_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    networks: [dokploy-network]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.gateway.rule=Host(`api.${APP_DOMAIN}`)
+      - traefik.http.routers.gateway.entrypoints=${TRAEFIK_ENTRYPOINT}
+      - traefik.http.routers.gateway.tls.certresolver=${TRAEFIK_CERTRESOLVER}
+      - traefik.http.services.gateway.loadbalancer.server.port=8080
+      # WebSocket-friendly timeouts for long agent streams
+      - traefik.http.services.gateway.loadbalancer.sticky=false
+      - traefik.http.routers.gateway.middlewares=gateway-headers@docker
+      - traefik.http.middlewares.gateway-headers.headers.customrequestheaders.X-Forwarded-Proto=https
+
+volumes:
+  redb_data:
+    external: true
+    name: conusai_redb_data
+
+networks:
+  dokploy-network:
+    external: true

@@ -1,0 +1,214 @@
+# Conusai infra stack — Postgres, Redis, Qdrant, RustFS, Zitadel, Lago.
+# Internal-only services have NO traefik labels and NO host ports.
+# Cross-stack services resolve each other by `hostname:` over dokploy-network.
+
+services:
+  # ── Postgres (shared by Zitadel, Lago, future apps) ──────────────────────
+  postgres:
+    image: postgres:17-alpine
+    hostname: conusai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${POSTGRES_DB:-conusai}"
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [dokploy-network]
+
+  # ── Redis (Lago queues) ──────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    hostname: conusai-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [dokploy-network]
+
+  # ── Qdrant (vector store) ────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.17.0
+    hostname: conusai-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc 'echo > /dev/tcp/127.0.0.1/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [dokploy-network]
+
+  # ── RustFS perms fixer (runs once) ───────────────────────────────────────
+  rustfs-perms:
+    image: alpine:3
+    user: root
+    command: ["sh", "-c", "chown -R 10001:10001 /fix_path && echo done"]
+    volumes:
+      - rustfs_data:/fix_path
+    restart: "no"
+    networks: [dokploy-network]
+
+  # ── RustFS (S3-compatible object storage) ────────────────────────────────
+  rustfs:
+    image: rustfs/rustfs:latest
+    hostname: conusai-rustfs
+    restart: unless-stopped
+    depends_on:
+      rustfs-perms:
+        condition: service_completed_successfully
+    environment:
+      RUSTFS_ACCESS_KEY: "${AWS_ACCESS_KEY_ID}"
+      RUSTFS_SECRET_KEY: "${AWS_SECRET_ACCESS_KEY}"
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ENABLE: "true"
+    command: ["--console-enable", "/data"]
+    volumes:
+      - rustfs_data:/data
+    healthcheck:
+      test: ["CMD", "sh", "-c", "true"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [dokploy-network]
+    labels:
+      - traefik.enable=true
+      # S3 API
+      - traefik.http.routers.rustfs-s3.rule=Host(`s3.${APP_DOMAIN}`)
+      - traefik.http.routers.rustfs-s3.entrypoints=${TRAEFIK_ENTRYPOINT}
+      - traefik.http.routers.rustfs-s3.tls.certresolver=${TRAEFIK_CERTRESOLVER}
+      - traefik.http.routers.rustfs-s3.service=rustfs-s3
+      - traefik.http.services.rustfs-s3.loadbalancer.server.port=9000
+      # Web console (protect with Dokploy basic-auth middleware in UI)
+      - traefik.http.routers.rustfs-console.rule=Host(`s3-console.${APP_DOMAIN}`)
+      - traefik.http.routers.rustfs-console.entrypoints=${TRAEFIK_ENTRYPOINT}
+      - traefik.http.routers.rustfs-console.tls.certresolver=${TRAEFIK_CERTRESOLVER}
+      - traefik.http.routers.rustfs-console.service=rustfs-console
+      - traefik.http.services.rustfs-console.loadbalancer.server.port=9001
+
+  # ── Zitadel (identity provider) ──────────────────────────────────────────
+  zitadel:
+    image: ghcr.io/zitadel/zitadel:v2.68.0
+    hostname: conusai-zitadel
+    restart: unless-stopped
+    command: >
+      start-from-init
+      --masterkey "${ZITADEL_MASTERKEY}"
+      --tlsMode external
+    environment:
+      ZITADEL_DATABASE_POSTGRES_HOST: conusai-postgres
+      ZITADEL_DATABASE_POSTGRES_PORT: 5432
+      ZITADEL_DATABASE_POSTGRES_DATABASE: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_USERNAME: "${POSTGRES_USER}"
+      ZITADEL_DATABASE_POSTGRES_USER_PASSWORD: "${POSTGRES_PASSWORD}"
+      ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE: disable
+      ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME: "${POSTGRES_USER}"
+      ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD: "${POSTGRES_PASSWORD}"
+      ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE: disable
+      ZITADEL_EXTERNALSECURE: "true"
+      ZITADEL_EXTERNALPORT: 443
+      ZITADEL_EXTERNALDOMAIN: "auth.${APP_DOMAIN}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/zitadel", "ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+    networks: [dokploy-network]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.zitadel.rule=Host(`auth.${APP_DOMAIN}`)
+      - traefik.http.routers.zitadel.entrypoints=${TRAEFIK_ENTRYPOINT}
+      - traefik.http.routers.zitadel.tls.certresolver=${TRAEFIK_CERTRESOLVER}
+      - traefik.http.services.zitadel.loadbalancer.server.port=8080
+      # Zitadel speaks h2c upstream — required for gRPC admin API
+      - traefik.http.services.zitadel.loadbalancer.server.scheme=h2c
+
+  # ── Lago API (billing) ───────────────────────────────────────────────────
+  lago-api:
+    image: getlago/api:v1.30.0
+    hostname: conusai-lago-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      RAILS_ENV: production
+      LAGO_API_URL: "https://billing.${APP_DOMAIN}"
+      LAGO_FRONT_URL: "https://billing.${APP_DOMAIN}"
+      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@conusai-postgres:5432/lago"
+      REDIS_URL: "redis://conusai-redis:6379/0"
+      SECRET_KEY_BASE: "${LAGO_SECRET_KEY_BASE}"
+      ENCRYPTION_DETERMINISTIC_KEY: "${LAGO_ENCRYPTION_DET_KEY}"
+      ENCRYPTION_KEY_DERIVATION_SALT: "${LAGO_ENCRYPTION_SALT}"
+      ENCRYPTION_PRIMARY_KEY: "${LAGO_ENCRYPTION_KEY}"
+      LAGO_RSA_PRIVATE_KEY: "${LAGO_RSA_PRIVATE_KEY}"
+      STRIPE_API_KEY: "${STRIPE_SECRET_KEY}"
+      LAGO_DISABLE_SIGNUP: "true"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    networks: [dokploy-network]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.lago.rule=Host(`billing.${APP_DOMAIN}`)
+      - traefik.http.routers.lago.entrypoints=${TRAEFIK_ENTRYPOINT}
+      - traefik.http.routers.lago.tls.certresolver=${TRAEFIK_CERTRESOLVER}
+      - traefik.http.services.lago.loadbalancer.server.port=3000
+
+  # ── Lago Worker (Sidekiq) ────────────────────────────────────────────────
+  lago-worker:
+    image: getlago/api:v1.30.0
+    hostname: conusai-lago-worker
+    restart: unless-stopped
+    command: ["bundle", "exec", "sidekiq"]
+    depends_on:
+      lago-api:
+        condition: service_healthy
+    environment:
+      RAILS_ENV: production
+      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@conusai-postgres:5432/lago"
+      REDIS_URL: "redis://conusai-redis:6379/0"
+      SECRET_KEY_BASE: "${LAGO_SECRET_KEY_BASE}"
+      ENCRYPTION_DETERMINISTIC_KEY: "${LAGO_ENCRYPTION_DET_KEY}"
+      ENCRYPTION_KEY_DERIVATION_SALT: "${LAGO_ENCRYPTION_SALT}"
+      ENCRYPTION_PRIMARY_KEY: "${LAGO_ENCRYPTION_KEY}"
+      LAGO_RSA_PRIVATE_KEY: "${LAGO_RSA_PRIVATE_KEY}"
+    networks: [dokploy-network]
+
+volumes:
+  postgres_data:
+    external: true
+    name: conusai_postgres_data
+  redis_data:
+    external: true
+    name: conusai_redis_data
+  qdrant_data:
+    external: true
+    name: conusai_qdrant_data
+  rustfs_data:
+    external: true
+    name: conusai_rustfs_data
+
+networks:
+  dokploy-network:
+    external: true

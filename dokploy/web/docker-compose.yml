@@ -1,0 +1,56 @@
+# SvelteKit web app (apps/web) — also the remote URL loaded by the Tauri
+# desktop and mobile shells. In Dokploy set:
+#   Build Context = repo root
+#   Compose Path  = dokploy/web/docker-compose.yml
+
+services:
+  web:
+    build:
+      context: ../..
+      dockerfile: dokploy/web/Dockerfile
+    image: conusai/web:latest
+    hostname: conusai-web
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      # SvelteKit adapter-node — required for cookie/CSRF origin checks
+      ORIGIN: "https://app.${APP_DOMAIN}"
+      PROTOCOL_HEADER: x-forwarded-proto
+      HOST_HEADER: x-forwarded-host
+
+      # Server-side calls go to the gateway over the internal network
+      CONUSAI_BACKEND_URL: "http://conusai-gateway:8080"
+      UI_SESSION_KEY: "${UI_SESSION_KEY}"
+
+      # OIDC — Zitadel (server-side flows)
+      ZITADEL_ISSUER: "${ZITADEL_ISSUER}"
+      ZITADEL_CLIENT_ID: "${ZITADEL_CLIENT_ID}"
+
+      # Billing portal links
+      LAGO_API_URL: "https://billing.${APP_DOMAIN}"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [dokploy-network]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.web.rule=Host(`app.${APP_DOMAIN}`)
+      - traefik.http.routers.web.entrypoints=${TRAEFIK_ENTRYPOINT}
+      - traefik.http.routers.web.tls.certresolver=${TRAEFIK_CERTRESOLVER}
+      - traefik.http.services.web.loadbalancer.server.port=3000
+      # HSTS + secure headers
+      - traefik.http.routers.web.middlewares=web-secure-headers@docker
+      - traefik.http.middlewares.web-secure-headers.headers.stsSeconds=31536000
+      - traefik.http.middlewares.web-secure-headers.headers.stsIncludeSubdomains=true
+      - traefik.http.middlewares.web-secure-headers.headers.stsPreload=true
+      - traefik.http.middlewares.web-secure-headers.headers.contentTypeNosniff=true
+      - traefik.http.middlewares.web-secure-headers.headers.browserXssFilter=true
+      - traefik.http.middlewares.web-secure-headers.headers.referrerPolicy=strict-origin-when-cross-origin
+
+networks:
+  dokploy-network:
+    external: true

@@ -1,0 +1,25 @@
+# Self-registering MCP capability services. Each one calls the gateway on
+# startup to register itself, then waits for tool invocations over HTTP.
+# Internal-only: no Traefik labels, no host ports.
+
+services:
+  current-time:
+    build:
+      context: ../../services/current-time
+    image: conusai/current-time:latest
+    hostname: conusai-current-time
+    restart: unless-stopped
+    environment:
+      GATEWAY_URL: "http://conusai-gateway:8080"
+      SERVICE_URL: "http://conusai-current-time:8082"
+      PLATFORM_ADMIN_TOKEN: "${PLATFORM_ADMIN_TOKEN}"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8082/health',timeout=2).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    networks: [dokploy-network]
+
+networks:
+  dokploy-network:
+    external: true

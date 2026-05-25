@@ -1,0 +1,33 @@
+# Jaeger + OTel collector. Receives OTLP from the agent-gateway.
+# Jaeger UI is exposed at traces.${APP_DOMAIN} — gate it behind Dokploy's
+# basic-auth middleware in the UI.
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.123.0
+    hostname: conusai-otel
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    depends_on:
+      - jaeger
+    networks: [dokploy-network]
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    hostname: conusai-jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    networks: [dokploy-network]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.jaeger.rule=Host(`traces.${APP_DOMAIN}`)
+      - traefik.http.routers.jaeger.entrypoints=${TRAEFIK_ENTRYPOINT}
+      - traefik.http.routers.jaeger.tls.certresolver=${TRAEFIK_CERTRESOLVER}
+      - traefik.http.services.jaeger.loadbalancer.server.port=16686
+
+networks:
+  dokploy-network:
+    external: true

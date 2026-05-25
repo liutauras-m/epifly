@@ -12,6 +12,10 @@ Cargo.lock
 .env.*.local
 # Keep .env.example tracked (safe template)
 
+# ── Dokploy local credentials (API key + project URL) ────────────────────────
+.dokploy
+**/.dokploy
+
 # ── IDE ───────────────────────────────────────────────────────────────────────
 .idea/
 .vscode/
