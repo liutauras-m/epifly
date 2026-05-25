@@ -29,91 +29,37 @@
  *   DEPLOY_TIMEOUT_SECS=600    Per-app deploy timeout (default 10 min)
  *   DEPLOY_ONLY=env|composes|domains|deploys|verify   Run a single phase
  *
- * Zero npm dependencies — only Node 22+ stdlib.
+ * Shared logic lives in dokploy/lib/*.mjs — imported dynamically so this
+ * file works both inside the container (/app/lib) and from a local checkout.
  */
 
 import { spawnSync } from "node:child_process";
-import { randomBytes, generateKeyPairSync } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { request as httpRequest } from "node:http";
 import { resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-// ── Declarative manifest ────────────────────────────────────────────────────
-// Defines the apps this orchestrator manages, in deploy order. composePath is
-// relative to the repo root, matching Dokploy's `composePath` field.
-const APPS = [
-  { name: "infra",         composePath: "./dokploy/infra/docker-compose.yml",         hasDomains: true  },
-  { name: "gateway",       composePath: "./dokploy/gateway/docker-compose.yml",       hasDomains: true  },
-  { name: "web",           composePath: "./dokploy/web/docker-compose.yml",           hasDomains: true  },
-  { name: "observability", composePath: "./dokploy/observability/docker-compose.yml", hasDomains: true  },
-  { name: "capabilities",  composePath: "./dokploy/capabilities/docker-compose.yml",  hasDomains: false },
-];
+// ── Resolve shared lib directory ────────────────────────────────────────────
+// Container: /app/scripts/deploy.mjs → /app/lib  (../lib relative to script)
+// Local dev:  dokploy/epifly-deploy/scripts/     → dokploy/lib  (../../lib)
+const __dir = fileURLToPath(new URL(".", import.meta.url));
+function findLib() {
+  for (const p of [resolve(__dir, "../lib"), resolve(__dir, "../../lib")]) {
+    if (existsSync(p)) return p;
+  }
+  console.error("✗ Cannot find dokploy/lib. Add bind-mount ../lib:/app/lib:ro to docker-compose.yml.");
+  process.exit(1);
+}
+const LIB = findLib();
+const libUrl = (mod) => pathToFileURL(resolve(LIB, mod)).href;
 
-// External named Docker volumes the stacks expect to already exist. Declared
-// `external: true` in the compose files so their lifecycle is decoupled from
-// any deploy / project delete — they only go away on explicit `docker volume
-// rm`. Phase 0 creates any that are missing; existing ones are left untouched.
-const EXTERNAL_VOLUMES = [
-  "conusai_postgres_data",
-  "conusai_redis_data",
-  "conusai_qdrant_data",
-  "conusai_rustfs_data",
-  "conusai_redb_data",
-];
-
-const DOCKER_SOCK = "/var/run/docker.sock";
-
-// Secrets to auto-generate when absent from Shared Env. Format strings chosen
-// to match the existing `generate-prod-env.mjs` output so we don't break any
-// downstream regex/length validation in zitadel/lago/rustfs.
-const SECRETS = {
-  POSTGRES_PASSWORD:       () => randB64Url(30),  // ~40 chars
-  ZITADEL_MASTERKEY:       () => randB64Url(24),  // exactly 32 chars
-  LAGO_SECRET_KEY_BASE:    () => randHex(64),     // 128 hex chars
-  LAGO_ENCRYPTION_DET_KEY: () => randB64Url(24),
-  LAGO_ENCRYPTION_SALT:    () => randB64Url(24),
-  LAGO_ENCRYPTION_KEY:     () => randB64Url(24),
-  LAGO_RSA_PRIVATE_KEY:    () => base64(generateRsaPem(2048)),
-  AWS_ACCESS_KEY_ID:       () => "rfs_" + randUpperAlnum(15),
-  AWS_SECRET_ACCESS_KEY:   () => randB64Url(30),
-  RUSTFS_IAM_ENC_KEY:      () => randB64Url(24),
-  RUSTFS_WEBHOOK_SECRET:   () => randB64Url(32),
-  UI_SESSION_KEY:          () => randHex(32),       // 64 hex chars (>32 bytes)
-  PLATFORM_ADMIN_TOKEN:    () => "pat_" + randB64Url(32),
-};
-
-// Stateful secrets — once data exists on disk encrypted/hashed with these,
-// regenerating them silently corrupts that data (Postgres SASL mismatch,
-// Lago can't decrypt prior records, RustFS IAM blobs become unreadable).
-//
-// If the bound volume already exists AND the Shared Env value is empty,
-// Phase 1 will REFUSE to auto-generate — operator must restore the prior
-// value or explicitly wipe the volume. Prevents drift-by-regeneration.
-//
-// Map shape: SECRET_NAME -> volume-name (string). UI_SESSION_KEY and
-// PLATFORM_ADMIN_TOKEN are intentionally NOT listed here — they're
-// runtime-only (no on-disk data depends on them), so silent rotation is
-// safe (it just invalidates active sessions / tokens).
-const STATEFUL_SECRETS = {
-  POSTGRES_PASSWORD:       "conusai_postgres_data",
-  LAGO_SECRET_KEY_BASE:    "conusai_postgres_data",
-  LAGO_ENCRYPTION_DET_KEY: "conusai_postgres_data",
-  LAGO_ENCRYPTION_SALT:    "conusai_postgres_data",
-  LAGO_ENCRYPTION_KEY:     "conusai_postgres_data",
-  LAGO_RSA_PRIVATE_KEY:    "conusai_postgres_data",
-  RUSTFS_IAM_ENC_KEY:      "conusai_rustfs_data",
-  AWS_ACCESS_KEY_ID:       "conusai_rustfs_data",
-  AWS_SECRET_ACCESS_KEY:   "conusai_rustfs_data",
-  ZITADEL_MASTERKEY:       "conusai_postgres_data",
-};
-
-// Variables derived from APP_DOMAIN. Recomputed every run so changing
-// APP_DOMAIN in the orchestrator's per-compose env propagates everywhere
-// (instead of being frozen to whatever .env.example shipped).
-const DERIVED = (appDomain) => ({
-  ZITADEL_ISSUER: `https://auth.${appDomain}`,
-  COOKIE_DOMAIN:  `.${appDomain}`,
-});
+// ── Dynamic imports from the shared library ─────────────────────────────────
+const { APPS, EXTERNAL_VOLUMES, DOCKER_SOCK, DERIVED } = await import(libUrl("manifest.mjs"));
+const { SECRETS, STATEFUL_SECRETS } = await import(libUrl("secrets.mjs"));
+const { makeClient } = await import(libUrl("dokploy-client.mjs"));
+const { parseDotenv, renderDotenv, isSecret } = await import(libUrl("dotenv.mjs"));
+const { extractComposeVars, renderProjectRefs } = await import(libUrl("compose-vars.mjs"));
+const { buildVerifyChecks, runCheck } = await import(libUrl("verify.mjs"));
+const { dockerApi, listExistingVolumes } = await import(libUrl("docker.mjs"));
 
 // ── CLI / env knobs ─────────────────────────────────────────────────────────
 const DRY_RUN     = process.env.DEPLOY_DRY_RUN === "true";
@@ -172,45 +118,6 @@ async function ensureVolumes() {
   }
 }
 
-// Returns the subset of `names` that currently exist as Docker volumes.
-// Silently returns an empty set when the docker socket isn't mounted, so
-// callers can degrade gracefully (matching Phase 0 behaviour).
-async function listExistingVolumes(names) {
-  const out = new Set();
-  if (!existsSync(DOCKER_SOCK)) return out;
-  for (const name of names) {
-    const r = await dockerApi("GET", `/volumes/${encodeURIComponent(name)}`);
-    if (r.status === 200) out.add(name);
-    else if (r.status !== 404) {
-      fail(`docker GET /volumes/${name} → HTTP ${r.status}: ${r.body.slice(0, 200)}`);
-    }
-  }
-  return out;
-}
-
-function dockerApi(method, path, body) {
-  return new Promise((res, rej) => {
-    const req = httpRequest(
-      {
-        socketPath: DOCKER_SOCK,
-        method,
-        path,
-        headers: body
-          ? { "content-type": "application/json", accept: "application/json" }
-          : { accept: "application/json" },
-      },
-      (r) => {
-        const chunks = [];
-        r.on("data", (c) => chunks.push(c));
-        r.on("end", () => res({ status: r.statusCode, body: Buffer.concat(chunks).toString("utf8") }));
-      },
-    );
-    req.on("error", rej);
-    if (body) req.write(JSON.stringify(body));
-    req.end();
-  });
-}
-
 // ── Phase 1: Shared Env ─────────────────────────────────────────────────────
 // Writes to the **project**-level env (projects.env), because Dokploy resolves
 // `${{project.X}}` refs in per-compose env tabs against `compose.environment.
@@ -256,6 +163,8 @@ async function ensureSharedEnv({ api, projectId, appDomain, preExistingVolumes }
     AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
     // Platform admin bearer token (used by CLIs / dashboards)
     PLATFORM_ADMIN_TOKEN: process.env.PLATFORM_ADMIN_TOKEN,
+    // External API keys — set in per-compose env to survive project recreate
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
     ...DERIVED(appDomain),
   };
 
@@ -348,6 +257,7 @@ async function ensureComposes({ api, environmentId, selfComposeId }) {
     fail("Phase 2 needs a compose to inherit git source from. Create 'epifly-deploy' in the Dokploy UI first.");
   }
   const self = await api.query("compose.one", { composeId: selfComposeId });
+  const targetServerId = await resolveTargetServerId(api, self);
   const inherit = {
     sourceType: self.sourceType,
     githubId: self.githubId,
@@ -380,11 +290,12 @@ async function ensureComposes({ api, environmentId, selfComposeId }) {
         environmentId,
         description: `Managed by epifly-deploy. Source: ${app.composePath}`,
         composeType: "docker-compose",
+        ...(targetServerId ? { serverId: targetServerId } : {}),
       });
       composeId = created?.composeId ?? created?.json?.composeId;
       if (!composeId) fail(`compose.create returned no composeId: ${JSON.stringify(created)}`);
 
-      // Attach git source via compose.update (compose.create only takes name+env).
+      // Attach git source via compose.update (second step after compose.create).
       await api.mutate("compose.update", {
         composeId,
         ...inherit,
@@ -411,22 +322,26 @@ async function ensureComposes({ api, environmentId, selfComposeId }) {
   }
 }
 
-// Extract every `${VAR}`, `${VAR:-default}`, `${VAR:?msg}`, `${VAR-default}`,
-// `${VAR?msg}` reference from a compose YAML. Returns a sorted unique list.
-function extractComposeVars(composeFile) {
-  const content = readFileSync(composeFile, "utf8");
-  const re = /\$\{([A-Z_][A-Z0-9_]*)(?:[:?\-][^}]*)?\}/g;
-  const vars = new Set();
-  let m;
-  while ((m = re.exec(content)) !== null) vars.add(m[1]);
-  return [...vars].sort();
-}
+async function resolveTargetServerId(api, selfCompose) {
+  if (selfCompose?.serverId) return selfCompose.serverId;
 
-// Render a per-compose env block of pure project-level references. Dokploy
-// expands `${{project.VAR}}` against Shared Env when writing the per-service
-// .env file at deploy time, which compose then interpolates as `${VAR}`.
-function renderProjectRefs(vars) {
-  return vars.map((v) => `${v}=\${{project.${v}}}`).join("\n") + "\n";
+  const servers = await api.query("server.all", {});
+  const list = Array.isArray(servers) ? servers : [];
+  const active = list.find((s) => s?.serverStatus === "active");
+  if (active?.serverId) {
+    log(`  · epifly-deploy has no serverId; using active server ${active.name || active.serverId} for new composes`);
+    return active.serverId;
+  }
+
+  const fallback = list[0]?.serverId;
+  if (fallback) {
+    log(`  · epifly-deploy has no serverId; using fallback server ${list[0]?.name || fallback} for new composes`);
+    return fallback;
+  }
+
+  fail(
+    "No Dokploy servers available for compose.create. Add and setup a server first, then rerun deploy.",
+  );
 }
 
 // ── Phase 3: Sync domains ───────────────────────────────────────────────────
@@ -506,34 +421,6 @@ async function verifyAll({ appDomain }) {
   log(`✓ all ${checks.length} verification checks passed`);
 }
 
-function buildVerifyChecks(appDomain) {
-  return [
-    { label: "web (root)",            url: `https://${appDomain}`,                                                    expectStatus: [200, 301, 302, 307, 308] },
-    { label: "zitadel OIDC discovery", url: `https://auth.${appDomain}/.well-known/openid-configuration`,             expectStatus: [200], expectJsonKey: "issuer" },
-    { label: "lago app",              url: `https://billing.${appDomain}`,                                            expectStatus: [200, 301, 302, 307, 308] },
-    { label: "rustfs S3 (anon)",      url: `https://s3.${appDomain}/`,                                                expectStatus: [200, 403] },
-    { label: "rustfs console",        url: `https://s3-console.${appDomain}`,                                         expectStatus: [200, 301, 302, 307, 308] },
-    { label: "jaeger UI",             url: `https://traces.${appDomain}`,                                             expectStatus: [200, 301, 302, 307, 308] },
-    { label: "gateway api health",    url: `https://api.${appDomain}/health`,                                         expectStatus: [200, 404] }, // 404 acceptable until route is added
-  ];
-}
-
-async function runCheck({ url, expectStatus, expectJsonKey }) {
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), 15000);
-  try {
-    const res = await fetch(url, { redirect: "manual", signal: ac.signal });
-    if (!expectStatus.includes(res.status)) return false;
-    if (expectJsonKey) {
-      const body = await res.json().catch(() => null);
-      if (!body || !(expectJsonKey in body)) return false;
-    }
-    return true;
-  } finally {
-    clearTimeout(t);
-  }
-}
-
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function loadConfig() {
   const dokployUrl = (process.env.DOKPLOY_URL || "").replace(/\/+$/, "");
@@ -567,96 +454,11 @@ function section(title) {
   log(`▼ ${title}`);
 }
 
-function makeClient(baseUrl, apiKey) {
-  return {
-    async query(procedure, input) {
-      const url = `${baseUrl}/api/trpc/${procedure}?input=${encodeURIComponent(JSON.stringify({ json: input }))}`;
-      const res = await fetch(url, { headers: { "x-api-key": apiKey, accept: "application/json" } });
-      return unwrap(res, procedure);
-    },
-    async mutate(procedure, input) {
-      const res = await fetch(`${baseUrl}/api/trpc/${procedure}`, {
-        method: "POST",
-        headers: { "x-api-key": apiKey, "content-type": "application/json", accept: "application/json" },
-        body: JSON.stringify({ json: input }),
-      });
-      return unwrap(res, procedure);
-    },
-  };
-}
-
-async function unwrap(res, procedure) {
-  const text = await res.text();
-  let body;
-  try { body = text ? JSON.parse(text) : null; }
-  catch { fail(`${procedure}: non-JSON response (${res.status}): ${text.slice(0, 200)}`); }
-  if (!res.ok) {
-    const msg = body?.error?.json?.message ?? body?.message ?? text;
-    fail(`${procedure} → HTTP ${res.status}: ${msg}`);
-  }
-  return body?.result?.data?.json ?? body?.result?.data ?? body;
-}
-
-function parseDotenv(text) {
-  const out = {};
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
-    if (eq < 0) continue;
-    const k = line.slice(0, eq).trim();
-    let v = line.slice(eq + 1).trim();
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-      v = v.slice(1, -1);
-    }
-    out[k] = v;
-  }
-  return out;
-}
-
-// Render env preserving order from prior text where possible; new keys appended.
-function renderDotenv(merged, priorText) {
-  const seen = new Set();
-  const out = [];
-  for (const raw of priorText.split(/\r?\n/)) {
-    const m = raw.match(/^\s*([A-Z][A-Z0-9_]*)\s*=/);
-    if (m) {
-      const k = m[1];
-      if (k in merged) { out.push(`${k}=${merged[k]}`); seen.add(k); }
-      else out.push(raw); // unknown key — preserve
-    } else {
-      out.push(raw); // comment / blank
-    }
-  }
-  for (const k of Object.keys(merged)) {
-    if (!seen.has(k)) out.push(`${k}=${merged[k]}`);
-  }
-  return out.join("\n");
-}
 
 function pickExisting(paths) {
   for (const p of paths) if (existsSync(p)) return p;
-  fail(`None of these paths exist: ${paths.join(", ")}`);
-}
-
-function isSecret(k) {
-  return /PASSWORD|SECRET|TOKEN/.test(k) || /_KEY(_|$)/.test(k);
-}
-
-function randB64Url(bytes) {
-  return randomBytes(bytes).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-function randHex(bytes) { return randomBytes(bytes).toString("hex"); }
-function randUpperAlnum(n) {
-  const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-  const buf = randomBytes(n);
-  let s = "";
-  for (let i = 0; i < n; i++) s += charset[buf[i] % charset.length];
-  return s;
-}
-function base64(s) { return Buffer.from(s, "utf8").toString("base64"); }
-function generateRsaPem(modulusLength) {
-  return generateKeyPairSync("rsa", { modulusLength }).privateKey.export({ type: "pkcs8", format: "pem" });
+  console.error(`✗ None of these paths exist: ${paths.join(", ")}`);
+  process.exit(1);
 }
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
