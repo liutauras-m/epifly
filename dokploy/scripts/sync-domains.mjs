@@ -23,10 +23,14 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DOKPLOY_DIR = resolve(__dirname, "..");
+
+const { makeClient } = await import(
+  pathToFileURL(resolve(DOKPLOY_DIR, "lib/dokploy-client.mjs")).href
+);
 
 // ── CLI ────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -157,49 +161,6 @@ function parseYamlSubset(text) {
   }
 
   return parseBlock(0);
-}
-
-// ── tRPC HTTP client ───────────────────────────────────────────────────────
-function makeClient(baseUrl, apiKey) {
-  return {
-    async query(procedure, input) {
-      const url = `${baseUrl}/api/trpc/${procedure}?input=${encodeURIComponent(
-        JSON.stringify({ json: input }),
-      )}`;
-      const res = await fetch(url, {
-        method: "GET",
-        headers: { "x-api-key": apiKey, accept: "application/json" },
-      });
-      return unwrap(res, procedure);
-    },
-    async mutate(procedure, input) {
-      const res = await fetch(`${baseUrl}/api/trpc/${procedure}`, {
-        method: "POST",
-        headers: {
-          "x-api-key": apiKey,
-          "content-type": "application/json",
-          accept: "application/json",
-        },
-        body: JSON.stringify({ json: input }),
-      });
-      return unwrap(res, procedure);
-    },
-  };
-}
-
-async function unwrap(res, procedure) {
-  const text = await res.text();
-  let body;
-  try {
-    body = text ? JSON.parse(text) : null;
-  } catch {
-    fail(`${procedure}: non-JSON response (${res.status}): ${text.slice(0, 200)}`);
-  }
-  if (!res.ok) {
-    const msg = body?.error?.json?.message ?? body?.message ?? text;
-    fail(`${procedure} → HTTP ${res.status}: ${msg}`);
-  }
-  return body?.result?.data?.json ?? body?.result?.data ?? body;
 }
 
 // ── Domain helpers ─────────────────────────────────────────────────────────
