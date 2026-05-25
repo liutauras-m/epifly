@@ -59,15 +59,14 @@ const password = (length: number): string => {
 	return out.join("");
 };
 
-/** Generate a 2048-bit RSA private key in PKCS#8 PEM, single-line for `.env`. */
-const rsaPrivateKeyPem = (): string => {
+/** Generate a 2048-bit RSA private key, base64-encoded for Lago (`LAGO_RSA_PRIVATE_KEY` canonical format — single line, safe in env files). */
+const rsaPrivateKeyBase64 = (): string => {
 	const { privateKey } = generateKeyPairSync("rsa", {
 		modulusLength: 2048,
 		privateKeyEncoding: { type: "pkcs8", format: "pem" },
 		publicKeyEncoding: { type: "spki", format: "pem" },
 	});
-	// Inline newlines so the value fits on one `.env` line.
-	return privateKey.trim().replace(/\n/g, "\\n");
+	return Buffer.from(privateKey, "utf8").toString("base64");
 };
 
 // ── Per-variable generation rules ───────────────────────────────────────────
@@ -81,8 +80,10 @@ const generators: Record<string, () => string> = {
 	LAGO_ENCRYPTION_DET_KEY: () => password(32),
 	LAGO_ENCRYPTION_SALT: () => password(32),
 	LAGO_ENCRYPTION_KEY: () => password(32),
-	LAGO_RSA_PRIVATE_KEY: () => rsaPrivateKeyPem(),
-	AWS_ACCESS_KEY_ID: () => `AKIA${b64url(12).replace(/[-_]/g, "").toUpperCase().slice(0, 16)}`,
+	LAGO_RSA_PRIVATE_KEY: () => rsaPrivateKeyBase64(),
+	// RustFS S3 root credentials — deliberately NOT using the AWS `AKIA…` prefix
+	// to avoid false-positive triggers in secret scanners.
+	AWS_ACCESS_KEY_ID: () => `rfs_${b64url(12).replace(/[-_]/g, "").toUpperCase().slice(0, 16)}`,
 	AWS_SECRET_ACCESS_KEY: () => b64url(30, 40),
 	UI_SESSION_KEY: () => hex(32), // 64-char hex (32 bytes of entropy)
 	PLATFORM_ADMIN_TOKEN: () => `pat_${b64url(32)}`,
