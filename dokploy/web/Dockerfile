@@ -19,7 +19,7 @@ COPY packages/sdk/package.json packages/sdk/
 COPY packages/types/package.json packages/types/
 
 RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile --filter web... --filter ./packages/*
+    pnpm install --config.frozen-lockfile=true --filter web... --filter "./packages/*"
 
 # ── build ────────────────────────────────────────────────────────────────────
 FROM deps AS build
