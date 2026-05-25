@@ -1,7 +1,9 @@
 # Conusai Platform — Dokploy Deployment
 
-Production deployment for `*.beta.test.cloud.conusai.com` using
-[Dokploy](https://dokploy.com) + Traefik on the shared `dokploy-network`.
+Production deployment for **Epifly** at
+`https://epifly.beta.test.cloud.conusai.com` with supporting services at
+`*.epifly.beta.test.cloud.conusai.com`, using [Dokploy](https://dokploy.com)
++ Traefik on the shared `dokploy-network`.
 
 ## Architecture
 
@@ -15,15 +17,28 @@ per-service health.
 | [infra/](infra/) | `conusai-infra` | Postgres, Redis, Qdrant, RustFS, Zitadel, Lago | `auth.`, `billing.`, `s3.`, `s3-console.` |
 | [gateway/](gateway/) | `conusai-gateway` | Rust agent-gateway (HTTP + WS API) | `api.` |
 | [capabilities/](capabilities/) | `conusai-capabilities` | Self-registering MCP services (current-time, …) | internal only |
-| [web/](web/) | `conusai-web` | SvelteKit web app — also the remote target for Tauri shells | `app.` |
+| [web/](web/) | `conusai-web` | SvelteKit web app — also the remote target for Tauri shells | bare apex |
 | [observability/](observability/) | `conusai-observability` | Jaeger + OTel collector | `traces.` |
 
-`*` = `beta.test.cloud.conusai.com`.
+Hostnames (with `APP_DOMAIN=epifly.beta.test.cloud.conusai.com`):
+
+| Service | URL |
+|---|---|
+| Web (Epifly) | `https://epifly.beta.test.cloud.conusai.com` |
+| Agent gateway | `https://api.epifly.beta.test.cloud.conusai.com` |
+| Zitadel | `https://auth.epifly.beta.test.cloud.conusai.com` |
+| Lago billing | `https://billing.epifly.beta.test.cloud.conusai.com` |
+| RustFS S3 API | `https://s3.epifly.beta.test.cloud.conusai.com` |
+| RustFS console | `https://s3-console.epifly.beta.test.cloud.conusai.com` |
+| Jaeger | `https://traces.epifly.beta.test.cloud.conusai.com` |
+
+All services share the cookie domain `.epifly.beta.test.cloud.conusai.com`
+so a single Zitadel SSO session covers the web app + gateway + Lago portal.
 
 > **Tauri desktop / iOS / Android shells** are *not* deployed via Dokploy.
 > They are native binaries built in CI and distributed via the App Store,
 > Play Store, or GitHub Releases. They point their `frontendDist` /
-> `devUrl` at `https://app.beta.test.cloud.conusai.com`, which is the
+> `devUrl` at `https://epifly.beta.test.cloud.conusai.com`, which is the
 > `conusai-web` service in this folder.
 
 ## Networking
@@ -72,17 +87,19 @@ Sensitive values to set:
 
 ## Deploy order
 
-1. **Create DNS** A/AAAA records for every hostname listed above, all
-   pointing at the Dokploy host.
+1. **Create DNS**: easiest is one wildcard A record
+   `*.epifly.beta.test.cloud.conusai.com → <dokploy host>` plus an apex A
+   record for `epifly.beta.test.cloud.conusai.com` itself. Traefik then
+   issues one Let's Encrypt cert per hostname automatically.
 2. **Create the project** in Dokploy and add Shared Environment.
 3. Deploy **`conusai-infra`** → wait for all healthchecks green
    (Zitadel takes ~60 s on first boot to seed its schema).
-4. Visit `https://auth.beta.test.cloud.conusai.com`, complete Zitadel
-   initial-admin setup, create the Conusai project + OIDC application,
+4. Visit `https://auth.epifly.beta.test.cloud.conusai.com`, complete Zitadel
+   initial-admin setup, create the Epifly project + OIDC application,
    and record the issuer URL + client ID into Shared Environment as
    `ZITADEL_ISSUER` / `ZITADEL_CLIENT_ID`.
-5. Visit `https://billing.beta.test.cloud.conusai.com`, complete Lago
-   onboarding, generate the API key, store as `LAGO_API_KEY`.
+5. Visit `https://billing.epifly.beta.test.cloud.conusai.com`, complete
+   Lago onboarding, generate the API key, store as `LAGO_API_KEY`.
 6. Deploy **`conusai-gateway`**.
 7. Deploy **`conusai-capabilities`**.
 8. Deploy **`conusai-web`**.

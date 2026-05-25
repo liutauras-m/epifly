@@ -49,8 +49,11 @@ services:
       LAGO_API_URL: "http://conusai-lago-api:3000"
       LAGO_API_KEY: "${LAGO_API_KEY}"
 
-      # CORS — web + Tauri origins (no localhost in prod)
-      WEB_ORIGIN: "https://app.${APP_DOMAIN},https://tauri.localhost,tauri://localhost"
+      # CORS — web (bare apex) + Tauri origins (no localhost in prod)
+      WEB_ORIGIN: "https://${APP_DOMAIN},https://tauri.localhost,tauri://localhost"
+      # Cookie scope so /auth/* cookies are valid across api.${APP_DOMAIN}
+      # and ${APP_DOMAIN}.
+      COOKIE_DOMAIN: "${COOKIE_DOMAIN}"
 
       # Embeddings / LLM providers
       EMBEDDING_BACKEND: "${EMBEDDING_BACKEND:-openai}"

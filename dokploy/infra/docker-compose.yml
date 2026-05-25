@@ -121,6 +121,9 @@ services:
       ZITADEL_EXTERNALSECURE: "true"
       ZITADEL_EXTERNALPORT: 443
       ZITADEL_EXTERNALDOMAIN: "auth.${APP_DOMAIN}"
+      # Share session cookie across the whole epifly zone so the web app
+      # and Lago portal participate in the same Zitadel SSO session.
+      ZITADEL_OIDC_DEFAULTLOGINURLV2: "https://auth.${APP_DOMAIN}/ui/login/"
     depends_on:
       postgres:
         condition: service_healthy

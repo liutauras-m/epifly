@@ -2,8 +2,8 @@
 .dokploy
 **/.dokploy
 
-# Env files
+# Env files (real values — keep only .env.example tracked)
 *.env
 .env
-.env.local
+.env.*
 !.env.example

@@ -16,9 +16,11 @@ services:
       HOST: 0.0.0.0
       PORT: 3000
       # SvelteKit adapter-node — required for cookie/CSRF origin checks
-      ORIGIN: "https://app.${APP_DOMAIN}"
+      ORIGIN: "https://${APP_DOMAIN}"
       PROTOCOL_HEADER: x-forwarded-proto
       HOST_HEADER: x-forwarded-host
+      # Cookie scope — shared with api.${APP_DOMAIN} for SSO
+      COOKIE_DOMAIN: "${COOKIE_DOMAIN}"
 
       # Server-side calls go to the gateway over the internal network
       CONUSAI_BACKEND_URL: "http://conusai-gateway:8080"
@@ -30,6 +32,7 @@ services:
 
       # Billing portal links
       LAGO_API_URL: "https://billing.${APP_DOMAIN}"
+      LAGO_PORTAL_URL: "https://billing.${APP_DOMAIN}"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
@@ -38,7 +41,8 @@ services:
     networks: [dokploy-network]
     labels:
       - traefik.enable=true
-      - traefik.http.routers.web.rule=Host(`app.${APP_DOMAIN}`)
+      # Bare apex — Epifly main domain (no `app.` prefix)
+      - traefik.http.routers.web.rule=Host(`${APP_DOMAIN}`)
       - traefik.http.routers.web.entrypoints=${TRAEFIK_ENTRYPOINT}
       - traefik.http.routers.web.tls.certresolver=${TRAEFIK_CERTRESOLVER}
       - traefik.http.services.web.loadbalancer.server.port=3000
