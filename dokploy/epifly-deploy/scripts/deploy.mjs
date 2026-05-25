@@ -78,6 +78,26 @@ const SECRETS = {
   AWS_SECRET_ACCESS_KEY:   () => randB64Url(30),
   RUSTFS_IAM_ENC_KEY:      () => randB64Url(24),
   RUSTFS_WEBHOOK_SECRET:   () => randB64Url(32),
+};
+
+// Stateful secrets — once data exists on disk encrypted/hashed with these,
+// regenerating them silently corrupts that data (Postgres SASL mismatch,
+// Lago can't decrypt prior records, RustFS IAM blobs become unreadable).
+//
+// If the bound volume already exists AND the Shared Env value is empty,
+// Phase 1 will REFUSE to auto-generate — operator must restore the prior
+// value or explicitly wipe the volume. Prevents drift-by-regeneration.
+const STATEFUL_SECRETS = {
+  POSTGRES_PASSWORD:       "conusai_postgres_data",
+  LAGO_SECRET_KEY_BASE:    "conusai_postgres_data",
+  LAGO_ENCRYPTION_DET_KEY: "conusai_postgres_data",
+  LAGO_ENCRYPTION_SALT:    "conusai_postgres_data",
+  LAGO_ENCRYPTION_KEY:     "conusai_postgres_data",
+  LAGO_RSA_PRIVATE_KEY:    "conusai_postgres_data",
+  RUSTFS_IAM_ENC_KEY:      "conusai_rustfs_data",
+  AWS_ACCESS_KEY_ID:       "conusai_rustfs_data",
+  AWS_SECRET_ACCESS_KEY:   "conusai_rustfs_data",
+  ZITADEL_MASTERKEY:       "conusai_postgres_data",
   UI_SESSION_KEY:          () => randHex(32),
   PLATFORM_ADMIN_TOKEN:    () => "pat_" + randB64Url(32),
 };
@@ -147,6 +167,22 @@ async function ensureVolumes() {
   }
 }
 
+// Returns the subset of `names` that currently exist as Docker volumes.
+// Silently returns an empty set when the docker socket isn't mounted, so
+// callers can degrade gracefully (matching Phase 0 behaviour).
+async function listExistingVolumes(names) {
+  const out = new Set();
+  if (!existsSync(DOCKER_SOCK)) return out;
+  for (const name of names) {
+    const r = await dockerApi("GET", `/volumes/${encodeURIComponent(name)}`);
+    if (r.status === 200) out.add(name);
+    else if (r.status !== 404) {
+      fail(`docker GET /volumes/${name} → HTTP ${r.status}: ${r.body.slice(0, 200)}`);
+    }
+  }
+  return out;
+}
+
 function dockerApi(method, path, body) {
   return new Promise((res, rej) => {
     const req = httpRequest(
@@ -193,6 +229,12 @@ async function ensureSharedEnv({ api, projectId, appDomain }) {
     ...DERIVED(appDomain),
   };
 
+  // Pre-flight: which stateful volumes already exist on the host? Used
+  // below to refuse silent regeneration of secrets bound to live data.
+  const existingVolumes = await listExistingVolumes(
+    new Set(Object.values(STATEFUL_SECRETS)),
+  );
+
   const merged = { ...current };
   const actions = []; // [{ key, action, source }]
   const exampleKeys = new Set(Object.keys(example));
@@ -219,6 +261,19 @@ async function ensureSharedEnv({ api, projectId, appDomain }) {
       merged[k] = bootstrap[k];
       actions.push({ key: k, action: "set", source: "bootstrap" });
     } else if (SECRETS[k]) {
+      const boundVolume = STATEFUL_SECRETS[k];
+      if (boundVolume && existingVolumes.has(boundVolume)) {
+        fail(
+          `Refusing to regenerate stateful secret ${k}: volume ${boundVolume} ` +
+          `already exists on the host, so data on it was encrypted/hashed with the ` +
+          `previous value. Regenerating would corrupt that data.\n\n` +
+          `Either:\n` +
+          `  1. Restore the original value in Dokploy Shared Env (project.env), or\n` +
+          `  2. Wipe the volume explicitly on the host:\n` +
+          `       docker volume rm ${boundVolume}\n` +
+          `     and re-run the deploy (you will lose all data in that volume).`,
+        );
+      }
       merged[k] = SECRETS[k]();
       actions.push({ key: k, action: "gen", source: "auto-secret" });
     } else if ((example[k] ?? "").trim()) {

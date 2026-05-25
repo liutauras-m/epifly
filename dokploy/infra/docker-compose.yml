@@ -24,7 +24,54 @@ services:
       start_period: 60s
     networks: [dokploy-network]
 
-  # ── Redis (Lago queues) ──────────────────────────────────────────────────
+  # ── Postgres password sync (runs every deploy) ───────────────────────────
+  # The official `postgres` image only honours $POSTGRES_PASSWORD on the very
+  # first initdb. If the value in Shared Env ever drifts from what's baked
+  # into the volume (regenerated, re-pasted, project recreated, etc.),
+  # Zitadel and Lago crash-loop with `password authentication failed for user
+  # "conusai" (SQLSTATE 28P01)`.
+  #
+  # This one-shot reconciles the in-DB password to match $POSTGRES_PASSWORD on
+  # every deploy. It uses the local Unix socket inside the running postgres
+  # container, where pg_hba.conf's first line is `local all all trust` (the
+  # postgres image default) — so the ALTER USER works even when the current
+  # password no longer matches. The unix socket is reachable only from inside
+  # the container itself, so this is not a credential-bypass risk.
+  pg-password-sync:
+    image: docker:27-cli
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-conusai}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in Shared Env}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        CID=$$(docker ps --filter "label=com.docker.compose.service=postgres" --format '{{.ID}}' | head -1)
+        if [ -z "$$CID" ]; then
+          echo "✗ conusai-postgres container not found" >&2
+          exit 1
+        fi
+        # Pass the new password through `docker exec -e` so it lives only in
+        # psql's env (never in argv / process list). psql's `\getenv` reads it
+        # safely; `:'name'` performs proper SQL string quoting.
+        docker exec -i \
+          -e PGUSER="$$POSTGRES_USER" \
+          -e NEW_PG_PASSWORD="$$POSTGRES_PASSWORD" \
+          "$$CID" \
+          psql -v ON_ERROR_STOP=1 -h /var/run/postgresql -d postgres <<'SQL'
+        \getenv new_password NEW_PG_PASSWORD
+        ALTER USER current_user WITH PASSWORD :'new_password';
+        SQL
+        echo "✓ Postgres password synced to current Shared Env value"
+    networks: [dokploy-network]
+
+  # ── Redis (Lago queues) ───────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     hostname: conusai-redis
@@ -114,6 +161,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      pg-password-sync:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "/app/zitadel", "ready"]
       interval: 15s
@@ -135,6 +184,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      pg-password-sync:
+        condition: service_completed_successfully
     environment:
       RAILS_ENV: production
       LAGO_API_URL: "https://billing.${APP_DOMAIN}"
