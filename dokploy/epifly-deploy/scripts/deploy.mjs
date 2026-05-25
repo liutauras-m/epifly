@@ -218,7 +218,7 @@ function dockerApi(method, path, body) {
 // field causes deploys to abort with
 //   "Invalid project environment variable: project.X"
 // even though the key exists in the (wrong) env-level store.
-async function ensureSharedEnv({ api, projectId, appDomain }) {
+async function ensureSharedEnv({ api, projectId, appDomain, preExistingVolumes }) {
   const example = parseDotenv(readFileSync(ENV_EXAMPLE, "utf8"));
   const projectRecord = await api.query("project.one", { projectId });
   const current = parseDotenv(projectRecord.env || "");
@@ -259,11 +259,16 @@ async function ensureSharedEnv({ api, projectId, appDomain }) {
     ...DERIVED(appDomain),
   };
 
-  // Pre-flight: which stateful volumes already exist on the host? Used
-  // below to refuse silent regeneration of secrets bound to live data.
-  const existingVolumes = await listExistingVolumes(
-    new Set(Object.values(STATEFUL_SECRETS)),
-  );
+  // Stateful volumes that existed on the host BEFORE this orchestrator
+  // run started (snapshot taken in main before Phase 0). Used below to
+  // refuse silent regeneration of secrets bound to live data. We do NOT
+  // re-query here, because Phase 0 (`ensureVolumes`) may have just
+  // created these volumes empty in this same run — querying now would
+  // always find them and falsely trip the guard on fresh deploys.
+  // Fallback to a fresh query when the snapshot wasn't passed (e.g.
+  // `DEPLOY_ONLY=env` invoked outside the main() phase loop).
+  const existingVolumes = preExistingVolumes
+    ?? await listExistingVolumes(new Set(Object.values(STATEFUL_SECRETS)));
 
   const merged = { ...current };
   const actions = []; // [{ key, action, source }]
@@ -686,7 +691,15 @@ async function discoverSelfComposeId(api, environmentId) {
     }
     // Re-bind everything and run phases (replaces main()'s loadConfig).
     banner(cfg);
-    const ctx = { ...cfg, api };
+    // Snapshot which stateful volumes pre-existed BEFORE Phase 0 runs.
+    // Phase 1's STATEFUL_SECRETS guard uses this snapshot so it only refuses
+    // to regenerate when the bound volume genuinely carries data from a
+    // previous deploy — not when Phase 0 just created the volume empty in
+    // this same run.
+    const preExistingVolumes = await listExistingVolumes(
+      new Set(Object.values(STATEFUL_SECRETS)),
+    );
+    const ctx = { ...cfg, api, preExistingVolumes };
     const phases = {
       volumes:  () => ensureVolumes(),
       env:      () => ensureSharedEnv(ctx),
