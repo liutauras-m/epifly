@@ -6,6 +6,8 @@ import { COOKIE_NAME, verify } from '$lib/server/session.js';
 // them anyway; but we keep this list explicit for clarity and future proofing).
 const CSRF_EXEMPT_PREFIXES = ['/v1', '/api', '/ui', '/mcp', '/admin'];
 
+const BACKEND_URL = process.env.CONUSAI_BACKEND_URL ?? 'http://localhost:8080';
+
 // NOTE: Production key enforcement (throw on missing UI_SESSION_KEY) lives in
 // src/lib/server/session.ts → getKey(). It fires on the first sign/verify call.
 
@@ -29,6 +31,25 @@ export const handle: Handle = async ({ event, resolve }) => {
 				return new Response('CSRF check failed', { status: 403 });
 			}
 		}
+	}
+
+	// ── Backend proxy (same-origin pass-through) ─────────────────────────────
+	// Browser clients call /v1/*, /api/*, etc. on the same origin. We proxy
+	// those here to the internal gateway so the browser never needs to know
+	// the gateway's internal Docker hostname.
+	if (isApiPath) {
+		const backendUrl = `${BACKEND_URL}${event.url.pathname}${event.url.search}`;
+		const reqHeaders = new Headers(event.request.headers);
+		// Remove headers that cause issues when forwarding
+		reqHeaders.delete('host');
+		const hasBody = method !== 'GET' && method !== 'HEAD';
+		return fetch(backendUrl, {
+			method,
+			headers: reqHeaders,
+			body: hasBody ? event.request.body : undefined,
+			// @ts-ignore — duplex is required for streaming request bodies in Node 18+
+			...(hasBody ? { duplex: 'half' } : {}),
+		});
 	}
 
 	// ── Session auth ─────────────────────────────────────────────────────────
