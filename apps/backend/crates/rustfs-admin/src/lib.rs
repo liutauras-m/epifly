@@ -129,8 +129,22 @@ fn decrypt_admin_body(password: &str, data: &[u8]) -> Result<Vec<u8>> {
 
     let key_bytes = derive_admin_key(password, salt, alg_id)?;
     let cipher    = Aes256Gcm::new_from_slice(&key_bytes).expect("aes key");
+
+    // sio-go uses a 17-byte AAD derived from seqNum=0: [flags(1)] || verif_token(16).
+    // verif_token = AES-GCM-Seal(nonce=nonce_prefix||LE(0), plaintext=nil, aad=nil).
+    let mut init_nonce_arr = [0u8; 12];
+    init_nonce_arr[0..8].copy_from_slice(nonce_prefix);
+    // init_nonce_arr[8..12] = 0 (seqNum=0, zero-initialised)
+    let init_nonce   = Nonce::<Aes256Gcm>::from(init_nonce_arr);
+    // encrypting empty plaintext returns only the 16-byte GCM tag
+    let verif_token  = cipher
+        .encrypt(&init_nonce, Payload { msg: &[], aad: &[] })
+        .expect("sio init seal");
+    debug_assert_eq!(verif_token.len(), TAG_LEN);
+
     let mut plain = Vec::with_capacity(body.len());
-    let mut counter: u32 = 0;
+    // Data packages start at seqNum=1; seqNum=0 is consumed by the init seal above.
+    let mut seq_num: u32 = 1;
 
     while !body.is_empty() {
         if body.len() < TAG_LEN {
@@ -148,19 +162,21 @@ fn decrypt_admin_body(password: &str, data: &[u8]) -> Result<Vec<u8>> {
 
         let mut nonce_arr = [0u8; 12];
         nonce_arr[0..8].copy_from_slice(nonce_prefix);
-        nonce_arr[8..12].copy_from_slice(&counter.to_le_bytes());
+        nonce_arr[8..12].copy_from_slice(&seq_num.to_le_bytes());
         let nonce = Nonce::<Aes256Gcm>::from(nonce_arr);
 
-        // AAD = [0x80] for the last chunk, [0x00] for non-last chunks.
-        let aad: [u8; 1] = if is_last { [0x80] } else { [0x00] };
+        // sio-go per-chunk AAD = [0x80 if last, else 0x00] || verif_token(16) = 17 bytes.
+        let mut aad = [0u8; 1 + TAG_LEN];
+        aad[0] = if is_last { 0x80 } else { 0x00 };
+        aad[1..].copy_from_slice(&verif_token);
 
         let decrypted = cipher
             .decrypt(&nonce, Payload { msg: chunk, aad: &aad })
-            .map_err(|_| anyhow::anyhow!("sio: AES-GCM failed at chunk {counter}"))?;
+            .map_err(|_| anyhow::anyhow!("sio: AES-GCM failed at chunk {seq_num}"))?;
 
         plain.extend_from_slice(&decrypted);
         body    = rest;
-        counter += 1;
+        seq_num += 1;
     }
 
     Ok(plain)
@@ -1046,13 +1062,28 @@ mod tests {
         let mut key = [0u8; 32];
         argon2.hash_password_into(password.as_bytes(), &salt, &mut key).unwrap();
 
-        // Encrypt single chunk: counter=0, AAD=[0x80] (last chunk).
-        let mut nonce_arr = [0u8; 12];
-        nonce_arr[..8].copy_from_slice(&nonce_prefix);
-        nonce_arr[8..].copy_from_slice(&0u32.to_le_bytes());
         let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
-        let nonce  = Nonce::<Aes256Gcm>::from(nonce_arr);
-        let ct     = cipher.encrypt(&nonce, Payload { msg: plaintext, aad: &[0x80u8] }).unwrap();
+
+        // sio-go: compute verification token using init nonce (seqNum=0).
+        let mut init_nonce = [0u8; 12];
+        init_nonce[..8].copy_from_slice(&nonce_prefix);
+        // init_nonce[8..] = 0 (seqNum=0)
+        let verif_token = cipher.encrypt(
+            &Nonce::<Aes256Gcm>::from(init_nonce),
+            Payload { msg: &[], aad: &[] },
+        ).unwrap();
+
+        // Encrypt single data chunk: seqNum=1, AAD=[0x80]||verif_token (last chunk).
+        let mut data_nonce = [0u8; 12];
+        data_nonce[..8].copy_from_slice(&nonce_prefix);
+        data_nonce[8..].copy_from_slice(&1u32.to_le_bytes()); // seqNum=1
+        let mut aad = [0u8; 17];
+        aad[0] = 0x80; // last chunk
+        aad[1..].copy_from_slice(&verif_token);
+        let ct = cipher.encrypt(
+            &Nonce::<Aes256Gcm>::from(data_nonce),
+            Payload { msg: plaintext, aad: &aad },
+        ).unwrap();
 
         // Assemble sio wire: [salt 32][alg_id=0x00 1][nonce_prefix 8][ct+tag]
         let mut wire = Vec::new();
@@ -1098,12 +1129,28 @@ mod tests {
         let mut key = [0u8; 32];
         key.copy_from_slice(&result);
 
-        let mut nonce_arr = [0u8; 12];
-        nonce_arr[..8].copy_from_slice(&nonce_prefix);
-        nonce_arr[8..].copy_from_slice(&0u32.to_le_bytes());
         let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
-        let nonce  = Nonce::<Aes256Gcm>::from(nonce_arr);
-        let ct     = cipher.encrypt(&nonce, Payload { msg: plaintext, aad: &[0x80u8] }).unwrap();
+
+        // sio-go: compute verification token using init nonce (seqNum=0).
+        let mut init_nonce = [0u8; 12];
+        init_nonce[..8].copy_from_slice(&nonce_prefix);
+        // init_nonce[8..] = 0 (seqNum=0)
+        let verif_token = cipher.encrypt(
+            &Nonce::<Aes256Gcm>::from(init_nonce),
+            Payload { msg: &[], aad: &[] },
+        ).unwrap();
+
+        // Encrypt single data chunk: seqNum=1, AAD=[0x80]||verif_token (last chunk).
+        let mut data_nonce = [0u8; 12];
+        data_nonce[..8].copy_from_slice(&nonce_prefix);
+        data_nonce[8..].copy_from_slice(&1u32.to_le_bytes()); // seqNum=1
+        let mut aad = [0u8; 17];
+        aad[0] = 0x80; // last chunk
+        aad[1..].copy_from_slice(&verif_token);
+        let ct = cipher.encrypt(
+            &Nonce::<Aes256Gcm>::from(data_nonce),
+            Payload { msg: plaintext, aad: &aad },
+        ).unwrap();
 
         let mut wire = Vec::new();
         wire.extend_from_slice(&salt);
