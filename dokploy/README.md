@@ -134,31 +134,33 @@ hand):
 2. **Bootstrap the orchestrator** in Dokploy:
    - Project → Add Compose → Source = this repo, branch `main`,
      Compose Path = `./dokploy/epifly-deploy/docker-compose.yml`, trigger = `tag`.
-   - Set these 4 vars in the **per-compose Environment** tab (Shared Env
-     stays empty — the orchestrator fills it):
+   - **Before deploying, go to Project → Environment (Shared Variables) and add:**
      ```
      APP_DOMAIN=epifly.beta.test.cloud.conusai.com
      DOKPLOY_URL=https://dokploy.beta.test.cloud.conusai.com
      DOKPLOY_API_KEY=<from Dokploy → Profile → API Tokens>
      DOKPLOY_ENVIRONMENT_ID=<from project URL: /environment/<this>>
      ```
+   - You may add all other secrets and config here as well (see below for recommended keys).
+   - In each compose's **Environment** tab, reference shared variables as `${{project.KEY}}` (e.g. `APP_DOMAIN=${{project.APP_DOMAIN}}`).
+   - The orchestrator will also populate all required secrets and derived values into Shared Env on first run.
 3. **Deploy `epifly-deploy`** — it runs Phases 0–5:
    - Creates external volumes via the Docker socket
    - Generates the 13 auto-secrets and PUTs them to project Shared Env
      (along with derived `ZITADEL_ISSUER` and `COOKIE_DOMAIN`)
    - Creates `infra` / `gateway` / `web` / `observability` / `capabilities`
      compose apps and wires each one's per-compose env to `${{project.*}}`
-     references
+     references (Dokploy expands these from Shared Env at deploy time)
    - Syncs domains from [`domains.yaml`](domains.yaml)
    - Deploys each stack in order and verifies HTTPS reachability
 
 4. After `infra` is green, finish Zitadel + Lago onboarding manually and
-   paste the resulting credentials into Project → **Shared Environment**:
+  paste the resulting credentials into Project → **Shared Environment** (Project Environment):
    - `ZITADEL_CLIENT_ID` — from Zitadel → Project → OIDC application
    - `LAGO_API_KEY` — from Lago → Developers → API keys
    - `STRIPE_SECRET_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` if used
-   The orchestrator picks them up on the next tag push (or click Redeploy
-   on `epifly-deploy`).
+  The orchestrator picks them up on the next tag push (or click Redeploy
+  on `epifly-deploy`).
 
 ## Public routing (Dokploy Domain sync)
 
@@ -168,11 +170,12 @@ the entries appear in Dokploy's **Domains** tab for the matching app;
 Dokploy then injects the Traefik labels + `dokploy-network` for the
 target service on the next deploy.
 
+
 **Why declarative**: hardcoding labels in `docker-compose.yml` doesn't
 work — Dokploy's Shared Environment vars (`${APP_DOMAIN}`) are *not*
-interpolated into compose labels, so `Host(\`auth.${APP_DOMAIN}\`)`
+interpolated into compose labels, so `Host(\`auth.${APP_DOMAIN}\`)
 shipped to Traefik as the literal `Host(\`auth.\`)` and returned 404
-on every request.
+on every request. Always use `${{project.KEY}}` in per-compose env tabs and set the value in Project Environment.
 
 Credentials live in `dokploy/.dokploy` (gitignored):
 
@@ -201,6 +204,21 @@ The script is **idempotent** and **destructive against drift**: any
 domain present in Dokploy but absent from `domains.yaml` for a listed
 app will be deleted. Domains for apps *not* listed in `domains.yaml`
 are never touched.
+
+## Dokploy 2026+ Environment Variable Model
+
+**Project Environment (Shared Variables):**
+- Set all shared config and secrets here. These are available to all composes as `${{project.KEY}}`.
+
+**Per-compose Environment tabs:**
+- Reference shared variables as `KEY=${{project.KEY}}`.
+- Do NOT set secrets directly here unless they are service-specific overrides.
+
+**If you see `Invalid project environment variable: project.KEY` errors:**
+- It means the key is missing from Project Environment (Shared Variables).
+- Add it there and redeploy.
+
+---
 
 ## Troubleshooting
 
