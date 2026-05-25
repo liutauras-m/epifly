@@ -26,6 +26,18 @@
 #       DOKPLOY_URL=https://dokploy.<env>.cloud.conusai.com
 #       DOKPLOY_API_KEY=<paste once, then rotate>
 #       DOKPLOY_ENVIRONMENT_ID=<from project URL>
+#       # Optional but RECOMMENDED — canonical source of truth for the
+#       # operator-meaningful credentials. When set here, they survive a
+#       # project recreate or Shared-Env wipe and re-seed on the next
+#       # deploy, so the values baked into stateful volumes (postgres,
+#       # rustfs) cannot drift out of sync with Shared Env. Omit any to
+#       # let Phase 1 auto-generate once and manage that value manually.
+#       POSTGRES_USER=conusai
+#       POSTGRES_PASSWORD=<strong, store in your password manager>
+#       POSTGRES_DB=conusai
+#       AWS_ACCESS_KEY_ID=rfs_<choose or paste>
+#       AWS_SECRET_ACCESS_KEY=<strong, store in your password manager>
+#       PLATFORM_ADMIN_TOKEN=pat_<choose or paste>
 #   • Click Deploy → it reconciles everything else.
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -39,6 +51,24 @@ services:
       DOKPLOY_URL: "${DOKPLOY_URL:?DOKPLOY_URL must be set in per-compose env}"
       DOKPLOY_API_KEY: "${DOKPLOY_API_KEY:?DOKPLOY_API_KEY must be set in per-compose env}"
       DOKPLOY_ENVIRONMENT_ID: "${DOKPLOY_ENVIRONMENT_ID:?DOKPLOY_ENVIRONMENT_ID must be set in per-compose env}"
+      # ── Canonical operator-meaningful credentials (optional but recommended) ──
+      # When set, these are pinned into Shared Env on every deploy, so a
+      # project recreate / Shared-Env wipe re-seeds the same values that
+      # are baked into stateful volumes (conusai_postgres_data,
+      # conusai_rustfs_data) — credentials cannot drift. Leave any empty
+      # to fall back to Phase 1 auto-generation for that single key.
+      #
+      # Opaque crypto material (ZITADEL_MASTERKEY, LAGO_ENCRYPTION_*,
+      # LAGO_RSA_PRIVATE_KEY, RUSTFS_IAM_ENC_KEY, UI_SESSION_KEY, …) is
+      # intentionally NOT exposed here — it's auto-generated once by
+      # Phase 1; volume-bound entries are then protected from silent
+      # regeneration by the stateful-secret guard.
+      POSTGRES_USER: "${POSTGRES_USER:-}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-}"
+      POSTGRES_DB: "${POSTGRES_DB:-}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      PLATFORM_ADMIN_TOKEN: "${PLATFORM_ADMIN_TOKEN:-}"
       # ── Optional knobs ──
       DEPLOY_SKIP_VERIFY: "${DEPLOY_SKIP_VERIFY:-false}"
       DEPLOY_DRY_RUN: "${DEPLOY_DRY_RUN:-false}"

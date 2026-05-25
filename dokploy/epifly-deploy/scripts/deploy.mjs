@@ -78,6 +78,8 @@ const SECRETS = {
   AWS_SECRET_ACCESS_KEY:   () => randB64Url(30),
   RUSTFS_IAM_ENC_KEY:      () => randB64Url(24),
   RUSTFS_WEBHOOK_SECRET:   () => randB64Url(32),
+  UI_SESSION_KEY:          () => randHex(32),       // 64 hex chars (>32 bytes)
+  PLATFORM_ADMIN_TOKEN:    () => "pat_" + randB64Url(32),
 };
 
 // Stateful secrets — once data exists on disk encrypted/hashed with these,
@@ -87,6 +89,11 @@ const SECRETS = {
 // If the bound volume already exists AND the Shared Env value is empty,
 // Phase 1 will REFUSE to auto-generate — operator must restore the prior
 // value or explicitly wipe the volume. Prevents drift-by-regeneration.
+//
+// Map shape: SECRET_NAME -> volume-name (string). UI_SESSION_KEY and
+// PLATFORM_ADMIN_TOKEN are intentionally NOT listed here — they're
+// runtime-only (no on-disk data depends on them), so silent rotation is
+// safe (it just invalidates active sessions / tokens).
 const STATEFUL_SECRETS = {
   POSTGRES_PASSWORD:       "conusai_postgres_data",
   LAGO_SECRET_KEY_BASE:    "conusai_postgres_data",
@@ -98,8 +105,6 @@ const STATEFUL_SECRETS = {
   AWS_ACCESS_KEY_ID:       "conusai_rustfs_data",
   AWS_SECRET_ACCESS_KEY:   "conusai_rustfs_data",
   ZITADEL_MASTERKEY:       "conusai_postgres_data",
-  UI_SESSION_KEY:          () => randHex(32),
-  PLATFORM_ADMIN_TOKEN:    () => "pat_" + randB64Url(32),
 };
 
 // Variables derived from APP_DOMAIN. Recomputed every run so changing
@@ -221,11 +226,36 @@ async function ensureSharedEnv({ api, projectId, appDomain }) {
   // Bootstrap vars from this orchestrator's own env — these MUST end up in
   // Shared Env so domain-sync init containers in every other stack can call
   // back into the Dokploy API.
+  //
+  // Operator-meaningful credentials (POSTGRES_USER/PASSWORD/DB, RustFS S3
+  // admin keys, PLATFORM_ADMIN_TOKEN, …) can ALSO be pinned here. When set,
+  // they survive a project recreate / Shared-Env wipe and re-bootstrap to
+  // the same values on the next deploy — so the orchestrator's compose env
+  // becomes the canonical source of truth and the credentials baked into
+  // stateful volumes (postgres, rustfs) never drift.
+  //
+  // Undefined / empty values are skipped by the merge loop below
+  // (`if (k in bootstrap && bootstrap[k])`), so leaving them unset falls
+  // through to the SECRETS auto-generator (itself guarded by
+  // STATEFUL_SECRETS against silent regeneration when data exists).
+  //
+  // Opaque crypto material (encryption keys, RSA PEM, master keys) is NOT
+  // pinned here — no human types those; they're auto-generated once and
+  // protected by the volume-existence guard from then on.
   const bootstrap = {
     APP_DOMAIN: process.env.APP_DOMAIN,
     DOKPLOY_URL: process.env.DOKPLOY_URL,
     DOKPLOY_API_KEY: process.env.DOKPLOY_API_KEY,
     DOKPLOY_ENVIRONMENT_ID: process.env.DOKPLOY_ENVIRONMENT_ID,
+    // Postgres (shared by Zitadel + Lago + future apps)
+    POSTGRES_USER: process.env.POSTGRES_USER,
+    POSTGRES_PASSWORD: process.env.POSTGRES_PASSWORD,
+    POSTGRES_DB: process.env.POSTGRES_DB,
+    // RustFS S3 admin (bound to conusai_rustfs_data)
+    AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID,
+    AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
+    // Platform admin bearer token (used by CLIs / dashboards)
+    PLATFORM_ADMIN_TOKEN: process.env.PLATFORM_ADMIN_TOKEN,
     ...DERIVED(appDomain),
   };
 
