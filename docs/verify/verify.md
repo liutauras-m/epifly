@@ -1907,6 +1907,6 @@ kill %1
 | `SERVICE_UNAVAILABLE file storage` | RustFS unreachable | Check `conusai-rustfs` healthy |
 | Semantic search returns `source: "local"` | Qdrant unreachable or embedding generation failed | Check `conusai-qdrant` health and embedding provider configuration |
 | WASM ping fails | `capability.wasm` missing | `python3 scripts/gen_wasm.py` |
-| `cargo test` WASM test skipped | `capability.wasm` not in path | Check `capabilities/template-wasm/capability.wasm` exists |
+| `cargo test` WASM test skipped | `capability.wasm` not in path | Check `apps/backend/examples/capabilities/template-wasm/capability.wasm` exists |
 | RustFS 403 on upload | Bucket not created | `docker compose restart rustfs-init` |
 | `invoice extraction failed: x-api-key required` | `ANTHROPIC_API_KEY` not in env | `source .env.local` |

@@ -15,7 +15,23 @@
 
 	let uid = $state('');
 	let busy = $state(false);
-	let sharedWith = $state<string[]>(node.shared_with ?? []);
+	let sharedWith = $state<string[]>([]);
+
+	$effect(() => {
+		sharedWith = node.shared_with ?? [];
+	});
+
+	function handleBackdropKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape') {
+			onclose();
+		}
+	}
+
+	function handleBackdropPointerDown(event: PointerEvent) {
+		if (event.target === event.currentTarget) {
+			onclose();
+		}
+	}
 
 	async function addShare() {
 		const id = uid.trim();
@@ -35,9 +51,9 @@
 	}
 </script>
 
-<div class="dialog-backdrop" role="presentation" onclick={() => onclose()} onkeydown={() => {}}>
-	<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="share-title"
-		onclick={(e) => e.stopPropagation()}>
+<div class="dialog-backdrop" role="presentation" tabindex="-1" onpointerdown={handleBackdropPointerDown} onkeydown={handleBackdropKeydown}>
+	<div class="dialog" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="share-title"
+		onpointerdown={(e) => e.stopPropagation()}>
 		<h2 id="share-title" class="dialog-title">Share "{node.name}"</h2>
 
 		{#if sharedWith.length > 0}

@@ -1,6 +1,7 @@
 use crate::mw::RouterQuotaLayer;
 use crate::state::AppState;
 use axum::{
+    extract::DefaultBodyLimit,
     Router,
     routing::{delete, get, patch, post},
 };
@@ -32,6 +33,12 @@ mod tasks;
 mod threads;
 mod uploads;
 mod workspaces;
+
+const DEFAULT_JSON_BODY_LIMIT: usize = 256 * 1024;
+const CHAT_BODY_LIMIT: usize = 2 * 1024 * 1024;
+const WORKSPACE_CONTENT_BODY_LIMIT: usize = 8 * 1024 * 1024;
+const WEBHOOK_BODY_LIMIT: usize = 256 * 1024;
+const CAPABILITY_REGISTER_BODY_LIMIT: usize = 1024 * 1024;
 
 /// Adds security scheme definitions to the generated OpenAPI spec.
 struct SecurityAddon;
@@ -616,15 +623,17 @@ pub fn public_router() -> Router<Arc<AppState>> {
         // Lago billing webhooks — signature verified inside handler.
         .route(
             "/v1/billing/webhooks",
-            post(billing_webhook::handle_webhook),
+            post(billing_webhook::handle_webhook).layer(DefaultBodyLimit::max(WEBHOOK_BODY_LIMIT)),
         )
         // Self-registration for external capability services.
         .route(
             "/admin/capabilities/register",
-            post(admin_capabilities::register_capability),
+            post(admin_capabilities::register_capability)
+                .layer(DefaultBodyLimit::max(CAPABILITY_REGISTER_BODY_LIMIT)),
         )
         // OpenAPI spec + Swagger UI
         .merge(SwaggerUi::new("/docs").url("/openapi.json", ApiDoc::openapi()))
+        .layer(DefaultBodyLimit::max(DEFAULT_JSON_BODY_LIMIT))
 }
 
 /// Super-admin only routes (JWT-protected with role=super_admin).
@@ -633,18 +642,24 @@ pub fn admin_router() -> Router<Arc<AppState>> {
     use axum::middleware;
     Router::new()
         .route("/admin/capabilities", get(admin_capabilities::list))
-        .route("/admin/capabilities", post(admin_capabilities::create))
+        .route(
+            "/admin/capabilities",
+            post(admin_capabilities::create)
+                .layer(DefaultBodyLimit::max(CAPABILITY_REGISTER_BODY_LIMIT)),
+        )
         .route(
             "/admin/capabilities/reload",
             post(admin_capabilities::reload_all),
         )
         .route(
             "/admin/capabilities/validate",
-            post(admin_capabilities::validate),
+            post(admin_capabilities::validate)
+                .layer(DefaultBodyLimit::max(CAPABILITY_REGISTER_BODY_LIMIT)),
         )
         .route(
             "/admin/capabilities/test",
-            post(admin_capabilities::test_invoke),
+            post(admin_capabilities::test_invoke)
+                .layer(DefaultBodyLimit::max(CAPABILITY_REGISTER_BODY_LIMIT)),
         )
         .route(
             "/admin/capabilities/{name}",
@@ -656,7 +671,8 @@ pub fn admin_router() -> Router<Arc<AppState>> {
         )
         .route(
             "/admin/capabilities/{name}",
-            axum::routing::patch(admin_capabilities::update),
+            axum::routing::patch(admin_capabilities::update)
+                .layer(DefaultBodyLimit::max(CAPABILITY_REGISTER_BODY_LIMIT)),
         )
         .route(
             "/admin/capabilities/{name}/enabled",
@@ -697,11 +713,15 @@ pub fn admin_router() -> Router<Arc<AppState>> {
         // ── Tenant lifecycle ─────────────────────────────────────────────────
         .route("/admin/tenants/{id}", delete(admin_tenants::delete_tenant))
         .layer(middleware::from_fn(require_super_admin_jwt))
+        .layer(DefaultBodyLimit::max(DEFAULT_JSON_BODY_LIMIT))
 }
 
 /// Internal routes — not exposed externally (mount behind a firewall or IP allowlist in prod).
 pub fn internal_router() -> Router<Arc<AppState>> {
-    Router::new().route("/internal/rustfs/events", post(internal::rustfs_events))
+    Router::new().route(
+        "/internal/rustfs/events",
+        post(internal::rustfs_events).layer(DefaultBodyLimit::max(WEBHOOK_BODY_LIMIT)),
+    )
 }
 
 /// Routes protected by the tenant middleware.
@@ -717,9 +737,15 @@ pub fn protected_router(
     };
     Router::new()
         // OpenAI-compatible chat
-        .route("/v1/chat/completions", post(chat::completions))
+        .route(
+            "/v1/chat/completions",
+            post(chat::completions).layer(DefaultBodyLimit::max(CHAT_BODY_LIMIT)),
+        )
         // Agent with tool calling + optional thread memory
-        .route("/v1/agent/completions", post(agent::agent_completions))
+        .route(
+            "/v1/agent/completions",
+            post(agent::agent_completions).layer(DefaultBodyLimit::max(CHAT_BODY_LIMIT)),
+        )
         .route_layer(RouterQuotaLayer::new(quota_cfg))
         // Tool registry
         .route("/v1/capabilities", get(capabilities::list_capabilities))
@@ -749,7 +775,8 @@ pub fn protected_router(
         .route("/v1/workspaces/{id}/content", get(workspaces::get_content))
         .route(
             "/v1/workspaces/{id}/content",
-            patch(workspaces::patch_content),
+            patch(workspaces::patch_content)
+                .layer(DefaultBodyLimit::max(WORKSPACE_CONTENT_BODY_LIMIT)),
         )
         .route("/v1/workspaces/{id}/move", post(workspaces::move_node))
         .route("/v1/workspaces/{id}/rename", post(workspaces::rename_node))
@@ -801,4 +828,151 @@ pub fn protected_router(
         .route("/v1/billing/portal", post(billing::billing_portal))
         .route("/v1/billing/invoices", get(billing::list_invoices))
         .route("/v1/billing/usage", get(billing::get_usage))
+        .layer(DefaultBodyLimit::max(DEFAULT_JSON_BODY_LIMIT))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_core::{PlanTier, TenantClaims, UserRole};
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode},
+        middleware,
+    };
+    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+    use std::sync::{Mutex, OnceLock};
+    use tower::ServiceExt;
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn admin_token(role: UserRole) -> String {
+        encode(
+            &Header::new(Algorithm::HS256),
+            &TenantClaims {
+                sub: "admin-user".into(),
+                tenant_id: "tenant-admin".into(),
+                plan: PlanTier::Enterprise,
+                role,
+                subscription_status: agent_core::SubscriptionStatus::Active,
+                exp: 4_102_444_800,
+            },
+            &EncodingKey::from_secret(b"router-order-test-secret"),
+        )
+        .expect("jwt")
+    }
+
+    fn admin_app(state: Arc<AppState>) -> Router {
+        Router::new()
+            .merge(
+                admin_router().layer(middleware::from_fn_with_state(
+                    Arc::clone(&state),
+                    crate::mw::tenant::extract_tenant,
+                )),
+            )
+            .with_state(state)
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn admin_router_allows_super_admin_after_tenant_extraction() {
+        let _guard = env_lock().lock().expect("env lock");
+        unsafe {
+            std::env::set_var("JWT_SECRET", "router-order-test-secret");
+        }
+
+        let state = Arc::new(AppState::with_in_memory_stores().expect("state"));
+        let app = admin_app(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/jobs")
+                    .header("authorization", format!("Bearer {}", admin_token(UserRole::SuperAdmin)))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn admin_router_rejects_non_super_admin_after_tenant_extraction() {
+        let _guard = env_lock().lock().expect("env lock");
+        unsafe {
+            std::env::set_var("JWT_SECRET", "router-order-test-secret");
+        }
+
+        let state = Arc::new(AppState::with_in_memory_stores().expect("state"));
+        let app = admin_app(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/admin/jobs")
+                    .header("authorization", format!("Bearer {}", admin_token(UserRole::User)))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn public_billing_webhook_rejects_oversized_payload() {
+        let state = Arc::new(AppState::with_in_memory_stores().expect("state"));
+        let app = public_router().with_state(state);
+        let oversized = vec![b'a'; WEBHOOK_BODY_LIMIT + 1];
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/billing/webhooks")
+                    .header("content-type", "application/json")
+                    .body(Body::from(oversized))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn admin_router_rejects_oversized_job_run_payload() {
+        let _guard = env_lock().lock().expect("env lock");
+        unsafe {
+            std::env::set_var("JWT_SECRET", "router-order-test-secret");
+        }
+
+        let state = Arc::new(AppState::with_in_memory_stores().expect("state"));
+        let app = admin_app(state);
+        let oversized = vec![b'a'; DEFAULT_JSON_BODY_LIMIT + 1];
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/admin/jobs/example/run")
+                    .header(
+                        "authorization",
+                        format!("Bearer {}", admin_token(UserRole::SuperAdmin)),
+                    )
+                    .header("content-type", "application/json")
+                    .body(Body::from(oversized))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
 }

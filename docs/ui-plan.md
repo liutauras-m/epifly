@@ -332,7 +332,7 @@ Within each release, sub-phases ship as their own PRs (per Phase 4's PR cadence 
   All call sites use `tokenSpring('--spring-snappy')` rather than literal numbers — same discipline as `--ease-*` curves. `prefers-reduced-motion` short-circuits every animation to opacity-only inside this entry point so consumers can't forget.
 
 ### 2.4 Iconography
-- [ ] Standardize on `lucide-svelte` (already in `apps/web`). Add to `packages/ui` as a peer and re-export a curated set via `packages/ui/components/icons/`.
+- [ ] Standardize on `@lucide/svelte` and re-export a curated set via `packages/ui/components/icons/`.
 - [ ] Strip ad-hoc inline SVGs; replace with `Icon` primitive that enforces stroke width 1.5, size tokens (`--icon-sm: 16`, `--icon-md: 20`, `--icon-lg: 24`).
 - [ ] **Known direct-import violators to migrate first** (audit 2026-05-23): `apps/web/src/routes/account/+page.svelte`, `apps/web/src/routes/account/billing/+page.svelte`, `apps/web/src/routes/account/usage/+page.svelte`. After these three, the token-audit script (Phase 1.2) gates against new ones.
 
@@ -704,7 +704,7 @@ For each, verify against the two screenshots in `perfect-ui-task.md`: desktop si
 Each entry shows its **activation point** — the phase after which it becomes a CI-enforced rule. Until then, it's a code-review hint only; flagging dozens of pre-existing violations as "delete on sight" before the migration path exists wastes review cycles.
 
 - **`<style>` block in `apps/web/src/routes` or `apps/browser-shell/src/lib` containing color, font-size, or radius values** — activation: **Phase 1.2** (token-audit script flags), hard CI fail: **Phase 4** (after every screen extraction).
-- **`lucide-svelte` imported directly outside `packages/ui/src/lib/components/icons`** — activation: **Phase 2.4** (after `Icon` primitive + curated re-exports land + the three named violators in `apps/web/src/routes/account/` are migrated).
+- **`@lucide/svelte` imported directly outside `packages/ui/src/lib/components/icons`** — activation: **Phase 2.4** (after `Icon` primitive + curated re-exports land + the three named violators in `apps/web/src/routes/account/` are migrated).
 - **New components added to `apps/*` instead of `packages/ui`** — activation: **Phase 0** via `scripts/check-no-local-components.mjs` (CI-enforced, see Phase 8.1). Prior version of this plan made it code-review-only; humans are famously bad linters at this kind of rule, so it's now automated from day one.
 - **Hard-coded breakpoints (`@media (max-width: 768px)`)** — activation: **Phase 3.1** (after `--bp-*` tokens and `AppShell` container queries exist as the alternative).
 - **Inline `transition:` style strings** — activation: **Phase 2.3** (after motion helpers `fadeRise` / `slideFromRight` / `cascade()` are exported).

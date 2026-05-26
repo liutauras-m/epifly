@@ -89,8 +89,8 @@ tags = []
 tools = []
 "#;
         let manifest = ToolManifest::from_toml(manifest_str).unwrap();
-        let capabilities_dir =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../capabilities/template-wasm");
+        let capabilities_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/capabilities/template-wasm");
 
         let card = CapabilityCard::new(manifest, capabilities_dir);
 

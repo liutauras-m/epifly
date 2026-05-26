@@ -2,6 +2,7 @@
 //!
 //! Trait `RegisteredToolStore` allows swapping in `InMemoryStore` for tests.
 
+use crate::capabilities::discovery::capability_dirs_from_env;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -36,8 +37,10 @@ impl FilesystemStore {
     }
 
     pub fn from_env() -> Self {
-        let dir = std::env::var("CONUSAI_CAPABILITIES_DIR")
-            .unwrap_or_else(|_| "./capabilities".to_string());
+        let dir = capability_dirs_from_env()
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| PathBuf::from("./capabilities"));
         Self::new(dir)
     }
 }

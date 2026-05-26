@@ -314,7 +314,7 @@ services:
       UI_SESSION_KEY: "${UI_SESSION_KEY:-conusai-foundry-dev-secret-change-me-32b}"
       PLATFORM_ADMIN_TOKEN: "${PLATFORM_ADMIN_TOKEN:-}"
       WEB_ORIGIN: "${WEB_ORIGIN:-http://localhost:3000,http://localhost:5173,https://tauri.localhost,tauri://localhost}"
-      EMBEDDING_BACKEND: "${EMBEDDING_BACKEND:-openai}"
+      EMBEDDING_BACKEND: "${EMBEDDING_BACKEND:-local}"
       # Billing — talk to Lago in-cluster, not via the host port
       LAGO_API_URL: "${LAGO_API_URL_INTERNAL:-http://conusai-lago-api:3000}"
       LAGO_API_KEY: "${LAGO_API_KEY:-}"

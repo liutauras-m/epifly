@@ -10,15 +10,24 @@ pub struct CapabilityDiscovery {
     dirs: Vec<PathBuf>,
 }
 
+pub fn capability_dirs_from_env() -> Vec<PathBuf> {
+    let raw = std::env::var("CONUSAI_CAPABILITIES_DIR")
+        .unwrap_or_else(|_| "./capabilities".to_string());
+
+    raw.split(',')
+        .map(str::trim)
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+        .collect()
+}
+
 impl CapabilityDiscovery {
     pub fn new(dirs: Vec<PathBuf>) -> Self {
         Self { dirs }
     }
 
     pub fn from_env() -> Self {
-        let dir = std::env::var("CONUSAI_CAPABILITIES_DIR")
-            .unwrap_or_else(|_| "./capabilities".to_string());
-        Self::new(vec![PathBuf::from(dir)])
+        Self::new(capability_dirs_from_env())
     }
 
     pub fn discover(&self) -> common::error::Result<CapabilityRegistry> {

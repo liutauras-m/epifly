@@ -167,7 +167,7 @@ prompt = "write a markdown report summarising X"
 expected_capability = "compose-report-md"
 
 [[case]]
-id = "runtime-echo"
-prompt = "echo hello"
-expected_capability = "runtime-echo"
-expected_tool = "echo"
+id = "read-explicit-path"
+prompt = "read projects/demo/README.md"
+expected_capability = "storage-fs"
+expected_tool = "read_file"

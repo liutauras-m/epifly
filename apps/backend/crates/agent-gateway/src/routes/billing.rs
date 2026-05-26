@@ -267,3 +267,44 @@ pub async fn admin_billing_dashboard(State(state): State<Arc<AppState>>) -> Resp
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mw::tenant::ResolvedTenant;
+    use agent_core::{PlanTier, TenantContext};
+    use axum::{Extension, body::to_bytes};
+
+    fn test_tenant() -> Extension<ResolvedTenant> {
+        Extension(ResolvedTenant(TenantContext::new(
+            "tenant-disabled-billing",
+            None::<&str>,
+            PlanTier::Free,
+            "/tmp/conusai-tests",
+        )))
+    }
+
+    #[tokio::test]
+    async fn get_subscription_reports_billing_not_configured_when_provider_missing() {
+        let state = Arc::new(AppState::with_in_memory_stores().expect("state"));
+
+        let resp = get_subscription(State(state), Some(test_tenant())).await;
+        assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+
+        let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(json, serde_json::json!({ "error": "billing not configured" }));
+    }
+
+    #[tokio::test]
+    async fn admin_billing_dashboard_marks_billing_unconfigured_when_provider_missing() {
+        let state = Arc::new(AppState::with_in_memory_stores().expect("state"));
+
+        let resp = admin_billing_dashboard(State(state)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(json, serde_json::json!({ "configured": false }));
+    }
+}

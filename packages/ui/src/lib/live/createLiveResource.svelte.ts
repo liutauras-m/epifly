@@ -56,7 +56,7 @@ export interface CreateLiveResourceOptions {
    * but a mismatch indicates either a misconfig or a real cross-tenant leak; we log and
    * drop. Pass `data.user.tenantId` from the SvelteKit load.
    */
-  tenantId?: string | null;
+  tenantId?: string | null | (() => string | null);
 }
 
 export interface LiveResource<T> {
@@ -111,7 +111,10 @@ export function createLiveResource<T>(
   fetcher: Fetcher<T>,
   options: CreateLiveResourceOptions = {},
 ): LiveResource<T> {
-  const tenantId = options.tenantId ?? null;
+  const getTenantId =
+    typeof options.tenantId === 'function'
+      ? options.tenantId
+      : () => options.tenantId ?? null;
 
   let data = $state<T | null>(null);
   let loading = $state(false);
@@ -232,6 +235,7 @@ export function createLiveResource<T>(
   }
 
   function notifyInvalidationWithScope(incomingResource: string, scope: string) {
+    const tenantId = getTenantId();
     if (tenantId != null && scope !== tenantId) {
       console.warn(
         `[createLiveResource] dropping cross-tenant invalidation for "${incomingResource}": ` +

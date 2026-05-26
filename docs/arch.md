@@ -283,10 +283,10 @@ conusai-platform/
 
 | Package | Version | Key deps |
 |---------|---------|----------|
-| `web` (`apps/web`) | 0.1.0 | SvelteKit 2.21, adapter-node 5.2.12, Svelte 5.33, Vite 6.3.5, Tailwind v4 (`@tailwindcss/vite` 4.3), `bits-ui` 2.18, `tailwind-variants` 3.2, `tailwind-merge` 3.6, `clsx` 2.1, `lucide-svelte` 0.477, `@lucide/svelte` 1.16, `lighthouse` 13.3, `@axe-core/playwright` 4.11, `@playwright/test` 1.49 |
+| `web` (`apps/web`) | 0.1.0 | SvelteKit 2.21, adapter-node 5.2.12, Svelte 5.33, Vite 6.3.5, Tailwind v4 (`@tailwindcss/vite` 4.3), `bits-ui` 2.18, `tailwind-variants` 3.2, `tailwind-merge` 3.6, `clsx` 2.1, `@lucide/svelte` 1.16, `lighthouse` 13.3, `@axe-core/playwright` 4.11, `@playwright/test` 1.49 |
 | `browser-shell` (`apps/browser-shell`) | 0.4.0 | SvelteKit + adapter-static 3, Svelte 5.33, `@tauri-apps/api` 2, `tauri-plugin-{dialog,stronghold}` 2, `vite-plugin-static-copy` 1 |
 | `browser-shell-tauri` (`src-tauri/Cargo.toml`) | 0.4.0 | tauri 2 + `unstable`, `tauri-plugin-{dialog,stronghold,http,haptics}` 2, optional `tauri-plugin-updater` (non-iOS/Android), optional `tauri-plugin-webdriver-automation` 0.1.3 (macOS debug + `e2e` feature) |
-| `@conusai/ui` | 0.6.0 | Svelte 5 peer; deps: `@tauri-apps/plugin-haptics` 2.3.2, `lucide-svelte` 0.477 (dev); test dep `jsdom` 29.1 |
+| `@conusai/ui` | 0.6.0 | Svelte 5 peer; deps: `@tauri-apps/plugin-haptics` 2.3.2; dev dep `@lucide/svelte` 1.16; test dep `jsdom` 29.1 |
 | `@conusai/sdk` | 0.6.0 | OpenAPI-derived types — runtime-free aside from fetch |
 | `@conusai/types` | 0.6.0 | `openapi-typescript` 7; prebuild runs `scripts/openapi-to-types.sh` |
 
@@ -819,14 +819,15 @@ invoice-processing        — invoice extraction (chain, vision=true, output_sch
 ocr-service               — general-purpose OCR (chain, vision=true)
 plan-on-upload            — per-tenant upload policy (native, kind="native")
 plan-orchestrate          — meta-planner (chain)
-runtime-echo              — debug echo capability (native)
 sense-classify-document   — document type classifier (chain, vision=true)
 sense-mime                — MIME sniffer (mcp / remote)
 storage-fs                — local FS storage (native)
 storage-workspace         — workspace storage (native)
-template-wasm             — WASM demo capability (wasm)
 transcribe-video          — video transcription (job-backed, job_kind="video-transcription")
 ```
+
+Dev/example capabilities live under `apps/backend/examples/capabilities/` and
+are not loaded by the default production registry.
 
 ### 5.10 Rig 0.36 Usage Map
 
@@ -1326,7 +1327,7 @@ Every component ships with a sibling `*.fixtures.ts` that the primitive gallery
 | Component | Default export | Type/prop exports |
 |-----------|-----------------|---------------------|
 | `Type`        | `default` | `TypeVariant` (`hero`, `display`, `title`, `subtitle`, `body`, `caption`, `mono`) |
-| `Icon`        | `default` | `IconSize` (`sm`, `md`, `lg`) — wraps `lucide-svelte` |
+| `Icon`        | `default` | `IconSize` (`sm`, `md`, `lg`) — wraps `@lucide/svelte` icons |
 | `Button`      | `default` | `ButtonVariant` (`primary`, `secondary`, `ghost`, `danger`), `ButtonSize` (`sm`, `md`, `lg`) |
 | `Field`       | `default` | `FieldType` (text, password, email, number, …) |
 | `Chip`        | `default` | `ChipVariant`, `ChipSize` |
@@ -2428,14 +2429,14 @@ invoice-processing/capability.toml
 ocr-service/capability.toml
 plan-on-upload/capability.toml
 plan-orchestrate/capability.toml
-runtime-echo/capability.toml
 sense-classify-document/capability.toml
 sense-mime/capability.toml
 storage-fs/capability.toml
 storage-workspace/capability.toml
-template-wasm/capability.toml
 transcribe-video/capability.toml
 ```
+
+Example-only manifests now live under `apps/backend/examples/capabilities/`.
 
 ### 13.14 `scripts/`
 

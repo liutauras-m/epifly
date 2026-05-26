@@ -31,8 +31,8 @@ ocr-tesseract
 ocr-vision
 presigned-url
 read-project
+read-explicit-path
 rename-node
-runtime-echo
 save-doc
 scaffold-nextjs
 scaffold-react

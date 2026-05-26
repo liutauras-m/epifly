@@ -45,10 +45,6 @@
 </nav>
 
 <style>
-  .breadcrumbs {
-    /* Consumed in page headers — display inline so it flows naturally */
-  }
-
   .crumb-list {
     display:     flex;
     flex-wrap:   wrap;
@@ -85,9 +81,5 @@
   .crumb-sep {
     /* Already in gap — just the › divider */
     user-select: none;
-  }
-
-  .crumb-current {
-    /* Current page — no link style */
   }
 </style>

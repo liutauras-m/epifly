@@ -603,7 +603,7 @@ function isInvoiceFile(a: Attachment) {
 - Use `border-radius: 12px` everywhere — this is not a soft / rounded app; radii are intentional and discrete. Use `--radius-*` tokens.
 - Animate longer than 400 ms per element, or longer than 3 000 ms total per task.
 - Add components to `apps/*/src/lib/components/**` — they belong in `packages/ui`. CI enforces from Phase 0.
-- Import `lucide-svelte` outside `packages/ui/src/lib/components/icons/`. Use the curated `<Icon>` primitive (Phase 2.4).
+- Import `@lucide/svelte` directly outside `packages/ui/src/lib/components/icons/`. Use the curated `<Icon>` primitive (Phase 2.4).
 - Use viewport `@media` queries on shell layout — use container queries on `app-shell` so Tauri windows of any size work.
 - Reintroduce Fraunces / Switzer / JetBrains Mono, purple gradients, glass blur panels, or warm-cream backgrounds. Geist + ember/cyan on near-neutral is the brand.
 - Use cyan as a generic accent. Cyan is reserved for live / streaming / active-system signals only (Principle #2).

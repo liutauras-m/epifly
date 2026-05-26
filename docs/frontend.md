@@ -308,7 +308,7 @@ Pure SvelteKit on `adapter-node`, port 5173 in dev, vite-proxied to backend at
 ### 6.1 Stack
 
 `@sveltejs/kit 2.21`, `svelte 5.33`, `@tailwindcss/vite 4.3`, `bits-ui 2.18`,
-`tailwind-variants`, `lucide-svelte`. Tests: `@playwright/test`,
+`tailwind-variants`, `@lucide/svelte`. Tests: `@playwright/test`,
 `@axe-core/playwright`, `lighthouse`, `vitest`.
 
 ### 6.2 Routes (`src/routes/`)

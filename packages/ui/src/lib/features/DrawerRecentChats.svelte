@@ -38,7 +38,7 @@
 			if (res.error) return [];
 			return res.data ?? [];
 		},
-		{ tenantId },
+		{ tenantId: () => tenantId },
 	);
 
 	// Forward chat-stream invalidations to the live resource. The factory's own

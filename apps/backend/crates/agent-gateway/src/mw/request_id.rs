@@ -65,3 +65,52 @@ pub async fn inject_request_id(req: Request, next: Next) -> Response {
 
     res
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        Router,
+        body::{Body, to_bytes},
+        http::{Request as HttpRequest, StatusCode},
+        middleware::from_fn,
+        response::IntoResponse,
+        routing::get,
+    };
+    use common::error::HttpError;
+    use tower::ServiceExt;
+
+    async fn error_handler() -> Response {
+        HttpError::bad_request("bad input").into_response()
+    }
+
+    #[tokio::test]
+    async fn inject_request_id_echoes_header_and_body_field_for_json_errors() {
+        let app = Router::new()
+            .route("/test", get(error_handler))
+            .layer(from_fn(inject_request_id));
+
+        let resp = app
+            .oneshot(
+                HttpRequest::builder()
+                    .uri("/test")
+                    .header("x-request-id", "req-123")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            resp.headers()
+                .get("x-request-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("req-123")
+        );
+
+        let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(json["error"]["request_id"], serde_json::json!("req-123"));
+    }
+}

@@ -17,11 +17,23 @@
 		if (!trimmed) { error = 'Name is required'; return; }
 		onsubmit(kind, trimmed);
 	}
+
+	function handleBackdropKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape') {
+			oncancel();
+		}
+	}
+
+	function handleBackdropPointerDown(event: PointerEvent) {
+		if (event.target === event.currentTarget) {
+			oncancel();
+		}
+	}
 </script>
 
-<div class="dialog-backdrop" role="presentation" onclick={oncancel} onkeydown={() => {}}>
-	<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="new-node-title"
-		onclick={(e) => e.stopPropagation()}>
+<div class="dialog-backdrop" role="presentation" tabindex="-1" onpointerdown={handleBackdropPointerDown} onkeydown={handleBackdropKeydown}>
+	<div class="dialog" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="new-node-title"
+		onpointerdown={(e) => e.stopPropagation()}>
 		<h2 id="new-node-title" class="dialog-title">New item{parentName ? ` in ${parentName}` : ''}</h2>
 
 		<fieldset class="kind-group">

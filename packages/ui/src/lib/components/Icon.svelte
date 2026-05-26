@@ -3,7 +3,7 @@
   /**
    * Icon — iconography primitive (Phase 2.4).
    *
-   * Wraps any lucide-svelte icon with Foundry's enforced defaults:
+  * Wraps any Lucide icon with Foundry's enforced defaults:
    *   • stroke-width 1.5 (Foundry standard — never raw stroke attrs in components)
    *   • size from token: --icon-sm 16, --icon-md 20, --icon-lg 24
    *   • aria-hidden="true" by default (decorative); pass label for standalone icons

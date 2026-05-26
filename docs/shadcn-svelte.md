@@ -35,7 +35,7 @@ Non-goals:
   regression).
 - No new features. Only swap.
 - No backend or SDK changes.
-- No new component libraries beyond shadcn-svelte + Bits UI + `lucide-svelte`.
+- No new component libraries beyond shadcn-svelte + Bits UI + `@lucide/svelte`.
 
 ---
 
@@ -114,7 +114,7 @@ Toggle Group, Tooltip, Typography.
 | `Field.svelte` (text/textarea wrapper)                | `Field` + `Label` + `Input` / `Textarea` + `Form` helpers                              |
 | `Chip.svelte`                                         | `Badge` (extend variant set) or `Toggle` for selectable variant                        |
 | `Type.svelte` (typography variant)                    | `Typography` (Tailwind utility presets; keep our font-size tokens)                     |
-| `Icon.svelte` (wraps lucide)                          | Keep as a thin wrapper around `lucide-svelte` — shadcn uses lucide directly too        |
+| `Icon.svelte` (wraps lucide)                          | Keep as a thin wrapper around `@lucide/svelte` — shadcn uses lucide directly too        |
 | `EmptyState.svelte`                                   | `Empty` (new shadcn primitive, perfect 1-1)                                            |
 | `StatusBadge.svelte` (status kind)                    | `Badge` with our extended variants + colored dot                                       |
 | `Composer.svelte`                                     | Composite using `Textarea` + `Button` + `Tooltip` + our `autoGrow` action              |
@@ -531,7 +531,7 @@ Every CLI run is followed by:
 | Larger initial JS bundle from `Command` / `Data Table`            | shadcn ships TanStack Table only when `data-table` installed. Code-split per screen via SvelteKit dynamic imports if needed. Add a Lighthouse perf budget to CI. |
 | Component fork drift after `shadcn-svelte` updates                | CI `ui:diff` runs weekly and on every PR touching `packages/ui/src/lib/components/ui/`. |
 | Asymmetric Svelte 5 + Tauri webview behaviour for `Drawer` (Vaul) | Test on iOS WKWebView and Android WebView in Phase 2 exit gate; fall back to `Sheet` on platforms where touch drag jitters. |
-| Inline-svg icon sizing differs between `lucide-svelte` and our wrapper | Keep our `<Icon>` thin wrapper that fixes width/height to `IconSize` token; shadcn primitives accept icons as snippets so this is transparent. |
+| Inline-svg icon sizing differs between `@lucide/svelte` and our wrapper | Keep our `<Icon>` thin wrapper that fixes width/height to `IconSize` token; shadcn primitives accept icons as snippets so this is transparent. |
 
 ---
 

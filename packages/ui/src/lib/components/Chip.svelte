@@ -42,7 +42,7 @@
     size?:        ChipSize;
     selected?:    boolean;
     disabled?:    boolean;
-    /** Optional leading icon (lucide-svelte component) */
+    /** Optional leading Lucide icon component. */
     icon?:        IconComponent;
     class?:       string;
     onclick?:     (e: MouseEvent) => void;

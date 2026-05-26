@@ -48,9 +48,9 @@
     loading?:      boolean;
     disabled?:     boolean;
     fullWidth?:    boolean;
-    /** Lucide-svelte component to render before the label */
+    /** Lucide icon component to render before the label */
     iconLeading?:  IconComponent;
-    /** Lucide-svelte component to render after the label */
+    /** Lucide icon component to render after the label */
     iconTrailing?: IconComponent;
     class?:        string;
     /** Convenience plain-text label (for fixture files) */

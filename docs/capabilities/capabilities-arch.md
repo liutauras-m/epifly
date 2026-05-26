@@ -387,8 +387,8 @@ is needed in the manifests. See [plan.md](plan.md) for rationale.
 
 | Cap dir                                                                                          | Namespace                 | Kind  | Notes                                                       |
 | ------------------------------------------------------------------------------------------------ | ------------------------- | ----- | ----------------------------------------------------------- |
-| [runtime-echo](../../apps/backend/capabilities/runtime-echo/capability.toml)                     | `compute.debug.echo`      | chain | Smoke-tests the chain path end-to-end.                       |
-| [template-wasm](../../apps/backend/capabilities/template-wasm/capability.toml)                   | `compute.debug.wasm-ping` | wasm  | Returns `42`; minimum viable WASM template for new authors. |
+| [runtime-echo](../../apps/backend/examples/capabilities/runtime-echo/capability.toml)            | `compute.debug.echo`      | chain | Dev/example only; smoke-tests the chain path end-to-end.   |
+| [template-wasm](../../apps/backend/examples/capabilities/template-wasm/capability.toml)          | `compute.debug.wasm-ping` | wasm  | Dev/example only; returns `42` for WASM authoring smoke tests. |
 
 ### 5.9 Inter-capability requirements (selected)
 

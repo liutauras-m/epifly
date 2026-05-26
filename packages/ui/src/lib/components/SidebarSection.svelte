@@ -48,8 +48,7 @@
   .sidebar-section:nth-of-type(4) { animation-delay: 280ms; }
   .sidebar-section:nth-of-type(n+5) { animation-delay: 320ms; }
 
-  /* svelte-ignore css_unused_selector */
-  .sidebar-section + .sidebar-section {
+  :global(.sidebar-section) + :global(.sidebar-section) {
     border-top: 1px solid var(--color-border);
     padding-top: var(--space-2);
     margin-top:  var(--space-1);

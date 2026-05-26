@@ -121,6 +121,45 @@ impl AppState {
             }
         }
 
+        match std::env::var("EMBEDDING_BACKEND").as_deref() {
+            Ok("local") | Err(_) => {}
+            Ok(other) => errors.push(format!(
+                "unknown EMBEDDING_BACKEND={other} (supported: local)"
+            )),
+        }
+
+        if let Ok(model) = std::env::var("EMBEDDING_LOCAL_MODEL")
+            && agent_core::indexing::embedding_service::EmbeddingModel::from_name(&model)
+                .is_none()
+        {
+            errors.push(format!(
+                "unknown EMBEDDING_LOCAL_MODEL={model} (supported: multilingual-e5-large, bge-small-en-v1.5, bge-m3, nomic-embed-text-v1.5, all-minilm-l6-v2)"
+            ));
+        }
+
+        if is_prod {
+            match std::env::var("WEB_ORIGIN") {
+                Ok(raw) if raw.split(',').any(|origin| !origin.trim().is_empty()) => {
+                    let invalid_origin = raw.split(',').map(str::trim).find(|origin| {
+                        origin == &"*"
+                            || origin.starts_with("http://localhost")
+                            || origin.starts_with("https://localhost")
+                            || origin.starts_with("http://127.0.0.1")
+                            || origin.starts_with("https://127.0.0.1")
+                    });
+                    if let Some(origin) = invalid_origin {
+                        errors.push(format!(
+                            "WEB_ORIGIN contains development or wildcard origin in production: {origin}"
+                        ));
+                    }
+                }
+                _ => errors.push(
+                    "WEB_ORIGIN must be explicitly set in production; refusing localhost CORS fallback"
+                        .to_string(),
+                ),
+            }
+        }
+
         if is_prod {
             require("JWT_SECRET", &mut errors);
             require("UI_SESSION_KEY", &mut errors);
@@ -748,6 +787,7 @@ mod tests {
             std::env::set_var("QDRANT_URL", "http://localhost:6334");
             std::env::set_var("RUSTFS_WEBHOOK_SECRET", "test-webhook-secret");
             std::env::set_var("LAGO_API_KEY", "test-lago-key");
+            std::env::set_var("WEB_ORIGIN", "https://app.example.com,https://tauri.localhost");
             std::env::remove_var("RUSTFS_ENDPOINT");
         }
     }
@@ -782,5 +822,53 @@ mod tests {
 
         let result = AppState::validate_env_contracts();
         assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn validate_env_contracts_rejects_unknown_embedding_backend_and_model() {
+        let _guard = env_lock().lock().expect("env lock");
+        set_min_prod_env();
+        // Safety: tests mutate process env under env_lock to avoid races.
+        unsafe {
+            std::env::set_var("EMBEDDING_BACKEND", "openai");
+            std::env::set_var("EMBEDDING_LOCAL_MODEL", "not-a-real-model");
+        }
+
+        let err = AppState::validate_env_contracts().expect_err("should reject bad embedding config");
+        let msg = err.to_string();
+        assert!(msg.contains("unknown EMBEDDING_BACKEND=openai"), "{msg}");
+        assert!(msg.contains("unknown EMBEDDING_LOCAL_MODEL=not-a-real-model"), "{msg}");
+    }
+
+    #[test]
+    fn validate_env_contracts_rejects_missing_web_origin_in_production() {
+        let _guard = env_lock().lock().expect("env lock");
+        set_min_prod_env();
+        unsafe {
+            std::env::remove_var("WEB_ORIGIN");
+        }
+
+        let err = AppState::validate_env_contracts().expect_err("should reject missing WEB_ORIGIN");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("WEB_ORIGIN must be explicitly set in production"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn validate_env_contracts_rejects_localhost_web_origin_in_production() {
+        let _guard = env_lock().lock().expect("env lock");
+        set_min_prod_env();
+        unsafe {
+            std::env::set_var("WEB_ORIGIN", "https://app.example.com,http://localhost:3000");
+        }
+
+        let err = AppState::validate_env_contracts().expect_err("should reject localhost WEB_ORIGIN");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("WEB_ORIGIN contains development or wildcard origin in production"),
+            "{msg}"
+        );
     }
 }

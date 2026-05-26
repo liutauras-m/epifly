@@ -234,8 +234,7 @@ async fn main() -> Result<()> {
                     Arc::clone(&state),
                     mw::api_key::extract_api_key,
                 ))
-                .layer(axum::middleware::from_fn(mw::trace::propagate_trace))
-                .layer(axum::middleware::from_fn(mw::request_id::inject_request_id)),
+                .layer(axum::middleware::from_fn(mw::trace::propagate_trace)),
         )
         .merge(ui::ui_router())
         .merge(
@@ -244,11 +243,11 @@ async fn main() -> Result<()> {
                     Arc::clone(&state),
                     mw::tenant::extract_tenant,
                 ))
-                .layer(axum::middleware::from_fn(mw::trace::propagate_trace))
-                .layer(axum::middleware::from_fn(mw::request_id::inject_request_id)),
+                .layer(axum::middleware::from_fn(mw::trace::propagate_trace)),
         )
         .layer(build_cors())
         .layer(TraceLayer::new_for_http())
+        .layer(axum::middleware::from_fn(mw::request_id::inject_request_id))
         .with_state(Arc::clone(&state));
 
     let addr = format!(

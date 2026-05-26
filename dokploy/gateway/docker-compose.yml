@@ -56,7 +56,7 @@ services:
       COOKIE_DOMAIN: "${COOKIE_DOMAIN}"
 
       # Embeddings / LLM providers
-      EMBEDDING_BACKEND: "${EMBEDDING_BACKEND:-openai}"
+      EMBEDDING_BACKEND: "${EMBEDDING_BACKEND:-local}"
       OPENAI_API_KEY: "${OPENAI_API_KEY}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
 

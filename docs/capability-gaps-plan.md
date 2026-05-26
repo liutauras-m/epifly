@@ -22,7 +22,8 @@
 
 The first pass flagged TOML-vs-YAML as a real gap. It is **not** — the active
 backend at [apps/backend/capabilities](apps/backend/capabilities/) ships
-`capability.toml` files exactly as the guide describes:
+production capability manifests, and dev/example capabilities now live under
+[apps/backend/examples/capabilities](apps/backend/examples/capabilities/):
 
 ```
 apps/backend/capabilities/
@@ -30,7 +31,9 @@ apps/backend/capabilities/
 ├── invoice-processing/capability.toml
 ├── google-workspace/capability.toml
 ├── file-storage/capability.toml
-├── ocr-service/capability.toml
+└── ocr-service/capability.toml
+
+apps/backend/examples/capabilities/
 ├── runtime-echo/capability.toml
 └── template-wasm/capability.{toml,wasm}
 ```

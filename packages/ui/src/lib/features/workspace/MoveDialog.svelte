@@ -6,11 +6,23 @@
 	} = $props();
 
 	let dest = $state('');
+
+	function handleBackdropKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape') {
+			oncancel();
+		}
+	}
+
+	function handleBackdropPointerDown(event: PointerEvent) {
+		if (event.target === event.currentTarget) {
+			oncancel();
+		}
+	}
 </script>
 
-<div class="dialog-backdrop" role="presentation" onclick={oncancel} onkeydown={() => {}}>
-	<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="move-title"
-		onclick={(e) => e.stopPropagation()}>
+<div class="dialog-backdrop" role="presentation" tabindex="-1" onpointerdown={handleBackdropPointerDown} onkeydown={handleBackdropKeydown}>
+	<div class="dialog" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="move-title"
+		onpointerdown={(e) => e.stopPropagation()}>
 		<h2 id="move-title" class="dialog-title">Move "{nodeName}"</h2>
 		<label class="dialog-field">
 			<span class="label-text">New parent folder path (empty = root)</span>

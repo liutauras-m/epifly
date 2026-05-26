@@ -4,10 +4,22 @@
 		onconfirm: () => void;
 		oncancel: () => void;
 	} = $props();
+
+	function handleBackdropKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape') {
+			oncancel();
+		}
+	}
+
+	function handleBackdropPointerDown(event: PointerEvent) {
+		if (event.target === event.currentTarget) {
+			oncancel();
+		}
+	}
 </script>
 
-<div class="dialog-backdrop" role="presentation" onclick={oncancel} onkeydown={() => {}}>
-	<div class="dialog" role="alertdialog" aria-modal="true" aria-label="Confirm" onclick={(e) => e.stopPropagation()}>
+<div class="dialog-backdrop" role="presentation" tabindex="-1" onpointerdown={handleBackdropPointerDown} onkeydown={handleBackdropKeydown}>
+	<div class="dialog" role="alertdialog" tabindex="-1" aria-modal="true" aria-label="Confirm" onpointerdown={(e) => e.stopPropagation()}>
 		<p class="dialog-message">{message}</p>
 		<div class="dialog-actions">
 			<button class="btn-ghost" onclick={oncancel}>Cancel</button>
