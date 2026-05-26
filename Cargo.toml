@@ -9,7 +9,7 @@ members = [
     "apps/backend/crates/agent-gateway",
     "apps/backend/evals",
     "apps/backend/xtask",
-    "apps/browser-shell/src-tauri",
+    "apps/native/src-tauri",
 ]
 
 [workspace.package]
