@@ -4,9 +4,7 @@
   import FilePlusIcon from "@lucide/svelte/icons/file-plus";
   import FileSearchIcon from "@lucide/svelte/icons/file-search";
   import FileTextIcon from "@lucide/svelte/icons/file-text";
-  import FolderIcon from "@lucide/svelte/icons/folder";
   import FolderPlusIcon from "@lucide/svelte/icons/folder-plus";
-  import FolderOpenIcon from "@lucide/svelte/icons/folder-open";
   import FolderTreeIcon from "@lucide/svelte/icons/folder-tree";
   import MessageSquareIcon from "@lucide/svelte/icons/message-square";
   import PlusIcon from "@lucide/svelte/icons/plus";
@@ -19,52 +17,64 @@
   import * as DropdownMenu from "../ui/dropdown-menu/index.js";
   import * as Input from "../ui/input/index.js";
   import * as Sidebar from "../ui/sidebar/index.js";
+  import * as Skeleton from "../ui/skeleton/index.js";
   import AppSidebar from "./app-sidebar.svelte";
+  import WorkspaceTree from "../workspace/workspace-tree.svelte";
+  import type { WorkspaceNode } from "../workspace/workspace-tree.svelte";
+
+  type ThreadItem = {
+    id: string;
+    title?: string | null;
+    last_active?: string | null;
+  };
 
   type Props = {
     activePath?: string;
+    /** Live workspace tree nodes from the workspaces store. */
+    workspaceNodes?: WorkspaceNode[];
+    workspaceLoading?: boolean;
+    /** Live thread list from the threads store, sorted by recency. */
+    threads?: ThreadItem[];
+    threadsLoading?: boolean;
+    activeThreadId?: string | null;
+    selectedWorkspaceNodeId?: string | null;
+    onNewChat?: () => void;
+    onThreadSelect?: (threadId: string) => void;
+    onWorkspaceNodeSelect?: (nodeId: string) => void;
   };
 
-  let { activePath = "/" }: Props = $props();
+  let {
+    activePath = "/",
+    workspaceNodes = [],
+    workspaceLoading = false,
+    threads = [],
+    threadsLoading = false,
+    activeThreadId = null,
+    selectedWorkspaceNodeId = null,
+    onNewChat,
+    onThreadSelect,
+    onWorkspaceNodeSelect
+  }: Props = $props();
 
-  const fileBranches = [
-    {
-      title: "apps",
-      children: ["web", "native"]
-    },
-    {
-      title: "packages",
-      children: ["ui", "sdk"]
-    },
-    {
-      title: "docs",
-      children: ["plan.md"]
-    }
-  ];
-
-  let openBranches = $state(new Set(fileBranches.map((branch) => branch.title)));
   let searchOpen = $state(false);
   let searchQuery = $state("");
   let searchInputEl = $state<HTMLInputElement | null>(null);
 
-  const searchItems = $derived(
-    fileBranches.flatMap((branch) => [
-      {
-        name: branch.title,
-        path: branch.title,
-        type: "folder" as const
-      },
-      ...branch.children.map((file) => ({
-        name: file,
-        path: `${branch.title}/${file}`,
-        type: "file" as const
-      }))
-    ])
-  );
+  /** Flatten workspace tree for search. */
+  function flattenNodes(nodes: WorkspaceNode[]): WorkspaceNode[] {
+    const out: WorkspaceNode[] = [];
+    for (const n of nodes) {
+      out.push(n);
+      if (n.children?.length) out.push(...flattenNodes(n.children));
+    }
+    return out;
+  }
+
+  const flatNodes = $derived(flattenNodes(workspaceNodes));
 
   const filteredSearchItems = $derived(
-    searchItems.filter((item) =>
-      `${item.name} ${item.path}`.toLowerCase().includes(searchQuery.trim().toLowerCase())
+    flatNodes.filter((n) =>
+      n.name.toLowerCase().includes(searchQuery.trim().toLowerCase())
     )
   );
 
@@ -83,15 +93,8 @@
     searchQuery = "";
   }
 
-  function toggleBranch(title: string) {
-    const next = new Set(openBranches);
-    if (next.has(title)) {
-      next.delete(title);
-    } else {
-      next.add(title);
-    }
-    openBranches = next;
-  }
+  /** Display at most 15 recent threads in the sidebar. */
+  const recentThreads = $derived(threads.slice(0, 15));
 </script>
 
 <AppSidebar>
@@ -137,6 +140,7 @@
   {/snippet}
 
   {#snippet content()}
+    <!-- Workspace / files section -->
     <Sidebar.Group aria-label="Files" class="pt-1">
       <Sidebar.GroupContent>
         {#if searchOpen}
@@ -167,30 +171,31 @@
             </div>
 
             <Sidebar.Menu>
-              {#each filteredSearchItems as item (item.path)}
-                <Sidebar.MenuItem>
-                  <Sidebar.MenuButton class="h-7 text-sidebar-foreground/80 hover:text-sidebar-foreground">
-                    {#snippet child({ props })}
-                      <button type="button" {...props}>
-                        {#if item.type === "folder"}
-                          <FolderIcon size={15} strokeWidth={1.75} aria-hidden="true" />
-                        {:else}
+              {#if filteredSearchItems.length > 0}
+                {#each filteredSearchItems as item (item.id)}
+                  <Sidebar.MenuItem>
+                    <Sidebar.MenuButton class="h-7 text-sidebar-foreground/80 hover:text-sidebar-foreground">
+                      {#snippet child({ props })}
+                        <button
+                          type="button"
+                          {...props}
+                          onclick={() => { onWorkspaceNodeSelect?.(item.id); closeSearch(); }}
+                        >
                           <FileTextIcon size={14} strokeWidth={1.75} aria-hidden="true" />
-                        {/if}
-                        <span>{item.name}</span>
-                        <span class="ml-auto truncate text-[0.68rem] text-sidebar-foreground/40">{item.path}</span>
-                      </button>
-                    {/snippet}
-                  </Sidebar.MenuButton>
-                </Sidebar.MenuItem>
+                          <span>{item.name}</span>
+                        </button>
+                      {/snippet}
+                    </Sidebar.MenuButton>
+                  </Sidebar.MenuItem>
+                {/each}
               {:else}
                 <Sidebar.MenuItem>
                   <Sidebar.MenuButton class="pointer-events-none h-8 text-sidebar-foreground/45">
                     <FileSearchIcon size={15} strokeWidth={1.75} aria-hidden="true" />
-                    <span>No files found</span>
+                    <span>{searchQuery ? "No files found" : "Start typing to search"}</span>
                   </Sidebar.MenuButton>
                 </Sidebar.MenuItem>
-              {/each}
+              {/if}
             </Sidebar.Menu>
           </div>
         {:else}
@@ -207,59 +212,77 @@
               </Button.Button>
             </div>
 
-            <Sidebar.Menu>
-              {#each fileBranches as branch (branch.title)}
-                {@const isOpen = openBranches.has(branch.title)}
-                <Sidebar.MenuItem>
-                  <Sidebar.MenuButton class="h-7 font-medium text-sidebar-foreground/90">
-                    {#snippet child({ props })}
-                      <button type="button" {...props} onclick={() => toggleBranch(branch.title)} aria-expanded={isOpen}>
-                        {#if isOpen}
-                          <FolderOpenIcon size={16} strokeWidth={1.75} aria-hidden="true" />
-                        {:else}
-                          <FolderIcon size={16} strokeWidth={1.75} aria-hidden="true" />
-                        {/if}
-                        <span>{branch.title}</span>
-                      </button>
-                    {/snippet}
-                  </Sidebar.MenuButton>
-                  <Sidebar.MenuSub class={isOpen ? "py-0.5" : "hidden"} aria-hidden={!isOpen}>
-                    {#each branch.children as file (file)}
-                      <Sidebar.MenuSubItem>
-                        <Sidebar.MenuSubButton size="sm" class="h-6 text-sidebar-foreground/60 hover:text-sidebar-foreground">
-                          {#snippet child({ props })}
-                            <button type="button" {...props}>
-                              <FileTextIcon size={14} strokeWidth={1.75} aria-hidden="true" />
-                              <span>{file}</span>
-                            </button>
-                          {/snippet}
-                        </Sidebar.MenuSubButton>
-                      </Sidebar.MenuSubItem>
-                    {/each}
-                  </Sidebar.MenuSub>
-                </Sidebar.MenuItem>
-              {/each}
-            </Sidebar.Menu>
+            {#if workspaceLoading}
+              <div class="space-y-1 px-2 group-data-[collapsible=icon]:hidden" aria-label="Loading workspace">
+                {#each [1, 2, 3] as i (i)}
+                  <Skeleton.Skeleton class="h-6 w-full rounded-md" />
+                {/each}
+              </div>
+            {:else if workspaceNodes.length > 0}
+              <WorkspaceTree
+                nodes={workspaceNodes}
+                activeId={selectedWorkspaceNodeId ?? undefined}
+                onSelect={onWorkspaceNodeSelect}
+                class="group-data-[collapsible=icon]:hidden"
+              />
+            {:else}
+              <p class="px-3 py-2 text-xs text-sidebar-foreground/40 group-data-[collapsible=icon]:hidden">
+                No files yet
+              </p>
+            {/if}
           </div>
         {/if}
       </Sidebar.GroupContent>
     </Sidebar.Group>
 
+    <!-- Chat history section -->
     <Sidebar.Group aria-label="Chat history" class="mt-2 pt-1">
       <Sidebar.GroupContent>
         <Sidebar.Menu>
+          <!-- New chat button -->
           <Sidebar.MenuItem>
-            <Sidebar.MenuButton class="pointer-events-none opacity-70" tooltipContent="New chat">
-              <SquarePenIcon size={16} strokeWidth={1.75} aria-hidden="true" />
-              <span>New chat</span>
+            <Sidebar.MenuButton tooltipContent="New chat">
+              {#snippet child({ props })}
+                <button type="button" {...props} onclick={onNewChat}>
+                  <SquarePenIcon size={16} strokeWidth={1.75} aria-hidden="true" />
+                  <span>New chat</span>
+                </button>
+              {/snippet}
             </Sidebar.MenuButton>
           </Sidebar.MenuItem>
-          <Sidebar.MenuItem>
-            <Sidebar.MenuButton class="pointer-events-none opacity-45" tooltipContent="History placeholder">
-              <MessageSquareIcon size={16} strokeWidth={1.75} aria-hidden="true" />
-              <span>Recent thread</span>
-            </Sidebar.MenuButton>
-          </Sidebar.MenuItem>
+
+          {#if threadsLoading && recentThreads.length === 0}
+            {#each [1, 2, 3] as i (i)}
+              <Sidebar.MenuItem>
+                <Sidebar.MenuButton class="pointer-events-none">
+                  <Skeleton.Skeleton class="h-4 w-4 rounded" />
+                  <Skeleton.Skeleton class="h-3.5 flex-1 rounded" />
+                </Sidebar.MenuButton>
+              </Sidebar.MenuItem>
+            {/each}
+          {:else}
+            {#each recentThreads as thread (thread.id)}
+              {@const isActive = thread.id === activeThreadId}
+              <Sidebar.MenuItem>
+                <Sidebar.MenuButton
+                  isActive={isActive}
+                  tooltipContent={thread.title ?? "Untitled"}
+                >
+                  {#snippet child({ props })}
+                    <button
+                      type="button"
+                      {...props}
+                      onclick={() => onThreadSelect?.(thread.id)}
+                      aria-current={isActive ? "page" : undefined}
+                    >
+                      <MessageSquareIcon size={16} strokeWidth={1.75} aria-hidden="true" />
+                      <span class="truncate">{thread.title?.trim() || "Untitled"}</span>
+                    </button>
+                  {/snippet}
+                </Sidebar.MenuButton>
+              </Sidebar.MenuItem>
+            {/each}
+          {/if}
         </Sidebar.Menu>
       </Sidebar.GroupContent>
     </Sidebar.Group>

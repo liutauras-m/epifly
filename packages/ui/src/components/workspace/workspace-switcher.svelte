@@ -14,11 +14,11 @@
   type Props = {
     workspaces: Workspace[];
     activeId?: string;
-    onselect?: (id: string) => void;
-    oncreate?: () => void;
+    onSelect?: (id: string) => void;
+    onCreate?: () => void;
   };
 
-  let { workspaces, activeId, onselect, oncreate }: Props = $props();
+  let { workspaces, activeId, onSelect, onCreate }: Props = $props();
 
   let active = $derived(workspaces.find((w) => w.id === activeId) ?? workspaces[0]);
 </script>
@@ -49,7 +49,7 @@
     <DropdownMenu.DropdownMenuSeparator />
     {#each workspaces as ws (ws.id)}
       <DropdownMenu.DropdownMenuItem
-        onclick={() => onselect?.(ws.id)}
+        onclick={() => onSelect?.(ws.id)}
       >
         <span
           class="mr-2 flex h-5 w-5 shrink-0 items-center justify-center rounded bg-primary text-[9px] font-bold uppercase text-primary-foreground"
@@ -63,9 +63,9 @@
         {/if}
       </DropdownMenu.DropdownMenuItem>
     {/each}
-    {#if oncreate}
+    {#if onCreate}
       <DropdownMenu.DropdownMenuSeparator />
-      <DropdownMenu.DropdownMenuItem onclick={oncreate}>
+      <DropdownMenu.DropdownMenuItem onclick={onCreate}>
         <PlusIcon class="mr-2 size-4" strokeWidth={1.75} aria-hidden="true" />
         New workspace
       </DropdownMenu.DropdownMenuItem>

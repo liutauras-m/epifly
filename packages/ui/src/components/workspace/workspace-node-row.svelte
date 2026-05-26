@@ -10,11 +10,11 @@
   type Props = {
     node: WorkspaceNode;
     activeId?: string;
-    onselect?: (id: string) => void;
+    onSelect?: (id: string) => void;
     depth?: number;
   };
 
-  let { node, activeId, onselect, depth = 0 }: Props = $props();
+  let { node, activeId, onSelect, depth = 0 }: Props = $props();
 
   let expanded = $state(true);
   let isActive = $derived(node.id === activeId);
@@ -29,7 +29,7 @@
       if (node.kind === "folder") {
         expanded = !expanded;
       }
-      onselect?.(node.id);
+      onSelect?.(node.id);
     }}
     class={cn(
       "h-auto w-full justify-start gap-2 px-2 py-1.5 text-sm font-normal",
@@ -52,7 +52,7 @@
   {#if hasChildren && expanded}
     <div>
       {#each (node.children ?? []) as child (child.id)}
-        <WorkspaceNodeRow node={child} {activeId} {onselect} depth={depth + 1} />
+        <WorkspaceNodeRow node={child} {activeId} onSelect={onSelect} depth={depth + 1} />
       {/each}
     </div>
   {/if}

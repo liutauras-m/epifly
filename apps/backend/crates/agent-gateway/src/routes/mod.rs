@@ -861,7 +861,7 @@ mod tests {
                 subscription_status: agent_core::SubscriptionStatus::Active,
                 exp: 4_102_444_800,
             },
-            &EncodingKey::from_secret(b"router-order-test-secret"),
+            &EncodingKey::from_secret(b"test-jwt-secret"),
         )
         .expect("jwt")
     }
@@ -882,7 +882,7 @@ mod tests {
     async fn admin_router_allows_super_admin_after_tenant_extraction() {
         let _guard = env_lock().lock().expect("env lock");
         unsafe {
-            std::env::set_var("JWT_SECRET", "router-order-test-secret");
+            std::env::set_var("JWT_SECRET", "test-jwt-secret");
         }
 
         let state = Arc::new(AppState::with_in_memory_stores().expect("state"));
@@ -906,7 +906,7 @@ mod tests {
     async fn admin_router_rejects_non_super_admin_after_tenant_extraction() {
         let _guard = env_lock().lock().expect("env lock");
         unsafe {
-            std::env::set_var("JWT_SECRET", "router-order-test-secret");
+            std::env::set_var("JWT_SECRET", "test-jwt-secret");
         }
 
         let state = Arc::new(AppState::with_in_memory_stores().expect("state"));
@@ -951,7 +951,7 @@ mod tests {
     async fn admin_router_rejects_oversized_job_run_payload() {
         let _guard = env_lock().lock().expect("env lock");
         unsafe {
-            std::env::set_var("JWT_SECRET", "router-order-test-secret");
+            std::env::set_var("JWT_SECRET", "test-jwt-secret");
         }
 
         let state = Arc::new(AppState::with_in_memory_stores().expect("state"));

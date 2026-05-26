@@ -12,15 +12,15 @@
   type Props = {
     nodes: WorkspaceNode[];
     activeId?: string;
-    onselect?: (id: string) => void;
+    onSelect?: (id: string) => void;
     class?: string;
   };
 
-  let { nodes, activeId, onselect, class: className }: Props = $props();
+  let { nodes, activeId, onSelect, class: className }: Props = $props();
 </script>
 
 <nav class={cn("flex flex-col gap-0.5 py-2", className)} aria-label="Workspace">
   {#each nodes as node (node.id)}
-    <WorkspaceNodeRow {node} {activeId} {onselect} depth={0} />
+    <WorkspaceNodeRow {node} {activeId} onSelect={onSelect} depth={0} />
   {/each}
 </nav>

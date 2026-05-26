@@ -11,11 +11,11 @@
     name?: string;
     email?: string;
     avatarUrl?: string;
-    onlogout?: () => void | Promise<void>;
-    onsettings?: () => void;
+    onLogout?: () => void | Promise<void>;
+    onSettings?: () => void;
   };
 
-  let { name, email, avatarUrl, onlogout, onsettings }: Props = $props();
+  let { name, email, avatarUrl, onLogout, onSettings }: Props = $props();
 </script>
 
 <DropdownMenu.DropdownMenu>
@@ -52,14 +52,14 @@
       {/if}
     </div>
     <Separator.Separator />
-    {#if onsettings}
-      <DropdownMenu.DropdownMenuItem onclick={onsettings}>
+    {#if onSettings}
+      <DropdownMenu.DropdownMenuItem onclick={onSettings}>
         <SettingsIcon class="mr-2 size-4" strokeWidth={1.75} aria-hidden="true" />
         Settings
       </DropdownMenu.DropdownMenuItem>
     {/if}
-    {#if onlogout}
-      <DropdownMenu.DropdownMenuItem onclick={onlogout} class="text-destructive focus:text-destructive">
+    {#if onLogout}
+      <DropdownMenu.DropdownMenuItem onclick={onLogout} class="text-destructive focus:text-destructive">
         <LogOutIcon class="mr-2 size-4" strokeWidth={1.75} aria-hidden="true" />
         Log out
       </DropdownMenu.DropdownMenuItem>

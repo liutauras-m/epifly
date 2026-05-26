@@ -4,10 +4,12 @@ import type { WorkspaceNode } from "@conusai/types";
 export function createWorkspacesStore(sdk: ConusSdk) {
   let tree = $state<WorkspaceNode[]>([]);
   let isLoading = $state(false);
+  let hasLoaded = $state(false);
   let error = $state<string | null>(null);
   let selectedNodeId = $state<string | null>(null);
 
   async function loadTree(parentId?: string | null) {
+    if (isLoading) return;
     isLoading = true;
     error = null;
     const result = await sdk.workspaces.tree(parentId);
@@ -16,7 +18,14 @@ export function createWorkspacesStore(sdk: ConusSdk) {
       error = result.error.message;
     } else {
       tree = result.data;
+      hasLoaded = true;
     }
+  }
+
+  /** Load only if not already loaded. Use for initial mount. */
+  async function loadTreeOnce(parentId?: string | null) {
+    if (hasLoaded || isLoading) return;
+    return loadTree(parentId);
   }
 
   function selectNode(id: string | null) {
@@ -26,9 +35,11 @@ export function createWorkspacesStore(sdk: ConusSdk) {
   return {
     get tree() { return tree; },
     get isLoading() { return isLoading; },
+    get hasLoaded() { return hasLoaded; },
     get error() { return error; },
     get selectedNodeId() { return selectedNodeId; },
     loadTree,
+    loadTreeOnce,
     selectNode
   };
 }

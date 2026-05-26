@@ -87,6 +87,15 @@ export function createChatStore(sdk: ConusSdk) {
     abortController = null;
   }
 
+  /** Populate the store with previously loaded messages (e.g. when opening an existing thread). */
+  function init(initialMessages: UiMessage[], initialThreadId?: string | null) {
+    messages = [...initialMessages];
+    threadId = initialThreadId ?? null;
+    error = null;
+    isStreaming = false;
+    abortController = null;
+  }
+
   return {
     get messages() { return messages; },
     get isStreaming() { return isStreaming; },
@@ -94,6 +103,7 @@ export function createChatStore(sdk: ConusSdk) {
     get error() { return error; },
     send,
     stop,
-    reset
+    reset,
+    init
   };
 }

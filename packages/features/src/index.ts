@@ -1,3 +1,10 @@
+// App shell state
+export { createAppShellState } from "./app-shell/app-shell-state.svelte.js";
+export type { SidebarWorkspaceNode, CreateAppShellStateArgs } from "./app-shell/app-shell-state.svelte.js";
+
+// Workspace adapters
+export { toSidebarWorkspaceNode } from "./workspaces/workspace-adapters.js";
+
 // SDK provider
 export { default as SdkProvider } from "./sdk/sdk-provider.svelte";
 export { getSdkContext, setSdkContext } from "./sdk/sdk-context.svelte.js";
