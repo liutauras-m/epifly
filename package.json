@@ -36,6 +36,7 @@
     "tauri-wd": "tauri-wd --port 4444"
   },
   "devDependencies": {
+    "@dokploy/sdk": "^0.29.4",
     "@playwright/test": "^1.49.0",
     "@typescript-eslint/eslint-plugin": "^8.59.4",
     "@typescript-eslint/parser": "^8.59.4",

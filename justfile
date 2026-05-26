@@ -90,6 +90,33 @@ backend-test:
 types:
     ./scripts/openapi-to-types.sh
 
+# ── Deploy / Eval ─────────────────────────────────────────────────────────────
+# Requires: DOKPLOY_URL, DOKPLOY_API_KEY, DOKPLOY_ENVIRONMENT_ID, APP_DOMAIN
+# set in the shell (or present in dokploy/.dokploy).
+#
+# Usage:
+#   just epifly-build           build the CLI (auto-run by deploy/eval targets)
+#   just deploy-beta            full deploy (6-phase orchestrator + Phase 5 verify)
+#   just eval-beta              post-deploy eval: HTTP smoke + service diagnostics
+#   just deploy-eval-beta       deploy then eval in one shot
+
+# Build the epifly CLI (idempotent — tsup only rebuilds on change).
+epifly-build:
+    pnpm --filter @conusai/epifly build
+
+# Deploy to beta environment via epifly CLI.
+# Triggers the epifly-deploy Dokploy compose, streams logs, runs Phase 5 verify.
+deploy-beta: epifly-build
+    node tools/epifly/dist/epifly.mjs deploy --config dokploy/.dokploy --timeout 900
+
+# Post-deploy evaluation: HTTP smoke tests + Dokploy service diagnostics.
+eval-beta: epifly-build
+    node tools/epifly/dist/epifly.mjs verify --config dokploy/.dokploy
+    node tools/epifly/dist/epifly.mjs doctor --config dokploy/.dokploy
+
+# Full deploy + eval in one command.
+deploy-eval-beta: deploy-beta eval-beta
+
 # ── Full verify (CI gate) ─────────────────────────────────────────────────────
 
 # ── Tenant path lint (CI guard) ───────────────────────────────────────────────
