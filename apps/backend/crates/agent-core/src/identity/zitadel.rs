@@ -233,10 +233,10 @@ impl IdentityProvider for ZitadelProvider {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        if let Some(exp) = intro.exp {
-            if exp < now {
-                return Err(AuthError::TokenExpired);
-            }
+        if let Some(exp) = intro.exp
+            && exp < now
+        {
+            return Err(AuthError::TokenExpired);
         }
 
         let sub = intro

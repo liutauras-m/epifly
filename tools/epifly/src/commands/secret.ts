@@ -8,16 +8,12 @@
 
 import type { Command } from "commander";
 import pc from "picocolors";
-import { parseDotenv, renderDotenv, isSecret } from "../../../../dokploy/lib/dotenv.mjs";
+import { isSecret, parseDotenv, renderDotenv } from "../../../../dokploy/lib/dotenv.mjs";
 import { SECRETS, STATEFUL_SECRETS } from "../../../../dokploy/lib/secrets.mjs";
 import { loadConfig } from "../lib/config.ts";
-import {
-  getEnvironment,
-  getProject,
-  updateProject,
-} from "../lib/dokploy.ts";
-import { banner, err, fatal, info, ok, section, warn } from "../lib/ui.ts";
+import { getEnvironment, getProject, updateProject } from "../lib/dokploy.ts";
 import { promptConfirm } from "../lib/prompts.ts";
+import { banner, err, fatal, info, ok, section, warn } from "../lib/ui.ts";
 
 export function registerSecret(program: Command): void {
   const secret = program.command("secret").description("Manage Shared Env secrets");
@@ -37,12 +33,16 @@ export function registerSecret(program: Command): void {
       }
 
       const envRecord = await getEnvironment(cfg, cfg.environmentId);
-      const projectRecord = await getProject(cfg, envRecord.projectId ?? envRecord.project?.projectId);
+      const projectRecord = await getProject(
+        cfg,
+        envRecord.projectId ?? envRecord.project?.projectId
+      );
       const current = parseDotenv(projectRecord?.env ?? "");
       section(`Shared Env (${Object.keys(current).length} keys)`);
 
       for (const [k, v] of Object.entries(current).sort(([a], [b]) => a.localeCompare(b))) {
-        const masked = isSecret(k) && !opts.show ? pc.dim("********") : pc.green(v || pc.italic("(empty)"));
+        const masked =
+          isSecret(k) && !opts.show ? pc.dim("********") : pc.green(v || pc.italic("(empty)"));
         const stateful = k in STATEFUL_SECRETS ? pc.yellow(" [stateful]") : "";
         const managed = k in SECRETS ? pc.blue(" [managed]") : "";
         console.log(`  ${k.padEnd(38)} ${masked}${stateful}${managed}`);
@@ -63,7 +63,10 @@ export function registerSecret(program: Command): void {
       }
 
       const envRecord = await getEnvironment(cfg, cfg.environmentId);
-      const projectRecord = await getProject(cfg, envRecord.projectId ?? envRecord.project?.projectId);
+      const projectRecord = await getProject(
+        cfg,
+        envRecord.projectId ?? envRecord.project?.projectId
+      );
       const current = parseDotenv(projectRecord?.env ?? "");
 
       if (!(key in current)) {
@@ -71,7 +74,7 @@ export function registerSecret(program: Command): void {
         process.exit(1);
       }
       // Print the raw value to stdout (suitable for `$(epifly secret get KEY)`)
-      process.stdout.write(current[key] + "\n");
+      process.stdout.write(`${current[key]}\n`);
     });
 
   // ── epifly secret rotate <KEY> ──────────────────────────────────────────────
@@ -91,19 +94,18 @@ export function registerSecret(program: Command): void {
       if (!(key in SECRETS)) {
         fatal(
           `'${key}' is not a managed secret.`,
-          `Managed secrets: ${Object.keys(SECRETS).join(", ")}`,
+          `Managed secrets: ${Object.keys(SECRETS).join(", ")}`
         );
       }
 
       if (key in STATEFUL_SECRETS) {
         warn(
-          `'${key}' is a STATEFUL secret bound to volume '${(STATEFUL_SECRETS as any)[key]}'. ` +
-            "Rotating it will CORRUPT the data in that volume!",
+          `'${key}' is a STATEFUL secret bound to volume '${(STATEFUL_SECRETS as any)[key]}'. Rotating it will CORRUPT the data in that volume!`
         );
         if (!opts.yes) {
           const confirmed = await promptConfirm(
             "Are you absolutely sure you want to rotate this stateful secret?",
-            false,
+            false
           );
           if (!confirmed) {
             info("Rotation cancelled.");

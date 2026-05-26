@@ -3,47 +3,150 @@
 // src/cli.ts
 import { Command } from "commander";
 
-// src/commands/init.ts
-import { writeFileSync } from "fs";
-import { resolve } from "path";
-import * as p from "@clack/prompts";
+// ../../dokploy/lib/dotenv.mjs
+function parseDotenv(text3) {
+  const out = {};
+  for (const raw of text3.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq < 0) continue;
+    const k = line.slice(0, eq).trim();
+    let v = line.slice(eq + 1).trim();
+    if (v.startsWith('"') && v.endsWith('"') || v.startsWith("'") && v.endsWith("'")) {
+      v = v.slice(1, -1);
+    }
+    out[k] = v;
+  }
+  return out;
+}
+function renderDotenv(merged, priorText) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const raw of priorText.split(/\r?\n/)) {
+    const m = raw.match(/^\s*([A-Z][A-Z0-9_]*)\s*=/);
+    if (m) {
+      const k = m[1];
+      if (k in merged) {
+        out.push(`${k}=${merged[k]}`);
+        seen.add(k);
+      } else {
+        out.push(raw);
+      }
+    } else {
+      out.push(raw);
+    }
+  }
+  for (const k of Object.keys(merged)) {
+    if (!seen.has(k)) out.push(`${k}=${merged[k]}`);
+  }
+  return out.join("\n");
+}
+function isSecret(k) {
+  return /PASSWORD|SECRET|TOKEN/.test(k) || /_KEY(_|$)/.test(k);
+}
 
-// src/lib/ui.ts
-import pc from "picocolors";
-function banner(title) {
-  const line = "\u2500".repeat(64);
-  console.log(pc.dim(line));
-  console.log(`  ${pc.bold(pc.cyan("epifly"))} ${pc.dim("\u203A")} ${pc.bold(title)}`);
-  console.log(pc.dim(line));
-}
-function ok(msg) {
-  console.log(`${pc.green("\u2713")} ${msg}`);
-}
-function warn(msg) {
-  console.warn(`${pc.yellow("\u26A0")} ${pc.yellow(msg)}`);
-}
-function err(msg) {
-  console.error(`${pc.red("\u2717")} ${pc.red(msg)}`);
-}
-function info(msg) {
-  console.log(`${pc.blue("\xB7")} ${msg}`);
-}
-function section(title) {
-  console.log();
-  console.log(pc.bold(pc.dim(`\u25BC ${title}`)));
-}
-function table(rows) {
-  const col1 = Math.max(...rows.map(([a]) => a.length), 0);
-  const col2 = Math.max(...rows.map(([, b]) => b.length), 0);
-  for (const [a, b, c] of rows) {
-    const status = c === "ok" ? pc.green("ok") : c === "error" ? pc.red("error") : c ? pc.dim(c) : "";
-    console.log(`  ${a.padEnd(col1)}  ${b.padEnd(col2)}  ${status}`);
+// ../../dokploy/lib/manifest.mjs
+var APPS = [
+  { name: "infra", composePath: "./dokploy/infra/docker-compose.yml", hasDomains: true },
+  { name: "gateway", composePath: "./dokploy/gateway/docker-compose.yml", hasDomains: true },
+  { name: "web", composePath: "./dokploy/web/docker-compose.yml", hasDomains: true },
+  { name: "observability", composePath: "./dokploy/observability/docker-compose.yml", hasDomains: true },
+  { name: "capabilities", composePath: "./dokploy/capabilities/docker-compose.yml", hasDomains: false }
+];
+var EXTERNAL_VOLUMES = [
+  "conusai_postgres_data",
+  "conusai_redis_data",
+  "conusai_qdrant_data",
+  "conusai_rustfs_data",
+  "conusai_redb_data",
+  "conusai_lago_storage_data"
+];
+
+// src/lib/config.ts
+import { existsSync, readFileSync, writeFileSync } from "fs";
+import { homedir } from "os";
+import { resolve } from "path";
+var CONFIG_SEARCH = [
+  resolve(process.cwd(), ".dokploy"),
+  resolve(process.cwd(), ".epifly.json"),
+  resolve(homedir(), ".dokploy")
+];
+function readConfigFile(path) {
+  if (!existsSync(path)) return {};
+  const raw = readFileSync(path, "utf8");
+  try {
+    return { ...JSON.parse(raw), _source: path };
+  } catch {
+    const out = { _source: path };
+    for (const line of raw.split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t || t.startsWith("#")) continue;
+      const m = t.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+      if (!m) continue;
+      let value = m[2].trim();
+      if (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'")) {
+        value = value.slice(1, -1);
+      }
+      if (m[1] === "DOKPLOY_URL") out.dokployUrl = value;
+      if (m[1] === "DOKPLOY_API_KEY") out.apiKey = value;
+      if (m[1] === "DOKPLOY_ENVIRONMENT_ID") out.environmentId = value;
+      if (m[1] === "APP_DOMAIN") out.appDomain = value;
+    }
+    if (out.dokployUrl || out.apiKey || out.environmentId || out.appDomain) {
+      return out;
+    }
+    throw new Error(`Failed to parse config file ${path}: invalid JSON or env format`);
   }
 }
-function fatal(msg, hint) {
-  err(msg);
-  if (hint) console.error(pc.dim(`  ${hint}`));
-  process.exit(1);
+function readPartialConfig(flags = {}) {
+  const explicitConfigPath = flags.config ? resolve(process.cwd(), flags.config) : void 0;
+  const configPath = explicitConfigPath || process.env.EPIFLY_CONFIG || CONFIG_SEARCH.find((p3) => existsSync(p3));
+  const file = configPath ? readConfigFile(configPath) : {};
+  const env = {
+    ...process.env.DOKPLOY_URL ? { dokployUrl: process.env.DOKPLOY_URL } : {},
+    ...process.env.DOKPLOY_API_KEY ? { apiKey: process.env.DOKPLOY_API_KEY } : {},
+    ...process.env.DOKPLOY_ENVIRONMENT_ID ? { environmentId: process.env.DOKPLOY_ENVIRONMENT_ID } : {},
+    ...process.env.APP_DOMAIN ? { appDomain: process.env.APP_DOMAIN } : {}
+  };
+  const merged = {
+    repoRoot: process.cwd(),
+    ...file,
+    ...env,
+    ...flags.dokployUrl ? { dokployUrl: flags.dokployUrl } : {},
+    ...flags.apiKey ? { apiKey: flags.apiKey } : {},
+    ...flags.environmentId ? { environmentId: flags.environmentId } : {},
+    ...flags.appDomain ? { appDomain: flags.appDomain } : {},
+    ...flags.repoRoot ? { repoRoot: flags.repoRoot } : {}
+  };
+  return merged;
+}
+function loadConfig(flags = {}) {
+  const cfg = readPartialConfig(flags);
+  const required = [
+    "dokployUrl",
+    "apiKey",
+    "environmentId",
+    "appDomain"
+  ];
+  const missing = required.filter((k) => !cfg[k]);
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required config: ${missing.join(", ")}
+
+Set them via:
+  \u2022 epifly init            (interactive wizard)
+  \u2022 .dokploy config file   (JSON)
+  \u2022 Environment variables  (DOKPLOY_URL, DOKPLOY_API_KEY, DOKPLOY_ENVIRONMENT_ID, APP_DOMAIN)`
+    );
+  }
+  return {
+    dokployUrl: cfg.dokployUrl.replace(/\/+$/, ""),
+    apiKey: cfg.apiKey,
+    environmentId: cfg.environmentId,
+    appDomain: cfg.appDomain,
+    repoRoot: cfg.repoRoot ?? process.cwd()
+  };
 }
 
 // src/lib/dokploy.ts
@@ -142,7 +245,11 @@ async function getEnvironment(cfg, environmentId) {
   return get(cfg, "environment.one", { environmentId });
 }
 async function listEnvironments(cfg, params) {
-  const result = await get(cfg, "environment.search", params);
+  const result = await get(
+    cfg,
+    "environment.search",
+    params
+  );
   return result?.items ?? result ?? [];
 }
 async function getDomainsByCompose(cfg, composeId) {
@@ -152,239 +259,42 @@ async function deleteDomain(cfg, domainId) {
   return post(cfg, "domain.delete", { domainId });
 }
 
-// src/commands/init.ts
-function registerInit(program2) {
-  program2.command("init").description("Interactive bootstrap wizard \u2014 create .dokploy config").option("--config <path>", "Config file to write (default: .dokploy in cwd)").action(async (opts) => {
-    banner("init");
-    p.intro("Let's configure your Epifly environment.");
-    const dokployUrl = await p.text({
-      message: "Dokploy URL",
-      placeholder: "https://dokploy.example.com",
-      validate: (v) => {
-        if (!v.startsWith("http")) return "Must start with http:// or https://";
-      }
-    });
-    if (p.isCancel(dokployUrl)) {
-      p.cancel("Cancelled.");
-      process.exit(0);
-    }
-    const apiKey = await p.password({
-      message: "Dokploy API key",
-      validate: (v) => v.length < 8 ? "API key too short" : void 0
-    });
-    if (p.isCancel(apiKey)) {
-      p.cancel("Cancelled.");
-      process.exit(0);
-    }
-    const sp = p.spinner();
-    sp.start("Connecting to Dokploy API\u2026");
-    const initCfg = { dokployUrl: dokployUrl.replace(/\/+$/, ""), apiKey };
-    let environmentId;
-    try {
-      const envList = await listEnvironments(initCfg);
-      sp.stop("Connected");
-      if (envList.length === 0) {
-        warn("No environments found. Create one in the Dokploy UI first.");
-        process.exit(1);
-      }
-      const chosen = await p.select({
-        message: "Select environment",
-        options: envList.map((e) => ({
-          value: e.environmentId,
-          label: e.name ?? e.environmentId,
-          hint: e.description ?? ""
-        }))
-      });
-      if (p.isCancel(chosen)) {
-        p.cancel("Cancelled.");
-        process.exit(0);
-      }
-      environmentId = chosen;
-    } catch (e) {
-      sp.stop("Failed");
-      p.log.error(`Cannot connect to Dokploy API: ${e.message}`);
-      process.exit(1);
-    }
-    const appDomain = await p.text({
-      message: "APP_DOMAIN (e.g. epifly.prod.example.com)",
-      placeholder: "epifly.prod.example.com",
-      validate: (v) => {
-        if (!v.includes(".")) return "Must be a valid domain";
-      }
-    });
-    if (p.isCancel(appDomain)) {
-      p.cancel("Cancelled.");
-      process.exit(0);
-    }
-    const repoRoot = await p.text({
-      message: "Path to the conusai-platform repo root",
-      defaultValue: process.cwd(),
-      placeholder: process.cwd()
-    });
-    if (p.isCancel(repoRoot)) {
-      p.cancel("Cancelled.");
-      process.exit(0);
-    }
-    const dest = opts.config ?? resolve(process.cwd(), ".dokploy");
-    const cfg = {
-      dokployUrl: dokployUrl.replace(/\/+$/, ""),
-      apiKey,
-      environmentId,
-      appDomain,
-      repoRoot
-    };
-    writeFileSync(dest, JSON.stringify(cfg, null, 2) + "\n", "utf8");
-    section("Done");
-    ok(`Config written to ${dest}`);
-    p.log.info("Run `epifly status` to check your environment, or `epifly deploy` to trigger a deploy.");
-    p.outro("Happy deploying!");
-  });
+// src/lib/ui.ts
+import pc from "picocolors";
+function banner(title) {
+  const line = "\u2500".repeat(64);
+  console.log(pc.dim(line));
+  console.log(`  ${pc.bold(pc.cyan("epifly"))} ${pc.dim("\u203A")} ${pc.bold(title)}`);
+  console.log(pc.dim(line));
 }
-
-// ../../dokploy/lib/manifest.mjs
-var APPS = [
-  { name: "infra", composePath: "./dokploy/infra/docker-compose.yml", hasDomains: true },
-  { name: "gateway", composePath: "./dokploy/gateway/docker-compose.yml", hasDomains: true },
-  { name: "web", composePath: "./dokploy/web/docker-compose.yml", hasDomains: true },
-  { name: "observability", composePath: "./dokploy/observability/docker-compose.yml", hasDomains: true },
-  { name: "capabilities", composePath: "./dokploy/capabilities/docker-compose.yml", hasDomains: false }
-];
-var EXTERNAL_VOLUMES = [
-  "conusai_postgres_data",
-  "conusai_redis_data",
-  "conusai_qdrant_data",
-  "conusai_rustfs_data",
-  "conusai_redb_data",
-  "conusai_lago_storage_data"
-];
-
-// ../../dokploy/lib/dotenv.mjs
-function parseDotenv(text3) {
-  const out = {};
-  for (const raw of text3.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
-    if (eq < 0) continue;
-    const k = line.slice(0, eq).trim();
-    let v = line.slice(eq + 1).trim();
-    if (v.startsWith('"') && v.endsWith('"') || v.startsWith("'") && v.endsWith("'")) {
-      v = v.slice(1, -1);
-    }
-    out[k] = v;
-  }
-  return out;
+function ok(msg) {
+  console.log(`${pc.green("\u2713")} ${msg}`);
 }
-function renderDotenv(merged, priorText) {
-  const seen = /* @__PURE__ */ new Set();
-  const out = [];
-  for (const raw of priorText.split(/\r?\n/)) {
-    const m = raw.match(/^\s*([A-Z][A-Z0-9_]*)\s*=/);
-    if (m) {
-      const k = m[1];
-      if (k in merged) {
-        out.push(`${k}=${merged[k]}`);
-        seen.add(k);
-      } else {
-        out.push(raw);
-      }
-    } else {
-      out.push(raw);
-    }
-  }
-  for (const k of Object.keys(merged)) {
-    if (!seen.has(k)) out.push(`${k}=${merged[k]}`);
-  }
-  return out.join("\n");
+function warn(msg) {
+  console.warn(`${pc.yellow("\u26A0")} ${pc.yellow(msg)}`);
 }
-function isSecret(k) {
-  return /PASSWORD|SECRET|TOKEN/.test(k) || /_KEY(_|$)/.test(k);
+function err(msg) {
+  console.error(`${pc.red("\u2717")} ${pc.red(msg)}`);
 }
-
-// src/lib/config.ts
-import { existsSync, readFileSync, writeFileSync as writeFileSync2 } from "fs";
-import { homedir } from "os";
-import { resolve as resolve2 } from "path";
-var CONFIG_SEARCH = [
-  resolve2(process.cwd(), ".dokploy"),
-  resolve2(process.cwd(), ".epifly.json"),
-  resolve2(homedir(), ".dokploy")
-];
-function readConfigFile(path) {
-  if (!existsSync(path)) return {};
-  const raw = readFileSync(path, "utf8");
-  try {
-    return { ...JSON.parse(raw), _source: path };
-  } catch {
-    const out = { _source: path };
-    for (const line of raw.split(/\r?\n/)) {
-      const t = line.trim();
-      if (!t || t.startsWith("#")) continue;
-      const m = t.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-      if (!m) continue;
-      let value = m[2].trim();
-      if (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'")) {
-        value = value.slice(1, -1);
-      }
-      if (m[1] === "DOKPLOY_URL") out.dokployUrl = value;
-      if (m[1] === "DOKPLOY_API_KEY") out.apiKey = value;
-      if (m[1] === "DOKPLOY_ENVIRONMENT_ID") out.environmentId = value;
-      if (m[1] === "APP_DOMAIN") out.appDomain = value;
-    }
-    if (out.dokployUrl || out.apiKey || out.environmentId || out.appDomain) {
-      return out;
-    }
-    throw new Error(`Failed to parse config file ${path}: invalid JSON or env format`);
+function info(msg) {
+  console.log(`${pc.blue("\xB7")} ${msg}`);
+}
+function section(title) {
+  console.log();
+  console.log(pc.bold(pc.dim(`\u25BC ${title}`)));
+}
+function table(rows) {
+  const col1 = Math.max(...rows.map(([a]) => a.length), 0);
+  const col2 = Math.max(...rows.map(([, b]) => b.length), 0);
+  for (const [a, b, c] of rows) {
+    const status = c === "ok" ? pc.green("ok") : c === "error" ? pc.red("error") : c ? pc.dim(c) : "";
+    console.log(`  ${a.padEnd(col1)}  ${b.padEnd(col2)}  ${status}`);
   }
 }
-function readPartialConfig(flags = {}) {
-  const explicitConfigPath = flags.config ? resolve2(process.cwd(), flags.config) : void 0;
-  const configPath = explicitConfigPath || process.env["EPIFLY_CONFIG"] || CONFIG_SEARCH.find((p3) => existsSync(p3));
-  const file = configPath ? readConfigFile(configPath) : {};
-  const env = {
-    ...process.env["DOKPLOY_URL"] ? { dokployUrl: process.env["DOKPLOY_URL"] } : {},
-    ...process.env["DOKPLOY_API_KEY"] ? { apiKey: process.env["DOKPLOY_API_KEY"] } : {},
-    ...process.env["DOKPLOY_ENVIRONMENT_ID"] ? { environmentId: process.env["DOKPLOY_ENVIRONMENT_ID"] } : {},
-    ...process.env["APP_DOMAIN"] ? { appDomain: process.env["APP_DOMAIN"] } : {}
-  };
-  const merged = {
-    repoRoot: process.cwd(),
-    ...file,
-    ...env,
-    ...flags.dokployUrl ? { dokployUrl: flags.dokployUrl } : {},
-    ...flags.apiKey ? { apiKey: flags.apiKey } : {},
-    ...flags.environmentId ? { environmentId: flags.environmentId } : {},
-    ...flags.appDomain ? { appDomain: flags.appDomain } : {},
-    ...flags.repoRoot ? { repoRoot: flags.repoRoot } : {}
-  };
-  return merged;
-}
-function loadConfig(flags = {}) {
-  const cfg = readPartialConfig(flags);
-  const required = [
-    "dokployUrl",
-    "apiKey",
-    "environmentId",
-    "appDomain"
-  ];
-  const missing = required.filter((k) => !cfg[k]);
-  if (missing.length > 0) {
-    throw new Error(
-      `Missing required config: ${missing.join(", ")}
-
-Set them via:
-  \u2022 epifly init            (interactive wizard)
-  \u2022 .dokploy config file   (JSON)
-  \u2022 Environment variables  (DOKPLOY_URL, DOKPLOY_API_KEY, DOKPLOY_ENVIRONMENT_ID, APP_DOMAIN)`
-    );
-  }
-  return {
-    dokployUrl: cfg.dokployUrl.replace(/\/+$/, ""),
-    apiKey: cfg.apiKey,
-    environmentId: cfg.environmentId,
-    appDomain: cfg.appDomain,
-    repoRoot: cfg.repoRoot ?? process.cwd()
-  };
+function fatal(msg, hint) {
+  err(msg);
+  if (hint) console.error(pc.dim(`  ${hint}`));
+  process.exit(1);
 }
 
 // src/lib/log-tail.ts
@@ -479,17 +389,14 @@ function registerDeploy(program2) {
       fatal(`Failed to locate epifly-deploy compose: ${e.message}`);
     }
     const envOverrides = {};
-    if (opts.dryRun) envOverrides["DEPLOY_DRY_RUN"] = "true";
+    if (opts.dryRun) envOverrides.DEPLOY_DRY_RUN = "true";
     if (opts.phase) {
       if (!ALLOWED_PHASES.includes(opts.phase)) {
-        fatal(
-          `Invalid --phase '${opts.phase}'.`,
-          `Allowed phases: ${ALLOWED_PHASES.join("|")}`
-        );
+        fatal(`Invalid --phase '${opts.phase}'.`, `Allowed phases: ${ALLOWED_PHASES.join("|")}`);
       }
-      envOverrides["DEPLOY_ONLY"] = opts.phase;
+      envOverrides.DEPLOY_ONLY = opts.phase;
     }
-    if (opts.skipVerify) envOverrides["DEPLOY_SKIP_VERIFY"] = "true";
+    if (opts.skipVerify) envOverrides.DEPLOY_SKIP_VERIFY = "true";
     let priorComposeEnv = "";
     let appliedTemporaryOverrides = false;
     if (Object.keys(envOverrides).length > 0) {
@@ -596,7 +503,11 @@ async function ensureManagedServicesRunning(cfg, environmentId, timeoutMs) {
     }
     warn(`${app.name}: ${status} (forcing compose.deploy)`);
     await triggerDeploy(cfg, compose.composeId);
-    const result = await waitForManagedCompose(cfg, compose.composeId, Math.min(timeoutMs, 24e4));
+    const result = await waitForManagedCompose(
+      cfg,
+      compose.composeId,
+      Math.min(timeoutMs, 24e4)
+    );
     if (!result.ok) {
       failures.push(`${app.name} (${result.reason})`);
     } else {
@@ -604,10 +515,7 @@ async function ensureManagedServicesRunning(cfg, environmentId, timeoutMs) {
     }
   }
   if (failures.length > 0) {
-    fatal(
-      "Some services are not running after deploy.",
-      `Failures: ${failures.join(", ")}`
-    );
+    fatal("Some services are not running after deploy.", `Failures: ${failures.join(", ")}`);
   }
 }
 function hasDeploymentHistory(composeOne) {
@@ -675,7 +583,9 @@ async function printServerDiagnosticSummary(cfg) {
     info(
       `Server: ${selected.name ?? selected.serverId} (${selected.serverStatus ?? "unknown"}) ${selected.ipAddress ?? ""}`
     );
-    const latest = getLatestByCreatedAt(await listDeploymentsByServer(cfg, String(selected.serverId)));
+    const latest = getLatestByCreatedAt(
+      await listDeploymentsByServer(cfg, String(selected.serverId))
+    );
     if (!latest) return;
     info(
       `Latest server deployment: ${latest.status ?? "unknown"} (${latest.deploymentId ?? "unknown"})`
@@ -687,15 +597,15 @@ async function printServerDiagnosticSummary(cfg) {
 }
 
 // src/lib/prompts.ts
-import * as p2 from "@clack/prompts";
+import * as p from "@clack/prompts";
 function checkCancel(value) {
-  if (p2.isCancel(value)) {
-    p2.cancel("Cancelled.");
+  if (p.isCancel(value)) {
+    p.cancel("Cancelled.");
     process.exit(0);
   }
 }
 async function promptConfirm(message, initialValue = false) {
-  const value = await p2.confirm({ message, initialValue });
+  const value = await p.confirm({ message, initialValue });
   checkCancel(value);
   return value;
 }
@@ -722,11 +632,11 @@ function registerDestroy(program2) {
     } catch (e) {
       fatal(`Failed to list composes: ${e.message}`);
     }
-    if (items.length === 0) {
+    if (items?.length === 0) {
       info("No compose services found in this environment.");
       return;
     }
-    warn(`This will permanently delete ${items.length} compose service(s):`);
+    warn(`This will permanently delete ${items?.length} compose service(s):`);
     for (const c of items) {
       warn(`  \xB7 ${c.name} (${c.composeId}) \u2014 status: ${c.composeStatus}`);
     }
@@ -764,7 +674,9 @@ function registerDestroy(program2) {
         const message = String(e?.message ?? e);
         if (!opts.deleteVolumes && message.includes("--deleteVolumes")) {
           warn(`  \u2717 ${c.name}: Dokploy CLI requires --deleteVolumes on this server version.`);
-          warn("    Re-run with --delete-volumes or upgrade Dokploy CLI/server for optional flag behavior.");
+          warn(
+            "    Re-run with --delete-volumes or upgrade Dokploy CLI/server for optional flag behavior."
+          );
         } else {
           warn(`  \u2717 ${c.name}: ${message || "delete failed"}`);
         }
@@ -773,10 +685,264 @@ function registerDestroy(program2) {
     }
     console.log();
     if (failed > 0) {
-      fatal(`${failed}/${items.length} deletes failed. Check the Dokploy UI.`);
+      fatal(`${failed}/${items?.length} deletes failed. Check the Dokploy UI.`);
     } else {
-      ok(`All ${items.length} services deleted. Run \`epifly deploy\` to redeploy.`);
+      ok(`All ${items?.length} services deleted. Run \`epifly deploy\` to redeploy.`);
     }
+  });
+}
+
+// src/commands/diff.ts
+import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
+import { resolve as resolve2 } from "path";
+import pc2 from "picocolors";
+function registerDiff(program2) {
+  program2.command("diff").description("Diff local .env.production against live Dokploy Shared Env (project.env)").option("--config <path>", "Path to .dokploy config file").option(
+    "--env-file <path>",
+    "Path to local env file to compare (default: .env.production in repo root)"
+  ).option("--show-secrets", "Show secret values instead of masking them").action(async (opts) => {
+    let cfg;
+    try {
+      cfg = loadConfig({ config: opts.config });
+    } catch (e) {
+      fatal(e.message);
+    }
+    const envFile = opts.envFile ?? resolve2(cfg.repoRoot, ".env.production");
+    if (!existsSync2(envFile)) {
+      fatal(
+        `Local env file not found: ${envFile}`,
+        "Pass --env-file <path> to specify a different file."
+      );
+    }
+    const local = parseDotenv(readFileSync2(envFile, "utf8"));
+    let projectRecord;
+    try {
+      const envRecord = await getEnvironment(cfg, cfg.environmentId);
+      projectRecord = await getProject(cfg, envRecord.projectId ?? envRecord.project?.projectId);
+    } catch (e) {
+      fatal(`Failed to fetch live env: ${e.message}`);
+    }
+    const remote = parseDotenv(projectRecord?.env ?? "");
+    banner("diff");
+    section(`Local: ${envFile} vs Remote: Dokploy project.env`);
+    const allKeys = /* @__PURE__ */ new Set([...Object.keys(local), ...Object.keys(remote)]);
+    let diffs = 0;
+    for (const k of [...allKeys].sort()) {
+      const l = local[k];
+      const r = remote[k];
+      const secret = isSecret(k) && !opts.showSecrets;
+      if (!(k in local) && k in remote) {
+        const val = secret ? "********" : r;
+        console.log(`  ${pc2.dim("remote-only")} ${pc2.cyan(k.padEnd(36))} ${pc2.dim(val ?? "")}`);
+        diffs++;
+      } else if (k in local && !(k in remote)) {
+        const val = secret ? "********" : l;
+        console.log(
+          `  ${pc2.yellow("local-only ")} ${pc2.yellow(k.padEnd(36))} ${pc2.dim(val ?? "")}`
+        );
+        diffs++;
+      } else if (l !== r) {
+        const lv = secret ? "********" : l;
+        const rv = secret ? "********" : r;
+        console.log(`  ${pc2.red("changed    ")} ${pc2.red(k.padEnd(36))}`);
+        console.log(`    ${pc2.dim("local :")} ${lv ?? pc2.italic("(empty)")}`);
+        console.log(`    ${pc2.dim("remote:")} ${rv ?? pc2.italic("(empty)")}`);
+        diffs++;
+      }
+    }
+    console.log();
+    if (diffs === 0) {
+      ok("No differences found");
+    } else {
+      warn(`${diffs} difference(s) found`);
+      process.exitCode = 1;
+    }
+  });
+}
+
+// src/commands/doctor.ts
+import pc3 from "picocolors";
+async function runChecks(opts) {
+  const results = [];
+  let cfg;
+  try {
+    cfg = loadConfig({ config: opts.config });
+    results.push({ label: "Config file loaded", passed: true, detail: opts.config ?? ".dokploy" });
+  } catch (e) {
+    results.push({ label: "Config file loaded", passed: false, detail: e.message });
+    return results;
+  }
+  try {
+    await getAllProjects(cfg);
+    results.push({ label: `Dokploy API (${cfg.dokployUrl})`, passed: true });
+  } catch (e) {
+    results.push({ label: `Dokploy API (${cfg.dokployUrl})`, passed: false, detail: e.message });
+    return results;
+  }
+  let envRecord;
+  try {
+    envRecord = await getEnvironment(cfg, cfg.environmentId);
+    results.push({
+      label: "Environment found",
+      passed: true,
+      detail: envRecord?.name ?? cfg.environmentId
+    });
+  } catch (e) {
+    results.push({ label: "Environment found", passed: false, detail: e.message });
+    return results;
+  }
+  const search = await searchComposes(cfg, {
+    environmentId: cfg.environmentId,
+    limit: 100,
+    offset: 0
+  });
+  const existing = new Map((search?.items ?? []).map((c) => [c.name, c]));
+  const expected = [...APPS.map((a) => a.name), "epifly-deploy"];
+  for (const name of expected) {
+    const compose = existing.get(name);
+    results.push({
+      label: `Compose '${name}' exists`,
+      passed: existing.has(name),
+      detail: existing.has(name) ? `composeId=${compose.composeId} status=${compose.composeStatus}` : "missing \u2014 run `epifly deploy` to create"
+    });
+  }
+  try {
+    const projectRecord = await getProject(
+      cfg,
+      envRecord.projectId ?? envRecord.project?.projectId
+    );
+    const env = projectRecord?.env ?? "";
+    const missing = env.trim().length === 0;
+    results.push({
+      label: "Shared Env populated",
+      passed: !missing,
+      detail: missing ? "project.env is empty \u2014 run `epifly deploy`" : "ok"
+    });
+  } catch (e) {
+    results.push({ label: "Shared Env populated", passed: false, detail: e.message });
+  }
+  return results;
+}
+function registerDoctor(program2) {
+  program2.command("doctor").description("Run diagnostic checks against your Epifly environment").option("--config <path>", "Path to .dokploy config file").option("--json", "Output results as JSON").action(async (opts) => {
+    if (!opts.json) banner("doctor");
+    const results = await runChecks(opts);
+    if (opts.json) {
+      console.log(JSON.stringify(results, null, 2));
+      const failed2 = results.filter((r) => !r.passed).length;
+      process.exit(failed2 > 0 ? 1 : 0);
+    }
+    section("Checks");
+    let failed = 0;
+    for (const r of results) {
+      const icon = r.passed ? pc3.green("\u2713") : pc3.red("\u2717");
+      const label = r.passed ? pc3.white(r.label) : pc3.red(r.label);
+      const detail = r.detail ? pc3.dim(` \u2014 ${r.detail}`) : "";
+      console.log(`  ${icon} ${label}${detail}`);
+      if (!r.passed) failed++;
+    }
+    console.log();
+    if (failed === 0) {
+      ok(`All ${results.length} checks passed`);
+    } else {
+      warn(`${failed}/${results.length} checks failed`);
+      process.exit(1);
+    }
+  });
+}
+
+// src/commands/init.ts
+import { writeFileSync as writeFileSync2 } from "fs";
+import { resolve as resolve3 } from "path";
+import * as p2 from "@clack/prompts";
+function registerInit(program2) {
+  program2.command("init").description("Interactive bootstrap wizard \u2014 create .dokploy config").option("--config <path>", "Config file to write (default: .dokploy in cwd)").action(async (opts) => {
+    banner("init");
+    p2.intro("Let's configure your Epifly environment.");
+    const dokployUrl = await p2.text({
+      message: "Dokploy URL",
+      placeholder: "https://dokploy.example.com",
+      validate: (v) => {
+        if (!v.startsWith("http")) return "Must start with http:// or https://";
+      }
+    });
+    if (p2.isCancel(dokployUrl)) {
+      p2.cancel("Cancelled.");
+      process.exit(0);
+    }
+    const apiKey = await p2.password({
+      message: "Dokploy API key",
+      validate: (v) => v.length < 8 ? "API key too short" : void 0
+    });
+    if (p2.isCancel(apiKey)) {
+      p2.cancel("Cancelled.");
+      process.exit(0);
+    }
+    const sp = p2.spinner();
+    sp.start("Connecting to Dokploy API\u2026");
+    const initCfg = { dokployUrl: dokployUrl.replace(/\/+$/, ""), apiKey };
+    let environmentId;
+    try {
+      const envList = await listEnvironments(initCfg);
+      sp.stop("Connected");
+      if (envList.length === 0) {
+        warn("No environments found. Create one in the Dokploy UI first.");
+        process.exit(1);
+      }
+      const chosen = await p2.select({
+        message: "Select environment",
+        options: envList.map((e) => ({
+          value: e.environmentId,
+          label: e.name ?? e.environmentId,
+          hint: e.description ?? ""
+        }))
+      });
+      if (p2.isCancel(chosen)) {
+        p2.cancel("Cancelled.");
+        process.exit(0);
+      }
+      environmentId = chosen;
+    } catch (e) {
+      sp.stop("Failed");
+      p2.log.error(`Cannot connect to Dokploy API: ${e.message}`);
+      process.exit(1);
+    }
+    const appDomain = await p2.text({
+      message: "APP_DOMAIN (e.g. epifly.prod.example.com)",
+      placeholder: "epifly.prod.example.com",
+      validate: (v) => {
+        if (!v.includes(".")) return "Must be a valid domain";
+      }
+    });
+    if (p2.isCancel(appDomain)) {
+      p2.cancel("Cancelled.");
+      process.exit(0);
+    }
+    const repoRoot = await p2.text({
+      message: "Path to the conusai-platform repo root",
+      defaultValue: process.cwd(),
+      placeholder: process.cwd()
+    });
+    if (p2.isCancel(repoRoot)) {
+      p2.cancel("Cancelled.");
+      process.exit(0);
+    }
+    const dest = opts.config ?? resolve3(process.cwd(), ".dokploy");
+    const cfg = {
+      dokployUrl: dokployUrl.replace(/\/+$/, ""),
+      apiKey,
+      environmentId,
+      appDomain,
+      repoRoot
+    };
+    writeFileSync2(dest, `${JSON.stringify(cfg, null, 2)}
+`, "utf8");
+    section("Done");
+    ok(`Config written to ${dest}`);
+    p2.log.info(
+      "Run `epifly status` to check your environment, or `epifly deploy` to trigger a deploy."
+    );
+    p2.outro("Happy deploying!");
   });
 }
 
@@ -897,9 +1063,7 @@ async function printLatestDeploymentSummary(cfg, composeId, composeName) {
     if (dep.errorMessage) warn(`Error message: ${dep.errorMessage}`);
     if (dep.logPath) info(`Log path reported by Dokploy: ${dep.logPath}`);
     if (!one?.serverId) {
-      warn(
-        "Latest deployment has no serverId. Compose may not be bound to a Dokploy server."
-      );
+      warn("Latest deployment has no serverId. Compose may not be bound to a Dokploy server.");
     }
     const servers = await listServers(cfg);
     const active = [...Array.isArray(servers) ? servers : []].filter(
@@ -910,7 +1074,9 @@ async function printLatestDeploymentSummary(cfg, composeId, composeName) {
     info(
       `Server: ${selected.name ?? selected.serverId} (${selected.serverStatus ?? "unknown"}) ${selected.ipAddress ?? ""}`
     );
-    const serverDep = getLatestByCreatedAt2(await listDeploymentsByServer(cfg, String(selected.serverId)));
+    const serverDep = getLatestByCreatedAt2(
+      await listDeploymentsByServer(cfg, String(selected.serverId))
+    );
     if (!serverDep) return;
     info(
       `Latest server deployment: ${serverDep.status ?? "unknown"} (${serverDep.deploymentId ?? "unknown"})`
@@ -927,6 +1093,199 @@ function getLatestByCreatedAt2(items) {
 function toTs2(raw) {
   const ts = Date.parse(String(raw ?? ""));
   return Number.isFinite(ts) ? ts : 0;
+}
+
+// src/commands/secret.ts
+import pc4 from "picocolors";
+
+// ../../dokploy/lib/secrets.mjs
+import { randomBytes, generateKeyPairSync } from "crypto";
+var SECRETS = {
+  POSTGRES_PASSWORD: () => randB64Url(30),
+  // ~40 chars
+  ZITADEL_MASTERKEY: () => randB64Url(24),
+  // exactly 32 chars
+  LAGO_SECRET_KEY_BASE: () => randHex(64),
+  // 128 hex chars
+  LAGO_ENCRYPTION_DET_KEY: () => randB64Url(24),
+  LAGO_ENCRYPTION_SALT: () => randB64Url(24),
+  LAGO_ENCRYPTION_KEY: () => randB64Url(24),
+  LAGO_RSA_PRIVATE_KEY: () => base64(generateRsaPem(2048)),
+  AWS_ACCESS_KEY_ID: () => "rfs_" + randUpperAlnum(15),
+  AWS_SECRET_ACCESS_KEY: () => randB64Url(30),
+  RUSTFS_IAM_ENC_KEY: () => randB64Url(24),
+  RUSTFS_WEBHOOK_SECRET: () => randB64Url(32),
+  UI_SESSION_KEY: () => randHex(32),
+  // 64 hex chars (>32 bytes)
+  PLATFORM_ADMIN_TOKEN: () => "pat_" + randB64Url(32)
+};
+var STATEFUL_SECRETS = {
+  POSTGRES_PASSWORD: "conusai_postgres_data",
+  LAGO_SECRET_KEY_BASE: "conusai_postgres_data",
+  LAGO_ENCRYPTION_DET_KEY: "conusai_postgres_data",
+  LAGO_ENCRYPTION_SALT: "conusai_postgres_data",
+  LAGO_ENCRYPTION_KEY: "conusai_postgres_data",
+  LAGO_RSA_PRIVATE_KEY: "conusai_postgres_data",
+  RUSTFS_IAM_ENC_KEY: "conusai_rustfs_data",
+  AWS_ACCESS_KEY_ID: "conusai_rustfs_data",
+  AWS_SECRET_ACCESS_KEY: "conusai_rustfs_data",
+  ZITADEL_MASTERKEY: "conusai_postgres_data"
+};
+function randB64Url(bytes) {
+  return randomBytes(bytes).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function randHex(bytes) {
+  return randomBytes(bytes).toString("hex");
+}
+function randUpperAlnum(n) {
+  const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const buf = randomBytes(n);
+  let s = "";
+  for (let i = 0; i < n; i++) s += charset[buf[i] % charset.length];
+  return s;
+}
+function base64(s) {
+  return Buffer.from(s, "utf8").toString("base64");
+}
+function generateRsaPem(modulusLength) {
+  return generateKeyPairSync("rsa", { modulusLength }).privateKey.export({
+    type: "pkcs8",
+    format: "pem"
+  });
+}
+
+// src/commands/secret.ts
+function registerSecret(program2) {
+  const secret = program2.command("secret").description("Manage Shared Env secrets");
+  secret.command("list").description("List all Shared Env keys (values masked for secrets)").option("--config <path>", "Path to .dokploy config file").option("--show", "Show secret values in plaintext").action(async (opts) => {
+    let cfg;
+    try {
+      cfg = loadConfig({ config: opts.config });
+    } catch (e) {
+      fatal(e.message);
+    }
+    const envRecord = await getEnvironment(cfg, cfg.environmentId);
+    const projectRecord = await getProject(
+      cfg,
+      envRecord.projectId ?? envRecord.project?.projectId
+    );
+    const current = parseDotenv(projectRecord?.env ?? "");
+    section(`Shared Env (${Object.keys(current).length} keys)`);
+    for (const [k, v] of Object.entries(current).sort(([a], [b]) => a.localeCompare(b))) {
+      const masked = isSecret(k) && !opts.show ? pc4.dim("********") : pc4.green(v || pc4.italic("(empty)"));
+      const stateful = k in STATEFUL_SECRETS ? pc4.yellow(" [stateful]") : "";
+      const managed = k in SECRETS ? pc4.blue(" [managed]") : "";
+      console.log(`  ${k.padEnd(38)} ${masked}${stateful}${managed}`);
+    }
+  });
+  secret.command("get <key>").description("Print the current value of a single key").option("--config <path>", "Path to .dokploy config file").action(async (key, opts) => {
+    let cfg;
+    try {
+      cfg = loadConfig({ config: opts.config });
+    } catch (e) {
+      fatal(e.message);
+    }
+    const envRecord = await getEnvironment(cfg, cfg.environmentId);
+    const projectRecord = await getProject(
+      cfg,
+      envRecord.projectId ?? envRecord.project?.projectId
+    );
+    const current = parseDotenv(projectRecord?.env ?? "");
+    if (!(key in current)) {
+      err(`Key not found: ${key}`);
+      process.exit(1);
+    }
+    process.stdout.write(`${current[key]}
+`);
+  });
+  secret.command("rotate <key>").description("Regenerate a managed secret in Shared Env").option("--config <path>", "Path to .dokploy config file").option("--yes", "Skip confirmation prompt").action(async (key, opts) => {
+    let cfg;
+    try {
+      cfg = loadConfig({ config: opts.config });
+    } catch (e) {
+      fatal(e.message);
+    }
+    if (!(key in SECRETS)) {
+      fatal(
+        `'${key}' is not a managed secret.`,
+        `Managed secrets: ${Object.keys(SECRETS).join(", ")}`
+      );
+    }
+    if (key in STATEFUL_SECRETS) {
+      warn(
+        `'${key}' is a STATEFUL secret bound to volume '${STATEFUL_SECRETS[key]}'. Rotating it will CORRUPT the data in that volume!`
+      );
+      if (!opts.yes) {
+        const confirmed = await promptConfirm(
+          "Are you absolutely sure you want to rotate this stateful secret?",
+          false
+        );
+        if (!confirmed) {
+          info("Rotation cancelled.");
+          process.exit(0);
+        }
+      }
+    }
+    banner("secret rotate");
+    const envRecord = await getEnvironment(cfg, cfg.environmentId);
+    const projectId = envRecord.projectId ?? envRecord.project?.projectId;
+    const projectRecord = await getProject(cfg, projectId);
+    const current = parseDotenv(projectRecord?.env ?? "");
+    const newValue = SECRETS[key]();
+    const merged = { ...current, [key]: newValue };
+    const envText = renderDotenv(merged, projectRecord?.env ?? "");
+    await updateProject(cfg, { projectId, env: envText });
+    ok(`Rotated ${key}`);
+    info(`New value: ${isSecret(key) ? "******** (masked)" : newValue}`);
+    info("Run `epifly deploy` to apply the new secret to all services.");
+  });
+}
+
+// src/commands/status.ts
+var STATUS_COLOR = {
+  done: "ok",
+  running: "ok",
+  error: "error",
+  failed: "error",
+  idle: "idle",
+  queued: "queued"
+};
+function registerStatus(program2) {
+  program2.command("status").description("Show deploy status of all compose services in the environment").option("--config <path>", "Path to .dokploy config file").option("--json", "Output as JSON").action(async (opts) => {
+    let cfg;
+    try {
+      cfg = loadConfig({ config: opts.config });
+    } catch (e) {
+      fatal(e.message);
+    }
+    let search;
+    try {
+      search = await searchComposes(cfg, {
+        environmentId: cfg.environmentId,
+        limit: 100,
+        offset: 0
+      });
+    } catch (e) {
+      fatal(`Failed to fetch composes: ${e.message}`);
+    }
+    const items = search?.items ?? [];
+    if (opts.json) {
+      console.log(JSON.stringify(items, null, 2));
+      return;
+    }
+    banner("status");
+    section(`${cfg.appDomain} (${items.length} services)`);
+    if (items.length === 0) {
+      info("No compose services found in this environment.");
+      return;
+    }
+    const rows = items.map((c) => [
+      c.name ?? c.composeId,
+      c.composeStatus ?? "unknown",
+      STATUS_COLOR[c.composeStatus] ?? c.composeStatus
+    ]);
+    table(rows);
+  });
 }
 
 // ../../dokploy/lib/verify.mjs
@@ -1031,7 +1390,8 @@ function registerVerify(program2) {
   program2.command("verify").description("Run HTTPS smoke-tests against a live environment").option("-d, --domain <domain>", "APP_DOMAIN to verify (overrides config)").option("--config <path>", "Path to .dokploy config file").action(async (opts) => {
     const partial = readPartialConfig({ config: opts.config, appDomain: opts.domain });
     const appDomain = partial.appDomain;
-    if (!appDomain) fatal("No APP_DOMAIN. Pass --domain or set it in .dokploy / APP_DOMAIN env var.");
+    if (!appDomain)
+      fatal("No APP_DOMAIN. Pass --domain or set it in .dokploy / APP_DOMAIN env var.");
     banner("verify");
     section(`Checking ${appDomain}`);
     const checks = buildVerifyChecks(appDomain);
@@ -1056,258 +1416,6 @@ function registerVerify(program2) {
       process.exit(1);
     } else {
       ok(`All ${checks.length} checks passed`);
-    }
-  });
-}
-
-// src/commands/secret.ts
-import pc2 from "picocolors";
-
-// ../../dokploy/lib/secrets.mjs
-import { randomBytes, generateKeyPairSync } from "crypto";
-var SECRETS = {
-  POSTGRES_PASSWORD: () => randB64Url(30),
-  // ~40 chars
-  ZITADEL_MASTERKEY: () => randB64Url(24),
-  // exactly 32 chars
-  LAGO_SECRET_KEY_BASE: () => randHex(64),
-  // 128 hex chars
-  LAGO_ENCRYPTION_DET_KEY: () => randB64Url(24),
-  LAGO_ENCRYPTION_SALT: () => randB64Url(24),
-  LAGO_ENCRYPTION_KEY: () => randB64Url(24),
-  LAGO_RSA_PRIVATE_KEY: () => base64(generateRsaPem(2048)),
-  AWS_ACCESS_KEY_ID: () => "rfs_" + randUpperAlnum(15),
-  AWS_SECRET_ACCESS_KEY: () => randB64Url(30),
-  RUSTFS_IAM_ENC_KEY: () => randB64Url(24),
-  RUSTFS_WEBHOOK_SECRET: () => randB64Url(32),
-  UI_SESSION_KEY: () => randHex(32),
-  // 64 hex chars (>32 bytes)
-  PLATFORM_ADMIN_TOKEN: () => "pat_" + randB64Url(32)
-};
-var STATEFUL_SECRETS = {
-  POSTGRES_PASSWORD: "conusai_postgres_data",
-  LAGO_SECRET_KEY_BASE: "conusai_postgres_data",
-  LAGO_ENCRYPTION_DET_KEY: "conusai_postgres_data",
-  LAGO_ENCRYPTION_SALT: "conusai_postgres_data",
-  LAGO_ENCRYPTION_KEY: "conusai_postgres_data",
-  LAGO_RSA_PRIVATE_KEY: "conusai_postgres_data",
-  RUSTFS_IAM_ENC_KEY: "conusai_rustfs_data",
-  AWS_ACCESS_KEY_ID: "conusai_rustfs_data",
-  AWS_SECRET_ACCESS_KEY: "conusai_rustfs_data",
-  ZITADEL_MASTERKEY: "conusai_postgres_data"
-};
-function randB64Url(bytes) {
-  return randomBytes(bytes).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-function randHex(bytes) {
-  return randomBytes(bytes).toString("hex");
-}
-function randUpperAlnum(n) {
-  const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-  const buf = randomBytes(n);
-  let s = "";
-  for (let i = 0; i < n; i++) s += charset[buf[i] % charset.length];
-  return s;
-}
-function base64(s) {
-  return Buffer.from(s, "utf8").toString("base64");
-}
-function generateRsaPem(modulusLength) {
-  return generateKeyPairSync("rsa", { modulusLength }).privateKey.export({
-    type: "pkcs8",
-    format: "pem"
-  });
-}
-
-// src/commands/secret.ts
-function registerSecret(program2) {
-  const secret = program2.command("secret").description("Manage Shared Env secrets");
-  secret.command("list").description("List all Shared Env keys (values masked for secrets)").option("--config <path>", "Path to .dokploy config file").option("--show", "Show secret values in plaintext").action(async (opts) => {
-    let cfg;
-    try {
-      cfg = loadConfig({ config: opts.config });
-    } catch (e) {
-      fatal(e.message);
-    }
-    const envRecord = await getEnvironment(cfg, cfg.environmentId);
-    const projectRecord = await getProject(cfg, envRecord.projectId ?? envRecord.project?.projectId);
-    const current = parseDotenv(projectRecord?.env ?? "");
-    section(`Shared Env (${Object.keys(current).length} keys)`);
-    for (const [k, v] of Object.entries(current).sort(([a], [b]) => a.localeCompare(b))) {
-      const masked = isSecret(k) && !opts.show ? pc2.dim("********") : pc2.green(v || pc2.italic("(empty)"));
-      const stateful = k in STATEFUL_SECRETS ? pc2.yellow(" [stateful]") : "";
-      const managed = k in SECRETS ? pc2.blue(" [managed]") : "";
-      console.log(`  ${k.padEnd(38)} ${masked}${stateful}${managed}`);
-    }
-  });
-  secret.command("get <key>").description("Print the current value of a single key").option("--config <path>", "Path to .dokploy config file").action(async (key, opts) => {
-    let cfg;
-    try {
-      cfg = loadConfig({ config: opts.config });
-    } catch (e) {
-      fatal(e.message);
-    }
-    const envRecord = await getEnvironment(cfg, cfg.environmentId);
-    const projectRecord = await getProject(cfg, envRecord.projectId ?? envRecord.project?.projectId);
-    const current = parseDotenv(projectRecord?.env ?? "");
-    if (!(key in current)) {
-      err(`Key not found: ${key}`);
-      process.exit(1);
-    }
-    process.stdout.write(current[key] + "\n");
-  });
-  secret.command("rotate <key>").description("Regenerate a managed secret in Shared Env").option("--config <path>", "Path to .dokploy config file").option("--yes", "Skip confirmation prompt").action(async (key, opts) => {
-    let cfg;
-    try {
-      cfg = loadConfig({ config: opts.config });
-    } catch (e) {
-      fatal(e.message);
-    }
-    if (!(key in SECRETS)) {
-      fatal(
-        `'${key}' is not a managed secret.`,
-        `Managed secrets: ${Object.keys(SECRETS).join(", ")}`
-      );
-    }
-    if (key in STATEFUL_SECRETS) {
-      warn(
-        `'${key}' is a STATEFUL secret bound to volume '${STATEFUL_SECRETS[key]}'. Rotating it will CORRUPT the data in that volume!`
-      );
-      if (!opts.yes) {
-        const confirmed = await promptConfirm(
-          "Are you absolutely sure you want to rotate this stateful secret?",
-          false
-        );
-        if (!confirmed) {
-          info("Rotation cancelled.");
-          process.exit(0);
-        }
-      }
-    }
-    banner("secret rotate");
-    const envRecord = await getEnvironment(cfg, cfg.environmentId);
-    const projectId = envRecord.projectId ?? envRecord.project?.projectId;
-    const projectRecord = await getProject(cfg, projectId);
-    const current = parseDotenv(projectRecord?.env ?? "");
-    const newValue = SECRETS[key]();
-    const merged = { ...current, [key]: newValue };
-    const envText = renderDotenv(merged, projectRecord?.env ?? "");
-    await updateProject(cfg, { projectId, env: envText });
-    ok(`Rotated ${key}`);
-    info(`New value: ${isSecret(key) ? "******** (masked)" : newValue}`);
-    info("Run `epifly deploy` to apply the new secret to all services.");
-  });
-}
-
-// src/commands/status.ts
-var STATUS_COLOR = {
-  done: "ok",
-  running: "ok",
-  error: "error",
-  failed: "error",
-  idle: "idle",
-  queued: "queued"
-};
-function registerStatus(program2) {
-  program2.command("status").description("Show deploy status of all compose services in the environment").option("--config <path>", "Path to .dokploy config file").option("--json", "Output as JSON").action(async (opts) => {
-    let cfg;
-    try {
-      cfg = loadConfig({ config: opts.config });
-    } catch (e) {
-      fatal(e.message);
-    }
-    let search;
-    try {
-      search = await searchComposes(cfg, {
-        environmentId: cfg.environmentId,
-        limit: 100,
-        offset: 0
-      });
-    } catch (e) {
-      fatal(`Failed to fetch composes: ${e.message}`);
-    }
-    const items = search?.items ?? [];
-    if (opts.json) {
-      console.log(JSON.stringify(items, null, 2));
-      return;
-    }
-    banner("status");
-    section(`${cfg.appDomain} (${items.length} services)`);
-    if (items.length === 0) {
-      info("No compose services found in this environment.");
-      return;
-    }
-    const rows = items.map((c) => [
-      c.name ?? c.composeId,
-      c.composeStatus ?? "unknown",
-      STATUS_COLOR[c.composeStatus] ?? c.composeStatus
-    ]);
-    table(rows);
-  });
-}
-
-// src/commands/diff.ts
-import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
-import { resolve as resolve3 } from "path";
-import pc3 from "picocolors";
-function registerDiff(program2) {
-  program2.command("diff").description("Diff local .env.production against live Dokploy Shared Env (project.env)").option("--config <path>", "Path to .dokploy config file").option(
-    "--env-file <path>",
-    "Path to local env file to compare (default: .env.production in repo root)"
-  ).option("--show-secrets", "Show secret values instead of masking them").action(async (opts) => {
-    let cfg;
-    try {
-      cfg = loadConfig({ config: opts.config });
-    } catch (e) {
-      fatal(e.message);
-    }
-    const envFile = opts.envFile ?? resolve3(cfg.repoRoot, ".env.production");
-    if (!existsSync2(envFile)) {
-      fatal(
-        `Local env file not found: ${envFile}`,
-        "Pass --env-file <path> to specify a different file."
-      );
-    }
-    const local = parseDotenv(readFileSync2(envFile, "utf8"));
-    let projectRecord;
-    try {
-      const envRecord = await getEnvironment(cfg, cfg.environmentId);
-      projectRecord = await getProject(cfg, envRecord.projectId ?? envRecord.project?.projectId);
-    } catch (e) {
-      fatal(`Failed to fetch live env: ${e.message}`);
-    }
-    const remote = parseDotenv(projectRecord?.env ?? "");
-    banner("diff");
-    section(`Local: ${envFile} vs Remote: Dokploy project.env`);
-    const allKeys = /* @__PURE__ */ new Set([...Object.keys(local), ...Object.keys(remote)]);
-    let diffs = 0;
-    for (const k of [...allKeys].sort()) {
-      const l = local[k];
-      const r = remote[k];
-      const secret = isSecret(k) && !opts.showSecrets;
-      if (!(k in local) && k in remote) {
-        const val = secret ? "********" : r;
-        console.log(`  ${pc3.dim("remote-only")} ${pc3.cyan(k.padEnd(36))} ${pc3.dim(val ?? "")}`);
-        diffs++;
-      } else if (k in local && !(k in remote)) {
-        const val = secret ? "********" : l;
-        console.log(`  ${pc3.yellow("local-only ")} ${pc3.yellow(k.padEnd(36))} ${pc3.dim(val ?? "")}`);
-        diffs++;
-      } else if (l !== r) {
-        const lv = secret ? "********" : l;
-        const rv = secret ? "********" : r;
-        console.log(`  ${pc3.red("changed    ")} ${pc3.red(k.padEnd(36))}`);
-        console.log(`    ${pc3.dim("local :")} ${lv ?? pc3.italic("(empty)")}`);
-        console.log(`    ${pc3.dim("remote:")} ${rv ?? pc3.italic("(empty)")}`);
-        diffs++;
-      }
-    }
-    console.log();
-    if (diffs === 0) {
-      ok("No differences found");
-    } else {
-      warn(`${diffs} difference(s) found`);
-      process.exitCode = 1;
     }
   });
 }
@@ -1393,90 +1501,6 @@ function registerWipe(program2) {
       );
     } catch (e) {
       fatal(`Wipe failed: ${e.message}`);
-    }
-  });
-}
-
-// src/commands/doctor.ts
-import pc4 from "picocolors";
-async function runChecks(opts) {
-  const results = [];
-  let cfg;
-  try {
-    cfg = loadConfig({ config: opts.config });
-    results.push({ label: "Config file loaded", passed: true, detail: opts.config ?? ".dokploy" });
-  } catch (e) {
-    results.push({ label: "Config file loaded", passed: false, detail: e.message });
-    return results;
-  }
-  try {
-    await getAllProjects(cfg);
-    results.push({ label: `Dokploy API (${cfg.dokployUrl})`, passed: true });
-  } catch (e) {
-    results.push({ label: `Dokploy API (${cfg.dokployUrl})`, passed: false, detail: e.message });
-    return results;
-  }
-  let envRecord;
-  try {
-    envRecord = await getEnvironment(cfg, cfg.environmentId);
-    results.push({ label: "Environment found", passed: true, detail: envRecord?.name ?? cfg.environmentId });
-  } catch (e) {
-    results.push({ label: "Environment found", passed: false, detail: e.message });
-    return results;
-  }
-  const search = await searchComposes(cfg, {
-    environmentId: cfg.environmentId,
-    limit: 100,
-    offset: 0
-  });
-  const existing = new Map((search?.items ?? []).map((c) => [c.name, c]));
-  const expected = [...APPS.map((a) => a.name), "epifly-deploy"];
-  for (const name of expected) {
-    const compose = existing.get(name);
-    results.push({
-      label: `Compose '${name}' exists`,
-      passed: existing.has(name),
-      detail: existing.has(name) ? `composeId=${compose.composeId} status=${compose.composeStatus}` : "missing \u2014 run `epifly deploy` to create"
-    });
-  }
-  try {
-    const projectRecord = await getProject(cfg, envRecord.projectId ?? envRecord.project?.projectId);
-    const env = projectRecord?.env ?? "";
-    const missing = env.trim().length === 0;
-    results.push({
-      label: "Shared Env populated",
-      passed: !missing,
-      detail: missing ? "project.env is empty \u2014 run `epifly deploy`" : "ok"
-    });
-  } catch (e) {
-    results.push({ label: "Shared Env populated", passed: false, detail: e.message });
-  }
-  return results;
-}
-function registerDoctor(program2) {
-  program2.command("doctor").description("Run diagnostic checks against your Epifly environment").option("--config <path>", "Path to .dokploy config file").option("--json", "Output results as JSON").action(async (opts) => {
-    if (!opts.json) banner("doctor");
-    const results = await runChecks(opts);
-    if (opts.json) {
-      console.log(JSON.stringify(results, null, 2));
-      const failed2 = results.filter((r) => !r.passed).length;
-      process.exit(failed2 > 0 ? 1 : 0);
-    }
-    section("Checks");
-    let failed = 0;
-    for (const r of results) {
-      const icon = r.passed ? pc4.green("\u2713") : pc4.red("\u2717");
-      const label = r.passed ? pc4.white(r.label) : pc4.red(r.label);
-      const detail = r.detail ? pc4.dim(` \u2014 ${r.detail}`) : "";
-      console.log(`  ${icon} ${label}${detail}`);
-      if (!r.passed) failed++;
-    }
-    console.log();
-    if (failed === 0) {
-      ok(`All ${results.length} checks passed`);
-    } else {
-      warn(`${failed}/${results.length} checks failed`);
-      process.exit(1);
     }
   });
 }

@@ -30,7 +30,12 @@ pub async fn ui_upload(
 ) -> Response {
     let store = match state.file_store.as_ref() {
         Some(s) => s,
-        None => return err(StatusCode::SERVICE_UNAVAILABLE, "file storage not configured"),
+        None => {
+            return err(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "file storage not configured",
+            );
+        }
     };
 
     let tenant = user.tenant_context();
@@ -90,7 +95,10 @@ pub async fn ui_upload(
                 "filename": base_name,
                 "content": meta_content,
             });
-            if let Err(e) = prov.invoke("save_document", &attach_input, Some(&tenant)).await {
+            if let Err(e) = prov
+                .invoke("save_document", &attach_input, Some(&tenant))
+                .await
+            {
                 warn!(error = %e, "upload: workspace registration failed (non-fatal)");
             }
         }
@@ -118,7 +126,8 @@ pub async fn ui_upload(
                         let realtime = Arc::clone(&state.realtime_service);
                         let tenant_bg = tenant.clone();
                         tokio::spawn(async move {
-                            run_plan(steps, registry, Some(llm), Some(tenant_bg), Some(realtime)).await;
+                            run_plan(steps, registry, Some(llm), Some(tenant_bg), Some(realtime))
+                                .await;
                         });
                     }
                 }

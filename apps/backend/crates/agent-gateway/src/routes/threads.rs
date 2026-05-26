@@ -49,9 +49,13 @@ pub async fn list(
     Extension(ResolvedTenant(tenant)): Extension<ResolvedTenant>,
     Query(q): Query<ListQuery>,
 ) -> impl IntoResponse {
-    let limit = q.limit.unwrap_or(20).min(100).max(1);
+    let limit = q.limit.unwrap_or(20).clamp(1, 100);
     let after = q.after.as_deref();
-    match state.thread_store.list(&tenant.tenant_id, limit, after).await {
+    match state
+        .thread_store
+        .list(&tenant.tenant_id, limit, after)
+        .await
+    {
         Ok(threads) => {
             let payload: Vec<_> = threads
                 .into_iter()

@@ -11,9 +11,9 @@ use crate::state::AppState;
 use crate::ui::session::SessionUser;
 use agent_core::TenantStorage;
 use axum::{
-    http::HeaderMap,
     Json,
     extract::State,
+    http::HeaderMap,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -123,7 +123,10 @@ fn build_attachment_hint(
 
     let mut lines = Vec::new();
     for object_key in attachment_ids {
-        if !storage.map(|s| s.owns_object_key(object_key)).unwrap_or(false) {
+        if !storage
+            .map(|s| s.owns_object_key(object_key))
+            .unwrap_or(false)
+        {
             continue;
         }
         let filename = object_key.split('/').next_back().unwrap_or("file");
@@ -188,12 +191,19 @@ async fn resolve_attachments(
 
     for object_key in attachment_ids {
         // attachment_ids are now object keys directly (no UUID token lookup)
-        if !storage.map(|s| s.owns_object_key(object_key)).unwrap_or(false) {
+        if !storage
+            .map(|s| s.owns_object_key(object_key))
+            .unwrap_or(false)
+        {
             continue;
         }
         let object_key = object_key.clone();
 
-        let filename = object_key.split('/').next_back().unwrap_or("file").to_string();
+        let filename = object_key
+            .split('/')
+            .next_back()
+            .unwrap_or("file")
+            .to_string();
         let ct = content_type_from_filename(&filename);
 
         let os_path = OsPath::from(object_key.as_str());
@@ -252,16 +262,21 @@ async fn resolve_attachments(
 }
 
 fn content_type_from_filename(name: &str) -> &'static str {
-    match name.rsplit('.').next().map(|e| e.to_ascii_lowercase()).as_deref() {
+    match name
+        .rsplit('.')
+        .next()
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
         Some("jpg") | Some("jpeg") => "image/jpeg",
         Some("png") => "image/png",
         Some("gif") => "image/gif",
         Some("webp") => "image/webp",
         Some("pdf") => "application/pdf",
         Some(
-            "txt" | "md" | "markdown" | "csv" | "json" | "yaml" | "yml" | "toml" | "xml"
-            | "html" | "htm" | "css" | "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "rb"
-            | "go" | "java" | "c" | "cpp" | "h" | "sh" | "sql" | "log",
+            "txt" | "md" | "markdown" | "csv" | "json" | "yaml" | "yml" | "toml" | "xml" | "html"
+            | "htm" | "css" | "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "rb" | "go" | "java"
+            | "c" | "cpp" | "h" | "sh" | "sql" | "log",
         ) => "text/plain",
         _ => "application/octet-stream",
     }

@@ -5,8 +5,8 @@ use crate::types::{CheckoutSession, Invoice, Subscription, SubscriptionStatus};
 use async_trait::async_trait;
 use common::types::TenantId;
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
@@ -24,13 +24,17 @@ pub struct LagoConfig {
 
 impl LagoConfig {
     pub fn from_env() -> Result<Self, BillingError> {
-        let api_url = std::env::var("LAGO_API_URL")
-            .unwrap_or_else(|_| "http://lago-api:3000".into());
+        let api_url =
+            std::env::var("LAGO_API_URL").unwrap_or_else(|_| "http://lago-api:3000".into());
         let api_key = std::env::var("LAGO_API_KEY").map_err(|_| {
             BillingError::Config("LAGO_API_KEY environment variable not set".into())
         })?;
         let webhook_secret = std::env::var("LAGO_WEBHOOK_SECRET").unwrap_or_default();
-        Ok(Self { api_url, api_key, webhook_secret })
+        Ok(Self {
+            api_url,
+            api_key,
+            webhook_secret,
+        })
     }
 }
 
@@ -288,7 +292,11 @@ impl BillingProvider for LagoProvider {
     async fn cancel_subscription(&self, tenant_id: &TenantId) -> Result<(), BillingError> {
         let external_id = format!("{}-", tenant_id);
         // Fetch current subscription to find external_id.
-        let url = format!("{}/subscriptions?external_customer_id={}", self.base_url(), tenant_id);
+        let url = format!(
+            "{}/subscriptions?external_customer_id={}",
+            self.base_url(),
+            tenant_id
+        );
         let resp = self
             .client
             .get(&url)
@@ -424,11 +432,7 @@ impl BillingProvider for LagoProvider {
         tenant_id: &TenantId,
         _return_url: &str,
     ) -> Result<String, BillingError> {
-        let url = format!(
-            "{}/customers/{}/portal_url",
-            self.base_url(),
-            tenant_id
-        );
+        let url = format!("{}/customers/{}/portal_url", self.base_url(), tenant_id);
         let resp = self
             .client
             .get(&url)
@@ -465,10 +469,8 @@ impl BillingProvider for LagoProvider {
             return Ok(());
         }
 
-        let mut mac =
-            HmacSha256::new_from_slice(self.config.webhook_secret.as_bytes()).map_err(|e| {
-                BillingError::Lago(format!("HMAC init error: {}", e))
-            })?;
+        let mut mac = HmacSha256::new_from_slice(self.config.webhook_secret.as_bytes())
+            .map_err(|e| BillingError::Lago(format!("HMAC init error: {}", e)))?;
         mac.update(payload);
         let expected = hex::encode(mac.finalize().into_bytes());
 
@@ -517,23 +519,30 @@ impl BillingProvider for LagoProvider {
         // Fetch gross revenue analytics from Lago.
         let resp = self
             .client
-            .get(format!("{}/api/v1/analytics/gross_revenue", self.base_url()))
+            .get(format!(
+                "{}/api/v1/analytics/gross_revenue",
+                self.base_url()
+            ))
             .bearer_auth(&self.config.api_key)
             .send()
             .await
             .map_err(|e| BillingError::Lago(e.to_string()))?;
 
         if resp.status().is_success() {
-            let data: serde_json::Value = resp.json().await.map_err(|e| {
-                BillingError::Lago(format!("analytics_summary deserialize: {e}"))
-            })?;
+            let data: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| BillingError::Lago(format!("analytics_summary deserialize: {e}")))?;
             Ok(data)
         } else {
             Ok(serde_json::json!({ "configured": true, "data": [] }))
         }
     }
 
-    async fn ensure_plans(&self, catalog: &crate::catalog::PlanCatalog) -> Result<(), BillingError> {
+    async fn ensure_plans(
+        &self,
+        catalog: &crate::catalog::PlanCatalog,
+    ) -> Result<(), BillingError> {
         for plan in catalog.list() {
             let code = &plan.key;
             // Check if plan already exists.
@@ -577,7 +586,12 @@ impl BillingProvider for LagoProvider {
             } else {
                 let status = resp.status().as_u16();
                 let text = resp.text().await.unwrap_or_default();
-                tracing::warn!(plan = code, status, error = text, "ensure_plans upsert failed");
+                tracing::warn!(
+                    plan = code,
+                    status,
+                    error = text,
+                    "ensure_plans upsert failed"
+                );
             }
         }
         Ok(())
@@ -588,5 +602,8 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }

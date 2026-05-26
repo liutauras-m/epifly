@@ -248,8 +248,8 @@ impl BulkCapabilityFactory for CapabilitySpecFactory {
             .collect();
 
         // ── Embedding cache (PR 2.B.3.1): skip already-cached descriptions ──────
-        let cache_hits_counter    = metrics::embedding_cache_hits();
-        let cache_misses_counter  = metrics::embedding_cache_misses();
+        let cache_hits_counter = metrics::embedding_cache_hits();
+        let cache_misses_counter = metrics::embedding_cache_misses();
         let miss_indices: Vec<usize> = texts
             .iter()
             .enumerate()
@@ -262,8 +262,12 @@ impl BulkCapabilityFactory for CapabilitySpecFactory {
         // Record hit/miss metrics.
         let n_hits = texts.len().saturating_sub(miss_indices.len()) as u64;
         let n_misses = miss_indices.len() as u64;
-        if n_hits > 0   { cache_hits_counter.add(n_hits, &[]); }
-        if n_misses > 0 { cache_misses_counter.add(n_misses, &[]); }
+        if n_hits > 0 {
+            cache_hits_counter.add(n_hits, &[]);
+        }
+        if n_misses > 0 {
+            cache_misses_counter.add(n_misses, &[]);
+        }
 
         let fresh_embeddings: Vec<Vec<f32>> = if miss_texts.is_empty() {
             vec![]

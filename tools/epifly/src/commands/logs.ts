@@ -9,9 +9,9 @@ import { loadConfig } from "../lib/config.ts";
 import {
   getCompose,
   getContainersByAppNameMatch,
+  getServiceContainersByAppName,
   listDeploymentsByServer,
   listServers,
-  getServiceContainersByAppName,
   readComposeLogs,
   searchComposes,
 } from "../lib/dokploy.ts";
@@ -72,12 +72,13 @@ export function registerLogs(program: Command): void {
 
       let containers: any[] = [];
       try {
-        containers = await getServiceContainersByAppName(cfg, { appName: composeAppName }) ?? [];
+        containers = (await getServiceContainersByAppName(cfg, { appName: composeAppName })) ?? [];
         if (containers.length === 0) {
-          containers = await getContainersByAppNameMatch(cfg, {
-            appName: composeAppName,
-            appType: "docker-compose",
-          }) ?? [];
+          containers =
+            (await getContainersByAppNameMatch(cfg, {
+              appName: composeAppName,
+              appType: "docker-compose",
+            })) ?? [];
         }
       } catch (e: any) {
         warn(`Failed to list containers via Dokploy CLI: ${e.message}`);
@@ -140,7 +141,11 @@ function stringifyLine(line: any): string {
   return JSON.stringify(line);
 }
 
-async function printLatestDeploymentSummary(cfg: any, composeId: string, composeName: string): Promise<void> {
+async function printLatestDeploymentSummary(
+  cfg: any,
+  composeId: string,
+  composeName: string
+): Promise<void> {
   try {
     const one: any = await getCompose(cfg, composeId);
     const dep = getLatestByCreatedAt(Array.isArray(one?.deployments) ? one.deployments : []);
@@ -153,26 +158,26 @@ async function printLatestDeploymentSummary(cfg: any, composeId: string, compose
     if (dep.errorMessage) warn(`Error message: ${dep.errorMessage}`);
     if (dep.logPath) info(`Log path reported by Dokploy: ${dep.logPath}`);
     if (!one?.serverId) {
-      warn(
-        "Latest deployment has no serverId. Compose may not be bound to a Dokploy server.",
-      );
+      warn("Latest deployment has no serverId. Compose may not be bound to a Dokploy server.");
     }
 
     const servers = await listServers(cfg);
     const active = [...(Array.isArray(servers) ? servers : [])].filter(
-      (s: any) => String(s?.serverStatus ?? "") === "active",
+      (s: any) => String(s?.serverStatus ?? "") === "active"
     );
     const selected = active[0] ?? (Array.isArray(servers) ? servers[0] : undefined);
     if (!selected?.serverId) return;
 
     info(
-      `Server: ${selected.name ?? selected.serverId} (${selected.serverStatus ?? "unknown"}) ${selected.ipAddress ?? ""}`,
+      `Server: ${selected.name ?? selected.serverId} (${selected.serverStatus ?? "unknown"}) ${selected.ipAddress ?? ""}`
     );
 
-    const serverDep = getLatestByCreatedAt(await listDeploymentsByServer(cfg, String(selected.serverId)));
+    const serverDep = getLatestByCreatedAt(
+      await listDeploymentsByServer(cfg, String(selected.serverId))
+    );
     if (!serverDep) return;
     info(
-      `Latest server deployment: ${serverDep.status ?? "unknown"} (${serverDep.deploymentId ?? "unknown"})`,
+      `Latest server deployment: ${serverDep.status ?? "unknown"} (${serverDep.deploymentId ?? "unknown"})`
     );
     if (serverDep.errorMessage) warn(`Server deployment error: ${serverDep.errorMessage}`);
     if (serverDep.logPath) info(`Server log path: ${serverDep.logPath}`);

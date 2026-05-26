@@ -6,10 +6,10 @@
 
 import type { Command } from "commander";
 import { EXTERNAL_VOLUMES } from "../../../../dokploy/lib/manifest.mjs";
-import { runOverSsh } from "../lib/ssh.ts";
 import { loadConfig, readPartialConfig } from "../lib/config.ts";
-import { banner, fatal, info, section, warn } from "../lib/ui.ts";
 import { promptConfirm } from "../lib/prompts.ts";
+import { runOverSsh } from "../lib/ssh.ts";
+import { banner, fatal, info, section, warn } from "../lib/ui.ts";
 
 const VOLUME_GROUPS: Record<string, string[]> = {
   postgres: ["conusai_postgres_data"],
@@ -49,7 +49,7 @@ export function registerWipe(program: Command): void {
       if (volumes.length === 0) {
         fatal(
           "No volumes selected.",
-          "Use --all, --postgres, --redis, --qdrant, --rustfs, or --lago.",
+          "Use --all, --postgres, --redis, --qdrant, --rustfs, or --lago."
         );
       }
 
@@ -62,7 +62,7 @@ export function registerWipe(program: Command): void {
       if (!opts.yes) {
         const confirmed = await promptConfirm(
           "Type 'yes' to confirm you understand this will destroy all data in these volumes.",
-          false,
+          false
         );
         if (!confirmed) {
           info("Wipe cancelled.");
@@ -95,7 +95,7 @@ export function registerWipe(program: Command): void {
             port: opts.port ? Number(opts.port) : undefined,
             identityFile: opts.identity,
           },
-          cmd,
+          cmd
         );
       } catch (e: any) {
         fatal(`Wipe failed: ${e.message}`);

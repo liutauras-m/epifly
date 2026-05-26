@@ -30,7 +30,10 @@ impl ScheduledJob for AuditLogCleanupJob {
         let before = Utc::now() - chrono::Duration::days(retention_days);
         let deleted = ctx.audit_store.prune_before(before).await.unwrap_or(0);
 
-        info!(retention_days, deleted, "audit-log-cleanup: deleted old audit events");
+        info!(
+            retention_days,
+            deleted, "audit-log-cleanup: deleted old audit events"
+        );
         Ok(())
     }
 }

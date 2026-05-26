@@ -21,7 +21,7 @@ export function registerDiff(program: Command): void {
     .option("--config <path>", "Path to .dokploy config file")
     .option(
       "--env-file <path>",
-      "Path to local env file to compare (default: .env.production in repo root)",
+      "Path to local env file to compare (default: .env.production in repo root)"
     )
     .option("--show-secrets", "Show secret values instead of masking them")
     .action(async (opts) => {
@@ -32,13 +32,12 @@ export function registerDiff(program: Command): void {
         fatal(e.message);
       }
 
-      const envFile =
-        opts.envFile ?? resolve(cfg.repoRoot, ".env.production");
+      const envFile = opts.envFile ?? resolve(cfg.repoRoot, ".env.production");
 
       if (!existsSync(envFile)) {
         fatal(
           `Local env file not found: ${envFile}`,
-          "Pass --env-file <path> to specify a different file.",
+          "Pass --env-file <path> to specify a different file."
         );
       }
 
@@ -73,7 +72,9 @@ export function registerDiff(program: Command): void {
         } else if (k in local && !(k in remote)) {
           // Only in local
           const val = secret ? "********" : l;
-          console.log(`  ${pc.yellow("local-only ")} ${pc.yellow(k.padEnd(36))} ${pc.dim(val ?? "")}`);
+          console.log(
+            `  ${pc.yellow("local-only ")} ${pc.yellow(k.padEnd(36))} ${pc.dim(val ?? "")}`
+          );
           diffs++;
         } else if (l !== r) {
           // Both exist but differ

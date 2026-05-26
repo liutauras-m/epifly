@@ -194,3 +194,20 @@ verify:
     cargo test --workspace
     just types
     git diff --exit-code packages/types/src
+
+# Consolidated audit gate used for cleanup/refactor cycles.
+gate:
+    pnpm install --frozen-lockfile
+    pnpm -w check
+    pnpm -w lint
+    pnpm -w test
+    pnpm -w build
+    pnpm -w knip
+    cargo machete --with-metadata
+    cargo run -p xtask -- validate-capabilities --strict
+    cargo fmt --all --check
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
+    cargo test --workspace --all-features
+    cargo audit
+    cargo deny check
+    make verify-routes-doc

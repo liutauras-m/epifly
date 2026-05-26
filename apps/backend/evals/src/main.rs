@@ -45,7 +45,12 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     match cli.cmd {
-        Commands::Run { suite, dataset, model, scorer } => {
+        Commands::Run {
+            suite,
+            dataset,
+            model,
+            scorer,
+        } => {
             let scorer_kind: ScorerKind = scorer.parse()?;
             runners::run_suite_with_scorer(&suite, dataset, &model, scorer_kind).await?;
         }
@@ -60,7 +65,9 @@ async fn main() -> Result<()> {
             println!("  default     - Each suite's built-in scorer");
             println!("  exact       - Exact JSON equality");
             println!("  field-diff  - Field-by-field diff (auto-discovers expected keys)");
-            println!("  llm-judge   - LLM-graded evaluation (requires GATEWAY_URL + EVAL_TENANT_ID)");
+            println!(
+                "  llm-judge   - LLM-graded evaluation (requires GATEWAY_URL + EVAL_TENANT_ID)"
+            );
         }
     }
     Ok(())

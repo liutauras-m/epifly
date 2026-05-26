@@ -20,8 +20,8 @@ impl BootstrapConfig {
     pub fn from_env() -> Self {
         let web_origin = std::env::var("WEB_ORIGIN")
             .unwrap_or_else(|_| "http://localhost:3000,http://localhost:5173,https://tauri.localhost,tauri://localhost".into());
-        let rustfs_origin = std::env::var("S3_ENDPOINT")
-            .unwrap_or_else(|_| "http://rustfs:9000".into());
+        let rustfs_origin =
+            std::env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://rustfs:9000".into());
 
         let mut origins: Vec<String> = web_origin
             .split(',')
@@ -87,14 +87,18 @@ pub async fn bootstrap_storage(client: &RustFsAdminClient, cfg: &BootstrapConfig
     if std::env::var("RUSTFS_SSE").as_deref() != Ok("off") {
         match client.put_bucket_encryption().await {
             Ok(()) => info!("bucket default SSE-S3 encryption configured"),
-            Err(e) => warn!(error = %e, "bucket encryption config skipped (RustFS may not support it yet)"),
+            Err(e) => {
+                warn!(error = %e, "bucket encryption config skipped (RustFS may not support it yet)")
+            }
         }
     }
 
     if cfg.versioning {
         match client.set_versioning(true).await {
             Ok(()) => info!("versioning enabled"),
-            Err(e) => warn!(error = %e, "versioning config skipped (RustFS may not support it yet)"),
+            Err(e) => {
+                warn!(error = %e, "versioning config skipped (RustFS may not support it yet)")
+            }
         }
     }
 
@@ -112,12 +116,12 @@ pub async fn bootstrap_storage(client: &RustFsAdminClient, cfg: &BootstrapConfig
         }
     }
 
-    if let (Some(url), Some(secret)) = (&cfg.notification_webhook_url, &cfg.notification_secret) {
-        if std::env::var("RUSTFS_NOTIFICATIONS").as_deref() != Ok("off") {
-            match client.put_bucket_notification(url, secret).await {
-                Ok(()) => info!(url, "bucket notifications configured"),
-                Err(e) => warn!(error = %e, "bucket notification config skipped"),
-            }
+    if let (Some(url), Some(secret)) = (&cfg.notification_webhook_url, &cfg.notification_secret)
+        && std::env::var("RUSTFS_NOTIFICATIONS").as_deref() != Ok("off")
+    {
+        match client.put_bucket_notification(url, secret).await {
+            Ok(()) => info!(url, "bucket notifications configured"),
+            Err(e) => warn!(error = %e, "bucket notification config skipped"),
         }
     }
 

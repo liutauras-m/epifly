@@ -9,15 +9,10 @@
 
 import type { Command } from "commander";
 import pc from "picocolors";
-import { EXTERNAL_VOLUMES, APPS } from "../../../../dokploy/lib/manifest.mjs";
+import { APPS, EXTERNAL_VOLUMES } from "../../../../dokploy/lib/manifest.mjs";
 import { loadConfig, readPartialConfig } from "../lib/config.ts";
-import {
-  getAllProjects,
-  getEnvironment,
-  getProject,
-  searchComposes,
-} from "../lib/dokploy.ts";
-import { banner, info, ok, err, warn, section } from "../lib/ui.ts";
+import { getAllProjects, getEnvironment, getProject, searchComposes } from "../lib/dokploy.ts";
+import { banner, err, info, ok, section, warn } from "../lib/ui.ts";
 
 type CheckResult = { label: string; passed: boolean; detail?: string };
 
@@ -47,7 +42,11 @@ async function runChecks(opts: any): Promise<CheckResult[]> {
   let envRecord: any;
   try {
     envRecord = await getEnvironment(cfg, cfg.environmentId);
-    results.push({ label: "Environment found", passed: true, detail: envRecord?.name ?? cfg.environmentId });
+    results.push({
+      label: "Environment found",
+      passed: true,
+      detail: envRecord?.name ?? cfg.environmentId,
+    });
   } catch (e: any) {
     results.push({ label: "Environment found", passed: false, detail: e.message });
     return results;
@@ -75,7 +74,10 @@ async function runChecks(opts: any): Promise<CheckResult[]> {
 
   // 5. Project env has no missing keys
   try {
-    const projectRecord: any = await getProject(cfg, envRecord.projectId ?? envRecord.project?.projectId);
+    const projectRecord: any = await getProject(
+      cfg,
+      envRecord.projectId ?? envRecord.project?.projectId
+    );
     const env = projectRecord?.env ?? "";
     const missing = env.trim().length === 0;
     results.push({

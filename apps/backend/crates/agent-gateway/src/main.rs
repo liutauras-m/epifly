@@ -80,6 +80,11 @@ async fn main() -> Result<()> {
         print!("{}", routes::dump_routes_markdown());
         return Ok(());
     }
+    if std::env::args().any(|a| a == "--validate-config") {
+        AppState::validate_env_contracts()?;
+        println!("validate-config: OK");
+        return Ok(());
+    }
 
     let (_telemetry, prom_registry) = common::telemetry::init("agent-gateway", "info");
     let prom_registry = Arc::new(prom_registry);
@@ -127,7 +132,9 @@ async fn main() -> Result<()> {
                 }
 
                 if let Some(ref svc) = onboarding {
-                    let cur = svc.onboarding_total.load(std::sync::atomic::Ordering::Relaxed);
+                    let cur = svc
+                        .onboarding_total
+                        .load(std::sync::atomic::Ordering::Relaxed);
                     if cur > last_onboarding {
                         m.record_onboarding("normal");
                         last_onboarding = cur;

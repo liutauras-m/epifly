@@ -10,9 +10,16 @@ import { flushSync } from 'svelte';
  */
 export function withRoot<T>(fn: () => T): { result: T; cleanup: () => void } {
   let result!: T;
-  const cleanup = $effect.root(() => {
+  const dispose = $effect.root(() => {
     result = fn();
   });
   flushSync();
-  return { result, cleanup };
+  return {
+    result,
+    cleanup: () => {
+      dispose();
+      // Force effect teardown to run immediately so tests do not leak listeners/timers.
+      flushSync();
+    },
+  };
 }

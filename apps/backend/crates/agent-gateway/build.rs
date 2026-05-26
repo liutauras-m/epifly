@@ -9,13 +9,9 @@
 
 fn main() {
     let local_embeddings = std::env::var_os("CARGO_FEATURE_LOCAL_EMBEDDINGS").is_some();
-    println!(
-        "cargo:warning=agent-gateway: building with local-embeddings = {local_embeddings}"
-    );
+    println!("cargo:warning=agent-gateway: building with local-embeddings = {local_embeddings}");
     if !local_embeddings {
-        println!(
-            "cargo:warning=    ⚠️  Semantic router will serve ZERO tools at runtime."
-        );
+        println!("cargo:warning=    ⚠️  Semantic router will serve ZERO tools at runtime.");
         println!(
             "cargo:warning=    Rebuild with: cargo build --features agent-gateway/local-embeddings"
         );

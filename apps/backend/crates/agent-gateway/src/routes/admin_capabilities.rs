@@ -244,7 +244,6 @@ pub async fn test_invoke(
     }
 }
 
-
 pub async fn list_namespaces(
     State(state): State<Arc<AppState>>,
     Extension(_tenant): Extension<ResolvedTenant>,

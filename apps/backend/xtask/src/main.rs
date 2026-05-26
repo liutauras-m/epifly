@@ -4,17 +4,22 @@
 //!   cargo xtask capabilities lint [--dir <path>]
 //!   cargo xtask capabilities lint --strict
 
+use agent_core::capabilities::manifest::{ToolKind, ToolManifest};
+use agent_core::capabilities::validator::RegisteredToolValidator;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::ValidateCapabilities(args) => validate_capabilities(args),
         Command::Capabilities { sub } => match sub {
             CapabilitiesCommand::Lint(args) => lint(args),
+            CapabilitiesCommand::Validate(args) => validate_capabilities(args),
         },
     }
 }
@@ -30,6 +35,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Validate capability manifests + wiring contracts
+    #[command(name = "validate-capabilities")]
+    ValidateCapabilities(ValidateArgs),
     /// Capability manifest tooling
     Capabilities {
         #[command(subcommand)]
@@ -41,6 +49,8 @@ enum Command {
 enum CapabilitiesCommand {
     /// Validate all capability.toml files against schema and taxonomy rules
     Lint(LintArgs),
+    /// Validate manifests plus runtime wiring expectations
+    Validate(ValidateArgs),
 }
 
 #[derive(Parser)]
@@ -51,6 +61,22 @@ struct LintArgs {
     /// Exit with error code 1 even for warnings
     #[arg(long)]
     strict: bool,
+}
+
+#[derive(Parser, Clone)]
+struct ValidateArgs {
+    /// Root directory containing capability sub-folders (default: apps/backend/capabilities)
+    #[arg(long, short)]
+    dir: Option<PathBuf>,
+    /// Exit with error code 1 even for warnings
+    #[arg(long)]
+    strict: bool,
+    /// Maximum allowed .wasm module size in megabytes
+    #[arg(long, default_value_t = 32)]
+    max_wasm_mb: usize,
+    /// Optional comma-separated MCP endpoint allowlist (default: MCP_ALLOWED_ENDPOINTS env)
+    #[arg(long)]
+    mcp_allowlist: Option<String>,
 }
 
 // ── Minimal TOML shape ────────────────────────────────────────────────────────
@@ -90,7 +116,10 @@ impl<'de> serde::Deserialize<'de> for AcceptEntry {
             },
         }
         Ok(match Form::deserialize(d)? {
-            Form::Bare(mime) => AcceptEntry { mime, max_size_mb: None },
+            Form::Bare(mime) => AcceptEntry {
+                mime,
+                max_size_mb: None,
+            },
             Form::Full { mime, max_size_mb } => AcceptEntry { mime, max_size_mb },
         })
     }
@@ -107,31 +136,19 @@ const NAMESPACE_ROOTS: &[&str] = &[
 ];
 
 fn lint(args: LintArgs) -> anyhow::Result<()> {
-    // Resolve the capabilities directory relative to the workspace root.
-    let dir = args.dir.unwrap_or_else(|| {
-        // Try to find workspace root by walking up from cwd.
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        find_workspace_root(&cwd)
-            .map(|r| r.join("apps/backend/capabilities"))
-            .unwrap_or_else(|| cwd.join("capabilities"))
-    });
+    let dir = resolve_capabilities_dir(args.dir);
 
     if !dir.exists() {
         anyhow::bail!("capabilities directory not found: {}", dir.display());
     }
 
-    let pattern = dir.join("*/capability.toml");
-    let pattern_str = pattern
-        .to_str()
-        .context("non-UTF-8 path")?;
-
-    let paths: Vec<PathBuf> = glob::glob(pattern_str)
-        .context("bad glob")?
-        .filter_map(|e| e.ok())
-        .collect();
+    let paths = capability_manifest_paths(&dir)?;
 
     if paths.is_empty() {
-        println!("{}", "No capability.toml files found — nothing to lint.".yellow());
+        println!(
+            "{}",
+            "No capability.toml files found — nothing to lint.".yellow()
+        );
         return Ok(());
     }
 
@@ -157,6 +174,222 @@ fn lint(args: LintArgs) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn validate_capabilities(args: ValidateArgs) -> anyhow::Result<()> {
+    let dir = resolve_capabilities_dir(args.dir.clone());
+
+    if !dir.exists() {
+        anyhow::bail!("capabilities directory not found: {}", dir.display());
+    }
+
+    let paths = capability_manifest_paths(&dir)?;
+    if paths.is_empty() {
+        println!(
+            "{}",
+            "No capability.toml files found — nothing to validate.".yellow()
+        );
+        return Ok(());
+    }
+
+    let mut errors = 0usize;
+    let mut warnings = 0usize;
+    let mut manifests: HashMap<String, ToolManifest> = HashMap::new();
+
+    let mcp_allowlist_raw = args
+        .mcp_allowlist
+        .or_else(|| std::env::var("MCP_ALLOWED_ENDPOINTS").ok())
+        .unwrap_or_default();
+    let mcp_allowlist: Vec<String> = mcp_allowlist_raw
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+
+    let max_wasm_bytes = args.max_wasm_mb * 1024 * 1024;
+
+    for path in &paths {
+        let rel = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+
+        let raw = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                println!("{} {} — cannot read: {e}", "ERROR".red().bold(), rel);
+                errors += 1;
+                continue;
+            }
+        };
+
+        let size_report = RegisteredToolValidator::validate_manifest_size(&raw, 256 * 1024);
+        for e in size_report.errors {
+            println!("  {} [{}] {}", "ERROR".red().bold(), rel, e);
+            errors += 1;
+        }
+
+        let report = RegisteredToolValidator::validate_manifest(&raw);
+        for e in report.errors {
+            println!("  {} [{}] {}", "ERROR".red().bold(), rel, e);
+            errors += 1;
+        }
+        for w in report.warnings {
+            println!("  {} [{}] {}", "WARN ".yellow().bold(), rel, w);
+            warnings += 1;
+        }
+
+        let manifest = match ToolManifest::from_toml(&raw) {
+            Ok(m) => m,
+            Err(e) => {
+                println!("  {} [{}] {}", "ERROR".red().bold(), rel, e);
+                errors += 1;
+                continue;
+            }
+        };
+
+        manifests.insert(manifest.name.clone(), manifest.clone());
+
+        if !manifest.enabled {
+            println!(
+                "  {} [{}] capability is disabled; skipping runtime checks",
+                "INFO ".cyan().bold(),
+                rel
+            );
+            continue;
+        }
+
+        match manifest.kind {
+            ToolKind::Wasm => {
+                let module_name = manifest.config["wasm_module"]
+                    .as_str()
+                    .or_else(|| manifest.config["module"].as_str());
+
+                let Some(module_name) = module_name else {
+                    println!(
+                        "  {} [{}] kind=wasm requires config.wasm_module",
+                        "ERROR".red().bold(),
+                        rel
+                    );
+                    errors += 1;
+                    continue;
+                };
+
+                let module_path = path
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join(module_name);
+                let bytes = match std::fs::read(&module_path) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        println!(
+                            "  {} [{}] cannot read wasm module {}: {e}",
+                            "ERROR".red().bold(),
+                            rel,
+                            module_path.display()
+                        );
+                        errors += 1;
+                        continue;
+                    }
+                };
+
+                let wasm_report = RegisteredToolValidator::validate_wasm(&bytes, max_wasm_bytes);
+                for e in wasm_report.errors {
+                    println!("  {} [{}] {}", "ERROR".red().bold(), rel, e);
+                    errors += 1;
+                }
+            }
+            ToolKind::Mcp | ToolKind::RemoteMcp => {
+                if let Some(endpoint) = manifest.config["endpoint"].as_str() {
+                    if !mcp_allowlist.is_empty() {
+                        let allowed = mcp_allowlist.iter().any(|entry| endpoint.contains(entry));
+                        if !allowed {
+                            println!(
+                                "  {} [{}] MCP endpoint disallowed by allowlist: {}",
+                                "ERROR".red().bold(),
+                                rel,
+                                endpoint
+                            );
+                            errors += 1;
+                        }
+                    }
+                } else {
+                    println!(
+                        "  {} [{}] kind=mcp requires config.endpoint",
+                        "ERROR".red().bold(),
+                        rel
+                    );
+                    errors += 1;
+                }
+            }
+            ToolKind::Native => {
+                // Native capabilities are backed either by NativeStorageFactory
+                // (name/op dispatch) or explicit runtime wiring (`backend = "job"`).
+                let has_native_storage_mapping = manifest.name == "storage-workspace"
+                    || manifest.name == "storage-fs"
+                    || manifest.config["op"].is_string();
+                let has_job_backend = manifest.config["backend"].as_str() == Some("job");
+
+                if !has_native_storage_mapping && !has_job_backend {
+                    println!(
+                        "  {} [{}] native capability has no known provider mapping (expected config.op, backend=\"job\", or known storage capability)",
+                        "ERROR".red().bold(),
+                        rel
+                    );
+                    errors += 1;
+                }
+            }
+            ToolKind::Chain | ToolKind::Docker | ToolKind::DynamicPrompt => {}
+        }
+    }
+
+    // Provider → manifest coverage for explicit runtime-wired capabilities.
+    for required in ["transcribe-video"] {
+        if !manifests.contains_key(required) {
+            println!(
+                "{} missing required manifest for runtime-wired provider: {required}",
+                "ERROR".red().bold(),
+            );
+            errors += 1;
+        }
+    }
+
+    println!();
+    println!(
+        "Validated {} manifest(s): {} error(s), {} warning(s)",
+        manifests.len(),
+        errors,
+        warnings
+    );
+
+    if errors > 0 || (args.strict && warnings > 0) {
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+fn resolve_capabilities_dir(dir: Option<PathBuf>) -> PathBuf {
+    dir.unwrap_or_else(|| {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        find_workspace_root(&cwd)
+            .map(|r| r.join("apps/backend/capabilities"))
+            .unwrap_or_else(|| cwd.join("capabilities"))
+    })
+}
+
+fn capability_manifest_paths(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let pattern = dir.join("*/capability.toml");
+    let pattern_str = pattern.to_str().context("non-UTF-8 path")?;
+
+    let paths: Vec<PathBuf> = glob::glob(pattern_str)
+        .context("bad glob")?
+        .filter_map(|e| e.ok())
+        .collect();
+
+    Ok(paths)
 }
 
 fn lint_one(path: &Path) -> (usize, usize) {
@@ -231,11 +464,15 @@ fn lint_one(path: &Path) -> (usize, usize) {
     if IO_CATEGORIES.contains(&category) {
         let accepts = cap.accepts.as_deref().unwrap_or(&[]);
         if accepts.is_empty() {
-            err(&format!("category `{category}` requires at least one `[[accepts]]` entry"));
+            err(&format!(
+                "category `{category}` requires at least one `[[accepts]]` entry"
+            ));
         }
         let emits = cap.emits.as_deref().unwrap_or(&[]);
         if emits.is_empty() {
-            err(&format!("category `{category}` requires at least one `emits` entry"));
+            err(&format!(
+                "category `{category}` requires at least one `emits` entry"
+            ));
         }
     }
 

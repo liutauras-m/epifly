@@ -292,7 +292,12 @@ impl SemanticCapabilityRouter {
         let hits = match self.embedder.embed_query(query).await {
             Ok(embedding) => self
                 .vector_store
-                .top_n_capabilities_filtered(&embedding, limit, &self.cfg.namespace, &self.cfg.tags_any)
+                .top_n_capabilities_filtered(
+                    &embedding,
+                    limit,
+                    &self.cfg.namespace,
+                    &self.cfg.tags_any,
+                )
                 .await
                 .unwrap_or_default(),
             Err(e) => {

@@ -11,49 +11,56 @@ pub async fn run_suite_with_scorer(
     model: &str,
     scorer: ScorerKind,
 ) -> Result<()> {
-    use generic::{Scorer, json_content_extractor, text_content_extractor, run_suite_with_override};
+    use generic::{
+        Scorer, SuiteRunConfig, json_content_extractor, run_suite_with_override,
+        text_content_extractor,
+    };
 
     match suite {
         "invoice" => {
-            run_suite_with_override(
+            run_suite_with_override(SuiteRunConfig {
                 dataset,
-                "evals/suites/invoice.jsonl",
-                model,
-                |sample| {
-                    let cap = sample.input["capability"].as_str().unwrap_or("extract.fields.invoice");
+                default_dataset: "evals/suites/invoice.jsonl",
+                model: model.to_string(),
+                prompt_fn: |sample| {
+                    let cap = sample.input["capability"]
+                        .as_str()
+                        .unwrap_or("extract.fields.invoice");
                     let path = sample.input["image_path"].as_str().unwrap_or("[missing]");
                     format!("Use the {cap} capability on: {path}")
                 },
-                json_content_extractor,
-                Scorer::FieldDiff,
-                "invoice extraction eval",
-                Some(scorer),
-            )
+                extract_fn: json_content_extractor,
+                default_scorer: Scorer::FieldDiff,
+                suite_label: "invoice extraction eval",
+                scorer_override: Some(scorer),
+            })
             .await
         }
         "ocr" | "ocr_quality" => {
-            run_suite_with_override(
+            run_suite_with_override(SuiteRunConfig {
                 dataset,
-                "evals/suites/ocr.jsonl",
-                model,
-                |sample| {
-                    let cap = sample.input["capability"].as_str().unwrap_or("extract.text.ocr_vision");
+                default_dataset: "evals/suites/ocr.jsonl",
+                model: model.to_string(),
+                prompt_fn: |sample| {
+                    let cap = sample.input["capability"]
+                        .as_str()
+                        .unwrap_or("extract.text.ocr_vision");
                     let path = sample.input["image_path"].as_str().unwrap_or("[missing]");
                     format!("Use the {cap} capability on: {path}")
                 },
-                text_content_extractor,
-                Scorer::Snippets,
-                "OCR quality eval",
-                Some(scorer),
-            )
+                extract_fn: text_content_extractor,
+                default_scorer: Scorer::Snippets,
+                suite_label: "OCR quality eval",
+                scorer_override: Some(scorer),
+            })
             .await
         }
         "smoke" => {
-            run_suite_with_override(
+            run_suite_with_override(SuiteRunConfig {
                 dataset,
-                "evals/suites/smoke.jsonl",
-                model,
-                |sample| {
+                default_dataset: "evals/suites/smoke.jsonl",
+                model: model.to_string(),
+                prompt_fn: |sample| {
                     let cap = sample.input["capability"].as_str().unwrap_or("unknown");
                     let path = sample.input["image_path"]
                         .as_str()
@@ -61,32 +68,50 @@ pub async fn run_suite_with_scorer(
                         .unwrap_or("[missing]");
                     format!("Use the {cap} capability on: {path}")
                 },
-                json_content_extractor,
-                Scorer::FieldDiff,
-                "smoke eval",
-                Some(scorer),
-            )
+                extract_fn: json_content_extractor,
+                default_scorer: Scorer::FieldDiff,
+                suite_label: "smoke eval",
+                scorer_override: Some(scorer),
+            })
             .await
         }
         "all" => {
-            run_suite_with_override(
-                None, "evals/suites/invoice.jsonl", model,
-                |sample| {
-                    let cap = sample.input["capability"].as_str().unwrap_or("extract.fields.invoice");
+            run_suite_with_override(SuiteRunConfig {
+                dataset: None,
+                default_dataset: "evals/suites/invoice.jsonl",
+                model: model.to_string(),
+                prompt_fn: |sample| {
+                    let cap = sample.input["capability"]
+                        .as_str()
+                        .unwrap_or("extract.fields.invoice");
                     let path = sample.input["image_path"].as_str().unwrap_or("[missing]");
                     format!("Use the {cap} capability on: {path}")
                 },
-                json_content_extractor, Scorer::FieldDiff, "invoice extraction eval", None,
-            ).await.ok();
-            run_suite_with_override(
-                None, "evals/suites/ocr.jsonl", model,
-                |sample| {
-                    let cap = sample.input["capability"].as_str().unwrap_or("extract.text.ocr_vision");
+                extract_fn: json_content_extractor,
+                default_scorer: Scorer::FieldDiff,
+                suite_label: "invoice extraction eval",
+                scorer_override: None,
+            })
+            .await
+            .ok();
+            run_suite_with_override(SuiteRunConfig {
+                dataset: None,
+                default_dataset: "evals/suites/ocr.jsonl",
+                model: model.to_string(),
+                prompt_fn: |sample| {
+                    let cap = sample.input["capability"]
+                        .as_str()
+                        .unwrap_or("extract.text.ocr_vision");
                     let path = sample.input["image_path"].as_str().unwrap_or("[missing]");
                     format!("Use the {cap} capability on: {path}")
                 },
-                text_content_extractor, Scorer::Snippets, "OCR quality eval", None,
-            ).await.ok();
+                extract_fn: text_content_extractor,
+                default_scorer: Scorer::Snippets,
+                suite_label: "OCR quality eval",
+                scorer_override: None,
+            })
+            .await
+            .ok();
             Ok(())
         }
         other => anyhow::bail!("unknown suite: {other}. Run `evals list` to see available suites."),

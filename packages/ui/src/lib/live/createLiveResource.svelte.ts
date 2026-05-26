@@ -119,13 +119,21 @@ export function createLiveResource<T>(
   let lastError = $state<Error | null>(null);
   let attempt = 0;
   let lastFetchTime = 0;
+  // Bumps on each optimistic mutation so stale in-flight fetches can be ignored.
+  let optimisticEpoch = 0;
 
   async function refresh() {
     if (loading) return;
     loading = true;
     error = null;
+    const refreshEpoch = optimisticEpoch;
     try {
-      data = await fetcher();
+      const next = await fetcher();
+      // If an optimistic mutation happened while this refresh was in flight,
+      // keep the optimistic overlay instead of clobbering it with stale data.
+      if (refreshEpoch === optimisticEpoch) {
+        data = next;
+      }
       lastFetchTime = Date.now();
       attempt = 0;
     } catch (e: unknown) {
@@ -166,6 +174,7 @@ export function createLiveResource<T>(
     // Snapshot BEFORE the update so rollback restores the pre-mutation state.
     const snapshot = cloneSnapshot(data);
     const draft = cloneSnapshot(data);
+    optimisticEpoch += 1;
     data = updater(draft);
     void opts.rollbackOn.then(
       () => {

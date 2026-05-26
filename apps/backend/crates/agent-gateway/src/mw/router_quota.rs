@@ -7,13 +7,13 @@
 //! Also enforces daily quota limits via `QuotaChecker` for agent/chat routes,
 //! returning 429 with upgrade URL when the plan's daily cap is exceeded.
 
+use crate::mw::tenant::ResolvedTenant;
 use agent_core::context::tenant::PlanLimits;
 use axum::{
     body::Body,
     http::{Request, Response, StatusCode, header},
 };
 use billing_core::{events::ActionType, quota::QuotaChecker};
-use crate::mw::tenant::ResolvedTenant;
 use std::{
     future::Future,
     pin::Pin,
@@ -82,8 +82,8 @@ impl RouterQuotaConfig {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(default)
         }
-        let upgrade_url = std::env::var("BILLING_RETURN_URL")
-            .unwrap_or_else(|_| "/account/billing".into());
+        let upgrade_url =
+            std::env::var("BILLING_RETURN_URL").unwrap_or_else(|_| "/account/billing".into());
         let min_confidence = std::env::var("CONUSAI_ROUTER_MIN_CONFIDENCE")
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
@@ -168,54 +168,53 @@ where
             // Check daily quota for agent/chat completion routes.
             if let Some(ref quota) = cfg.quota {
                 let path = req.uri().path();
-                let is_agent_route = path.starts_with("/v1/agent/")
-                    || path.starts_with("/v1/chat/");
-                if is_agent_route {
-                    if let Some(ResolvedTenant(ctx)) = req.extensions().get::<ResolvedTenant>() {
-                        let decision = quota
-                            .check(&ctx.tenant_id, &ctx.plan, &ActionType::AgentTurn, 1)
-                            .await;
-                        if !decision.allowed {
-                            let plan_tier = format!("{}", ctx.plan);
-                            let upgrade_url = cfg.upgrade_url.clone();
-                            let reason = decision.reason.unwrap_or_default();
-                            let body = serde_json::json!({
-                                "code": "quota_exceeded",
-                                "message": reason,
-                                "plan_tier": plan_tier,
-                                "upgrade_url": upgrade_url,
-                            })
-                            .to_string();
-                            let mut resp = Response::new(Body::from(body));
-                            *resp.status_mut() = StatusCode::TOO_MANY_REQUESTS;
-                            resp.headers_mut().insert(
-                                header::CONTENT_TYPE,
-                                "application/json".parse().unwrap(),
-                            );
-                            if let Some(reset_at) = decision.reset_at {
-                                let secs = (reset_at - chrono::Utc::now()).num_seconds().max(0);
-                                if let Ok(v) = secs.to_string().parse() {
-                                    resp.headers_mut().insert(header::RETRY_AFTER, v);
-                                }
+                let is_agent_route =
+                    path.starts_with("/v1/agent/") || path.starts_with("/v1/chat/");
+                if is_agent_route
+                    && let Some(ResolvedTenant(ctx)) = req.extensions().get::<ResolvedTenant>()
+                {
+                    let decision = quota
+                        .check(&ctx.tenant_id, &ctx.plan, &ActionType::AgentTurn, 1)
+                        .await;
+                    if !decision.allowed {
+                        let plan_tier = format!("{}", ctx.plan);
+                        let upgrade_url = cfg.upgrade_url.clone();
+                        let reason = decision.reason.unwrap_or_default();
+                        let body = serde_json::json!({
+                            "code": "quota_exceeded",
+                            "message": reason,
+                            "plan_tier": plan_tier,
+                            "upgrade_url": upgrade_url,
+                        })
+                        .to_string();
+                        let mut resp = Response::new(Body::from(body));
+                        *resp.status_mut() = StatusCode::TOO_MANY_REQUESTS;
+                        resp.headers_mut()
+                            .insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
+                        if let Some(reset_at) = decision.reset_at {
+                            let secs = (reset_at - chrono::Utc::now()).num_seconds().max(0);
+                            if let Ok(v) = secs.to_string().parse() {
+                                resp.headers_mut().insert(header::RETRY_AFTER, v);
                             }
-                            return Ok(resp);
                         }
+                        return Ok(resp);
                     }
                 }
             }
 
             // Override tool caps from per-plan limits when available (injected by enforce_plan).
-            let effective_cfg = if let Some(plan_limits) = req.extensions().get::<PlanLimits>().copied() {
-                Arc::new(RouterQuotaConfig {
-                    max_tools_per_turn: plan_limits.max_tools_per_turn,
-                    max_invokes_per_turn: plan_limits.max_invokes_per_turn,
-                    min_confidence: cfg.min_confidence,
-                    quota: cfg.quota.clone(),
-                    upgrade_url: cfg.upgrade_url.clone(),
-                })
-            } else {
-                Arc::clone(&cfg)
-            };
+            let effective_cfg =
+                if let Some(plan_limits) = req.extensions().get::<PlanLimits>().copied() {
+                    Arc::new(RouterQuotaConfig {
+                        max_tools_per_turn: plan_limits.max_tools_per_turn,
+                        max_invokes_per_turn: plan_limits.max_invokes_per_turn,
+                        min_confidence: cfg.min_confidence,
+                        quota: cfg.quota.clone(),
+                        upgrade_url: cfg.upgrade_url.clone(),
+                    })
+                } else {
+                    Arc::clone(&cfg)
+                };
 
             let (mut parts, body) = req.into_parts();
             parts.extensions.insert(effective_cfg);
@@ -329,7 +328,13 @@ mod tests {
         async fn handler(req: axum::extract::Request) -> (StatusCode, String) {
             let cfg = req.extensions().get::<Arc<RouterQuotaConfig>>().cloned();
             match cfg {
-                Some(c) => (StatusCode::OK, format!("tools={},invokes={}", c.max_tools_per_turn, c.max_invokes_per_turn)),
+                Some(c) => (
+                    StatusCode::OK,
+                    format!(
+                        "tools={},invokes={}",
+                        c.max_tools_per_turn, c.max_invokes_per_turn
+                    ),
+                ),
                 None => (StatusCode::INTERNAL_SERVER_ERROR, "no config".into()),
             }
         }
@@ -357,7 +362,9 @@ mod tests {
 
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         assert_eq!(std::str::from_utf8(&body).unwrap(), "tools=50,invokes=25");
     }
 
@@ -366,8 +373,18 @@ mod tests {
         use agent_core::context::tenant::PlanTier;
 
         async fn handler(req: axum::extract::Request) -> (StatusCode, String) {
-            let cfg = req.extensions().get::<Arc<RouterQuotaConfig>>().cloned().unwrap();
-            (StatusCode::OK, format!("tools={},invokes={}", cfg.max_tools_per_turn, cfg.max_invokes_per_turn))
+            let cfg = req
+                .extensions()
+                .get::<Arc<RouterQuotaConfig>>()
+                .cloned()
+                .unwrap();
+            (
+                StatusCode::OK,
+                format!(
+                    "tools={},invokes={}",
+                    cfg.max_tools_per_turn, cfg.max_invokes_per_turn
+                ),
+            )
         }
 
         let app = Router::new()
@@ -382,7 +399,9 @@ mod tests {
             .unwrap();
 
         let resp = app.oneshot(req).await.unwrap();
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         // Free: 10 tools, 5 invokes — much less than the 25/10 global defaults.
         assert_eq!(std::str::from_utf8(&body).unwrap(), "tools=10,invokes=5");
     }

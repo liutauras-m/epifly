@@ -14,7 +14,9 @@ use agent_core::{
     capabilities::discovery::CapabilityDiscovery,
     llm::{LlmBinding, LlmRegistry},
 };
-use common::memory::{InMemoryWorkspaceContent, InMemoryWorkspaceStore, WorkspaceStore, WorkspaceContentStore};
+use common::memory::{
+    InMemoryWorkspaceContent, InMemoryWorkspaceStore, WorkspaceContentStore, WorkspaceStore,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -26,7 +28,11 @@ fn capabilities_dir() -> std::path::PathBuf {
         .ancestors()
         .find_map(|a| {
             let candidate = a.join("capabilities");
-            if candidate.is_dir() { Some(candidate) } else { None }
+            if candidate.is_dir() {
+                Some(candidate)
+            } else {
+                None
+            }
         })
         .unwrap_or_else(|| std::path::PathBuf::from("capabilities"))
 }
@@ -37,7 +43,10 @@ fn build_test_registry() -> CapabilityRegistry {
     let llm = Arc::new(LlmRegistry::new(
         HashMap::new(),
         HashMap::new(),
-        LlmBinding { provider: "anthropic".into(), model: "claude-haiku-4-5".into() },
+        LlmBinding {
+            provider: "anthropic".into(),
+            model: "claude-haiku-4-5".into(),
+        },
     ));
     let mut reg = CapabilityRegistry::with_default_factories(Arc::clone(&llm));
     reg.register_factory(NativeStorageFactory::new(
@@ -60,7 +69,9 @@ fn assert_lexical_match(reg: &CapabilityRegistry, prompt: &str, expected_caps: &
         return; // CI without capabilities dir — skip live manifest tests
     }
     let hits = reg.lexical_hint_capabilities(prompt, TENANT);
-    let matched_any = expected_caps.iter().any(|cap| hits.contains(&cap.to_string()));
+    let matched_any = expected_caps
+        .iter()
+        .any(|cap| hits.contains(&cap.to_string()));
     assert!(
         matched_any,
         "prompt {prompt:?} should have matched one of {expected_caps:?}; \
@@ -81,21 +92,33 @@ fn lexical_save_notes_to_folder() {
 #[test]
 fn lexical_delete_document() {
     let reg = build_test_registry();
-    assert_lexical_match(&reg, "delete this document from my workspace", &["storage-workspace"]);
+    assert_lexical_match(
+        &reg,
+        "delete this document from my workspace",
+        &["storage-workspace"],
+    );
 }
 
 /// 3. "scaffold a new React project" — code-project cap-level keyword "scaffold"
 #[test]
 fn lexical_scaffold_react_project() {
     let reg = build_test_registry();
-    assert_lexical_match(&reg, "scaffold a new React project for me", &["code-project"]);
+    assert_lexical_match(
+        &reg,
+        "scaffold a new React project for me",
+        &["code-project"],
+    );
 }
 
 /// 4. "add dependency lodash" — code-project tool-level keyword "add dependency"
 #[test]
 fn lexical_add_dependency() {
     let reg = build_test_registry();
-    assert_lexical_match(&reg, "add dependency lodash to the project", &["code-project"]);
+    assert_lexical_match(
+        &reg,
+        "add dependency lodash to the project",
+        &["code-project"],
+    );
 }
 
 /// 5. "upload this file" — file-storage tool-level keyword "upload"
@@ -120,7 +143,11 @@ fn lexical_extract_text_from_scan() {
 #[test]
 fn lexical_invoice_processing() {
     let reg = build_test_registry();
-    assert_lexical_match(&reg, "process this invoice PDF and extract the amounts", &["invoice-processing"]);
+    assert_lexical_match(
+        &reg,
+        "process this invoice PDF and extract the amounts",
+        &["invoice-processing"],
+    );
 }
 
 /// 8. "deploy and get a live URL" — code-project tool-level keyword "host"
@@ -134,14 +161,22 @@ fn lexical_deploy_app() {
 #[test]
 fn lexical_create_folder() {
     let reg = build_test_registry();
-    assert_lexical_match(&reg, "create a new folder for my research", &["storage-workspace"]);
+    assert_lexical_match(
+        &reg,
+        "create a new folder for my research",
+        &["storage-workspace"],
+    );
 }
 
 /// 10. "remove all files from the archive" — storage-workspace tool-level keyword "remove all"
 #[test]
 fn lexical_remove_all_files() {
     let reg = build_test_registry();
-    assert_lexical_match(&reg, "remove all files from the archive folder", &["storage-workspace"]);
+    assert_lexical_match(
+        &reg,
+        "remove all files from the archive folder",
+        &["storage-workspace"],
+    );
 }
 
 // ── Negative test ─────────────────────────────────────────────────────────────

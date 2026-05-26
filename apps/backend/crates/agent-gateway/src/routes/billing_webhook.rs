@@ -92,7 +92,10 @@ pub async fn handle_webhook(
                 && let Some(customer_id) = obj.get("external_id").and_then(|v| v.as_str())
             {
                 // Push SSE quota warning to the affected tenant.
-                state.realtime_service.broadcast_quota_warning(customer_id).await;
+                state
+                    .realtime_service
+                    .broadcast_quota_warning(customer_id)
+                    .await;
             }
         }
         other => {

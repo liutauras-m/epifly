@@ -6,9 +6,14 @@
 
 import type { Command } from "commander";
 import { loadConfig } from "../lib/config.ts";
-import { searchComposes, deleteCompose, deleteDomain, getDomainsByCompose } from "../lib/dokploy.ts";
-import { banner, fatal, info, ok, section, warn } from "../lib/ui.ts";
+import {
+  deleteCompose,
+  deleteDomain,
+  getDomainsByCompose,
+  searchComposes,
+} from "../lib/dokploy.ts";
 import { promptConfirm } from "../lib/prompts.ts";
+import { banner, fatal, info, ok, section, warn } from "../lib/ui.ts";
 
 export function registerDestroy(program: Command): void {
   program
@@ -41,12 +46,12 @@ export function registerDestroy(program: Command): void {
         fatal(`Failed to list composes: ${e.message}`);
       }
 
-      if (items!.length === 0) {
+      if (items?.length === 0) {
         info("No compose services found in this environment.");
         return;
       }
 
-      warn(`This will permanently delete ${items!.length} compose service(s):`);
+      warn(`This will permanently delete ${items?.length} compose service(s):`);
       for (const c of items!) {
         warn(`  · ${c.name} (${c.composeId}) — status: ${c.composeStatus}`);
       }
@@ -55,7 +60,7 @@ export function registerDestroy(program: Command): void {
       if (!opts.yes) {
         const confirmed = await promptConfirm(
           "Are you sure you want to delete all these services?",
-          false,
+          false
         );
         if (!confirmed) {
           info("Destroy cancelled.");
@@ -87,7 +92,9 @@ export function registerDestroy(program: Command): void {
           const message = String(e?.message ?? e);
           if (!opts.deleteVolumes && message.includes("--deleteVolumes")) {
             warn(`  ✗ ${c.name}: Dokploy CLI requires --deleteVolumes on this server version.`);
-            warn("    Re-run with --delete-volumes or upgrade Dokploy CLI/server for optional flag behavior.");
+            warn(
+              "    Re-run with --delete-volumes or upgrade Dokploy CLI/server for optional flag behavior."
+            );
           } else {
             warn(`  ✗ ${c.name}: ${message || "delete failed"}`);
           }
@@ -97,9 +104,9 @@ export function registerDestroy(program: Command): void {
 
       console.log();
       if (failed > 0) {
-        fatal(`${failed}/${items!.length} deletes failed. Check the Dokploy UI.`);
+        fatal(`${failed}/${items?.length} deletes failed. Check the Dokploy UI.`);
       } else {
-        ok(`All ${items!.length} services deleted. Run \`epifly deploy\` to redeploy.`);
+        ok(`All ${items?.length} services deleted. Run \`epifly deploy\` to redeploy.`);
       }
     });
 }

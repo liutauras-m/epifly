@@ -24,7 +24,10 @@ use std::sync::Arc;
 fn bridge_with_inmem() -> (Arc<ArtifactBridge>, Arc<InMemoryWorkspaceContent>) {
     let store = Arc::new(InMemory::new());
     let content = Arc::new(InMemoryWorkspaceContent::new());
-    let bridge = ArtifactBridge::new(store, Arc::clone(&content) as Arc<dyn WorkspaceContentStore>);
+    let bridge = ArtifactBridge::new(
+        store,
+        Arc::clone(&content) as Arc<dyn WorkspaceContentStore>,
+    );
     (bridge, content)
 }
 
@@ -119,7 +122,7 @@ async fn absent_prefix_uses_legacy_outputs_path() {
     let stored = content
         .read(TENANT, &expected_path)
         .await
-        .expect(&format!("should be readable at {expected_path}"));
+        .unwrap_or_else(|_| panic!("should be readable at {expected_path}"));
     assert_eq!(stored, "some output");
 }
 
@@ -141,11 +144,17 @@ async fn multiple_artifacts_all_use_prefix() {
         .expect("process_if_artifacts should succeed");
 
     assert_eq!(
-        content.read(TENANT, "projects/demo/src/index.ts").await.unwrap(),
+        content
+            .read(TENANT, "projects/demo/src/index.ts")
+            .await
+            .unwrap(),
         "const x = 1;"
     );
     assert_eq!(
-        content.read(TENANT, "projects/demo/package.json").await.unwrap(),
+        content
+            .read(TENANT, "projects/demo/package.json")
+            .await
+            .unwrap(),
         r#"{"name":"demo"}"#
     );
 }
@@ -172,7 +181,10 @@ async fn binary_artifact_does_not_write_to_content_store() {
     // Binary artifacts are NOT written to the workspace content store
     // (only text/* and application/json are indexed).  InMemoryWorkspaceContent
     // returns Ok("") for absent keys, so we check for the empty sentinel.
-    let stored = content.read(TENANT, "assets/logo.png").await.unwrap_or_default();
+    let stored = content
+        .read(TENANT, "assets/logo.png")
+        .await
+        .unwrap_or_default();
     assert!(
         stored.is_empty(),
         "binary artifact must not appear in content store, got: {stored:?}"

@@ -74,7 +74,10 @@ impl RustFsMetrics {
         .unwrap();
 
         let tenant_onboarding_total = IntCounterVec::new(
-            Opts::new("tenant_onboarding_total", "Successful tenant provisioning operations"),
+            Opts::new(
+                "tenant_onboarding_total",
+                "Successful tenant provisioning operations",
+            ),
             &["kind"],
         )
         .unwrap();
@@ -124,11 +127,15 @@ impl RustFsMetrics {
     }
 
     pub fn record_storage_fallback(&self, result: &str) {
-        self.storage_fallback_total.with_label_values(&[result]).inc();
+        self.storage_fallback_total
+            .with_label_values(&[result])
+            .inc();
     }
 
     pub fn record_onboarding(&self, kind: &str) {
-        self.tenant_onboarding_total.with_label_values(&[kind]).inc();
+        self.tenant_onboarding_total
+            .with_label_values(&[kind])
+            .inc();
     }
 
     pub fn record_onboarding_marker_failed(&self) {

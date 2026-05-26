@@ -19,6 +19,7 @@ pub enum ChunkPayload {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn chat_stream_start(
     app: AppHandle,
     registry: State<'_, StreamRegistry>,

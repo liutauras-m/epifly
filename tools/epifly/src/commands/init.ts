@@ -10,10 +10,10 @@
 
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { Command } from "commander";
 import * as p from "@clack/prompts";
-import { banner, ok, section, warn } from "../lib/ui.ts";
+import type { Command } from "commander";
 import { listEnvironments } from "../lib/dokploy.ts";
+import { banner, ok, section, warn } from "../lib/ui.ts";
 
 export function registerInit(program: Command): void {
   program
@@ -32,13 +32,19 @@ export function registerInit(program: Command): void {
           if (!v.startsWith("http")) return "Must start with http:// or https://";
         },
       })) as string;
-      if (p.isCancel(dokployUrl)) { p.cancel("Cancelled."); process.exit(0); }
+      if (p.isCancel(dokployUrl)) {
+        p.cancel("Cancelled.");
+        process.exit(0);
+      }
 
       const apiKey = (await p.password({
         message: "Dokploy API key",
         validate: (v) => (v.length < 8 ? "API key too short" : undefined),
       })) as string;
-      if (p.isCancel(apiKey)) { p.cancel("Cancelled."); process.exit(0); }
+      if (p.isCancel(apiKey)) {
+        p.cancel("Cancelled.");
+        process.exit(0);
+      }
 
       // Verify connectivity and list environments for the operator to choose.
       const sp = p.spinner();
@@ -63,7 +69,10 @@ export function registerInit(program: Command): void {
             hint: e.description ?? "",
           })),
         })) as string;
-        if (p.isCancel(chosen)) { p.cancel("Cancelled."); process.exit(0); }
+        if (p.isCancel(chosen)) {
+          p.cancel("Cancelled.");
+          process.exit(0);
+        }
         environmentId = chosen;
       } catch (e: any) {
         sp.stop("Failed");
@@ -78,14 +87,20 @@ export function registerInit(program: Command): void {
           if (!v.includes(".")) return "Must be a valid domain";
         },
       })) as string;
-      if (p.isCancel(appDomain)) { p.cancel("Cancelled."); process.exit(0); }
+      if (p.isCancel(appDomain)) {
+        p.cancel("Cancelled.");
+        process.exit(0);
+      }
 
       const repoRoot = (await p.text({
         message: "Path to the conusai-platform repo root",
         defaultValue: process.cwd(),
         placeholder: process.cwd(),
       })) as string;
-      if (p.isCancel(repoRoot)) { p.cancel("Cancelled."); process.exit(0); }
+      if (p.isCancel(repoRoot)) {
+        p.cancel("Cancelled.");
+        process.exit(0);
+      }
 
       const dest = opts.config ?? resolve(process.cwd(), ".dokploy");
       const cfg = {
@@ -95,11 +110,13 @@ export function registerInit(program: Command): void {
         appDomain,
         repoRoot,
       };
-      writeFileSync(dest, JSON.stringify(cfg, null, 2) + "\n", "utf8");
+      writeFileSync(dest, `${JSON.stringify(cfg, null, 2)}\n`, "utf8");
 
       section("Done");
       ok(`Config written to ${dest}`);
-      p.log.info("Run `epifly status` to check your environment, or `epifly deploy` to trigger a deploy.");
+      p.log.info(
+        "Run `epifly status` to check your environment, or `epifly deploy` to trigger a deploy."
+      );
       p.outro("Happy deploying!");
     });
 }

@@ -9,7 +9,11 @@
   "scripts": {
     "dev": "pnpm --filter web dev",
     "build": "pnpm -r build",
+    "test": "pnpm -r --if-present test",
+    "check": "pnpm --filter web lint && pnpm --filter browser-shell check-types && pnpm --filter @conusai/ui check-types && pnpm --filter @conusai/epifly check-types",
     "lint": "pnpm -r lint",
+    "knip": "knip --production --dependencies",
+    "gate": "pnpm check && pnpm lint && pnpm test && pnpm build && pnpm knip",
     "lint:svelte": "eslint 'packages/ui/src/**/*.svelte' 'apps/web/src/**/*.svelte' 'apps/browser-shell/src/**/*.svelte'",
     "ui:contracts": "node packages/ui/scripts/check-ui-contracts.mjs",
     "ui:motion:durations": "node packages/ui/scripts/check-motion-durations.mjs",
@@ -50,13 +54,14 @@
     "eslint": "^10.4.0",
     "eslint-plugin-svelte": "^3.17.1",
     "globals": "^17.6.0",
+    "knip": "^6.14.2",
     "ts-node": "^10.9.2",
     "webdriverio": "^9.27.1"
   },
-  "dependencies": {
-    "@fontsource-variable/fraunces": "^5.2.9",
-    "@fontsource-variable/inter": "^5.2.8",
-    "@fontsource/fraunces": "^5.2.9",
-    "@fontsource/jetbrains-mono": "^5.2.8"
+  "dependencies": {},
+  "knip": {
+    "ignoreDependencies": [
+      "@sveltejs/adapter-node"
+    ]
   }
 }

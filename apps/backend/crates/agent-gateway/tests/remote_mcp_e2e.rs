@@ -7,7 +7,7 @@
 //! Does NOT require a running Postgres instance — uses the in-memory registry path.
 
 use agent_core::{
-    CapabilityRegistry, SemanticCapabilityRouter, SemanticRouterConfig,
+    CapabilityRegistry, QdrantVectorStore, SemanticCapabilityRouter, SemanticRouterConfig,
     capabilities::{
         card::CapabilityCard,
         manifest::{ToolDef, ToolKind, ToolManifest},
@@ -15,7 +15,6 @@ use agent_core::{
     },
     context::tenant::{PlanTier, TenantContext},
     indexing::EmbeddingService,
-    QdrantVectorStore,
 };
 use async_trait::async_trait;
 use serde_json::json;

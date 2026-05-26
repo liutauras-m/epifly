@@ -13,7 +13,7 @@ import { info, warn } from "./ui.ts";
 export async function tailDeployLogs(
   cfg: EpiflyConfig,
   composeId: string,
-  timeoutMs = 600_000,
+  timeoutMs = 600_000
 ): Promise<string> {
   const start = Date.now();
   let lastStatus = "";
@@ -69,7 +69,6 @@ export async function tailDeployLogs(
   warn("Timed out waiting for deploy to complete.");
   return "timeout";
 }
-
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));

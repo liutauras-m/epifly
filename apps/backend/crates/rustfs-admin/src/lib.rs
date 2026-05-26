@@ -10,8 +10,8 @@ pub mod iam;
 pub mod signing;
 
 pub use bootstrap::{BootstrapConfig, bootstrap_storage};
-pub use iam::{IamCreds, provision_tenant, deprovision_tenant};
 pub use bucket::sanitize_bucket_name;
+pub use iam::{IamCreds, deprovision_tenant, provision_tenant};
 
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
@@ -53,7 +53,7 @@ use tracing::{debug, instrument};
 fn derive_admin_key(password: &str, salt: &[u8], alg_id: u8) -> Result<[u8; 32]> {
     match alg_id {
         0x00 | 0x01 => {
-            use argon2::{Argon2, Algorithm, Version, Params};
+            use argon2::{Algorithm, Argon2, Params, Version};
             let params = Params::new(64 * 1024, 1, 4, Some(32)).expect("argon2 params");
             let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
             let mut key = [0u8; 32];
@@ -110,34 +110,34 @@ fn derive_admin_key(password: &str, salt: &[u8], alg_id: u8) -> Result<[u8; 32]>
 /// Single-block responses (< 65536 plaintext bytes):
 ///   - One chunk with is_last = true → AAD = [0x80], nonce = prefix || [0,0,0,0].
 fn decrypt_admin_body(password: &str, data: &[u8]) -> Result<Vec<u8>> {
+    use aes_gcm::aead::{Aead, Nonce, Payload};
     use aes_gcm::{Aes256Gcm, KeyInit};
-    use aes_gcm::aead::{Aead, Payload, Nonce};
 
-    const HEADER_LEN: usize  = 41; // 32 salt + 1 alg_id + 8 nonce_prefix
-    const TAG_LEN: usize     = 16;
-    const MAX_CHUNK: usize   = 65536; // max plaintext bytes per sio chunk
-    const CHUNK_WIRE: usize  = MAX_CHUNK + TAG_LEN; // wire bytes for a full chunk
+    const HEADER_LEN: usize = 41; // 32 salt + 1 alg_id + 8 nonce_prefix
+    const TAG_LEN: usize = 16;
+    const MAX_CHUNK: usize = 65536; // max plaintext bytes per sio chunk
+    const CHUNK_WIRE: usize = MAX_CHUNK + TAG_LEN; // wire bytes for a full chunk
 
     if data.len() < HEADER_LEN + TAG_LEN {
         bail!("response too short: {} bytes", data.len());
     }
 
-    let salt         = &data[0..32];
-    let alg_id       = data[32];
+    let salt = &data[0..32];
+    let alg_id = data[32];
     let nonce_prefix = &data[33..41];
-    let mut body     = &data[HEADER_LEN..];
+    let mut body = &data[HEADER_LEN..];
 
     let key_bytes = derive_admin_key(password, salt, alg_id)?;
-    let cipher    = Aes256Gcm::new_from_slice(&key_bytes).expect("aes key");
+    let cipher = Aes256Gcm::new_from_slice(&key_bytes).expect("aes key");
 
     // sio-go uses a 17-byte AAD derived from seqNum=0: [flags(1)] || verif_token(16).
     // verif_token = AES-GCM-Seal(nonce=nonce_prefix||LE(0), plaintext=nil, aad=nil).
     let mut init_nonce_arr = [0u8; 12];
     init_nonce_arr[0..8].copy_from_slice(nonce_prefix);
     // init_nonce_arr[8..12] = 0 (seqNum=0, zero-initialised)
-    let init_nonce   = Nonce::<Aes256Gcm>::from(init_nonce_arr);
+    let init_nonce = Nonce::<Aes256Gcm>::from(init_nonce_arr);
     // encrypting empty plaintext returns only the 16-byte GCM tag
-    let verif_token  = cipher
+    let verif_token = cipher
         .encrypt(&init_nonce, Payload { msg: &[], aad: &[] })
         .expect("sio init seal");
     debug_assert_eq!(verif_token.len(), TAG_LEN);
@@ -171,11 +171,17 @@ fn decrypt_admin_body(password: &str, data: &[u8]) -> Result<Vec<u8>> {
         aad[1..].copy_from_slice(&verif_token);
 
         let decrypted = cipher
-            .decrypt(&nonce, Payload { msg: chunk, aad: &aad })
+            .decrypt(
+                &nonce,
+                Payload {
+                    msg: chunk,
+                    aad: &aad,
+                },
+            )
             .map_err(|_| anyhow::anyhow!("sio: AES-GCM failed at chunk {seq_num}"))?;
 
         plain.extend_from_slice(&decrypted);
-        body    = rest;
+        body = rest;
         seq_num += 1;
     }
 
@@ -187,8 +193,11 @@ fn decrypt_admin_body(password: &str, data: &[u8]) -> Result<Vec<u8>> {
 /// Assembles: `[salt 32B][alg_id=0x00 1B][nonce 12B][ciphertext+tag]`.
 /// Key derivation: Argon2id(password=secret_key, salt, t=1, m=64KiB, p=4).
 fn encrypt_admin_body(secret_key: &str, plaintext: &[u8]) -> Vec<u8> {
-    use argon2::{Argon2, Algorithm, Version, Params};
-    use aes_gcm::{Aes256Gcm, KeyInit, aead::{Aead, Nonce}};
+    use aes_gcm::{
+        Aes256Gcm, KeyInit,
+        aead::{Aead, Nonce},
+    };
+    use argon2::{Algorithm, Argon2, Params, Version};
     use rand::RngCore;
 
     // Random 32-byte salt — placed FIRST in the wire format.
@@ -215,10 +224,10 @@ fn encrypt_admin_body(secret_key: &str, plaintext: &[u8]) -> Vec<u8> {
     // Assemble: salt(32) | alg_id(1) | nonce(12) | ciphertext+tag(N+16)
     const ALG_ARGON2ID_AES_GCM: u8 = 0x00;
     let mut out = Vec::with_capacity(32 + 1 + 12 + ciphertext.len());
-    out.extend_from_slice(&salt);        // [0..31]
-    out.push(ALG_ARGON2ID_AES_GCM);     // [32]
+    out.extend_from_slice(&salt); // [0..31]
+    out.push(ALG_ARGON2ID_AES_GCM); // [32]
     out.extend_from_slice(&nonce_bytes); // [33..44]
-    out.extend_from_slice(&ciphertext);  // [45+]
+    out.extend_from_slice(&ciphertext); // [45+]
     out
 }
 
@@ -256,16 +265,14 @@ impl RustFsAdminClient {
     }
 
     pub fn from_env() -> Self {
-        let endpoint = std::env::var("S3_ENDPOINT")
-            .unwrap_or_else(|_| "http://rustfs:9000".into());
+        let endpoint = std::env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://rustfs:9000".into());
         let access_key = std::env::var("RUSTFS_ROOT_ACCESS_KEY")
             .or_else(|_| std::env::var("AWS_ACCESS_KEY_ID"))
             .unwrap_or_else(|_| "rustfsadmin".into());
         let secret_key = std::env::var("RUSTFS_ROOT_SECRET_KEY")
             .or_else(|_| std::env::var("AWS_SECRET_ACCESS_KEY"))
             .unwrap_or_else(|_| "rustfsadmin".into());
-        let bucket = std::env::var("S3_BUCKET")
-            .unwrap_or_else(|_| "workspace".into());
+        let bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "workspace".into());
         Self::new(endpoint, access_key, secret_key, bucket)
     }
 
@@ -291,18 +298,22 @@ impl RustFsAdminClient {
             format!("{}{}?{}", self.endpoint, path, query)
         };
 
-        let signed = signing::sign_request(
-            method.as_str(),
-            path,
+        let host = self.host();
+        let ctx = signing::SigningContext {
+            host: &host,
+            access_key: &self.access_key,
+            secret_key: &self.secret_key,
+            region: &self.region,
+            service: "s3",
+        };
+        let req = signing::SigningRequest {
+            method: method.as_str(),
+            uri_path: path,
             query,
-            &self.host(),
-            &self.access_key,
-            &self.secret_key,
-            &self.region,
-            "s3",
             extra_headers,
-            &body,
-        );
+            payload: &body,
+        };
+        let signed = signing::sign_request(&ctx, &req);
 
         let mut req = self.http.request(method, &url);
         for (k, v) in &signed {
@@ -337,7 +348,9 @@ impl RustFsAdminClient {
         } else {
             Bytes::from(encrypt_admin_body(&self.secret_key, &body))
         };
-        let resp = self.s3_request(method, &full_path, query, &BTreeMap::new(), payload).await?;
+        let resp = self
+            .s3_request(method, &full_path, query, &BTreeMap::new(), payload)
+            .await?;
         let status = resp.status();
         let raw = resp.bytes().await.context("read admin response body")?;
         let plain = if raw.is_empty() {
@@ -370,7 +383,8 @@ impl RustFsAdminClient {
             }
             s => {
                 let body = resp.text().await.unwrap_or_default();
-                if body.contains("BucketAlreadyOwnedByYou") || body.contains("BucketAlreadyExists") {
+                if body.contains("BucketAlreadyOwnedByYou") || body.contains("BucketAlreadyExists")
+                {
                     debug!(bucket = %self.bucket, "bucket already exists");
                     return Ok(());
                 }
@@ -389,7 +403,13 @@ impl RustFsAdminClient {
         let mut headers = BTreeMap::new();
         headers.insert("content-type".into(), "application/xml".into());
         let resp = self
-            .s3_request(Method::PUT, &path, "versioning", &headers, Bytes::from(body))
+            .s3_request(
+                Method::PUT,
+                &path,
+                "versioning",
+                &headers,
+                Bytes::from(body),
+            )
             .await?;
         let s = resp.status();
         if s.is_success() {
@@ -448,13 +468,7 @@ impl RustFsAdminClient {
         let mut headers = BTreeMap::new();
         headers.insert("content-type".into(), "application/xml".into());
         let resp = self
-            .s3_request(
-                Method::PUT,
-                &path,
-                "cors",
-                &headers,
-                Bytes::from(xml),
-            )
+            .s3_request(Method::PUT, &path, "cors", &headers, Bytes::from(xml))
             .await?;
         let s = resp.status();
         if s.is_success() {
@@ -516,7 +530,9 @@ impl RustFsAdminClient {
             StatusCode::OK | StatusCode::CONFLICT => {}
             s => {
                 let body = resp.text().await.unwrap_or_default();
-                if !body.contains("BucketAlreadyOwnedByYou") && !body.contains("BucketAlreadyExists") {
+                if !body.contains("BucketAlreadyOwnedByYou")
+                    && !body.contains("BucketAlreadyExists")
+                {
                     bail!("ensure_bucket_named({bucket_name}) failed: {s} — {body}")
                 }
             }
@@ -558,7 +574,10 @@ impl RustFsAdminClient {
             .await?;
         if !resp.status().is_success() {
             let t = resp.text().await.unwrap_or_default();
-            tracing::warn!(bucket_name, "put_bucket_encryption on new bucket failed: {t}");
+            tracing::warn!(
+                bucket_name,
+                "put_bucket_encryption on new bucket failed: {t}"
+            );
         }
 
         // Apply lifecycle rules: expire uploads/tmp/ after 1 day, exports/ after 7 days.
@@ -592,7 +611,10 @@ impl RustFsAdminClient {
             .await?;
         if !resp.status().is_success() {
             let t = resp.text().await.unwrap_or_default();
-            tracing::warn!(bucket_name, "put_lifecycle on new bucket failed (non-fatal): {t}");
+            tracing::warn!(
+                bucket_name,
+                "put_lifecycle on new bucket failed (non-fatal): {t}"
+            );
         }
 
         debug!(bucket_name, "per-tenant bucket ready");
@@ -627,7 +649,10 @@ impl RustFsAdminClient {
         let mut continuation: Option<String> = None;
         loop {
             let query = if let Some(ref tok) = continuation {
-                format!("list-type=2&max-keys=1000&continuation-token={}", urlencoding(tok))
+                format!(
+                    "list-type=2&max-keys=1000&continuation-token={}",
+                    urlencoding(tok)
+                )
             } else {
                 "list-type=2&max-keys=1000".to_string()
             };
@@ -650,7 +675,13 @@ impl RustFsAdminClient {
             for key in &keys {
                 let obj_path = format!("/{bucket_name}/{}", urlencoding(key));
                 let resp = self
-                    .s3_request(Method::DELETE, &obj_path, "", &BTreeMap::new(), Bytes::new())
+                    .s3_request(
+                        Method::DELETE,
+                        &obj_path,
+                        "",
+                        &BTreeMap::new(),
+                        Bytes::new(),
+                    )
                     .await?;
                 if !resp.status().is_success() && resp.status() != StatusCode::NOT_FOUND {
                     let s = resp.status();
@@ -724,7 +755,10 @@ impl RustFsAdminClient {
             .await?;
 
         if !s.is_success() {
-            bail!("create_service_account failed: {s} — {}", String::from_utf8_lossy(&body_bytes));
+            bail!(
+                "create_service_account failed: {s} — {}",
+                String::from_utf8_lossy(&body_bytes)
+            );
         }
 
         parse_service_account_resp(body_bytes).context("create_service_account")
@@ -776,7 +810,10 @@ impl RustFsAdminClient {
             .await?;
 
         if !s.is_success() {
-            bail!("create_bucket_scoped_service_account failed: {s} — {}", String::from_utf8_lossy(&body_bytes));
+            bail!(
+                "create_bucket_scoped_service_account failed: {s} — {}",
+                String::from_utf8_lossy(&body_bytes)
+            );
         }
 
         parse_service_account_resp(body_bytes).context("create_bucket_scoped_service_account")
@@ -796,7 +833,10 @@ impl RustFsAdminClient {
         if s.is_success() || s == StatusCode::NOT_FOUND {
             Ok(())
         } else {
-            bail!("delete_service_account failed: {s} — {}", String::from_utf8_lossy(&body))
+            bail!(
+                "delete_service_account failed: {s} — {}",
+                String::from_utf8_lossy(&body)
+            )
         }
     }
 
@@ -811,7 +851,10 @@ impl RustFsAdminClient {
             )
             .await?;
         if !s.is_success() {
-            bail!("list_service_accounts failed: {s} — {}", String::from_utf8_lossy(&body));
+            bail!(
+                "list_service_accounts failed: {s} — {}",
+                String::from_utf8_lossy(&body)
+            );
         }
         #[derive(Deserialize)]
         struct ListResp {
@@ -835,7 +878,10 @@ impl RustFsAdminClient {
         if s.is_success() {
             Ok(())
         } else {
-            bail!("put_policy failed: {s} — {}", String::from_utf8_lossy(&body))
+            bail!(
+                "put_policy failed: {s} — {}",
+                String::from_utf8_lossy(&body)
+            )
         }
     }
 
@@ -892,7 +938,13 @@ impl RustFsAdminClient {
         let mut headers = BTreeMap::new();
         headers.insert("content-type".into(), "application/xml".into());
         let resp = self
-            .s3_request(Method::PUT, &path, "encryption=", &headers, Bytes::from(xml))
+            .s3_request(
+                Method::PUT,
+                &path,
+                "encryption=",
+                &headers,
+                Bytes::from(xml),
+            )
             .await?;
         let s = resp.status();
         if s.is_success() {
@@ -921,7 +973,10 @@ impl RustFsAdminClient {
         if s.is_success() {
             Ok(())
         } else {
-            bail!("attach_policy failed: {s} — {}", String::from_utf8_lossy(&body))
+            bail!(
+                "attach_policy failed: {s} — {}",
+                String::from_utf8_lossy(&body)
+            )
         }
     }
 }
@@ -967,8 +1022,12 @@ fn parse_version_list(xml: &str) -> Vec<(String, String, u64, bool)> {
     for block in xml.split("<Version>").skip(1) {
         let end = block.find("</Version>").unwrap_or(block.len());
         let inner = &block[..end];
-        let version_id = extract_xml_text(inner, "VersionId").unwrap_or_default().to_string();
-        let last_modified = extract_xml_text(inner, "LastModified").unwrap_or_default().to_string();
+        let version_id = extract_xml_text(inner, "VersionId")
+            .unwrap_or_default()
+            .to_string();
+        let last_modified = extract_xml_text(inner, "LastModified")
+            .unwrap_or_default()
+            .to_string();
         let size = extract_xml_text(inner, "Size")
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
@@ -1018,7 +1077,6 @@ fn urlencoding(s: &str) -> String {
         .collect()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1030,7 +1088,11 @@ mod tests {
         let enc = encrypt_admin_body("rustfsadmin", plaintext);
         // 32 (salt) + 1 (alg_id) + 12 (nonce) + 13 (data) + 16 (AES-GCM tag) = 74
         assert_eq!(enc.len(), 74, "unexpected wire length: {}", enc.len());
-        assert_eq!(enc[32], 0x00, "byte[32] must be alg_id 0x00 (Argon2id+AES-GCM), got {}", enc[32]);
+        assert_eq!(
+            enc[32], 0x00,
+            "byte[32] must be alg_id 0x00 (Argon2id+AES-GCM), got {}",
+            enc[32]
+        );
     }
 
     /// Two calls with the same key+plaintext must produce different ciphertexts (random salt).
@@ -1047,20 +1109,22 @@ mod tests {
     /// that decrypt_admin_body recovers the original plaintext.
     #[test]
     fn decrypt_admin_body_roundtrip_argon2id() {
-        use argon2::{Argon2, Algorithm, Version, Params};
-        use aes_gcm::{Aes256Gcm, KeyInit as AesKeyInit};
         use aes_gcm::aead::{Aead, Nonce, Payload};
+        use aes_gcm::{Aes256Gcm, KeyInit as AesKeyInit};
+        use argon2::{Algorithm, Argon2, Params, Version};
 
-        let password  = "roundtrip-test-key";
+        let password = "roundtrip-test-key";
         let plaintext = b"hello rustfs admin api";
-        let salt:         [u8; 32] = [0x42u8; 32];
-        let nonce_prefix: [u8; 8]  = [0xABu8; 8];
+        let salt: [u8; 32] = [0x42u8; 32];
+        let nonce_prefix: [u8; 8] = [0xABu8; 8];
 
         // Derive key with Argon2id (alg_id 0x00).
         let params = Params::new(64 * 1024, 1, 4, Some(32)).unwrap();
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
         let mut key = [0u8; 32];
-        argon2.hash_password_into(password.as_bytes(), &salt, &mut key).unwrap();
+        argon2
+            .hash_password_into(password.as_bytes(), &salt, &mut key)
+            .unwrap();
 
         let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
 
@@ -1068,10 +1132,12 @@ mod tests {
         let mut init_nonce = [0u8; 12];
         init_nonce[..8].copy_from_slice(&nonce_prefix);
         // init_nonce[8..] = 0 (seqNum=0)
-        let verif_token = cipher.encrypt(
-            &Nonce::<Aes256Gcm>::from(init_nonce),
-            Payload { msg: &[], aad: &[] },
-        ).unwrap();
+        let verif_token = cipher
+            .encrypt(
+                &Nonce::<Aes256Gcm>::from(init_nonce),
+                Payload { msg: &[], aad: &[] },
+            )
+            .unwrap();
 
         // Encrypt single data chunk: seqNum=1, AAD=[0x80]||verif_token (last chunk).
         let mut data_nonce = [0u8; 12];
@@ -1080,10 +1146,15 @@ mod tests {
         let mut aad = [0u8; 17];
         aad[0] = 0x80; // last chunk
         aad[1..].copy_from_slice(&verif_token);
-        let ct = cipher.encrypt(
-            &Nonce::<Aes256Gcm>::from(data_nonce),
-            Payload { msg: plaintext, aad: &aad },
-        ).unwrap();
+        let ct = cipher
+            .encrypt(
+                &Nonce::<Aes256Gcm>::from(data_nonce),
+                Payload {
+                    msg: plaintext,
+                    aad: &aad,
+                },
+            )
+            .unwrap();
 
         // Assemble sio wire: [salt 32][alg_id=0x00 1][nonce_prefix 8][ct+tag]
         let mut wire = Vec::new();
@@ -1100,16 +1171,16 @@ mod tests {
     /// corrected key-derivation path.
     #[test]
     fn decrypt_admin_body_roundtrip_pbkdf2() {
-        use hmac::{Hmac, Mac};
-        use hmac::digest::KeyInit; // shared trait — works for both HMAC and AES-GCM
-        use sha2::Sha256;
-        use aes_gcm::{Aes256Gcm};
+        use aes_gcm::Aes256Gcm;
         use aes_gcm::aead::{Aead, Nonce, Payload};
+        use hmac::digest::KeyInit; // shared trait — works for both HMAC and AES-GCM
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
 
-        let password  = "pbkdf2-test-key";
+        let password = "pbkdf2-test-key";
         let plaintext = b"service account credentials json";
-        let salt:         [u8; 32] = [0x77u8; 32];
-        let nonce_prefix: [u8; 8]  = [0x55u8; 8];
+        let salt: [u8; 32] = [0x77u8; 32];
+        let nonce_prefix: [u8; 8] = [0x55u8; 8];
 
         // Derive key: PBKDF2-SHA256(c=8192) — must match derive_admin_key(alg_id=0x02).
         type HmacSha256 = Hmac<Sha256>;
@@ -1124,7 +1195,9 @@ mod tests {
             let mut mac = <HmacSha256 as KeyInit>::new_from_slice(password.as_bytes()).unwrap();
             mac.update(&u);
             u = mac.finalize().into_bytes();
-            for (r, ui) in result.iter_mut().zip(u.iter()) { *r ^= ui; }
+            for (r, ui) in result.iter_mut().zip(u.iter()) {
+                *r ^= ui;
+            }
         }
         let mut key = [0u8; 32];
         key.copy_from_slice(&result);
@@ -1135,10 +1208,12 @@ mod tests {
         let mut init_nonce = [0u8; 12];
         init_nonce[..8].copy_from_slice(&nonce_prefix);
         // init_nonce[8..] = 0 (seqNum=0)
-        let verif_token = cipher.encrypt(
-            &Nonce::<Aes256Gcm>::from(init_nonce),
-            Payload { msg: &[], aad: &[] },
-        ).unwrap();
+        let verif_token = cipher
+            .encrypt(
+                &Nonce::<Aes256Gcm>::from(init_nonce),
+                Payload { msg: &[], aad: &[] },
+            )
+            .unwrap();
 
         // Encrypt single data chunk: seqNum=1, AAD=[0x80]||verif_token (last chunk).
         let mut data_nonce = [0u8; 12];
@@ -1147,10 +1222,15 @@ mod tests {
         let mut aad = [0u8; 17];
         aad[0] = 0x80; // last chunk
         aad[1..].copy_from_slice(&verif_token);
-        let ct = cipher.encrypt(
-            &Nonce::<Aes256Gcm>::from(data_nonce),
-            Payload { msg: plaintext, aad: &aad },
-        ).unwrap();
+        let ct = cipher
+            .encrypt(
+                &Nonce::<Aes256Gcm>::from(data_nonce),
+                Payload {
+                    msg: plaintext,
+                    aad: &aad,
+                },
+            )
+            .unwrap();
 
         let mut wire = Vec::new();
         wire.extend_from_slice(&salt);

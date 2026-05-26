@@ -6,8 +6,8 @@
 //! - Inactive token returns `AuthError::TokenExpired`.
 //! - Missing `sub` claim returns `AuthError::InvalidToken`.
 
-use agent_core::identity::{AuthError, IdentityProvider};
 use agent_core::identity::zitadel::{ZitadelConfig, ZitadelProvider};
+use agent_core::identity::{AuthError, IdentityProvider};
 use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -53,14 +53,20 @@ async fn cache_miss_on_first_call_then_hit() {
     let provider = make_provider(&server);
 
     // First call — must hit the wiremock server (miss).
-    let ctx1 = provider.verify_access_token("test-token").await.expect("first call failed");
+    let ctx1 = provider
+        .verify_access_token("test-token")
+        .await
+        .expect("first call failed");
     assert_eq!(ctx1.user_id, "user1");
     assert_eq!(ctx1.tenant_id.as_ref(), "tenant1");
     assert_eq!(provider.stats.misses(), 1, "expected 1 cache miss");
     assert_eq!(provider.stats.hits(), 0, "expected 0 cache hits");
 
     // Second call with the same token — must come from cache (no new HTTP call).
-    let ctx2 = provider.verify_access_token("test-token").await.expect("second call failed");
+    let ctx2 = provider
+        .verify_access_token("test-token")
+        .await
+        .expect("second call failed");
     assert_eq!(ctx2.user_id, "user1");
     assert_eq!(provider.stats.hits(), 1, "expected 1 cache hit");
     assert_eq!(provider.stats.misses(), 1, "still only 1 miss");
@@ -80,10 +86,20 @@ async fn different_tokens_each_miss() {
 
     let provider = make_provider(&server);
 
-    provider.verify_access_token("token-A").await.expect("A failed");
-    provider.verify_access_token("token-B").await.expect("B failed");
+    provider
+        .verify_access_token("token-A")
+        .await
+        .expect("A failed");
+    provider
+        .verify_access_token("token-B")
+        .await
+        .expect("B failed");
 
-    assert_eq!(provider.stats.misses(), 2, "two distinct tokens = two misses");
+    assert_eq!(
+        provider.stats.misses(),
+        2,
+        "two distinct tokens = two misses"
+    );
     assert_eq!(provider.stats.hits(), 0);
 }
 
@@ -100,7 +116,10 @@ async fn inactive_token_returns_expired_error() {
         .await;
 
     let provider = make_provider(&server);
-    let err = provider.verify_access_token("dead-token").await.unwrap_err();
+    let err = provider
+        .verify_access_token("dead-token")
+        .await
+        .unwrap_err();
     assert!(matches!(err, AuthError::TokenExpired), "got: {err:?}");
 }
 
@@ -119,7 +138,10 @@ async fn missing_sub_returns_invalid_token() {
         .await;
 
     let provider = make_provider(&server);
-    let err = provider.verify_access_token("no-sub-token").await.unwrap_err();
+    let err = provider
+        .verify_access_token("no-sub-token")
+        .await
+        .unwrap_err();
     assert!(matches!(err, AuthError::InvalidToken(_)), "got: {err:?}");
 }
 
@@ -135,6 +157,12 @@ async fn introspect_http_failure_returns_provider_error() {
         .await;
 
     let provider = make_provider(&server);
-    let err = provider.verify_access_token("some-token").await.unwrap_err();
-    assert!(matches!(err, AuthError::InvalidToken(_)), "HTTP 500 should map to InvalidToken, got: {err:?}");
+    let err = provider
+        .verify_access_token("some-token")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AuthError::InvalidToken(_)),
+        "HTTP 500 should map to InvalidToken, got: {err:?}"
+    );
 }

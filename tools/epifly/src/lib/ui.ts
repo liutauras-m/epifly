@@ -43,7 +43,8 @@ export function table(rows: Array<[string, string, string?]>): void {
   const col1 = Math.max(...rows.map(([a]) => a.length), 0);
   const col2 = Math.max(...rows.map(([, b]) => b.length), 0);
   for (const [a, b, c] of rows) {
-    const status = c === "ok" ? pc.green("ok") : c === "error" ? pc.red("error") : c ? pc.dim(c) : "";
+    const status =
+      c === "ok" ? pc.green("ok") : c === "error" ? pc.red("error") : c ? pc.dim(c) : "";
     console.log(`  ${a.padEnd(col1)}  ${b.padEnd(col2)}  ${status}`);
   }
 }

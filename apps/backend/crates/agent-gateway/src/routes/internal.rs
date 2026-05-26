@@ -104,10 +104,13 @@ pub async fn rustfs_events(
         let bucket = &record.s3.bucket.name;
 
         // Extract tenant_id — try legacy key prefix first, then modern bucket name.
-        let tenant_id = extract_tenant_from_legacy_key(key)
-            .or_else(|| extract_tenant_from_bucket(bucket));
+        let tenant_id =
+            extract_tenant_from_legacy_key(key).or_else(|| extract_tenant_from_bucket(bucket));
         let Some(tenant_id) = tenant_id else {
-            warn!(key, bucket, "could not extract tenant_id from object key or bucket");
+            warn!(
+                key,
+                bucket, "could not extract tenant_id from object key or bucket"
+            );
             continue;
         };
 

@@ -230,11 +230,7 @@ impl CapabilityRegistry {
     ///
     /// Used by `lexical_capability_hints()` in the agent router (PR 2.B.3).
     /// Returns only capabilities that are enabled and visible to `tenant_id`.
-    pub fn lexical_hint_capabilities(
-        &self,
-        query: &str,
-        tenant_id: &str,
-    ) -> Vec<String> {
+    pub fn lexical_hint_capabilities(&self, query: &str, tenant_id: &str) -> Vec<String> {
         let query_lower = query.to_lowercase();
         let mut matched: Vec<String> = Vec::new();
 
@@ -248,9 +244,11 @@ impl CapabilityRegistry {
             }
 
             // 1. Check capability-level search_keywords.
-            let cap_hit = card.manifest.search_keywords.iter().any(|kw| {
-                word_boundary_contains(&query_lower, &kw.to_lowercase())
-            });
+            let cap_hit = card
+                .manifest
+                .search_keywords
+                .iter()
+                .any(|kw| word_boundary_contains(&query_lower, &kw.to_lowercase()));
             if cap_hit {
                 matched.push(cap_name);
                 continue;
@@ -258,9 +256,9 @@ impl CapabilityRegistry {
 
             // 2. Check per-tool search_keywords.
             let tool_hit = card.manifest.tools.iter().any(|tool| {
-                tool.search_keywords.iter().any(|kw| {
-                    word_boundary_contains(&query_lower, &kw.to_lowercase())
-                })
+                tool.search_keywords
+                    .iter()
+                    .any(|kw| word_boundary_contains(&query_lower, &kw.to_lowercase()))
             });
             if tool_hit {
                 matched.push(cap_name);
@@ -689,7 +687,10 @@ mod tests {
 
     #[test]
     fn word_boundary_phrase_match() {
-        assert!(word_boundary_contains("i want to get rid of it", "get rid of"));
+        assert!(word_boundary_contains(
+            "i want to get rid of it",
+            "get rid of"
+        ));
         assert!(!word_boundary_contains("get rid", "get rid of")); // too short
     }
 
@@ -744,7 +745,10 @@ mod tests {
         let mut r = CapabilityRegistry::new();
         r.register(make_kw_card("delete-cap", vec!["delete".into()], vec![]));
         let hits = r.lexical_hint_capabilities("delete the file", "any-tenant");
-        assert!(hits.contains(&"delete-cap".to_string()), "expected delete-cap in {hits:?}");
+        assert!(
+            hits.contains(&"delete-cap".to_string()),
+            "expected delete-cap in {hits:?}"
+        );
     }
 
     #[test]
@@ -778,7 +782,13 @@ mod tests {
         let mut card = make_kw_card("scoped-cap", vec!["delete".into()], vec![]);
         card.manifest.tenant_scope = vec!["acme".into()];
         r.register(card);
-        assert!(r.lexical_hint_capabilities("delete something", "acme").contains(&"scoped-cap".to_string()));
-        assert!(r.lexical_hint_capabilities("delete something", "other").is_empty());
+        assert!(
+            r.lexical_hint_capabilities("delete something", "acme")
+                .contains(&"scoped-cap".to_string())
+        );
+        assert!(
+            r.lexical_hint_capabilities("delete something", "other")
+                .is_empty()
+        );
     }
 }

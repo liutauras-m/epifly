@@ -49,5 +49,6 @@ pub trait BillingProvider: Send + Sync + 'static {
     async fn analytics_summary(&self) -> Result<serde_json::Value, BillingError>;
 
     /// Ensure all plan definitions exist in Lago (idempotent upsert at boot).
-    async fn ensure_plans(&self, catalog: &crate::catalog::PlanCatalog) -> Result<(), BillingError>;
+    async fn ensure_plans(&self, catalog: &crate::catalog::PlanCatalog)
+    -> Result<(), BillingError>;
 }

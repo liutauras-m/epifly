@@ -20,8 +20,10 @@ use agent_core::{
     context::tenant::TenantContext,
     llm::{LlmBinding, LlmRegistry},
 };
+use common::memory::{
+    InMemoryWorkspaceContent, InMemoryWorkspaceStore, WorkspaceContentStore, WorkspaceStore,
+};
 use std::collections::HashMap;
-use common::memory::{InMemoryWorkspaceContent, InMemoryWorkspaceStore, WorkspaceStore, WorkspaceContentStore};
 use std::sync::Arc;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -32,7 +34,11 @@ fn capabilities_dir() -> std::path::PathBuf {
         .ancestors()
         .find_map(|a| {
             let candidate = a.join("capabilities");
-            if candidate.is_dir() { Some(candidate) } else { None }
+            if candidate.is_dir() {
+                Some(candidate)
+            } else {
+                None
+            }
         })
         .unwrap_or_else(|| std::path::PathBuf::from("capabilities"))
 }
@@ -87,9 +93,17 @@ fn invoice_capability_is_registered() {
 
     let provider = provider.unwrap();
     let manifest = provider.manifest();
-    assert_eq!(manifest.namespace.as_deref(), Some("extract.fields.invoice"));
+    assert_eq!(
+        manifest.namespace.as_deref(),
+        Some("extract.fields.invoice")
+    );
     assert_eq!(manifest.category.as_deref(), Some("extract"));
-    assert!(manifest.accepts.iter().any(|a| a.mime.contains("pdf") || a.mime.contains("image")));
+    assert!(
+        manifest
+            .accepts
+            .iter()
+            .any(|a| a.mime.contains("pdf") || a.mime.contains("image"))
+    );
     assert!(!manifest.emits.is_empty());
 }
 
@@ -100,7 +114,12 @@ fn invoice_manifest_has_extract_invoice_tool() {
         Some(p) => p,
         None => return,
     };
-    let tool_names: Vec<&str> = provider.manifest().tools.iter().map(|t| t.name.as_str()).collect();
+    let tool_names: Vec<&str> = provider
+        .manifest()
+        .tools
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
     assert!(
         tool_names.contains(&"extract_invoice"),
         "invoice capability should expose an 'extract_invoice' tool; found: {tool_names:?}"
@@ -120,7 +139,10 @@ fn semantic_router_selects_invoice_for_pdf_extraction_prompt() {
 fn legacy_workspace_monolith_absent() {
     let reg = build_test_registry();
     let old_cap = reg.get_provider("workspace-provider");
-    assert!(old_cap.is_none(), "legacy WorkspaceProvider should not be present");
+    assert!(
+        old_cap.is_none(),
+        "legacy WorkspaceProvider should not be present"
+    );
 }
 
 // ── Phase 1 consolidation — storage-workspace exposes all 11 tools ────────────
@@ -143,11 +165,24 @@ fn storage_workspace_exposes_all_legacy_tools() {
         Some(p) => p,
         None => return,
     };
-    let tool_names: Vec<&str> = provider.manifest().tools.iter().map(|t| t.name.as_str()).collect();
+    let tool_names: Vec<&str> = provider
+        .manifest()
+        .tools
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
     let expected = [
-        "save_document", "list_folders", "show_tree", "find_by_name",
-        "create_folder", "ensure_folder", "ensure_date_folder",
-        "move_node", "delete_node", "bulk_delete", "tag_object",
+        "save_document",
+        "list_folders",
+        "show_tree",
+        "find_by_name",
+        "create_folder",
+        "ensure_folder",
+        "ensure_date_folder",
+        "move_node",
+        "delete_node",
+        "bulk_delete",
+        "tag_object",
     ];
     for tool in &expected {
         assert!(
@@ -155,7 +190,11 @@ fn storage_workspace_exposes_all_legacy_tools() {
             "storage-workspace should expose tool '{tool}'; found: {tool_names:?}"
         );
     }
-    assert_eq!(tool_names.len(), 11, "storage-workspace should have exactly 11 tools; found: {tool_names:?}");
+    assert_eq!(
+        tool_names.len(),
+        11,
+        "storage-workspace should have exactly 11 tools; found: {tool_names:?}"
+    );
 }
 
 #[test]
@@ -191,15 +230,30 @@ fn storage_fs_dispatches_all_five_tools() {
         Some(p) => p,
         None => return,
     };
-    let tool_names: Vec<&str> = provider.manifest().tools.iter().map(|t| t.name.as_str()).collect();
-    let expected = ["read_file", "write_file", "put_object", "move_object", "list_paths"];
+    let tool_names: Vec<&str> = provider
+        .manifest()
+        .tools
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
+    let expected = [
+        "read_file",
+        "write_file",
+        "put_object",
+        "move_object",
+        "list_paths",
+    ];
     for tool in &expected {
         assert!(
             tool_names.contains(tool),
             "storage-fs should expose tool '{tool}'; found: {tool_names:?}"
         );
     }
-    assert_eq!(tool_names.len(), 5, "storage-fs should have exactly 5 tools; found: {tool_names:?}");
+    assert_eq!(
+        tool_names.len(),
+        5,
+        "storage-fs should have exactly 5 tools; found: {tool_names:?}"
+    );
 }
 
 #[test]
@@ -209,7 +263,12 @@ fn storage_fs_renames_list_folders_to_list_paths() {
         Some(p) => p,
         None => return,
     };
-    let tool_names: Vec<&str> = provider.manifest().tools.iter().map(|t| t.name.as_str()).collect();
+    let tool_names: Vec<&str> = provider
+        .manifest()
+        .tools
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
     assert!(
         tool_names.contains(&"list_paths"),
         "storage-fs must expose 'list_paths' (not the legacy 'list_folders')"
@@ -239,10 +298,20 @@ fn storage_fs_manifest_metadata() {
 fn legacy_storage_capabilities_are_removed() {
     let reg = build_test_registry();
     let removed = [
-        "storage-workspace-move", "storage-put", "storage-read-text", "storage-write-text",
-        "storage-move", "storage-delete", "storage-bulk-delete", "storage-list-folders",
-        "storage-create-folder", "storage-ensure-folder", "storage-ensure-date-folder",
-        "storage-find-by-name", "storage-show-tree", "storage-tag",
+        "storage-workspace-move",
+        "storage-put",
+        "storage-read-text",
+        "storage-write-text",
+        "storage-move",
+        "storage-delete",
+        "storage-bulk-delete",
+        "storage-list-folders",
+        "storage-create-folder",
+        "storage-ensure-folder",
+        "storage-ensure-date-folder",
+        "storage-find-by-name",
+        "storage-show-tree",
+        "storage-tag",
     ];
     for cap in &removed {
         assert!(
@@ -283,7 +352,9 @@ async fn storage_workspace_save_document_roundtrip() {
         "filename": "notes",
         "content": "# My Notes\n\nSome content here."
     });
-    let result = provider.invoke("save_document", &input, Some(&tenant)).await;
+    let result = provider
+        .invoke("save_document", &input, Some(&tenant))
+        .await;
     assert!(result.is_ok(), "save_document should succeed: {:?}", result);
     let v = result.unwrap();
     assert_eq!(v["status"], "ok");
@@ -344,12 +415,24 @@ async fn storage_fs_write_then_read_roundtrip() {
         "path": "notes/scratch.txt",
         "content": "hello from storage-fs"
     });
-    let write_result = provider.invoke("write_file", &write_input, Some(&tenant)).await;
-    assert!(write_result.is_ok(), "write_file should succeed: {:?}", write_result);
+    let write_result = provider
+        .invoke("write_file", &write_input, Some(&tenant))
+        .await;
+    assert!(
+        write_result.is_ok(),
+        "write_file should succeed: {:?}",
+        write_result
+    );
 
     let read_input = serde_json::json!({ "path": "notes/scratch.txt" });
-    let read_result = provider.invoke("read_file", &read_input, Some(&tenant)).await;
-    assert!(read_result.is_ok(), "read_file should succeed: {:?}", read_result);
+    let read_result = provider
+        .invoke("read_file", &read_input, Some(&tenant))
+        .await;
+    assert!(
+        read_result.is_ok(),
+        "read_file should succeed: {:?}",
+        read_result
+    );
     assert_eq!(read_result.unwrap()["content"], "hello from storage-fs");
 }
 
@@ -382,7 +465,9 @@ async fn storage_ensure_folder_creates_directory() {
     tenant.workspace_root = std::path::PathBuf::from(&ws_path);
 
     let input = serde_json::json!({ "path": "Research/notes" });
-    let result = provider.invoke("ensure_folder", &input, Some(&tenant)).await;
+    let result = provider
+        .invoke("ensure_folder", &input, Some(&tenant))
+        .await;
 
     assert!(result.is_ok(), "ensure_folder should succeed: {:?}", result);
     assert!(
@@ -425,7 +510,10 @@ async fn storage_write_text_creates_file() {
     assert!(result.is_ok(), "write_file should succeed: {:?}", result);
     let written = std::fs::read_to_string(tmp.path().join("Research/meeting-notes.md"))
         .expect("written file should be readable");
-    assert!(written.contains("Q3 roadmap"), "file content should be preserved");
+    assert!(
+        written.contains("Q3 roadmap"),
+        "file content should be preserved"
+    );
 }
 
 // ── Phase 8 — code-project capability is registered ──────────────────────────
@@ -448,10 +536,19 @@ fn code_project_exposes_all_six_tools() {
         Some(p) => p,
         None => return,
     };
-    let tool_names: Vec<&str> = provider.manifest().tools.iter().map(|t| t.name.as_str()).collect();
+    let tool_names: Vec<&str> = provider
+        .manifest()
+        .tools
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
     let expected = [
-        "scaffold_project", "edit_file", "apply_patch", "add_dependency",
-        "read_project", "host_project",
+        "scaffold_project",
+        "edit_file",
+        "apply_patch",
+        "add_dependency",
+        "read_project",
+        "host_project",
     ];
     for tool in &expected {
         assert!(
@@ -459,7 +556,11 @@ fn code_project_exposes_all_six_tools() {
             "code-project should expose tool '{tool}'; found: {tool_names:?}"
         );
     }
-    assert_eq!(tool_names.len(), 6, "code-project should have exactly 6 tools; found: {tool_names:?}");
+    assert_eq!(
+        tool_names.len(),
+        6,
+        "code-project should have exactly 6 tools; found: {tool_names:?}"
+    );
 }
 
 #[test]
@@ -473,7 +574,10 @@ fn code_project_manifest_metadata() {
     assert_eq!(m.category.as_deref(), Some("compose"));
     assert_eq!(m.namespace.as_deref(), Some("code.project"));
     assert_eq!(m.kind, ToolKind::Chain);
-    assert!(!m.idempotent, "code-project is not idempotent (modifies project files)");
+    assert!(
+        !m.idempotent,
+        "code-project is not idempotent (modifies project files)"
+    );
 }
 
 #[test]

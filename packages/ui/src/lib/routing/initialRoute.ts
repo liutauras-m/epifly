@@ -43,10 +43,14 @@ export async function initialRoute(): Promise<InitialRoute> {
       // @tauri-apps/plugin-deep-link is only present in the Tauri shell build;
       // this guard is only reached when `isTauri` is true at runtime.
       // eslint-disable-next-line @typescript-eslint/no-implied-eval
-      const { getCurrent } = await (new Function('s', 'return import(s)'))('@tauri-apps/plugin-deep-link') as typeof import('@tauri-apps/plugin-deep-link');
-      // getCurrent() returns string[] | null in plugin-deep-link v2.4+
-      const urls = await getCurrent();
-      const deepUrl = urls?.[0] ?? null;
+      const deepLink = await (new Function('s', 'return import(s)'))('@tauri-apps/plugin-deep-link') as typeof import('@tauri-apps/plugin-deep-link');
+      // Preferred API in plugin-deep-link v2.
+      const getCurrentUrl = (deepLink as { getCurrentUrl?: () => Promise<string | null> }).getCurrentUrl;
+      // Backward-compatible fallback for older plugin builds that exposed getCurrent().
+      const getCurrent = (deepLink as { getCurrent?: () => Promise<string[] | null> }).getCurrent;
+      const deepUrl = getCurrentUrl
+        ? await getCurrentUrl()
+        : ((await getCurrent?.())?.[0] ?? null);
       if (deepUrl) {
         const deep = new URL(deepUrl);
         const ws     = deep.searchParams.get('ws');

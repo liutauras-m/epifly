@@ -117,29 +117,28 @@ impl QdrantVectorStore {
                 // Verify the collection's vector dimension matches our embedding model.
                 let mut needs_recreate = false;
                 let info = client.collection_info(name).await?;
-                if let Some(config) = info.result.and_then(|r| r.config) {
-                    if let Some(params) = config
+                if let Some(config) = info.result.and_then(|r| r.config)
+                    && let Some(params) = config
                         .params
                         .and_then(|p| p.vectors_config)
                         .and_then(|vc| vc.config)
+                {
+                    use qdrant_client::qdrant::vectors_config::Config;
+                    let existing_dim = match params {
+                        Config::Params(vp) => Some(vp.size),
+                        Config::ParamsMap(pm) => pm.map.get("default").map(|p| p.size),
+                    };
+                    if let Some(dim) = existing_dim
+                        && dim != self.dims
                     {
-                        use qdrant_client::qdrant::vectors_config::Config;
-                        let existing_dim = match params {
-                            Config::Params(vp) => Some(vp.size),
-                            Config::ParamsMap(pm) => pm.map.get("default").map(|p| p.size),
-                        };
-                        if let Some(dim) = existing_dim {
-                            if dim != self.dims {
-                                tracing::warn!(
-                                    collection = name,
-                                    existing_dim = dim,
-                                    expected_dim = self.dims,
-                                    "Qdrant dimension mismatch — dropping and recreating collection"
-                                );
-                                client.delete_collection(name).await?;
-                                needs_recreate = true;
-                            }
-                        }
+                        tracing::warn!(
+                            collection = name,
+                            existing_dim = dim,
+                            expected_dim = self.dims,
+                            "Qdrant dimension mismatch — dropping and recreating collection"
+                        );
+                        client.delete_collection(name).await?;
+                        needs_recreate = true;
                     }
                 }
                 if !needs_recreate {
@@ -468,6 +467,7 @@ impl QdrantVectorStore {
     }
 
     #[instrument(skip(self, embedding))]
+    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_content_embedding_full(
         &self,
         chunk_id: &str,

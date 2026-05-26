@@ -53,17 +53,47 @@ fn build_s3_client(
 
 #[test]
 fn case1_virtual_path_rejects_traversal() {
-    assert!(VirtualPath::parse("../etc/passwd").is_err(), "../ must be rejected");
-    assert!(VirtualPath::parse("a/../b").is_err(), "mid-path .. must be rejected");
-    assert!(VirtualPath::parse("a/..").is_err(), "trailing .. must be rejected");
-    assert!(VirtualPath::parse("/etc/passwd").is_err(), "leading / must be rejected");
-    assert!(VirtualPath::parse("C:/windows").is_err(), "drive letter must be rejected");
-    assert!(VirtualPath::parse("a\x00b").is_err(), "NUL byte must be rejected");
-    assert!(VirtualPath::parse("a\x1fb").is_err(), "control char must be rejected");
-    assert!(VirtualPath::parse("a//b").is_err(), "double slash must be rejected");
-    assert!(VirtualPath::parse("a/b/").is_err(), "trailing slash must be rejected");
+    assert!(
+        VirtualPath::parse("../etc/passwd").is_err(),
+        "../ must be rejected"
+    );
+    assert!(
+        VirtualPath::parse("a/../b").is_err(),
+        "mid-path .. must be rejected"
+    );
+    assert!(
+        VirtualPath::parse("a/..").is_err(),
+        "trailing .. must be rejected"
+    );
+    assert!(
+        VirtualPath::parse("/etc/passwd").is_err(),
+        "leading / must be rejected"
+    );
+    assert!(
+        VirtualPath::parse("C:/windows").is_err(),
+        "drive letter must be rejected"
+    );
+    assert!(
+        VirtualPath::parse("a\x00b").is_err(),
+        "NUL byte must be rejected"
+    );
+    assert!(
+        VirtualPath::parse("a\x1fb").is_err(),
+        "control char must be rejected"
+    );
+    assert!(
+        VirtualPath::parse("a//b").is_err(),
+        "double slash must be rejected"
+    );
+    assert!(
+        VirtualPath::parse("a/b/").is_err(),
+        "trailing slash must be rejected"
+    );
     let long = "a".repeat(1025);
-    assert!(VirtualPath::parse(&long).is_err(), "path > 1024 bytes must be rejected");
+    assert!(
+        VirtualPath::parse(&long).is_err(),
+        "path > 1024 bytes must be rejected"
+    );
     assert!(VirtualPath::parse("Workspace/notes.md").is_ok());
     assert!(VirtualPath::parse("folder/sub/file.txt").is_ok());
 }
@@ -75,8 +105,12 @@ fn case2_legacy_key_always_scoped_under_tenant_prefix() {
     use agent_core::store::tenant_storage::StorageLayout;
 
     let _ = (
-        StorageLayout::LegacyPrefix { tenant_id: "a".into() },
-        StorageLayout::LegacyPrefix { tenant_id: "b".into() },
+        StorageLayout::LegacyPrefix {
+            tenant_id: "a".into(),
+        },
+        StorageLayout::LegacyPrefix {
+            tenant_id: "b".into(),
+        },
     );
 
     let vp = VirtualPath::parse("secret.md").unwrap();
@@ -97,7 +131,10 @@ fn case7_path_traversal_returns_invalid_path_error() {
     assert!(matches!(result, Err(StorageError::InvalidPath(_))));
 
     let err = VirtualPath::parse("../secret").unwrap_err();
-    assert!(err.to_string().contains("invalid virtual path"), "error: {err}");
+    assert!(
+        err.to_string().contains("invalid virtual path"),
+        "error: {err}"
+    );
 }
 
 // ── In-memory isolation — no server required ──────────────────────────────────
@@ -111,7 +148,10 @@ async fn inmem_tenant_a_write_not_visible_to_tenant_b() {
     let store_b = Arc::new(object_store::memory::InMemory::new());
 
     let key_a = ObjectPath::from("tenants/a/workspaces/secret.md");
-    store_a.put(&key_a, Bytes::from("A's secret").into()).await.unwrap();
+    store_a
+        .put(&key_a, Bytes::from("A's secret").into())
+        .await
+        .unwrap();
 
     // B's store is completely separate — cannot see A's object at all.
     let result = store_b.get(&key_a).await;
@@ -144,11 +184,28 @@ async fn provision_iam(
 #[tokio::test]
 #[ignore = "requires live RustFS — set RUSTFS_TEST_ENDPOINT to run"]
 async fn case3_tenant_b_presigned_url_rejected_for_tenant_a_object() {
-    let endpoint = match rustfs_endpoint() { Some(e) => e, None => return };
+    let endpoint = match rustfs_endpoint() {
+        Some(e) => e,
+        None => return,
+    };
     let bucket = "workspace";
 
-    let (ak_a, sk_a) = provision_iam(&endpoint, &root_access_key(), &root_secret_key(), "iso-tenant-a", bucket).await;
-    let (ak_b, sk_b) = provision_iam(&endpoint, &root_access_key(), &root_secret_key(), "iso-tenant-b", bucket).await;
+    let (ak_a, sk_a) = provision_iam(
+        &endpoint,
+        &root_access_key(),
+        &root_secret_key(),
+        "iso-tenant-a",
+        bucket,
+    )
+    .await;
+    let (ak_b, sk_b) = provision_iam(
+        &endpoint,
+        &root_access_key(),
+        &root_secret_key(),
+        "iso-tenant-b",
+        bucket,
+    )
+    .await;
 
     // A writes secret.md under A's prefix.
     let client_a = build_s3_client(&endpoint, bucket, &ak_a, &sk_a);
@@ -171,11 +228,28 @@ async fn case3_tenant_b_presigned_url_rejected_for_tenant_a_object() {
 #[tokio::test]
 #[ignore = "requires live RustFS — set RUSTFS_TEST_ENDPOINT to run"]
 async fn case4_tenant_b_cannot_list_tenant_a_prefix() {
-    let endpoint = match rustfs_endpoint() { Some(e) => e, None => return };
+    let endpoint = match rustfs_endpoint() {
+        Some(e) => e,
+        None => return,
+    };
     let bucket = "workspace";
 
-    let (_ak_a, _sk_a) = provision_iam(&endpoint, &root_access_key(), &root_secret_key(), "iso-tenant-a", bucket).await;
-    let (ak_b, sk_b)   = provision_iam(&endpoint, &root_access_key(), &root_secret_key(), "iso-tenant-b", bucket).await;
+    let (_ak_a, _sk_a) = provision_iam(
+        &endpoint,
+        &root_access_key(),
+        &root_secret_key(),
+        "iso-tenant-a",
+        bucket,
+    )
+    .await;
+    let (ak_b, sk_b) = provision_iam(
+        &endpoint,
+        &root_access_key(),
+        &root_secret_key(),
+        "iso-tenant-b",
+        bucket,
+    )
+    .await;
 
     let client_b = build_s3_client(&endpoint, bucket, &ak_b, &sk_b);
     let prefix_a = object_store::path::Path::from("tenants/iso-tenant-a/");
@@ -196,16 +270,36 @@ async fn case4_tenant_b_cannot_list_tenant_a_prefix() {
 #[tokio::test]
 #[ignore = "requires live RustFS — set RUSTFS_TEST_ENDPOINT to run"]
 async fn case5_tenant_b_cannot_get_tenant_a_object_directly() {
-    let endpoint = match rustfs_endpoint() { Some(e) => e, None => return };
+    let endpoint = match rustfs_endpoint() {
+        Some(e) => e,
+        None => return,
+    };
     let bucket = "workspace";
 
-    let (ak_a, sk_a) = provision_iam(&endpoint, &root_access_key(), &root_secret_key(), "iso-tenant-a", bucket).await;
-    let (ak_b, sk_b) = provision_iam(&endpoint, &root_access_key(), &root_secret_key(), "iso-tenant-b", bucket).await;
+    let (ak_a, sk_a) = provision_iam(
+        &endpoint,
+        &root_access_key(),
+        &root_secret_key(),
+        "iso-tenant-a",
+        bucket,
+    )
+    .await;
+    let (ak_b, sk_b) = provision_iam(
+        &endpoint,
+        &root_access_key(),
+        &root_secret_key(),
+        "iso-tenant-b",
+        bucket,
+    )
+    .await;
 
     // Write as A.
     let client_a = build_s3_client(&endpoint, bucket, &ak_a, &sk_a);
     let key = object_store::path::Path::from("tenants/iso-tenant-a/workspaces/private.bin");
-    client_a.put(&key, bytes::Bytes::from("private").into()).await.unwrap();
+    client_a
+        .put(&key, bytes::Bytes::from("private").into())
+        .await
+        .unwrap();
 
     // Direct GET as B.
     let client_b = build_s3_client(&endpoint, bucket, &ak_b, &sk_b);
@@ -216,11 +310,28 @@ async fn case5_tenant_b_cannot_get_tenant_a_object_directly() {
 #[tokio::test]
 #[ignore = "requires live RustFS — set RUSTFS_TEST_ENDPOINT to run"]
 async fn case6_tenant_b_cannot_finalize_tenant_a_staged_upload() {
-    let endpoint = match rustfs_endpoint() { Some(e) => e, None => return };
+    let endpoint = match rustfs_endpoint() {
+        Some(e) => e,
+        None => return,
+    };
     let bucket = "workspace";
 
-    let (ak_a, sk_a) = provision_iam(&endpoint, &root_access_key(), &root_secret_key(), "iso-tenant-a", bucket).await;
-    let (ak_b, sk_b) = provision_iam(&endpoint, &root_access_key(), &root_secret_key(), "iso-tenant-b", bucket).await;
+    let (ak_a, sk_a) = provision_iam(
+        &endpoint,
+        &root_access_key(),
+        &root_secret_key(),
+        "iso-tenant-a",
+        bucket,
+    )
+    .await;
+    let (ak_b, sk_b) = provision_iam(
+        &endpoint,
+        &root_access_key(),
+        &root_secret_key(),
+        "iso-tenant-b",
+        bucket,
+    )
+    .await;
 
     // A uploads a staging part.
     let client_a = build_s3_client(&endpoint, bucket, &ak_a, &sk_a);

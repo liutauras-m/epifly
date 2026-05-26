@@ -1,5 +1,8 @@
 /// Prometheus counters and histograms for billing and quota operations.
-use prometheus::{CounterVec, HistogramVec, Registry, register_counter_vec_with_registry, register_histogram_vec_with_registry};
+use prometheus::{
+    CounterVec, HistogramVec, Registry, register_counter_vec_with_registry,
+    register_histogram_vec_with_registry,
+};
 use std::sync::OnceLock;
 
 static QUOTA_DENIED: OnceLock<CounterVec> = OnceLock::new();

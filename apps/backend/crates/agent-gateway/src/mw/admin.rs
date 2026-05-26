@@ -5,12 +5,7 @@
 
 use crate::mw::tenant::ResolvedTenant;
 use axum::{
-    Extension,
-    body::Body,
-    extract::Request,
-    http::StatusCode,
-    middleware::Next,
-    response::Response,
+    Extension, body::Body, extract::Request, http::StatusCode, middleware::Next, response::Response,
 };
 
 /// Middleware for API routes (JWT): requires `role = SuperAdmin` in claims.
@@ -25,4 +20,3 @@ pub async fn require_super_admin_jwt(
     }
     Ok(next.run(req).await)
 }
-

@@ -1,6 +1,10 @@
+use crate::capabilities::job_backed::transcribe_video_provider;
+use crate::metrics::{RouterMetrics, RustFsMetrics};
 use crate::mw::{RateLimiter, RouterQuotaConfig};
 use crate::routes::admin_devices::DeviceToken;
+use agent_core::identity::IdentityManager;
 use agent_core::llm::providers::anthropic::AnthropicProvider;
+use agent_core::realtime::{InvalidationBus, new_invalidation_bus};
 use agent_core::{
     ArtifactBridge, BulkCapabilityFactory, CapabilityAdmin, CapabilityDiscovery,
     CapabilityRegistry, CapabilitySpecFactory, ConversationService, CredentialStore,
@@ -9,28 +13,28 @@ use agent_core::{
     RedbMetadataStore, RustFsContentStore, SemanticCapabilityRouter, SemanticRouterConfig,
     StorageQuotaService, TenantOnboardingService, TenantStorageFactory, build_admin,
 };
-use agent_core::realtime::{InvalidationBus, new_invalidation_bus};
-use agent_core::identity::IdentityManager;
 use agent_core::{LegacyIdentityProvider, ZitadelCacheStats, ZitadelProvider};
+use base64::Engine as _;
 use billing_core::{BillingProvider, LagoProvider, PlanCatalog, QuotaChecker};
-use std::sync::Arc as StdArc;
 use common::audit::AuditStore;
 use common::memory::{
     InMemoryAuditStore, InMemoryThreadStore, InMemoryWorkspaceContent, InMemoryWorkspaceStore,
     ThreadStore, WorkspaceContentStore, WorkspaceStore,
 };
-use jobs::jobs::{AuditLogCleanupJob, CapabilityHealthCheckJob, LagoReconcileJob, RustFsKeyRotationJob, TenantBucketMigrationJob, VideoTranscriptionJob};
+use jobs::jobs::{
+    AuditLogCleanupJob, CapabilityHealthCheckJob, LagoReconcileJob, RustFsKeyRotationJob,
+    TenantBucketMigrationJob, VideoTranscriptionJob,
+};
 use jobs::{JobAdmin, JobContext, JobExecutor, JobRegistry};
-use crate::capabilities::job_backed::transcribe_video_provider;
-use object_store::aws::AmazonS3Builder;
 use object_store::ObjectStore;
+use object_store::aws::AmazonS3Builder;
 use rustfs_admin::RustFsAdminClient;
-use crate::metrics::{RouterMetrics, RustFsMetrics};
 use std::collections::HashMap;
+use std::sync::Arc as StdArc;
 use std::sync::{Arc, Mutex};
-use tracing::{info, warn};
 #[cfg(not(feature = "local-embeddings"))]
 use tracing::error;
+use tracing::{info, warn};
 
 pub struct AppState {
     pub registry: Arc<Mutex<CapabilityRegistry>>,
@@ -95,6 +99,94 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Validate startup configuration directly from environment variables.
+    ///
+    /// This mode intentionally avoids constructing heavy runtime resources
+    /// (redb/Qdrant/RustFS) so it can be used as a fast preflight check.
+    pub fn validate_env_contracts() -> common::error::Result<()> {
+        let mut errors: Vec<String> = Vec::new();
+        let is_prod = is_production_env();
+
+        let require = |key: &str, errors: &mut Vec<String>| {
+            if std::env::var_os(key).is_none_or(|v| v.is_empty()) {
+                errors.push(format!("missing required env var: {key}"));
+            }
+        };
+
+        // Always validate canonical aliases used by chain manifests.
+        let llm = build_llm_registry();
+        for alias in ["smart", "opus", "haiku", "fast", "cheap"] {
+            if llm.resolve_binding(alias, None).is_err() {
+                errors.push(format!("LLM alias binding is unresolved: {alias}"));
+            }
+        }
+
+        if is_prod {
+            require("JWT_SECRET", &mut errors);
+            require("UI_SESSION_KEY", &mut errors);
+            require("SUPER_ADMIN_EMAILS", &mut errors);
+            require("PLATFORM_ADMIN_TOKEN", &mut errors);
+            require("QDRANT_URL", &mut errors);
+            require("RUSTFS_WEBHOOK_SECRET", &mut errors);
+
+            if std::env::var_os("LAGO_API_KEY").is_none_or(|v| v.is_empty()) {
+                errors.push(
+                    "LAGO_API_KEY missing: billing provider is disabled in production".to_string(),
+                );
+            }
+
+            // Per-tenant IAM credential encryption must be explicit in production
+            // when RustFS integration is configured.
+            if std::env::var_os("RUSTFS_ENDPOINT").is_some() {
+                match std::env::var("RUSTFS_IAM_ENC_KEY") {
+                    Ok(v) => {
+                        match base64::engine::general_purpose::STANDARD.decode(v.as_bytes()) {
+                            Ok(raw) if raw.len() == 32 => {}
+                            Ok(raw) => errors.push(format!(
+                                "RUSTFS_IAM_ENC_KEY must decode to 32 bytes, got {}",
+                                raw.len()
+                            )),
+                            Err(e) => errors.push(format!(
+                                "RUSTFS_IAM_ENC_KEY must be valid base64: {e}"
+                            )),
+                        }
+                    }
+                    Err(_) => errors.push(
+                        "missing required env var: RUSTFS_IAM_ENC_KEY (per-tenant IAM encryption key)"
+                            .to_string(),
+                    ),
+                }
+            }
+
+            if std::env::var("CONUSAI_AUTH_PROVIDER")
+                .map(|v| v == "zitadel")
+                .unwrap_or(false)
+            {
+                for key in [
+                    "ZITADEL_DOMAIN",
+                    "ZITADEL_AUDIENCE",
+                    "ZITADEL_INTROSPECTION_CLIENT_ID",
+                    "ZITADEL_INTROSPECTION_CLIENT_SECRET",
+                    "ZITADEL_MGMT_PAT",
+                ] {
+                    require(key, &mut errors);
+                }
+            }
+        }
+
+        if errors.is_empty() {
+            return Ok(());
+        }
+
+        let mut msg = String::from("startup config validation failed:\n");
+        for e in errors {
+            msg.push_str(" - ");
+            msg.push_str(&e);
+            msg.push('\n');
+        }
+        Err(common::error::ConusAiError::Config(msg))
+    }
+
     pub async fn from_env() -> common::error::Result<Self> {
         if std::env::var("CONUSAI_TEST_MODE").as_deref() == Ok("1") {
             return Self::with_in_memory_stores();
@@ -114,8 +206,7 @@ impl AppState {
 
         // ── Persistent stores (redb + Qdrant + RustFS) ───────────────────────
 
-        let redb_path = std::env::var("REDB_PATH")
-            .unwrap_or_else(|_| "/data/conusai.redb".into());
+        let redb_path = std::env::var("REDB_PATH").unwrap_or_else(|_| "/data/conusai.redb".into());
         let metadata_store: Arc<RedbMetadataStore> = RedbMetadataStore::open(&redb_path)
             .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?;
 
@@ -165,8 +256,8 @@ impl AppState {
             }
         };
 
-        let qdrant_url = std::env::var("QDRANT_URL")
-            .unwrap_or_else(|_| "http://qdrant:6334".into());
+        let qdrant_url =
+            std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://qdrant:6334".into());
         let vector_store = Arc::new(
             QdrantVectorStore::connect_from_service(&qdrant_url, embedding_service.as_ref())
                 .await
@@ -194,7 +285,9 @@ impl AppState {
         let workspace_content: Arc<dyn WorkspaceContentStore> =
             RustFsContentStore::new(Arc::clone(&tenant_storage));
 
-        info!("workspace content: RustFS/S3 object store (per-tenant IAM via TenantStorageFactory)");
+        info!(
+            "workspace content: RustFS/S3 object store (per-tenant IAM via TenantStorageFactory)"
+        );
 
         let file_store = init_file_store();
 
@@ -257,59 +350,65 @@ impl AppState {
         let tool_admin = Arc::new(build_admin(Arc::clone(&registry), Arc::clone(&audit_store)));
 
         // ── Identity provider ─────────────────────────────────────────────
-        let auth_provider = std::env::var("CONUSAI_AUTH_PROVIDER")
-            .unwrap_or_else(|_| "legacy".into());
-        let (identity, zitadel_cache_stats): (StdArc<dyn IdentityManager>, Option<StdArc<ZitadelCacheStats>>) =
-            if auth_provider == "zitadel" {
-                match ZitadelProvider::from_env() {
-                    Ok(p) => {
-                        info!("identity provider: Zitadel OIDC");
-                        let stats = StdArc::clone(&p.stats);
-                        (StdArc::new(p) as StdArc<dyn IdentityManager>, Some(stats))
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "Zitadel provider init failed — falling back to legacy");
-                        (StdArc::new(LegacyIdentityProvider::from_env()) as StdArc<dyn IdentityManager>, None)
-                    }
+        let auth_provider =
+            std::env::var("CONUSAI_AUTH_PROVIDER").unwrap_or_else(|_| "legacy".into());
+        let (identity, zitadel_cache_stats): (
+            StdArc<dyn IdentityManager>,
+            Option<StdArc<ZitadelCacheStats>>,
+        ) = if auth_provider == "zitadel" {
+            match ZitadelProvider::from_env() {
+                Ok(p) => {
+                    info!("identity provider: Zitadel OIDC");
+                    let stats = StdArc::clone(&p.stats);
+                    (StdArc::new(p) as StdArc<dyn IdentityManager>, Some(stats))
                 }
-            } else {
-                info!("identity provider: legacy HMAC/JWT");
-                (StdArc::new(LegacyIdentityProvider::from_env()) as StdArc<dyn IdentityManager>, None)
-            };
+                Err(e) => {
+                    tracing::warn!(error = %e, "Zitadel provider init failed — falling back to legacy");
+                    (
+                        StdArc::new(LegacyIdentityProvider::from_env())
+                            as StdArc<dyn IdentityManager>,
+                        None,
+                    )
+                }
+            }
+        } else {
+            info!("identity provider: legacy HMAC/JWT");
+            (
+                StdArc::new(LegacyIdentityProvider::from_env()) as StdArc<dyn IdentityManager>,
+                None,
+            )
+        };
 
         // ── Plan catalog ──────────────────────────────────────────────────
         let plan_catalog = StdArc::new(PlanCatalog::load());
         info!(plans = plan_catalog.list().len(), "plan catalog loaded");
 
         // ── Billing (Lago) — initialized before job registry so reconcile job has it ──
-        let (billing, quota): (Option<StdArc<dyn BillingProvider>>, Option<StdArc<QuotaChecker>>) =
-            match LagoProvider::from_env() {
-                Ok(provider) => {
-                    info!("billing provider: Lago");
-                    let quota_checker = StdArc::new(QuotaChecker::new(StdArc::clone(&plan_catalog)));
-                    (Some(StdArc::new(provider) as StdArc<dyn BillingProvider>), Some(quota_checker))
-                }
-                Err(e) => {
-                    warn!(error = %e, "Lago not configured — billing/metering disabled");
-                    (None, None)
-                }
-            };
+        let (billing, quota): (
+            Option<StdArc<dyn BillingProvider>>,
+            Option<StdArc<QuotaChecker>>,
+        ) = match LagoProvider::from_env() {
+            Ok(provider) => {
+                info!("billing provider: Lago");
+                let quota_checker = StdArc::new(QuotaChecker::new(StdArc::clone(&plan_catalog)));
+                (
+                    Some(StdArc::new(provider) as StdArc<dyn BillingProvider>),
+                    Some(quota_checker),
+                )
+            }
+            Err(e) => {
+                warn!(error = %e, "Lago not configured — billing/metering disabled");
+                (None, None)
+            }
+        };
 
         let s3_endpoint = std::env::var("S3_ENDPOINT").ok();
-        let bucket = std::env::var("S3_BUCKET")
-            .unwrap_or_else(|_| "workspace".into());
-        let mut job_ctx = JobContext::new(
-            Arc::clone(&audit_store),
-            s3_endpoint,
-            Some(bucket),
-        );
+        let bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "workspace".into());
+        let mut job_ctx = JobContext::new(Arc::clone(&audit_store), s3_endpoint, Some(bucket));
         if let (Some(ra), Some(cs)) = (rustfs_admin.as_ref(), Some(&cred_store)) {
             job_ctx = job_ctx.with_rustfs(Arc::clone(ra), Arc::clone(cs));
         }
-        job_ctx = job_ctx.with_storage(
-            Arc::clone(&tenant_storage),
-            Arc::clone(&workspace_store),
-        );
+        job_ctx = job_ctx.with_storage(Arc::clone(&tenant_storage), Arc::clone(&workspace_store));
         let job_ctx = Arc::new(job_ctx);
         let job_registry = build_job_registry(job_ctx, billing.clone());
         let job_executor = JobExecutor::new(Arc::clone(&job_registry));
@@ -318,24 +417,26 @@ impl AppState {
             Arc::clone(&job_executor),
         ));
 
-        let artifact_bridge = file_store.as_ref().map(|fs| {
-            ArtifactBridge::new(Arc::clone(fs), Arc::clone(&workspace_content))
-        });
+        let artifact_bridge = file_store
+            .as_ref()
+            .map(|fs| ArtifactBridge::new(Arc::clone(fs), Arc::clone(&workspace_content)));
 
         let realtime_service = RealtimeService::new();
 
         // Register job-backed capabilities that need Arc<JobExecutor>.
         {
             use agent_core::capabilities::provider::CapabilityProvider;
-            let provider: Arc<dyn CapabilityProvider> = Arc::new(
-                transcribe_video_provider(&job_executor),
-            );
+            let provider: Arc<dyn CapabilityProvider> =
+                Arc::new(transcribe_video_provider(&job_executor));
             registry.lock().unwrap().register_provider(provider);
             info!("transcribe-video capability registered");
         }
 
         // Start hot-reload watcher (250 ms debounce, non-fatal if notify unavailable).
-        let manifest_watcher = match ManifestWatcher::start(Arc::clone(&registry), Some(Arc::clone(&realtime_service))) {
+        let manifest_watcher = match ManifestWatcher::start(
+            Arc::clone(&registry),
+            Some(Arc::clone(&realtime_service)),
+        ) {
             Ok(w) => {
                 info!("manifest hot-reload watcher started");
                 Some(w)
@@ -481,6 +582,15 @@ impl AppState {
     }
 }
 
+fn is_production_env() -> bool {
+    std::env::var("CONUSAI_ENV")
+        .map(|v| matches!(v.as_str(), "production" | "prod"))
+        .unwrap_or(false)
+        || std::env::var("RUST_ENV")
+            .map(|v| matches!(v.as_str(), "production" | "prod"))
+            .unwrap_or(false)
+}
+
 /// Build a quota service backed by a dev-fallback factory (for test mode).
 fn noop_quota_service() -> Arc<StorageQuotaService> {
     // In test mode there's no redb or RustFS. Use a factory that always falls back.
@@ -502,10 +612,8 @@ fn noop_quota_service() -> Arc<StorageQuotaService> {
 }
 
 fn init_file_store() -> Option<Arc<dyn ObjectStore>> {
-    let endpoint = std::env::var("S3_ENDPOINT")
-        .unwrap_or_else(|_| "http://rustfs:9000".into());
-    let bucket = std::env::var("S3_BUCKET")
-        .unwrap_or_else(|_| "workspace".into());
+    let endpoint = std::env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://rustfs:9000".into());
+    let bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "workspace".into());
     let access_key = std::env::var("RUSTFS_ROOT_ACCESS_KEY")
         .or_else(|_| std::env::var("AWS_ACCESS_KEY_ID"))
         .unwrap_or_else(|_| "rustfsadmin".into());

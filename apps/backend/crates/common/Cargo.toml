@@ -8,9 +8,6 @@ authors.workspace    = true
 license.workspace    = true
 
 [dependencies]
-tokio.workspace       = true
-redb.workspace        = true
-postcard.workspace    = true
 serde.workspace       = true
 serde_json.workspace  = true
 figment.workspace     = true
@@ -25,12 +22,9 @@ opentelemetry-prometheus.workspace = true
 prometheus.workspace             = true
 tracing-opentelemetry.workspace  = true
 wasmtime.workspace    = true
-wasmtime-wasi.workspace = true
 reqwest.workspace     = true
-uuid.workspace        = true
 chrono.workspace      = true
 ulid.workspace        = true
-bytes.workspace       = true
 async-trait.workspace = true
 schemars.workspace    = true
 utoipa.workspace      = true

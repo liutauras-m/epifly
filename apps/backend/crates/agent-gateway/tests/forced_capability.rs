@@ -14,7 +14,9 @@ use agent_core::{
     capabilities::discovery::CapabilityDiscovery,
     llm::{LlmBinding, LlmRegistry},
 };
-use common::memory::{InMemoryWorkspaceContent, InMemoryWorkspaceStore, WorkspaceStore, WorkspaceContentStore};
+use common::memory::{
+    InMemoryWorkspaceContent, InMemoryWorkspaceStore, WorkspaceContentStore, WorkspaceStore,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -26,7 +28,11 @@ fn capabilities_dir() -> std::path::PathBuf {
         .ancestors()
         .find_map(|a| {
             let candidate = a.join("capabilities");
-            if candidate.is_dir() { Some(candidate) } else { None }
+            if candidate.is_dir() {
+                Some(candidate)
+            } else {
+                None
+            }
         })
         .unwrap_or_else(|| std::path::PathBuf::from("capabilities"))
 }
@@ -37,7 +43,10 @@ fn build_test_registry() -> CapabilityRegistry {
     let llm = Arc::new(LlmRegistry::new(
         HashMap::new(),
         HashMap::new(),
-        LlmBinding { provider: "anthropic".into(), model: "claude-haiku-4-5".into() },
+        LlmBinding {
+            provider: "anthropic".into(),
+            model: "claude-haiku-4-5".into(),
+        },
     ));
     let mut reg = CapabilityRegistry::with_default_factories(Arc::clone(&llm));
     reg.register_factory(NativeStorageFactory::new(
@@ -89,7 +98,12 @@ fn known_capability_returns_tool_definitions() {
 #[test]
 fn all_ui_invokable_capabilities_return_tool_definitions() {
     let reg = build_test_registry();
-    let caps = ["storage-workspace", "code-project", "invoice-processing", "ocr-service"];
+    let caps = [
+        "storage-workspace",
+        "code-project",
+        "invoice-processing",
+        "ocr-service",
+    ];
     for cap in &caps {
         let result = reg.tools_for_capability_exact_for_tenant(cap, dev_tenant_id());
         // If the capability dir is present the capability must exist; if not present
@@ -114,10 +128,8 @@ fn all_ui_invokable_capabilities_return_tool_definitions() {
 #[test]
 fn unknown_capability_returns_none() {
     let reg = build_test_registry();
-    let result = reg.tools_for_capability_exact_for_tenant(
-        "non-existent-capability-xyzzy",
-        dev_tenant_id(),
-    );
+    let result =
+        reg.tools_for_capability_exact_for_tenant("non-existent-capability-xyzzy", dev_tenant_id());
     assert!(
         result.is_none(),
         "unknown capability must return None, not an empty Vec"
@@ -153,8 +165,8 @@ fn disabled_capability_returns_none() {
 /// visibility check used by `tools_for_capability_exact_for_tenant`).
 #[test]
 fn scoped_capability_hidden_from_wrong_tenant() {
-    use agent_core::capabilities::manifest::{ToolKind, ToolManifest};
     use agent_core::capabilities::card::CapabilityCard;
+    use agent_core::capabilities::manifest::{ToolKind, ToolManifest};
 
     let mut reg = CapabilityRegistry::new();
 
@@ -180,7 +192,10 @@ fn scoped_capability_hidden_from_wrong_tenant() {
         cost_hint: None,
         requires: vec![],
     };
-    reg.register(CapabilityCard::new(manifest, std::path::PathBuf::from("/tmp")));
+    reg.register(CapabilityCard::new(
+        manifest,
+        std::path::PathBuf::from("/tmp"),
+    ));
 
     // Positive side: "acme" can see the capability in the enabled set.
     let acme_caps: Vec<_> = reg.enabled_for_tenant("acme").collect();
@@ -190,7 +205,9 @@ fn scoped_capability_hidden_from_wrong_tenant() {
     );
     let other_caps: Vec<_> = reg.enabled_for_tenant("other").collect();
     assert!(
-        !other_caps.iter().any(|c| c.manifest.name == "acme-only-cap"),
+        !other_caps
+            .iter()
+            .any(|c| c.manifest.name == "acme-only-cap"),
         "tenant 'other' must NOT see acme-only-cap in enabled_for_tenant"
     );
 

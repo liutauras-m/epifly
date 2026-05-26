@@ -5,8 +5,8 @@
 //! invariant (tenant A's threads never appear in tenant B's list) is the
 //! security contract.
 
-use common::memory::store::ThreadStore;
 use common::memory::InMemoryThreadStore;
+use common::memory::store::ThreadStore;
 
 #[tokio::test]
 async fn list_returns_only_threads_for_caller_tenant() {

@@ -18,5 +18,13 @@ export default defineConfig({
     globals: true,
     include: ['tests/**/*.test.ts'],
     setupFiles: ['tests/setup.ts'],
+    pool: 'threads',
+    poolOptions: {
+      threads: {
+        singleThread: true,
+      },
+    },
+    maxWorkers: 1,
+    minWorkers: 1,
   },
 });

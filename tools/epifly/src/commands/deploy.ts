@@ -5,14 +5,14 @@
  */
 
 import type { Command } from "commander";
-import { APPS } from "../../../../dokploy/lib/manifest.mjs";
 import { parseDotenv, renderDotenv } from "../../../../dokploy/lib/dotenv.mjs";
+import { APPS } from "../../../../dokploy/lib/manifest.mjs";
 import { loadConfig } from "../lib/config.ts";
 import {
   getCompose,
   getServerCount,
-  listDeploymentsByServer,
   listDeploymentsByCompose,
+  listDeploymentsByServer,
   listServers,
   searchComposes,
   triggerDeploy,
@@ -47,7 +47,7 @@ export function registerDeploy(program: Command): void {
         if (serverCount <= 0) {
           fatal(
             "Dokploy has no servers configured for this API key/project.",
-            "Add/connect a server in Dokploy, then rerun `epifly deploy`.",
+            "Add/connect a server in Dokploy, then rerun `epifly deploy`."
           );
         }
       } catch (e: any) {
@@ -66,7 +66,7 @@ export function registerDeploy(program: Command): void {
         if (!self) {
           fatal(
             "No 'epifly-deploy' compose found in this environment.",
-            "Run `epifly init` or create it manually in the Dokploy UI.",
+            "Run `epifly init` or create it manually in the Dokploy UI."
           );
         }
         composeId = self.composeId;
@@ -76,17 +76,14 @@ export function registerDeploy(program: Command): void {
 
       // Build per-compose env overrides for this deploy
       const envOverrides: Record<string, string> = {};
-      if (opts.dryRun) envOverrides["DEPLOY_DRY_RUN"] = "true";
+      if (opts.dryRun) envOverrides.DEPLOY_DRY_RUN = "true";
       if (opts.phase) {
         if (!ALLOWED_PHASES.includes(opts.phase)) {
-          fatal(
-            `Invalid --phase '${opts.phase}'.`,
-            `Allowed phases: ${ALLOWED_PHASES.join("|")}`,
-          );
+          fatal(`Invalid --phase '${opts.phase}'.`, `Allowed phases: ${ALLOWED_PHASES.join("|")}`);
         }
-        envOverrides["DEPLOY_ONLY"] = opts.phase;
+        envOverrides.DEPLOY_ONLY = opts.phase;
       }
-      if (opts.skipVerify) envOverrides["DEPLOY_SKIP_VERIFY"] = "true";
+      if (opts.skipVerify) envOverrides.DEPLOY_SKIP_VERIFY = "true";
 
       let priorComposeEnv = "";
       let appliedTemporaryOverrides = false;
@@ -150,7 +147,7 @@ export function registerDeploy(program: Command): void {
         }
         fatal(
           "Dokploy worker is not processing deployment queue.",
-          "Check Dokploy worker/queue health, then retry `epifly deploy`.",
+          "Check Dokploy worker/queue health, then retry `epifly deploy`."
         );
       } else if (finalStatus === "timeout") {
         warn("Timed out waiting for deploy. Check the Dokploy UI for status.");
@@ -163,10 +160,10 @@ export function registerDeploy(program: Command): void {
           if (latest.logPath) info(`Log path: ${latest.logPath}`);
           if (!(await hasComposeServerBinding(cfg, composeId!))) {
             warn(
-              "Latest deployment has no serverId. This usually means the compose is not bound to a Dokploy server.",
+              "Latest deployment has no serverId. This usually means the compose is not bound to a Dokploy server."
             );
             warn(
-              "Recreate epifly-deploy compose with a valid server in Dokploy, then rerun epifly deploy.",
+              "Recreate epifly-deploy compose with a valid server in Dokploy, then rerun epifly deploy."
             );
           }
         }
@@ -180,7 +177,7 @@ export function registerDeploy(program: Command): void {
 async function ensureManagedServicesRunning(
   cfg: any,
   environmentId: string,
-  timeoutMs: number,
+  timeoutMs: number
 ): Promise<void> {
   section("Post-deploy service check");
 
@@ -211,7 +208,11 @@ async function ensureManagedServicesRunning(
     warn(`${app.name}: ${status} (forcing compose.deploy)`);
     await triggerDeploy(cfg, compose.composeId);
 
-    const result = await waitForManagedCompose(cfg, compose.composeId, Math.min(timeoutMs, 240_000));
+    const result = await waitForManagedCompose(
+      cfg,
+      compose.composeId,
+      Math.min(timeoutMs, 240_000)
+    );
     if (!result.ok) {
       failures.push(`${app.name} (${result.reason})`);
     } else {
@@ -220,10 +221,7 @@ async function ensureManagedServicesRunning(
   }
 
   if (failures.length > 0) {
-    fatal(
-      "Some services are not running after deploy.",
-      `Failures: ${failures.join(", ")}`,
-    );
+    fatal("Some services are not running after deploy.", `Failures: ${failures.join(", ")}`);
   }
 }
 
@@ -236,7 +234,7 @@ function hasDeploymentHistory(composeOne: any): boolean {
 async function waitForManagedCompose(
   cfg: any,
   composeId: string,
-  timeoutMs: number,
+  timeoutMs: number
 ): Promise<{ ok: boolean; status: string; reason?: string }> {
   const start = Date.now();
 
@@ -264,9 +262,15 @@ function sleep(ms: number): Promise<void> {
 
 async function getLatestDeploymentSummary(
   cfg: any,
-  composeId: string,
+  composeId: string
 ): Promise<
-  | { deploymentId: string; status: string; createdAt?: string; errorMessage?: string; logPath?: string }
+  | {
+      deploymentId: string;
+      status: string;
+      createdAt?: string;
+      errorMessage?: string;
+      logPath?: string;
+    }
   | undefined
 > {
   try {
@@ -313,14 +317,16 @@ async function printServerDiagnosticSummary(cfg: any): Promise<void> {
     if (!selected?.serverId) return;
 
     info(
-      `Server: ${selected.name ?? selected.serverId} (${selected.serverStatus ?? "unknown"}) ${selected.ipAddress ?? ""}`,
+      `Server: ${selected.name ?? selected.serverId} (${selected.serverStatus ?? "unknown"}) ${selected.ipAddress ?? ""}`
     );
 
-    const latest = getLatestByCreatedAt(await listDeploymentsByServer(cfg, String(selected.serverId)));
+    const latest = getLatestByCreatedAt(
+      await listDeploymentsByServer(cfg, String(selected.serverId))
+    );
     if (!latest) return;
 
     info(
-      `Latest server deployment: ${latest.status ?? "unknown"} (${latest.deploymentId ?? "unknown"})`,
+      `Latest server deployment: ${latest.status ?? "unknown"} (${latest.deploymentId ?? "unknown"})`
     );
     if (latest.errorMessage) warn(`Server deployment error: ${latest.errorMessage}`);
     if (latest.logPath) info(`Server log path: ${latest.logPath}`);
@@ -328,4 +334,3 @@ async function printServerDiagnosticSummary(cfg: any): Promise<void> {
     // Best-effort diagnostics only.
   }
 }
-

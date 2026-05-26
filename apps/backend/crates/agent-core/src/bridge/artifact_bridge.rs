@@ -28,7 +28,11 @@ impl ArtifactBridge {
         content_store: Arc<dyn WorkspaceContentStore>,
     ) -> Arc<Self> {
         let pub_base_url = std::env::var("RUSTFS_PUBLIC_BASE_URL").ok();
-        Arc::new(Self { object_store, content_store, pub_base_url })
+        Arc::new(Self {
+            object_store,
+            content_store,
+            pub_base_url,
+        })
     }
 
     /// Materialise all artifacts in `output`. Failures are logged, not propagated.
@@ -62,7 +66,15 @@ impl ArtifactBridge {
 
         for artifact in &output.artifacts {
             match self
-                .materialise(tenant_id, user_id, tool_name, parent_node_id, artifact, path_prefix, hosting)
+                .materialise(
+                    tenant_id,
+                    user_id,
+                    tool_name,
+                    parent_node_id,
+                    artifact,
+                    path_prefix,
+                    hosting,
+                )
                 .await
             {
                 Ok(Some(vpath)) => changed_paths.push(vpath),
@@ -77,10 +89,14 @@ impl ArtifactBridge {
         let public_url = if hosting {
             if let Some(ref base) = self.pub_base_url {
                 let root_path = output.metadata["root_path"].as_str().unwrap_or("");
-                let index = output.metadata["index_file"].as_str().unwrap_or("index.html");
+                let index = output.metadata["index_file"]
+                    .as_str()
+                    .unwrap_or("index.html");
                 Some(format!("{base}/{tenant_id}/static/{root_path}/{index}"))
             } else {
-                warn!("hosting_type=static but RUSTFS_PUBLIC_BASE_URL is not set — no public_url returned");
+                warn!(
+                    "hosting_type=static but RUSTFS_PUBLIC_BASE_URL is not set — no public_url returned"
+                );
                 None
             }
         } else {
@@ -93,6 +109,7 @@ impl ArtifactBridge {
     /// Returns `Ok(Some(virtual_path))` when a text artifact was written to the
     /// content store (so the caller can collect changed paths for `resource_invalidated`).
     /// Returns `Ok(None)` for binary artifacts or when no content-store write occurred.
+    #[allow(clippy::too_many_arguments)]
     async fn materialise(
         &self,
         tenant_id: &str,

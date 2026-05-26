@@ -150,7 +150,10 @@ struct CaseResult {
 fn write_markdown_report(path: &std::path::Path, results: &[CaseResult]) {
     let mut out = String::new();
     out.push_str("# Routing-quality report\n\n");
-    out.push_str(&format!("Generated: {}\n\n", chrono::Utc::now().to_rfc3339()));
+    out.push_str(&format!(
+        "Generated: {}\n\n",
+        chrono::Utc::now().to_rfc3339()
+    ));
     out.push_str("## Per-case results\n\n");
     out.push_str("| id | variant | pass | actual capabilities |\n");
     out.push_str("|----|---------|------|---------------------|\n");

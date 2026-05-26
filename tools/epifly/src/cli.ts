@@ -4,16 +4,16 @@
  */
 
 import { Command } from "commander";
-import { registerInit } from "./commands/init.ts";
 import { registerDeploy } from "./commands/deploy.ts";
 import { registerDestroy } from "./commands/destroy.ts";
+import { registerDiff } from "./commands/diff.ts";
+import { registerDoctor } from "./commands/doctor.ts";
+import { registerInit } from "./commands/init.ts";
 import { registerLogs } from "./commands/logs.ts";
-import { registerVerify } from "./commands/verify.ts";
 import { registerSecret } from "./commands/secret.ts";
 import { registerStatus } from "./commands/status.ts";
-import { registerDiff } from "./commands/diff.ts";
+import { registerVerify } from "./commands/verify.ts";
 import { registerWipe } from "./commands/wipe.ts";
-import { registerDoctor } from "./commands/doctor.ts";
 
 const program = new Command("epifly")
   .version("0.1.0")

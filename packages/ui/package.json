@@ -51,7 +51,7 @@
   "scripts": {
     "build": "pnpm tokens:build",
     "check-types": "svelte-check --tsconfig ./tsconfig.json",
-    "test": "vitest run",
+    "test": "NODE_OPTIONS='--max-old-space-size=8192' vitest run",
     "assets:verify": "node scripts/assets-verify.js",
     "contracts": "node scripts/check-ui-contracts.mjs",
     "motion:durations": "node scripts/check-motion-durations.mjs",

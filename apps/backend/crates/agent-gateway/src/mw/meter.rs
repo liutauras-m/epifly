@@ -28,10 +28,7 @@ pub async fn record_usage(
     next: Next,
 ) -> Response {
     // Capture tenant before consuming the request.
-    let tenant = req
-        .extensions()
-        .get::<ResolvedTenant>()
-        .cloned();
+    let tenant = req.extensions().get::<ResolvedTenant>().cloned();
 
     let resp = next.run(req).await;
 

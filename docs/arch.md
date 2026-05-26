@@ -209,13 +209,14 @@ conusai-platform/
     ├── project-instructions.md
     ├── capability-authoring-guide.md
     ├── capability-gaps-plan.md
-    ├── capability-gaps-pan.md      # typo'd alias kept for in-flight links
+    ├── capability-gaps-pan.md      # deprecated compatibility alias; canonical: capability-gaps-plan.md
     ├── adr/
     │   ├── 0007-everything-is-a-capability.md
     │   └── 0008-orchestration-hook-vs-subexecution.md
     ├── branding/
     │   ├── branding.md
-    │   ├── indes.html              # (sic — file name typo)
+    │   ├── index.html              # canonical desktop branding reference
+    │   ├── indes.html              # deprecated compatibility alias
     │   └── mobile.html
     ├── capabilities/
     │   ├── capabilities-arch.md

@@ -1,7 +1,7 @@
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
-use agent_core::{LlmRegistry, PlanLimits, map_rig_error};
 use agent_core::llm::types::LlmRequest;
+use agent_core::{LlmRegistry, PlanLimits, map_rig_error};
 use axum::{
     Extension, Json,
     extract::State,
@@ -113,7 +113,9 @@ pub async fn completions(
     }
 
     if req.stream.unwrap_or(false) {
-        stream_response(Arc::clone(&state.llm), tenant, limits, req).await.into_response()
+        stream_response(Arc::clone(&state.llm), tenant, limits, req)
+            .await
+            .into_response()
     } else {
         match blocking_response(&state.llm, &tenant, limits, req).await {
             Ok(r) => r.into_response(),
@@ -131,7 +133,10 @@ async fn blocking_response(
     req: ChatRequest,
 ) -> Result<Json<ChatResponse>, HttpError> {
     let model_id = req.model.as_deref().unwrap_or("claude-opus-4-7");
-    let max_tokens = req.max_tokens.unwrap_or(limits.max_tokens).min(limits.max_tokens);
+    let max_tokens = req
+        .max_tokens
+        .unwrap_or(limits.max_tokens)
+        .min(limits.max_tokens);
 
     info!(
         model = model_id,
@@ -169,9 +174,20 @@ async fn blocking_response(
             finish_reason: resp.finish_reason.unwrap_or_else(|| "stop".into()),
         }],
         usage: Usage {
-            prompt_tokens: resp.usage.as_ref().map(|u| u.input_tokens as u64).unwrap_or(0),
-            completion_tokens: resp.usage.as_ref().map(|u| u.output_tokens as u64).unwrap_or(0),
-            total_tokens: resp.usage.map(|u| (u.input_tokens + u.output_tokens) as u64).unwrap_or(0),
+            prompt_tokens: resp
+                .usage
+                .as_ref()
+                .map(|u| u.input_tokens as u64)
+                .unwrap_or(0),
+            completion_tokens: resp
+                .usage
+                .as_ref()
+                .map(|u| u.output_tokens as u64)
+                .unwrap_or(0),
+            total_tokens: resp
+                .usage
+                .map(|u| (u.input_tokens + u.output_tokens) as u64)
+                .unwrap_or(0),
         },
     }))
 }
@@ -187,15 +203,24 @@ async fn stream_response(
     let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(64);
 
     tokio::spawn(async move {
-        let model_id = req.model.as_deref().unwrap_or("claude-opus-4-7").to_string();
-        let max_tokens = req.max_tokens.unwrap_or(limits.max_tokens).min(limits.max_tokens);
+        let model_id = req
+            .model
+            .as_deref()
+            .unwrap_or("claude-opus-4-7")
+            .to_string();
+        let max_tokens = req
+            .max_tokens
+            .unwrap_or(limits.max_tokens)
+            .min(limits.max_tokens);
         let id = format!("chatcmpl-{}", Uuid::new_v4());
 
         let provider = match llm.resolve(&model_id, None) {
             Ok(p) => p,
             Err(e) => {
                 let _ = tx
-                    .send(Ok(Event::default().data(json!({"error": e.to_string()}).to_string())))
+                    .send(Ok(
+                        Event::default().data(json!({"error": e.to_string()}).to_string())
+                    ))
                     .await;
                 return;
             }
@@ -211,7 +236,9 @@ async fn stream_response(
         match provider.stream(llm_req).await {
             Err(e) => {
                 let _ = tx
-                    .send(Ok(Event::default().data(json!({"error": e.to_string()}).to_string())))
+                    .send(Ok(
+                        Event::default().data(json!({"error": e.to_string()}).to_string())
+                    ))
                     .await;
             }
             Ok(mut stream) => {
@@ -263,7 +290,9 @@ async fn stream_response(
 fn chat_messages_to_rig(msgs: &[ChatMessage]) -> Vec<Message> {
     msgs.iter()
         .filter_map(|m| match m.role.as_str() {
-            "system" => Some(Message::System { content: m.content.clone() }),
+            "system" => Some(Message::System {
+                content: m.content.clone(),
+            }),
             "user" => Some(Message::User {
                 content: OneOrMany::one(UserContent::text(m.content.clone())),
             }),

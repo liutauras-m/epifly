@@ -15,7 +15,11 @@ export interface DokployConfig {
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────
 
-async function get(cfg: DokployConfig, procedure: string, input?: Record<string, unknown>): Promise<any> {
+async function get(
+  cfg: DokployConfig,
+  procedure: string,
+  input?: Record<string, unknown>
+): Promise<any> {
   const base = cfg.dokployUrl.replace(/\/+$/, "");
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(input ?? {})) {
@@ -29,7 +33,11 @@ async function get(cfg: DokployConfig, procedure: string, input?: Record<string,
   return unwrap(res, procedure);
 }
 
-async function post(cfg: DokployConfig, procedure: string, input?: Record<string, unknown>): Promise<any> {
+async function post(
+  cfg: DokployConfig,
+  procedure: string,
+  input?: Record<string, unknown>
+): Promise<any> {
   const base = cfg.dokployUrl.replace(/\/+$/, "");
   const res = await fetch(`${base}/api/${procedure}`, {
     method: "POST",
@@ -62,7 +70,7 @@ async function unwrap(res: Response, procedure: string): Promise<any> {
 
 export async function searchComposes(
   cfg: DokployConfig,
-  params: { environmentId: string; limit: number; offset: number },
+  params: { environmentId: string; limit: number; offset: number }
 ): Promise<{ items: any[]; total: number }> {
   return get(cfg, "compose.search", params as Record<string, unknown>);
 }
@@ -73,14 +81,14 @@ export async function getCompose(cfg: DokployConfig, composeId: string): Promise
 
 export async function createCompose(
   cfg: DokployConfig,
-  params: { name: string; environmentId: string; [key: string]: unknown },
+  params: { name: string; environmentId: string; [key: string]: unknown }
 ): Promise<any> {
   return post(cfg, "compose.create", params as Record<string, unknown>);
 }
 
 export async function updateCompose(
   cfg: DokployConfig,
-  params: { composeId: string; [key: string]: unknown },
+  params: { composeId: string; [key: string]: unknown }
 ): Promise<any> {
   return post(cfg, "compose.update", params as Record<string, unknown>);
 }
@@ -91,25 +99,31 @@ export async function triggerDeploy(cfg: DokployConfig, composeId: string): Prom
 
 export async function deleteCompose(
   cfg: DokployConfig,
-  params: { composeId: string; deleteVolumes?: boolean },
+  params: { composeId: string; deleteVolumes?: boolean }
 ): Promise<any> {
   return post(cfg, "compose.delete", params as Record<string, unknown>);
 }
 
 export async function readComposeLogs(
   cfg: DokployConfig,
-  params: { composeId: string; containerId: string; tail?: number; since?: string; search?: string },
+  params: { composeId: string; containerId: string; tail?: number; since?: string; search?: string }
 ): Promise<any> {
   return get(cfg, "compose.readLogs", params as Record<string, unknown>);
 }
 
 // ── Deployment ────────────────────────────────────────────────────────────
 
-export async function listDeploymentsByCompose(cfg: DokployConfig, composeId: string): Promise<any[]> {
+export async function listDeploymentsByCompose(
+  cfg: DokployConfig,
+  composeId: string
+): Promise<any[]> {
   return (await get(cfg, "deployment.allByCompose", { composeId })) ?? [];
 }
 
-export async function listDeploymentsByServer(cfg: DokployConfig, serverId: string): Promise<any[]> {
+export async function listDeploymentsByServer(
+  cfg: DokployConfig,
+  serverId: string
+): Promise<any[]> {
   return (await get(cfg, "deployment.allByServer", { serverId })) ?? [];
 }
 
@@ -134,16 +148,21 @@ export async function getServerCount(cfg: DokployConfig): Promise<number> {
 
 export async function getServiceContainersByAppName(
   cfg: DokployConfig,
-  params: { appName: string; serverId?: string },
+  params: { appName: string; serverId?: string }
 ): Promise<any[]> {
-  return (await get(cfg, "docker.getServiceContainersByAppName", params as Record<string, unknown>)) ?? [];
+  return (
+    (await get(cfg, "docker.getServiceContainersByAppName", params as Record<string, unknown>)) ??
+    []
+  );
 }
 
 export async function getContainersByAppNameMatch(
   cfg: DokployConfig,
-  params: { appName: string; appType?: "stack" | "docker-compose"; serverId?: string },
+  params: { appName: string; appType?: "stack" | "docker-compose"; serverId?: string }
 ): Promise<any[]> {
-  return (await get(cfg, "docker.getContainersByAppNameMatch", params as Record<string, unknown>)) ?? [];
+  return (
+    (await get(cfg, "docker.getContainersByAppNameMatch", params as Record<string, unknown>)) ?? []
+  );
 }
 
 // ── Project ───────────────────────────────────────────────────────────────
@@ -158,7 +177,7 @@ export async function getProject(cfg: DokployConfig, projectId: string): Promise
 
 export async function updateProject(
   cfg: DokployConfig,
-  params: { projectId: string; [key: string]: unknown },
+  params: { projectId: string; [key: string]: unknown }
 ): Promise<any> {
   return post(cfg, "project.update", params as Record<string, unknown>);
 }
@@ -171,9 +190,13 @@ export async function getEnvironment(cfg: DokployConfig, environmentId: string):
 
 export async function listEnvironments(
   cfg: DokployConfig,
-  params?: { projectId?: string; limit?: number; offset?: number },
+  params?: { projectId?: string; limit?: number; offset?: number }
 ): Promise<any[]> {
-  const result = await get(cfg, "environment.search", params as Record<string, unknown> | undefined);
+  const result = await get(
+    cfg,
+    "environment.search",
+    params as Record<string, unknown> | undefined
+  );
   return result?.items ?? result ?? [];
 }
 
@@ -183,13 +206,16 @@ export async function getDomainsByCompose(cfg: DokployConfig, composeId: string)
   return (await get(cfg, "domain.byComposeId", { composeId })) ?? [];
 }
 
-export async function createDomain(cfg: DokployConfig, params: Record<string, unknown>): Promise<any> {
+export async function createDomain(
+  cfg: DokployConfig,
+  params: Record<string, unknown>
+): Promise<any> {
   return post(cfg, "domain.create", params);
 }
 
 export async function updateDomain(
   cfg: DokployConfig,
-  params: { domainId: string; [key: string]: unknown },
+  params: { domainId: string; [key: string]: unknown }
 ): Promise<any> {
   return post(cfg, "domain.update", params as Record<string, unknown>);
 }

@@ -142,7 +142,6 @@ pub fn recorder_status(state: tauri::State<RecorderStateHandle>) -> serde_json::
     })
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

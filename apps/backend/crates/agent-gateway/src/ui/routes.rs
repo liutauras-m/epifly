@@ -14,5 +14,8 @@ pub fn ui_router() -> Router<Arc<AppState>> {
         .route("/ui/stream", post(chat::ui_stream))
         .route("/ui/upload", post(upload::ui_upload))
         .route("/ui/files/download", get(files::ui_download))
-        .route("/ui/admin/billing", get(billing_admin::billing_admin_dashboard))
+        .route(
+            "/ui/admin/billing",
+            get(billing_admin::billing_admin_dashboard),
+        )
 }

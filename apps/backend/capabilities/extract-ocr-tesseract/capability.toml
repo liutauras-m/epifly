@@ -4,6 +4,7 @@ version     = "0.1.0"
 namespace   = "extract.text.ocr_tesseract"
 category    = "extract"
 kind        = "wasm"
+enabled     = false
 description = "Extract text from images using Tesseract OCR via WebAssembly — fast, offline, low cost."
 tags        = ["ocr", "tesseract", "text extraction", "image", "offline"]
 accepts     = ["image/*"]

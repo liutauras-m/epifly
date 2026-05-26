@@ -73,31 +73,31 @@ function readConfigFile(path: string): PartialConfig {
 }
 
 /** Read config from file + env, without requiring all fields to be present. */
-export function readPartialConfig(flags: {
-  config?: string;
-  dokployUrl?: string;
-  apiKey?: string;
-  environmentId?: string;
-  appDomain?: string;
-  repoRoot?: string;
-} = {}): PartialConfig {
+export function readPartialConfig(
+  flags: {
+    config?: string;
+    dokployUrl?: string;
+    apiKey?: string;
+    environmentId?: string;
+    appDomain?: string;
+    repoRoot?: string;
+  } = {}
+): PartialConfig {
   const explicitConfigPath = flags.config ? resolve(process.cwd(), flags.config) : undefined;
 
   // 1. Config file
   const configPath =
-    explicitConfigPath ||
-    process.env["EPIFLY_CONFIG"] ||
-    CONFIG_SEARCH.find((p) => existsSync(p));
+    explicitConfigPath || process.env.EPIFLY_CONFIG || CONFIG_SEARCH.find((p) => existsSync(p));
   const file = configPath ? readConfigFile(configPath) : {};
 
   // 2. Env vars
   const env: PartialConfig = {
-    ...(process.env["DOKPLOY_URL"] ? { dokployUrl: process.env["DOKPLOY_URL"] } : {}),
-    ...(process.env["DOKPLOY_API_KEY"] ? { apiKey: process.env["DOKPLOY_API_KEY"] } : {}),
-    ...(process.env["DOKPLOY_ENVIRONMENT_ID"]
-      ? { environmentId: process.env["DOKPLOY_ENVIRONMENT_ID"] }
+    ...(process.env.DOKPLOY_URL ? { dokployUrl: process.env.DOKPLOY_URL } : {}),
+    ...(process.env.DOKPLOY_API_KEY ? { apiKey: process.env.DOKPLOY_API_KEY } : {}),
+    ...(process.env.DOKPLOY_ENVIRONMENT_ID
+      ? { environmentId: process.env.DOKPLOY_ENVIRONMENT_ID }
       : {}),
-    ...(process.env["APP_DOMAIN"] ? { appDomain: process.env["APP_DOMAIN"] } : {}),
+    ...(process.env.APP_DOMAIN ? { appDomain: process.env.APP_DOMAIN } : {}),
   };
 
   // 3. Merge: CLI flags override env override file
@@ -126,11 +126,7 @@ export function loadConfig(flags: Parameters<typeof readPartialConfig>[0] = {}):
   const missing = required.filter((k) => !cfg[k]);
   if (missing.length > 0) {
     throw new Error(
-      `Missing required config: ${missing.join(", ")}\n\n` +
-        `Set them via:\n` +
-        `  • epifly init            (interactive wizard)\n` +
-        `  • .dokploy config file   (JSON)\n` +
-        `  • Environment variables  (DOKPLOY_URL, DOKPLOY_API_KEY, DOKPLOY_ENVIRONMENT_ID, APP_DOMAIN)`,
+      `Missing required config: ${missing.join(", ")}\n\nSet them via:\n  • epifly init            (interactive wizard)\n  • .dokploy config file   (JSON)\n  • Environment variables  (DOKPLOY_URL, DOKPLOY_API_KEY, DOKPLOY_ENVIRONMENT_ID, APP_DOMAIN)`
     );
   }
   return {
@@ -143,7 +139,10 @@ export function loadConfig(flags: Parameters<typeof readPartialConfig>[0] = {}):
 }
 
 /** Write config to .dokploy in cwd. */
-export function writeConfig(cfg: Partial<EpiflyConfig>, dest = resolve(process.cwd(), ".dokploy")): void {
+export function writeConfig(
+  cfg: Partial<EpiflyConfig>,
+  dest = resolve(process.cwd(), ".dokploy")
+): void {
   const existing = existsSync(dest) ? JSON.parse(readFileSync(dest, "utf8")) : {};
-  writeFileSync(dest, JSON.stringify({ ...existing, ...cfg }, null, 2) + "\n", "utf8");
+  writeFileSync(dest, `${JSON.stringify({ ...existing, ...cfg }, null, 2)}\n`, "utf8");
 }

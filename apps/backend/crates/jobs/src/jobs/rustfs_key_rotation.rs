@@ -35,8 +35,7 @@ impl ScheduledJob for RustFsKeyRotationJob {
             .and_then(|v| v.parse().ok())
             .unwrap_or(90);
 
-        let (Some(admin), Some(cred_store)) =
-            (ctx.rustfs_admin.as_ref(), ctx.cred_store.as_ref())
+        let (Some(admin), Some(cred_store)) = (ctx.rustfs_admin.as_ref(), ctx.cred_store.as_ref())
         else {
             info!("rustfs-key-rotation: admin client or cred store not configured — skipping");
             return Ok(());
@@ -83,11 +82,12 @@ impl ScheduledJob for RustFsKeyRotationJob {
             // Rotate to a new service account, preserving the existing bucket.
             // Use the dedicated rotate function (not provision_tenant) to avoid
             // attempting to create a new bucket on credential rotation.
-            let effective_bucket = creds.bucket.clone()
-                .unwrap_or_else(|| rustfs_admin::bucket::sanitize_bucket_name(
-                    &format!("ws-{tenant_id}")
-                ));
-            let new_iam = match iam::rotate_tenant_credentials(admin, tenant_id, &effective_bucket).await {
+            let effective_bucket = creds.bucket.clone().unwrap_or_else(|| {
+                rustfs_admin::bucket::sanitize_bucket_name(&format!("ws-{tenant_id}"))
+            });
+            let new_iam = match iam::rotate_tenant_credentials(admin, tenant_id, &effective_bucket)
+                .await
+            {
                 Ok(c) => c,
                 Err(e) => {
                     warn!(tenant_id, error = %e, "rustfs-key-rotation: failed to provision new creds");

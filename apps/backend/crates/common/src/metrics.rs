@@ -165,7 +165,9 @@ pub fn capability_invoke_seconds() -> Histogram<f64> {
 pub fn embedding_cache_hits() -> Counter<u64> {
     opentelemetry::global::meter("conusai.agent")
         .u64_counter("gen_ai.capability_registry.embedding_cache_hit")
-        .with_description("Embedding cache hits when loading capability descriptions (avoids re-embedding)")
+        .with_description(
+            "Embedding cache hits when loading capability descriptions (avoids re-embedding)",
+        )
         .with_unit("hits")
         .build()
 }
@@ -174,7 +176,9 @@ pub fn embedding_cache_hits() -> Counter<u64> {
 pub fn embedding_cache_misses() -> Counter<u64> {
     opentelemetry::global::meter("conusai.agent")
         .u64_counter("gen_ai.capability_registry.embedding_cache_miss")
-        .with_description("Embedding cache misses when loading capability descriptions (requires re-embedding)")
+        .with_description(
+            "Embedding cache misses when loading capability descriptions (requires re-embedding)",
+        )
         .with_unit("misses")
         .build()
 }

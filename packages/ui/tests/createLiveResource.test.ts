@@ -59,6 +59,8 @@ describe('createLiveResource — rollback contract (3.A.4.1)', () => {
     const fetcher = vi.fn(async () => ({ items: ['x', 'y'] }) as Data);
     const { result: r, cleanup } = withRoot(() => createLiveResource<Data>('test', fetcher));
     try {
+      // Settle the factory's auto-init refresh before asserting optimistic state.
+      await r.refresh();
       await r.refresh();
       let resolveFn!: () => void;
       const rollbackOn = new Promise<void>((res) => { resolveFn = res; });
@@ -162,9 +164,10 @@ describe('createLiveResource — scope filtering (3.A.7)', () => {
 
       // Allow loading=false to settle before triggering the next fetch.
       r.notifyInvalidationWithScope('workspace', 'tenant-A');
-      // refresh() returns a Promise but notifyInvalidation* fires-and-forgets;
-      // give it microtask + macrotask room.
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      // notifyInvalidation* fires-and-forgets; flush microtasks so the queued
+      // refresh chain settles without depending on timer scheduling.
+      await Promise.resolve();
+      await Promise.resolve();
       // And let the fetcher's microtask settle.
       await r.refresh();
       expect(fetcher.mock.calls.length).toBeGreaterThan(before);

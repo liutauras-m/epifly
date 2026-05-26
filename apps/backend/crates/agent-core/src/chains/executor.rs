@@ -249,10 +249,10 @@ fn extract_json_object(raw: &str) -> Option<serde_json::Value> {
             let candidate = &raw[i..=end];
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(candidate) {
                 // Only accept objects that look like a ToolOutput (have "content" or "artifacts").
-                if let Some(obj) = v.as_object() {
-                    if obj.contains_key("content") || obj.contains_key("artifacts") {
-                        return Some(v);
-                    }
+                if let Some(obj) = v.as_object()
+                    && (obj.contains_key("content") || obj.contains_key("artifacts"))
+                {
+                    return Some(v);
                 }
             }
         }
@@ -290,11 +290,13 @@ fn normalize_tool_output(v: serde_json::Value) -> serde_json::Value {
         let pairs: Vec<(String, String)> = if let Some(arr) = files.as_array() {
             arr.iter()
                 .filter_map(|f| {
-                    let path = f.get("path")
+                    let path = f
+                        .get("path")
                         .or_else(|| f.get("name"))
                         .or_else(|| f.get("filename"))
                         .and_then(|s| s.as_str())?;
-                    let content = f.get("content")
+                    let content = f
+                        .get("content")
                         .or_else(|| f.get("data"))
                         .and_then(|s| s.as_str())?;
                     Some((path.to_owned(), content.to_owned()))
@@ -302,9 +304,7 @@ fn normalize_tool_output(v: serde_json::Value) -> serde_json::Value {
                 .collect()
         } else if let Some(map) = files.as_object() {
             map.iter()
-                .filter_map(|(path, content)| {
-                    Some((path.clone(), content.as_str()?.to_owned()))
-                })
+                .filter_map(|(path, content)| Some((path.clone(), content.as_str()?.to_owned())))
                 .collect()
         } else {
             return None;
@@ -326,7 +326,8 @@ fn normalize_tool_output(v: serde_json::Value) -> serde_json::Value {
     });
 
     if let Some(artifacts) = artifacts_from_files {
-        let summary = obj.get("notes")
+        let summary = obj
+            .get("notes")
             .or_else(|| obj.get("summary"))
             .or_else(|| obj.get("description"))
             .or_else(|| obj.get("project"))
@@ -334,7 +335,8 @@ fn normalize_tool_output(v: serde_json::Value) -> serde_json::Value {
             .unwrap_or("Files generated.")
             .to_owned();
 
-        let metadata = obj.get("metadata")
+        let metadata = obj
+            .get("metadata")
             .cloned()
             .unwrap_or_else(|| json!({"artifact_path_prefix": ""}));
 

@@ -29,7 +29,12 @@ pub async fn ui_download(
 ) -> Response {
     let store = match state.file_store.as_ref() {
         Some(s) => s,
-        None => return err(StatusCode::SERVICE_UNAVAILABLE, "file storage not configured"),
+        None => {
+            return err(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "file storage not configured",
+            );
+        }
     };
 
     // If a session is present, verify the object key belongs to that tenant.
@@ -46,7 +51,10 @@ pub async fn ui_download(
             false
         };
         if !owned {
-            return err(StatusCode::FORBIDDEN, "object does not belong to your tenant");
+            return err(
+                StatusCode::FORBIDDEN,
+                "object does not belong to your tenant",
+            );
         }
     }
 
@@ -57,14 +65,22 @@ pub async fn ui_download(
     };
     let bytes = match result.bytes().await {
         Ok(b) => b,
-        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("read error: {e}")),
+        Err(e) => {
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("read error: {e}"),
+            );
+        }
     };
 
     let filename = q.key.split('/').next_back().unwrap_or("file");
     Response::builder()
         .status(200)
         .header("content-type", "application/octet-stream")
-        .header("content-disposition", format!("attachment; filename=\"{filename}\""))
+        .header(
+            "content-disposition",
+            format!("attachment; filename=\"{filename}\""),
+        )
         .header("content-length", bytes.len().to_string())
         .header("cache-control", "private, no-store")
         .body(Body::from(bytes))

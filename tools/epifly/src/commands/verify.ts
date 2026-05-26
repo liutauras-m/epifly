@@ -18,7 +18,8 @@ export function registerVerify(program: Command): void {
     .action(async (opts) => {
       const partial = readPartialConfig({ config: opts.config, appDomain: opts.domain });
       const appDomain = partial.appDomain;
-      if (!appDomain) fatal("No APP_DOMAIN. Pass --domain or set it in .dokploy / APP_DOMAIN env var.");
+      if (!appDomain)
+        fatal("No APP_DOMAIN. Pass --domain or set it in .dokploy / APP_DOMAIN env var.");
 
       banner("verify");
       section(`Checking ${appDomain}`);

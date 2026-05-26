@@ -4,6 +4,7 @@ version     = "0.1.0"
 namespace   = "sense.detection.mime_type"
 category    = "sense"
 kind        = "wasm"
+enabled     = false
 description = "Detect the MIME type of a file by inspecting its magic bytes — no LLM required."
 tags        = ["mime", "file type", "detection", "magic bytes"]
 accepts     = ["*/*"]

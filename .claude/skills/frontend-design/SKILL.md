@@ -4,7 +4,7 @@ description: Build Epifly frontend interfaces using the established premium 2026
 license: Complete terms in LICENSE.txt
 ---
 
-This skill produces production-grade frontend code that is **strictly consistent with the Epifly brand system** defined in [docs/branding/branding.md](../../docs/branding/branding.md) and the reference layouts in [docs/branding/indes.html](../../docs/branding/indes.html) and [docs/branding/mobile.html](../../docs/branding/mobile.html). Do not invent a new aesthetic per task — every screen must feel like the same product.
+This skill produces production-grade frontend code that is **strictly consistent with the Epifly brand system** defined in [docs/branding/branding.md](../../docs/branding/branding.md) and the reference layouts in [docs/branding/index.html](../../docs/branding/index.html) and [docs/branding/mobile.html](../../docs/branding/mobile.html). Do not invent a new aesthetic per task — every screen must feel like the same product.
 
 The user provides frontend requirements: a component, page, application, or interface to build. Your job is to render that requirement **inside the existing premium-AI aesthetic**, not to choose a new one.
 
@@ -43,12 +43,12 @@ The user provides frontend requirements: a component, page, application, or inte
 
 ## 2. Required workflow before writing code
 
-1. **Read the source of truth.** Open [docs/branding/branding.md](../../docs/branding/branding.md) and [docs/branding/indes.html](../../docs/branding/indes.html). Skim the `:root` token block and the section patterns (hero, palette, type, principles).
+1. **Read the source of truth.** Open [docs/branding/branding.md](../../docs/branding/branding.md) and [docs/branding/index.html](../../docs/branding/index.html). Skim the `:root` token block and the section patterns (hero, palette, type, principles).
 2. **Locate similar existing components.** Search `packages/ui/src/lib/` and `apps/*/src/` for the closest analogue (card, panel, eyebrow, button, message bubble). Mirror its structure, naming, and radii. If the project's `tokens.css` does not yet contain the Epifly tokens, add them there first — never inline.
 3. **Decide *where* this code lives — see §11 Cross-platform sharing.** Default placement is `packages/ui`. Only fall back to an app folder when the component depends on a platform-only API (Tauri `invoke`, SvelteKit `$app/*`, WKWebView bridges). This step happens **before** picking a filename.
 4. **Pick the radius from the documented scale only**: `14px` · `18px` · `20px` · `28px` · `999px`. No new values.
 5. **Pick a surface recipe** from §7 (sticky topbar, hero copy panel, hero stage panel, mini-card grid, prompt card, variant card, mobile message bubble). Don't invent a new one.
-6. **Decide light-or-dark or both.** Every component must look correct in *both* modes. Use the `body[data-theme="dark"]` selector pattern from `indes.html` or `@media (prefers-color-scheme: dark)`.
+6. **Decide light-or-dark or both.** Every component must look correct in *both* modes. Use the `body[data-theme="dark"]` selector pattern from `index.html` or `@media (prefers-color-scheme: dark)`.
 7. **Lead the section with an eyebrow** — a Geist Mono uppercase `0.74rem` `letter-spacing: 0.14em` line, often in orange (`var(--orange)`), optionally preceded by a `44px` linear-gradient hairline `linear-gradient(90deg, var(--orange), transparent)`.
 8. **Then write code.**
 
@@ -146,7 +146,7 @@ Never use a single solid hex for `body`.
 - **Lead paragraph** — Geist Sans 400, `font-size: clamp(1.05rem, 1.3vw, 1.2rem)`, `line-height: 1.7`, `color: var(--text-soft)`, capped at `34rem` / `56ch`.
 - **Body paragraph** — Geist Sans 400, `line-height: 1.65`, `color: var(--text-soft)`, capped at `44rem` / `64ch`.
 - **Eyebrow / overline / mono meta** — Geist Mono `0.74rem` `text-transform: uppercase` `letter-spacing: 0.14em`. In orange when leading a section; in `--text-muted` for table/metric labels.
-- **Section tag with hairline** — eyebrow preceded by a `44×1px` `linear-gradient(90deg, var(--orange), transparent)`. See `.section-tag::before` in `indes.html`.
+- **Section tag with hairline** — eyebrow preceded by a `44×1px` `linear-gradient(90deg, var(--orange), transparent)`. See `.section-tag::before` in `index.html`.
 - **UI label / button** — Geist Sans `font-weight: 600`, normal letter-spacing.
 - **Code / mono inline** — `var(--font-mono)`, weight 500.
 
@@ -284,7 +284,7 @@ If a designer-spec includes an emoji (`✨ Generate`), replace it with `<Sparkle
 | **Logo plaque (dark)** | Same dimensions; `background: radial-gradient(circle at top, rgba(0,212,255,0.16), transparent 44%), #0F0F0F;` · `border-color: rgba(255,255,255,0.08);` | Cyan halo behind the orange logo. |
 | **Input field** | `border-radius: 18px;` · `border: 1px solid var(--line);` · `padding: 14px 16px;` · focus: `box-shadow: 0 0 0 3px rgba(255,98,0,0.20);` and `border-color: var(--orange);` | Geist Sans 400, no inset shadow. |
 
-For any new section, use the BEM-ish naming you see in `indes.html` (`.hero-copy`, `.hero-stage`, `.section-card`, `.palette-grid`, `.prompt-card`). Don't invent a new naming scheme.
+For any new section, use the BEM-ish naming you see in `index.html` (`.hero-copy`, `.hero-stage`, `.section-card`, `.palette-grid`, `.prompt-card`). Don't invent a new naming scheme.
 
 ---
 
@@ -593,7 +593,7 @@ Stay polite, state the rule, and offer the on-brand alternative.
 
 **Brand**
 - Brand kit: [docs/branding/branding.md](../../docs/branding/branding.md)
-- Reference desktop layout: [docs/branding/indes.html](../../docs/branding/indes.html)
+- Reference desktop layout: [docs/branding/index.html](../../docs/branding/index.html)
 - Reference mobile layout: [docs/branding/mobile.html](../../docs/branding/mobile.html)
 - Logo variants: `docs/branding/logo-*.svg` (vibrant-orange is the default mark)
 

@@ -82,50 +82,48 @@ async fn handle_shell_ws(
 
     while let Some(Ok(msg)) = receiver.next().await {
         match msg {
-            Message::Text(text) => {
-                match serde_json::from_str::<ControlMessage>(&text) {
-                    Ok(ControlMessage {
-                        kind: ControlKind::Heartbeat,
-                        ..
-                    }) => {
-                        replays_this_turn = 0;
-                        let ack = serde_json::to_string(&ControlMessage {
-                            kind: ControlKind::Ack,
-                            payload: serde_json::Value::Null,
+            Message::Text(text) => match serde_json::from_str::<ControlMessage>(&text) {
+                Ok(ControlMessage {
+                    kind: ControlKind::Heartbeat,
+                    ..
+                }) => {
+                    replays_this_turn = 0;
+                    let ack = serde_json::to_string(&ControlMessage {
+                        kind: ControlKind::Ack,
+                        payload: serde_json::Value::Null,
+                    })
+                    .unwrap_or_default();
+                    let _ = sender.send(Message::Text(ack.into())).await;
+                }
+                Ok(ControlMessage {
+                    kind: ControlKind::Replay,
+                    payload,
+                }) => {
+                    replays_this_turn += 1;
+                    if replays_this_turn > max_replays {
+                        warn!(
+                            device_id,
+                            limit = max_replays,
+                            "replay quota exceeded; closing connection"
+                        );
+                        let stop = serde_json::to_string(&ControlMessage {
+                            kind: ControlKind::Stop,
+                            payload: serde_json::json!({ "reason": "replay_quota_exceeded" }),
                         })
                         .unwrap_or_default();
-                        let _ = sender.send(Message::Text(ack.into())).await;
+                        let _ = sender.send(Message::Text(stop.into())).await;
+                        let _ = sender.send(Message::Close(None)).await;
+                        break;
                     }
-                    Ok(ControlMessage {
-                        kind: ControlKind::Replay,
-                        payload,
-                    }) => {
-                        replays_this_turn += 1;
-                        if replays_this_turn > max_replays {
-                            warn!(
-                                device_id,
-                                limit = max_replays,
-                                "replay quota exceeded; closing connection"
-                            );
-                            let stop = serde_json::to_string(&ControlMessage {
-                                kind: ControlKind::Stop,
-                                payload: serde_json::json!({ "reason": "replay_quota_exceeded" }),
-                            })
-                            .unwrap_or_default();
-                            let _ = sender.send(Message::Text(stop.into())).await;
-                            let _ = sender.send(Message::Close(None)).await;
-                            break;
-                        }
-                        info!(device_id, replay_n = replays_this_turn, payload = ?payload, "received replay message");
-                    }
-                    Ok(msg) => {
-                        info!(device_id, kind = ?msg.kind, "received shell message");
-                    }
-                    Err(e) => {
-                        warn!(device_id, err = %e, "malformed shell message");
-                    }
+                    info!(device_id, replay_n = replays_this_turn, payload = ?payload, "received replay message");
                 }
-            }
+                Ok(msg) => {
+                    info!(device_id, kind = ?msg.kind, "received shell message");
+                }
+                Err(e) => {
+                    warn!(device_id, err = %e, "malformed shell message");
+                }
+            },
             Message::Close(_) => break,
             _ => {}
         }

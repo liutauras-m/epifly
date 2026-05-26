@@ -107,14 +107,17 @@ pub async fn issue_device(
     let token_hash = hex::encode(hash.as_bytes());
     let id = Uuid::new_v4().to_string();
 
-    state.device_tokens.lock().unwrap().insert(token_hash, DeviceToken {
-        id: id.clone(),
-        tenant_id: req.tenant_id,
-        device_label: req.device_label.clone(),
-        created_at: Utc::now(),
-        last_seen: None,
-        revoked: false,
-    });
+    state.device_tokens.lock().unwrap().insert(
+        token_hash,
+        DeviceToken {
+            id: id.clone(),
+            tenant_id: req.tenant_id,
+            device_label: req.device_label.clone(),
+            created_at: Utc::now(),
+            last_seen: None,
+            revoked: false,
+        },
+    );
 
     Ok((
         StatusCode::CREATED,
@@ -201,11 +204,11 @@ pub async fn validate_device_token(
     let token_hash = hex::encode(hash.as_bytes());
 
     let mut tokens = state.device_tokens.lock().unwrap();
-    if let Some(record) = tokens.get_mut(&token_hash) {
-        if !record.revoked {
-            record.last_seen = Some(Utc::now());
-            return Ok(Some(record.tenant_id.clone()));
-        }
+    if let Some(record) = tokens.get_mut(&token_hash)
+        && !record.revoked
+    {
+        record.last_seen = Some(Utc::now());
+        return Ok(Some(record.tenant_id.clone()));
     }
     Ok(None)
 }

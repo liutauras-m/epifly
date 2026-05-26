@@ -37,6 +37,7 @@ verify-no-dead-deps:
 verify-routes-doc:
 	@mkdir -p docs
 	./scripts/dump-routes.sh docs/_routes.generated.md
+	node scripts/verify-route-wiring.mjs
 	@if [ -f docs/_routes.expected.md ]; then \
 	  diff -u docs/_routes.expected.md docs/_routes.generated.md || \
 	    (echo "ERROR: route table drift — run: cp docs/_routes.generated.md docs/_routes.expected.md" && exit 1); \

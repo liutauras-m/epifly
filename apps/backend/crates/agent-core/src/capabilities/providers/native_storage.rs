@@ -633,8 +633,7 @@ impl CapabilityProvider for MoveNodeProvider {
         if tool_name != "move_node" && tool_name != "relocate" {
             anyhow::bail!("unknown tool: {tool_name}");
         }
-        let tenant =
-            tenant.ok_or_else(|| anyhow::anyhow!("move_node requires tenant context"))?;
+        let tenant = tenant.ok_or_else(|| anyhow::anyhow!("move_node requires tenant context"))?;
         let tenant_id = tenant.tenant_id.as_str();
         let user_id = tenant
             .user_id
@@ -643,10 +642,7 @@ impl CapabilityProvider for MoveNodeProvider {
             .unwrap_or("__dev__");
 
         // Resolve target node: prefer explicit `id`, fall back to `name` lookup.
-        let id_str = if let Some(s) = input["id"]
-            .as_str()
-            .or_else(|| input["node_id"].as_str())
-        {
+        let id_str = if let Some(s) = input["id"].as_str().or_else(|| input["node_id"].as_str()) {
             s.to_string()
         } else if let Some(name) = input["name"].as_str() {
             let hits = self
@@ -677,9 +673,10 @@ impl CapabilityProvider for MoveNodeProvider {
             if s.is_empty() {
                 None
             } else {
-                Some(s.parse().map_err(|e| {
-                    anyhow::anyhow!("invalid parent ulid '{s}': {e}")
-                })?)
+                Some(
+                    s.parse()
+                        .map_err(|e| anyhow::anyhow!("invalid parent ulid '{s}': {e}"))?,
+                )
             }
         } else if let Some(parent_name) = input["new_parent_name"]
             .as_str()
@@ -692,14 +689,10 @@ impl CapabilityProvider for MoveNodeProvider {
                 .map_err(|e| anyhow::anyhow!("search for parent '{parent_name}': {e}"))?;
             let chosen = hits
                 .iter()
-                .find(|n| {
-                    n.kind == NodeKind::Folder && n.name.eq_ignore_ascii_case(parent_name)
-                })
+                .find(|n| n.kind == NodeKind::Folder && n.name.eq_ignore_ascii_case(parent_name))
                 .cloned()
                 .or_else(|| hits.into_iter().find(|n| n.kind == NodeKind::Folder))
-                .ok_or_else(|| {
-                    anyhow::anyhow!("no folder matches parent name '{parent_name}'")
-                })?;
+                .ok_or_else(|| anyhow::anyhow!("no folder matches parent name '{parent_name}'"))?;
             Some(chosen.id)
         } else {
             None
@@ -777,9 +770,10 @@ impl CapabilityProvider for CreateFolderProvider {
         let parent_id: Option<ulid::Ulid> = match input.get("parent_id") {
             None | Some(Value::Null) => None,
             Some(Value::String(s)) if s.is_empty() => None,
-            Some(Value::String(s)) => Some(s.parse().map_err(|e| {
-                anyhow::anyhow!("invalid parent_id '{s}': {e}")
-            })?),
+            Some(Value::String(s)) => Some(
+                s.parse()
+                    .map_err(|e| anyhow::anyhow!("invalid parent_id '{s}': {e}"))?,
+            ),
             Some(other) => anyhow::bail!("parent_id must be a string ULID, got {other:?}"),
         };
 
@@ -834,8 +828,8 @@ impl CapabilityProvider for DeleteNodeProvider {
         if tool_name != "delete_node" && tool_name != "delete" && tool_name != "remove" {
             anyhow::bail!("unknown tool: {tool_name}");
         }
-        let tenant = tenant
-            .ok_or_else(|| anyhow::anyhow!("delete_node requires tenant context"))?;
+        let tenant =
+            tenant.ok_or_else(|| anyhow::anyhow!("delete_node requires tenant context"))?;
         let tenant_id = tenant.tenant_id.as_str();
         let user_id = tenant
             .user_id
@@ -857,9 +851,9 @@ impl CapabilityProvider for DeleteNodeProvider {
                 .iter()
                 .find(|n| n.name.eq_ignore_ascii_case(name))
                 .cloned();
-            let chosen = exact.or_else(|| hits.into_iter().next()).ok_or_else(|| {
-                anyhow::anyhow!("no workspace node matches name '{name}'")
-            })?;
+            let chosen = exact
+                .or_else(|| hits.into_iter().next())
+                .ok_or_else(|| anyhow::anyhow!("no workspace node matches name '{name}'"))?;
             chosen.id.to_string()
         } else {
             anyhow::bail!("delete_node requires either `id` or `name`");
@@ -915,8 +909,8 @@ impl CapabilityProvider for FindByNameProvider {
         if tool_name != "find_by_name" && tool_name != "find" && tool_name != "lookup" {
             anyhow::bail!("unknown tool: {tool_name}");
         }
-        let tenant = tenant
-            .ok_or_else(|| anyhow::anyhow!("find_by_name requires tenant context"))?;
+        let tenant =
+            tenant.ok_or_else(|| anyhow::anyhow!("find_by_name requires tenant context"))?;
         let tenant_id = tenant.tenant_id.as_str();
         let user_id = tenant
             .user_id
@@ -1020,8 +1014,7 @@ impl CapabilityProvider for ShowTreeProvider {
         if tool_name != "show_tree" && tool_name != "tree" && tool_name != "show" {
             anyhow::bail!("unknown tool: {tool_name}");
         }
-        let tenant = tenant
-            .ok_or_else(|| anyhow::anyhow!("show_tree requires tenant context"))?;
+        let tenant = tenant.ok_or_else(|| anyhow::anyhow!("show_tree requires tenant context"))?;
         let tenant_id = tenant.tenant_id.as_str();
         let user_id = tenant
             .user_id
@@ -1029,22 +1022,14 @@ impl CapabilityProvider for ShowTreeProvider {
             .map(|u| u.as_str())
             .unwrap_or("__dev__");
 
-        let root_id: Option<ulid::Ulid> = input["parent_id"]
-            .as_str()
-            .and_then(|s| s.parse().ok());
+        let root_id: Option<ulid::Ulid> = input["parent_id"].as_str().and_then(|s| s.parse().ok());
         // Depth cap prevents unbounded recursion on pathological trees.
         let max_depth = input["depth"].as_u64().unwrap_or(2).min(5) as usize;
 
         let mut buf = String::new();
         let mut count = 0_usize;
         self.render_subtree(
-            tenant_id,
-            user_id,
-            root_id,
-            0,
-            max_depth,
-            &mut buf,
-            &mut count,
+            tenant_id, user_id, root_id, 0, max_depth, &mut buf, &mut count,
         )
         .await?;
 
@@ -1060,6 +1045,7 @@ impl CapabilityProvider for ShowTreeProvider {
 }
 
 impl ShowTreeProvider {
+    #[allow(clippy::too_many_arguments)]
     async fn render_subtree(
         &self,
         tenant_id: &str,
@@ -1141,10 +1127,7 @@ impl CapabilityProvider for BulkDeleteProvider {
         input: &Value,
         tenant: Option<&TenantContext>,
     ) -> anyhow::Result<Value> {
-        if tool_name != "bulk_delete"
-            && tool_name != "delete_all"
-            && tool_name != "empty_folder"
-        {
+        if tool_name != "bulk_delete" && tool_name != "delete_all" && tool_name != "empty_folder" {
             anyhow::bail!("unknown tool: {tool_name}");
         }
         let tenant =
@@ -1174,9 +1157,7 @@ impl CapabilityProvider for BulkDeleteProvider {
                 .map_err(|e| anyhow::anyhow!("search for parent '{name}': {e}"))?;
             let chosen = hits
                 .iter()
-                .find(|n| {
-                    n.kind == NodeKind::Folder && n.name.eq_ignore_ascii_case(name)
-                })
+                .find(|n| n.kind == NodeKind::Folder && n.name.eq_ignore_ascii_case(name))
                 .cloned()
                 .or_else(|| hits.into_iter().find(|n| n.kind == NodeKind::Folder))
                 .ok_or_else(|| anyhow::anyhow!("no folder matches name '{name}'"))?;
@@ -1269,13 +1250,19 @@ impl StorageWorkspaceProvider {
         workspace_store: Arc<dyn WorkspaceStore>,
         workspace_content: Arc<dyn WorkspaceContentStore>,
     ) -> Self {
-        Self { manifest, workspace_store, workspace_content }
+        Self {
+            manifest,
+            workspace_store,
+            workspace_content,
+        }
     }
 }
 
 #[async_trait]
 impl CapabilityProvider for StorageWorkspaceProvider {
-    fn manifest(&self) -> &ToolManifest { &self.manifest }
+    fn manifest(&self) -> &ToolManifest {
+        &self.manifest
+    }
 
     async fn invoke(
         &self,
@@ -1284,37 +1271,44 @@ impl CapabilityProvider for StorageWorkspaceProvider {
         tenant: Option<&TenantContext>,
     ) -> anyhow::Result<Value> {
         // Filesystem-backed tools don't require tenant context (workspace_root has a fallback).
-        if matches!(tool_name, "ensure_folder" | "ensure_date_folder" | "tag_object") {
+        if matches!(
+            tool_name,
+            "ensure_folder" | "ensure_date_folder" | "tag_object"
+        ) {
             let root = workspace_root_for(tenant);
             return match tool_name {
-                "ensure_folder"      => self.ensure_folder(input, &root).await,
+                "ensure_folder" => self.ensure_folder(input, &root).await,
                 "ensure_date_folder" => self.ensure_date_folder(input, &root).await,
-                "tag_object"         => self.tag_object(input, &root).await,
+                "tag_object" => self.tag_object(input, &root).await,
                 _ => unreachable!(),
             };
         }
 
-        let t = tenant
-            .ok_or_else(|| anyhow::anyhow!("workspace tools require tenant context"))?;
+        let t = tenant.ok_or_else(|| anyhow::anyhow!("workspace tools require tenant context"))?;
         let tenant_id = t.tenant_id.as_str();
         let user_id = t.user_id.as_ref().map(|u| u.as_str()).unwrap_or("__dev__");
 
         match tool_name {
-            "save_document"  => self.save_document(input, tenant_id, user_id).await,
-            "list_folders"   => self.list_folders(tenant_id, user_id).await,
-            "show_tree"      => self.show_tree(input, tenant_id, user_id).await,
-            "find_by_name"   => self.find_by_name(input, tenant_id, user_id).await,
-            "create_folder"  => self.create_folder(input, tenant_id, user_id).await,
-            "move_node"      => self.move_node(input, tenant_id, user_id).await,
-            "delete_node"    => self.delete_node(input, tenant_id, user_id).await,
-            "bulk_delete"    => self.bulk_delete(input, tenant_id, user_id).await,
+            "save_document" => self.save_document(input, tenant_id, user_id).await,
+            "list_folders" => self.list_folders(tenant_id, user_id).await,
+            "show_tree" => self.show_tree(input, tenant_id, user_id).await,
+            "find_by_name" => self.find_by_name(input, tenant_id, user_id).await,
+            "create_folder" => self.create_folder(input, tenant_id, user_id).await,
+            "move_node" => self.move_node(input, tenant_id, user_id).await,
+            "delete_node" => self.delete_node(input, tenant_id, user_id).await,
+            "bulk_delete" => self.bulk_delete(input, tenant_id, user_id).await,
             other => anyhow::bail!("unknown tool '{other}' for storage-workspace"),
         }
     }
 }
 
 impl StorageWorkspaceProvider {
-    async fn save_document(&self, input: &Value, tenant_id: &str, user_id: &str) -> anyhow::Result<Value> {
+    async fn save_document(
+        &self,
+        input: &Value,
+        tenant_id: &str,
+        user_id: &str,
+    ) -> anyhow::Result<Value> {
         let folder_name = input["folder_name"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("folder_name is required"))?
@@ -1336,7 +1330,8 @@ impl StorageWorkspaceProvider {
         } else {
             format!("{filename}.md")
         };
-        let folders = self.workspace_store
+        let folders = self
+            .workspace_store
             .list_accessible_children(tenant_id, user_id, None)
             .await
             .unwrap_or_default();
@@ -1351,11 +1346,16 @@ impl StorageWorkspaceProvider {
                 .await
                 .map_err(|e| anyhow::anyhow!("create folder '{folder_name}': {e}"))?
         };
-        let node = self.workspace_store
+        let node = self
+            .workspace_store
             .create_conversation(tenant_id, user_id, Some(folder.id), &doc_name)
             .await
             .map_err(|e| anyhow::anyhow!("create document '{doc_name}': {e}"))?;
-        if let Err(e) = self.workspace_content.write(tenant_id, &node.virtual_path, content).await {
+        if let Err(e) = self
+            .workspace_content
+            .write(tenant_id, &node.virtual_path, content)
+            .await
+        {
             warn!(error = %e, path = node.virtual_path, "save_document: content write failed");
         }
         Ok(json!({
@@ -1369,7 +1369,8 @@ impl StorageWorkspaceProvider {
     }
 
     async fn list_folders(&self, tenant_id: &str, user_id: &str) -> anyhow::Result<Value> {
-        let nodes = self.workspace_store
+        let nodes = self
+            .workspace_store
             .list_accessible_children(tenant_id, user_id, None)
             .await
             .unwrap_or_default();
@@ -1381,18 +1382,27 @@ impl StorageWorkspaceProvider {
         Ok(json!({ "folders": folders, "count": folders.len() }))
     }
 
-    async fn show_tree(&self, input: &Value, tenant_id: &str, user_id: &str) -> anyhow::Result<Value> {
+    async fn show_tree(
+        &self,
+        input: &Value,
+        tenant_id: &str,
+        user_id: &str,
+    ) -> anyhow::Result<Value> {
         let root_id: Option<ulid::Ulid> = input["parent_id"].as_str().and_then(|s| s.parse().ok());
         let max_depth = input["depth"].as_u64().unwrap_or(2).min(5) as usize;
         let mut buf = String::new();
         let mut count = 0_usize;
-        Box::pin(self.render_subtree(tenant_id, user_id, root_id, 0, max_depth, &mut buf, &mut count)).await?;
+        Box::pin(self.render_subtree(
+            tenant_id, user_id, root_id, 0, max_depth, &mut buf, &mut count,
+        ))
+        .await?;
         if buf.is_empty() {
             buf.push_str("_(workspace is empty)_");
         }
         Ok(json!({ "tree": buf, "node_count": count }))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_subtree<'a>(
         &'a self,
         tenant_id: &'a str,
@@ -1407,7 +1417,8 @@ impl StorageWorkspaceProvider {
             if depth > max_depth {
                 return Ok(());
             }
-            let children = self.workspace_store
+            let children = self
+                .workspace_store
                 .list_accessible_children(tenant_id, user_id, parent)
                 .await
                 .unwrap_or_default();
@@ -1421,20 +1432,38 @@ impl StorageWorkspaceProvider {
                 };
                 out.push_str(&format!("{indent}- {icon} {}\n", child.name));
                 if child.kind == NodeKind::Folder {
-                    Box::pin(self.render_subtree(tenant_id, user_id, Some(child.id), depth + 1, max_depth, out, count)).await?;
+                    Box::pin(self.render_subtree(
+                        tenant_id,
+                        user_id,
+                        Some(child.id),
+                        depth + 1,
+                        max_depth,
+                        out,
+                        count,
+                    ))
+                    .await?;
                 }
             }
             Ok(())
         })
     }
 
-    async fn find_by_name(&self, input: &Value, tenant_id: &str, user_id: &str) -> anyhow::Result<Value> {
+    async fn find_by_name(
+        &self,
+        input: &Value,
+        tenant_id: &str,
+        user_id: &str,
+    ) -> anyhow::Result<Value> {
         let name = input["name"]
             .as_str()
             .or_else(|| input["query"].as_str())
             .ok_or_else(|| anyhow::anyhow!("missing required field: name"))?;
-        let limit = input["limit"].as_u64().filter(|n| *n > 0 && *n <= 50).unwrap_or(10) as usize;
-        let hits = self.workspace_store
+        let limit = input["limit"]
+            .as_u64()
+            .filter(|n| *n > 0 && *n <= 50)
+            .unwrap_or(10) as usize;
+        let hits = self
+            .workspace_store
             .search_nodes(tenant_id, user_id, name, limit)
             .await
             .map_err(|e| anyhow::anyhow!("search '{name}': {e}"))?;
@@ -1458,13 +1487,15 @@ impl StorageWorkspaceProvider {
         let best = scored[0].1;
         let matches: Vec<Value> = hits
             .iter()
-            .map(|n| json!({
-                "id": n.id.to_string(),
-                "name": n.name,
-                "kind": format!("{:?}", n.kind).to_lowercase(),
-                "virtual_path": n.virtual_path,
-                "parent_id": n.parent_id.map(|p| p.to_string()),
-            }))
+            .map(|n| {
+                json!({
+                    "id": n.id.to_string(),
+                    "name": n.name,
+                    "kind": format!("{:?}", n.kind).to_lowercase(),
+                    "virtual_path": n.virtual_path,
+                    "parent_id": n.parent_id.map(|p| p.to_string()),
+                })
+            })
             .collect();
         Ok(json!({
             "found": true,
@@ -1479,7 +1510,12 @@ impl StorageWorkspaceProvider {
         }))
     }
 
-    async fn create_folder(&self, input: &Value, tenant_id: &str, user_id: &str) -> anyhow::Result<Value> {
+    async fn create_folder(
+        &self,
+        input: &Value,
+        tenant_id: &str,
+        user_id: &str,
+    ) -> anyhow::Result<Value> {
         let name = input["name"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: name"))?
@@ -1490,10 +1526,14 @@ impl StorageWorkspaceProvider {
         let parent_id: Option<ulid::Ulid> = match input.get("parent_id") {
             None | Some(Value::Null) => None,
             Some(Value::String(s)) if s.is_empty() => None,
-            Some(Value::String(s)) => Some(s.parse().map_err(|e| anyhow::anyhow!("invalid parent_id '{s}': {e}"))?),
+            Some(Value::String(s)) => Some(
+                s.parse()
+                    .map_err(|e| anyhow::anyhow!("invalid parent_id '{s}': {e}"))?,
+            ),
             Some(other) => anyhow::bail!("parent_id must be a string ULID, got {other:?}"),
         };
-        let folder = self.workspace_store
+        let folder = self
+            .workspace_store
             .create_folder(tenant_id, user_id, parent_id, name)
             .await
             .map_err(|e| anyhow::anyhow!("create_folder '{name}': {e}"))?;
@@ -1506,30 +1546,56 @@ impl StorageWorkspaceProvider {
         }))
     }
 
-    async fn move_node(&self, input: &Value, tenant_id: &str, user_id: &str) -> anyhow::Result<Value> {
+    async fn move_node(
+        &self,
+        input: &Value,
+        tenant_id: &str,
+        user_id: &str,
+    ) -> anyhow::Result<Value> {
         let id_str = if let Some(s) = input["id"].as_str().or_else(|| input["node_id"].as_str()) {
             s.to_string()
         } else if let Some(name) = input["name"].as_str() {
-            let hits = self.workspace_store
+            let hits = self
+                .workspace_store
                 .search_nodes(tenant_id, user_id, name, 5)
                 .await
                 .map_err(|e| anyhow::anyhow!("search for '{name}': {e}"))?;
-            let chosen = hits.iter().find(|n| n.name.eq_ignore_ascii_case(name)).cloned()
+            let chosen = hits
+                .iter()
+                .find(|n| n.name.eq_ignore_ascii_case(name))
+                .cloned()
                 .or_else(|| hits.into_iter().next())
                 .ok_or_else(|| anyhow::anyhow!("no workspace node matches name '{name}'"))?;
             chosen.id.to_string()
         } else {
             anyhow::bail!("move_node requires either `id` (or `node_id`) or `name`");
         };
-        let ulid: ulid::Ulid = id_str.parse().map_err(|e| anyhow::anyhow!("invalid node id '{id_str}': {e}"))?;
-        let new_parent_id: Option<ulid::Ulid> = if let Some(s) = input["new_parent_id"].as_str().or_else(|| input["parent_id"].as_str()) {
-            if s.is_empty() { None } else { Some(s.parse().map_err(|e| anyhow::anyhow!("invalid parent ulid '{s}': {e}"))?) }
-        } else if let Some(parent_name) = input["new_parent_name"].as_str().or_else(|| input["parent_name"].as_str()) {
-            let hits = self.workspace_store
+        let ulid: ulid::Ulid = id_str
+            .parse()
+            .map_err(|e| anyhow::anyhow!("invalid node id '{id_str}': {e}"))?;
+        let new_parent_id: Option<ulid::Ulid> = if let Some(s) = input["new_parent_id"]
+            .as_str()
+            .or_else(|| input["parent_id"].as_str())
+        {
+            if s.is_empty() {
+                None
+            } else {
+                Some(
+                    s.parse()
+                        .map_err(|e| anyhow::anyhow!("invalid parent ulid '{s}': {e}"))?,
+                )
+            }
+        } else if let Some(parent_name) = input["new_parent_name"]
+            .as_str()
+            .or_else(|| input["parent_name"].as_str())
+        {
+            let hits = self
+                .workspace_store
                 .search_nodes(tenant_id, user_id, parent_name, 5)
                 .await
                 .map_err(|e| anyhow::anyhow!("search for parent '{parent_name}': {e}"))?;
-            let chosen = hits.iter()
+            let chosen = hits
+                .iter()
                 .find(|n| n.kind == NodeKind::Folder && n.name.eq_ignore_ascii_case(parent_name))
                 .cloned()
                 .or_else(|| hits.into_iter().find(|n| n.kind == NodeKind::Folder))
@@ -1538,7 +1604,8 @@ impl StorageWorkspaceProvider {
         } else {
             None
         };
-        let moved = self.workspace_store
+        let moved = self
+            .workspace_store
             .move_node(tenant_id, user_id, ulid, new_parent_id, None)
             .await
             .map_err(|e| anyhow::anyhow!("move_node {ulid}: {e}"))?;
@@ -1551,22 +1618,34 @@ impl StorageWorkspaceProvider {
         }))
     }
 
-    async fn delete_node(&self, input: &Value, tenant_id: &str, user_id: &str) -> anyhow::Result<Value> {
+    async fn delete_node(
+        &self,
+        input: &Value,
+        tenant_id: &str,
+        user_id: &str,
+    ) -> anyhow::Result<Value> {
         let id_str = if let Some(s) = input["id"].as_str() {
             s.to_string()
         } else if let Some(name) = input["name"].as_str() {
-            let hits = self.workspace_store
+            let hits = self
+                .workspace_store
                 .search_nodes(tenant_id, user_id, name, 5)
                 .await
                 .map_err(|e| anyhow::anyhow!("search for '{name}': {e}"))?;
-            let exact = hits.iter().find(|n| n.name.eq_ignore_ascii_case(name)).cloned();
-            let chosen = exact.or_else(|| hits.into_iter().next())
+            let exact = hits
+                .iter()
+                .find(|n| n.name.eq_ignore_ascii_case(name))
+                .cloned();
+            let chosen = exact
+                .or_else(|| hits.into_iter().next())
                 .ok_or_else(|| anyhow::anyhow!("no workspace node matches name '{name}'"))?;
             chosen.id.to_string()
         } else {
             anyhow::bail!("delete_node requires either `id` or `name`");
         };
-        let ulid: ulid::Ulid = id_str.parse().map_err(|e| anyhow::anyhow!("invalid node id '{id_str}': {e}"))?;
+        let ulid: ulid::Ulid = id_str
+            .parse()
+            .map_err(|e| anyhow::anyhow!("invalid node id '{id_str}': {e}"))?;
         self.workspace_store
             .delete_node(tenant_id, user_id, ulid)
             .await
@@ -1574,16 +1653,32 @@ impl StorageWorkspaceProvider {
         Ok(json!({ "status": "deleted", "id": id_str }))
     }
 
-    async fn bulk_delete(&self, input: &Value, tenant_id: &str, user_id: &str) -> anyhow::Result<Value> {
+    async fn bulk_delete(
+        &self,
+        input: &Value,
+        tenant_id: &str,
+        user_id: &str,
+    ) -> anyhow::Result<Value> {
         // Resolve the target parent — None means workspace root.
-        let parent_id: Option<ulid::Ulid> = if let Some(s) = input["parent_id"].as_str().or_else(|| input["folder_id"].as_str()) {
-            Some(s.parse().map_err(|e| anyhow::anyhow!("invalid parent_id '{s}': {e}"))?)
-        } else if let Some(name) = input["parent_name"].as_str().or_else(|| input["folder_name"].as_str()) {
-            let hits = self.workspace_store
+        let parent_id: Option<ulid::Ulid> = if let Some(s) = input["parent_id"]
+            .as_str()
+            .or_else(|| input["folder_id"].as_str())
+        {
+            Some(
+                s.parse()
+                    .map_err(|e| anyhow::anyhow!("invalid parent_id '{s}': {e}"))?,
+            )
+        } else if let Some(name) = input["parent_name"]
+            .as_str()
+            .or_else(|| input["folder_name"].as_str())
+        {
+            let hits = self
+                .workspace_store
                 .search_nodes(tenant_id, user_id, name, 5)
                 .await
                 .map_err(|e| anyhow::anyhow!("search for parent '{name}': {e}"))?;
-            let chosen = hits.iter()
+            let chosen = hits
+                .iter()
                 .find(|n| n.kind == NodeKind::Folder && n.name.eq_ignore_ascii_case(name))
                 .cloned()
                 .or_else(|| hits.into_iter().find(|n| n.kind == NodeKind::Folder))
@@ -1595,7 +1690,8 @@ impl StorageWorkspaceProvider {
         };
 
         let kind_filter = input["kind"].as_str().unwrap_or("all").to_ascii_lowercase();
-        let children = self.workspace_store
+        let children = self
+            .workspace_store
             .list_accessible_children(tenant_id, user_id, parent_id)
             .await
             .unwrap_or_default();
@@ -1620,9 +1716,18 @@ impl StorageWorkspaceProvider {
                 }));
                 continue;
             }
-            match self.workspace_store.delete_node(tenant_id, user_id, child.id).await {
-                Ok(()) => { deleted_ids.push(child.id.to_string()); deleted_names.push(child.name); }
-                Err(e) => { errors.push(json!({ "id": child.id.to_string(), "name": child.name, "error": e.to_string() })); }
+            match self
+                .workspace_store
+                .delete_node(tenant_id, user_id, child.id)
+                .await
+            {
+                Ok(()) => {
+                    deleted_ids.push(child.id.to_string());
+                    deleted_names.push(child.name);
+                }
+                Err(e) => {
+                    errors.push(json!({ "id": child.id.to_string(), "name": child.name, "error": e.to_string() }));
+                }
             }
         }
 
@@ -1638,36 +1743,59 @@ impl StorageWorkspaceProvider {
     }
 
     async fn ensure_folder(&self, input: &Value, workspace_root: &str) -> anyhow::Result<Value> {
-        let rel = input["path"].as_str().ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
+        let rel = input["path"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
         let full = safe_join(Path::new(workspace_root), rel).map_err(|e| anyhow::anyhow!("{e}"))?;
-        tokio::fs::create_dir_all(&full).await.map_err(|e| anyhow::anyhow!("ensure_folder {rel}: {e}"))?;
+        tokio::fs::create_dir_all(&full)
+            .await
+            .map_err(|e| anyhow::anyhow!("ensure_folder {rel}: {e}"))?;
         Ok(json!({ "path": rel, "created": true }))
     }
 
-    async fn ensure_date_folder(&self, input: &Value, workspace_root: &str) -> anyhow::Result<Value> {
+    async fn ensure_date_folder(
+        &self,
+        input: &Value,
+        workspace_root: &str,
+    ) -> anyhow::Result<Value> {
         let base = input["base_path"].as_str().unwrap_or("uploads");
         let now = Utc::now();
         let date_path = format!("{}/{}", base, now.format("%Y/%m/%d"));
-        let full = safe_join(Path::new(workspace_root), &date_path).map_err(|e| anyhow::anyhow!("{e}"))?;
-        tokio::fs::create_dir_all(&full).await.map_err(|e| anyhow::anyhow!("ensure_date_folder {date_path}: {e}"))?;
+        let full =
+            safe_join(Path::new(workspace_root), &date_path).map_err(|e| anyhow::anyhow!("{e}"))?;
+        tokio::fs::create_dir_all(&full)
+            .await
+            .map_err(|e| anyhow::anyhow!("ensure_date_folder {date_path}: {e}"))?;
         Ok(json!({ "path": date_path, "created": true }))
     }
 
     async fn tag_object(&self, input: &Value, workspace_root: &str) -> anyhow::Result<Value> {
-        let rel = input["path"].as_str().ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
+        let rel = input["path"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
         let tags = input.get("tags").cloned().unwrap_or(json!({}));
         let sidecar_rel = {
             let p = std::path::Path::new(rel);
-            let fname = p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "file".into());
+            let fname = p
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "file".into());
             let dir = p.parent().and_then(|d| d.to_str()).unwrap_or(".");
-            if dir == "." { format!(".{fname}.meta.json") } else { format!("{dir}/.{fname}.meta.json") }
+            if dir == "." {
+                format!(".{fname}.meta.json")
+            } else {
+                format!("{dir}/.{fname}.meta.json")
+            }
         };
-        let full = safe_join(Path::new(workspace_root), &sidecar_rel).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let full = safe_join(Path::new(workspace_root), &sidecar_rel)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         if let Some(parent) = full.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
         let json_str = serde_json::to_string_pretty(&tags)?;
-        tokio::fs::write(&full, json_str).await.map_err(|e| anyhow::anyhow!("tag_object {rel}: {e}"))?;
+        tokio::fs::write(&full, json_str)
+            .await
+            .map_err(|e| anyhow::anyhow!("tag_object {rel}: {e}"))?;
         Ok(json!({ "path": rel, "sidecar": sidecar_rel, "tagged": true }))
     }
 }
@@ -1688,7 +1816,9 @@ impl StorageFsProvider {
 
 #[async_trait]
 impl CapabilityProvider for StorageFsProvider {
-    fn manifest(&self) -> &ToolManifest { &self.manifest }
+    fn manifest(&self) -> &ToolManifest {
+        &self.manifest
+    }
 
     async fn invoke(
         &self,
@@ -1698,11 +1828,11 @@ impl CapabilityProvider for StorageFsProvider {
     ) -> anyhow::Result<Value> {
         let root = workspace_root_for(tenant);
         match tool_name {
-            "read_file"   => self.read_file(input, &root).await,
-            "write_file"  => self.write_file(input, &root).await,
-            "put_object"  => self.put_object(input, &root).await,
+            "read_file" => self.read_file(input, &root).await,
+            "write_file" => self.write_file(input, &root).await,
+            "put_object" => self.put_object(input, &root).await,
             "move_object" => self.move_object(input, &root).await,
-            "list_paths"  => self.list_paths(input, &root).await,
+            "list_paths" => self.list_paths(input, &root).await,
             other => anyhow::bail!("unknown tool '{other}' for storage-fs"),
         }
     }
@@ -1710,50 +1840,78 @@ impl CapabilityProvider for StorageFsProvider {
 
 impl StorageFsProvider {
     async fn read_file(&self, input: &Value, workspace_root: &str) -> anyhow::Result<Value> {
-        let rel = input["path"].as_str().ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
+        let rel = input["path"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
         let full = safe_join(Path::new(workspace_root), rel).map_err(|e| anyhow::anyhow!("{e}"))?;
-        let content = tokio::fs::read_to_string(&full).await.map_err(|e| anyhow::anyhow!("read_file {rel}: {e}"))?;
+        let content = tokio::fs::read_to_string(&full)
+            .await
+            .map_err(|e| anyhow::anyhow!("read_file {rel}: {e}"))?;
         Ok(json!({ "path": rel, "content": content }))
     }
 
     async fn write_file(&self, input: &Value, workspace_root: &str) -> anyhow::Result<Value> {
-        let rel = input["path"].as_str().ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
-        let content = input["content"].as_str().ok_or_else(|| anyhow::anyhow!("missing required field: content"))?;
+        let rel = input["path"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
+        let content = input["content"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing required field: content"))?;
         let full = safe_join(Path::new(workspace_root), rel).map_err(|e| anyhow::anyhow!("{e}"))?;
         if let Some(parent) = full.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| anyhow::anyhow!("mkdir: {e}"))?;
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| anyhow::anyhow!("mkdir: {e}"))?;
         }
-        tokio::fs::write(&full, content).await.map_err(|e| anyhow::anyhow!("write_file {rel}: {e}"))?;
+        tokio::fs::write(&full, content)
+            .await
+            .map_err(|e| anyhow::anyhow!("write_file {rel}: {e}"))?;
         Ok(json!({ "path": rel, "bytes_written": content.len() }))
     }
 
     async fn put_object(&self, input: &Value, workspace_root: &str) -> anyhow::Result<Value> {
-        let rel = input["path"].as_str().ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
+        let rel = input["path"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
         let full = safe_join(Path::new(workspace_root), rel).map_err(|e| anyhow::anyhow!("{e}"))?;
         if let Some(parent) = full.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| anyhow::anyhow!("mkdir: {e}"))?;
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| anyhow::anyhow!("mkdir: {e}"))?;
         }
         let bytes = if let Some(b64) = input["content_base64"].as_str() {
-            BASE64.decode(b64).map_err(|e| anyhow::anyhow!("invalid base64: {e}"))?
+            BASE64
+                .decode(b64)
+                .map_err(|e| anyhow::anyhow!("invalid base64: {e}"))?
         } else if let Some(text) = input["content"].as_str() {
             text.as_bytes().to_vec()
         } else {
             anyhow::bail!("missing required field: content or content_base64");
         };
         let n = bytes.len();
-        tokio::fs::write(&full, bytes).await.map_err(|e| anyhow::anyhow!("put_object {rel}: {e}"))?;
+        tokio::fs::write(&full, bytes)
+            .await
+            .map_err(|e| anyhow::anyhow!("put_object {rel}: {e}"))?;
         Ok(json!({ "path": rel, "bytes_written": n }))
     }
 
     async fn move_object(&self, input: &Value, workspace_root: &str) -> anyhow::Result<Value> {
-        let from = input["from"].as_str().ok_or_else(|| anyhow::anyhow!("missing required field: from"))?;
-        let to = input["to"].as_str().ok_or_else(|| anyhow::anyhow!("missing required field: to"))?;
+        let from = input["from"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing required field: from"))?;
+        let to = input["to"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing required field: to"))?;
         let src = safe_join(Path::new(workspace_root), from).map_err(|e| anyhow::anyhow!("{e}"))?;
         let dst = safe_join(Path::new(workspace_root), to).map_err(|e| anyhow::anyhow!("{e}"))?;
         if let Some(parent) = dst.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| anyhow::anyhow!("mkdir for move destination: {e}"))?;
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| anyhow::anyhow!("mkdir for move destination: {e}"))?;
         }
-        tokio::fs::rename(&src, &dst).await.map_err(|e| anyhow::anyhow!("move_object {from} → {to}: {e}"))?;
+        tokio::fs::rename(&src, &dst)
+            .await
+            .map_err(|e| anyhow::anyhow!("move_object {from} → {to}: {e}"))?;
         Ok(json!({ "from": from, "to": to, "moved": true }))
     }
 
@@ -1765,7 +1923,9 @@ impl StorageFsProvider {
             safe_join(Path::new(workspace_root), prefix).map_err(|e| anyhow::anyhow!("{e}"))?
         };
         let mut entries = Vec::new();
-        let mut rd = tokio::fs::read_dir(&base).await.map_err(|e| anyhow::anyhow!("list_paths {prefix}: {e}"))?;
+        let mut rd = tokio::fs::read_dir(&base)
+            .await
+            .map_err(|e| anyhow::anyhow!("list_paths {prefix}: {e}"))?;
         while let Some(entry) = rd.next_entry().await? {
             let ft = entry.file_type().await?;
             entries.push(json!({
@@ -1823,11 +1983,13 @@ impl CapabilityFactory for NativeStorageFactory {
     fn create(&self, card: CapabilityCard) -> anyhow::Result<Arc<dyn CapabilityProvider>> {
         // Dispatch consolidated domain providers by manifest name first.
         match card.manifest.name.as_str() {
-            "storage-workspace" => return Ok(Arc::new(StorageWorkspaceProvider::new(
-                card.manifest,
-                Arc::clone(&self.workspace_store),
-                Arc::clone(&self.workspace_content),
-            ))),
+            "storage-workspace" => {
+                return Ok(Arc::new(StorageWorkspaceProvider::new(
+                    card.manifest,
+                    Arc::clone(&self.workspace_store),
+                    Arc::clone(&self.workspace_content),
+                )));
+            }
             "storage-fs" => return Ok(Arc::new(StorageFsProvider::new(card.manifest))),
             _ => {}
         }

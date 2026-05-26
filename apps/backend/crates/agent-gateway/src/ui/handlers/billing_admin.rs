@@ -30,8 +30,7 @@ pub async fn billing_admin_dashboard(State(state): State<Arc<AppState>>) -> Resp
         }
     };
 
-    let summary_pretty = serde_json::to_string_pretty(&summary)
-        .unwrap_or_else(|_| "{}".into());
+    let summary_pretty = serde_json::to_string_pretty(&summary).unwrap_or_else(|_| "{}".into());
 
     let page = format!(
         r#"<!DOCTYPE html>

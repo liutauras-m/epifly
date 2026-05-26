@@ -17,7 +17,6 @@ agent-core    = { path = "../agent-core" }
 billing-core  = { path = "../billing-core" }
 jobs          = { path = "../jobs" }
 rustfs-admin  = { path = "../rustfs-admin" }
-url           = { version = "2" }
 tokio.workspace       = true
 axum.workspace        = true
 tower.workspace       = true
@@ -25,13 +24,10 @@ tower-http.workspace  = true
 reqwest.workspace     = true
 serde.workspace       = true
 serde_json.workspace  = true
-thiserror.workspace   = true
 anyhow.workspace      = true
 tracing.workspace              = true
-tracing-subscriber.workspace   = true
 opentelemetry.workspace          = true
 opentelemetry_sdk.workspace      = true
-opentelemetry-prometheus.workspace = true
 prometheus.workspace             = true
 tracing-opentelemetry.workspace  = true
 ulid.workspace                 = true

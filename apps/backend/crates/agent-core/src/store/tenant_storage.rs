@@ -895,7 +895,7 @@ pub fn build_root_store() -> anyhow::Result<Arc<dyn ObjectStore>> {
 /// Bytes quota per plan tier (None = unlimited).
 pub fn plan_quota_bytes(plan: &PlanTier) -> Option<u64> {
     match plan {
-        PlanTier::Free => Some(1024 * 1024 * 1024), // 1 GiB
+        PlanTier::Free => Some(1024 * 1024 * 1024),      // 1 GiB
         PlanTier::Pro => Some(100 * 1024 * 1024 * 1024), // 100 GiB
         PlanTier::Enterprise => None,
     }

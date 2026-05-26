@@ -1,9 +1,10 @@
 schema_version = "2.0"
 name        = "wasm-ping"
 version     = "0.1.0"
-namespace   = "compute.debug.wasm-ping"
+namespace   = "compute.debug.wasm_ping"
 category    = "compute"
 kind        = "wasm"
+enabled     = false
 description = "Minimal WASM capability demonstrating the WASM runtime type. Exports a ping tool that returns an integer result via WebAssembly execution."
 tags        = ["demo", "wasm", "test"]
 emits       = ["application/json"]
@@ -22,3 +23,6 @@ required = []
 [tools.input_schema.properties.name]
 type = "string"
 description = "Optional label (echoed back in response)"
+
+[config]
+wasm_module = "wasm_ping.wasm"

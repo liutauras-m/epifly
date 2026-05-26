@@ -47,6 +47,7 @@ fn auth_http_error_has_401_status() {
 
 // ── require_platform_admin ────────────────────────────────────────────────────
 
+#[allow(clippy::result_large_err)]
 fn check_platform_admin(
     auth_header: Option<&str>,
     token_env: &str,

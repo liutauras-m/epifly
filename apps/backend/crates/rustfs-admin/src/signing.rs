@@ -29,34 +29,42 @@ fn signing_key(secret_key: &str, date: &str, region: &str, service: &str) -> Vec
 
 /// Attach an `Authorization` header (SigV4) to a mutable header map.
 ///
-/// `method` must be uppercase (e.g. "PUT").
-/// `uri_path` is the percent-encoded path (e.g. "/minio/admin/v3/add-user").
-/// `query` is already-encoded query string (e.g. "accessKey=tenant-foo").
-/// `extra_headers` is additional headers to sign (beyond host and x-amz-date).
-/// `payload` is the raw body bytes (use b"" for no body).
+/// `request.method` must be uppercase (e.g. "PUT").
+/// `request.uri_path` is the percent-encoded path (e.g. "/minio/admin/v3/add-user").
+/// `request.query` is already-encoded query string (e.g. "accessKey=tenant-foo").
+/// `request.extra_headers` is additional headers to sign (beyond host and x-amz-date).
+/// `request.payload` is the raw body bytes (use b"" for no body).
+pub struct SigningContext<'a> {
+    pub host: &'a str,
+    pub access_key: &'a str,
+    pub secret_key: &'a str,
+    pub region: &'a str,
+    pub service: &'a str,
+}
+
+pub struct SigningRequest<'a> {
+    pub method: &'a str,
+    pub uri_path: &'a str,
+    pub query: &'a str,
+    pub extra_headers: &'a BTreeMap<String, String>,
+    pub payload: &'a [u8],
+}
+
 pub fn sign_request(
-    method: &str,
-    uri_path: &str,
-    query: &str,
-    host: &str,
-    access_key: &str,
-    secret_key: &str,
-    region: &str,
-    service: &str,
-    extra_headers: &BTreeMap<String, String>,
-    payload: &[u8],
+    ctx: &SigningContext<'_>,
+    request: &SigningRequest<'_>,
 ) -> BTreeMap<String, String> {
     let now = Utc::now();
     let datetime = now.format("%Y%m%dT%H%M%SZ").to_string();
     let date = now.format("%Y%m%d").to_string();
 
-    let payload_hash = sha256_hex(payload);
+    let payload_hash = sha256_hex(request.payload);
 
     let mut headers: BTreeMap<String, String> = BTreeMap::new();
-    headers.insert("host".into(), host.to_string());
+    headers.insert("host".into(), ctx.host.to_string());
     headers.insert("x-amz-date".into(), datetime.clone());
     headers.insert("x-amz-content-sha256".into(), payload_hash.clone());
-    for (k, v) in extra_headers {
+    for (k, v) in request.extra_headers {
         headers.insert(k.to_lowercase(), v.clone());
     }
 
@@ -67,20 +75,22 @@ pub fn sign_request(
     let signed_headers: String = headers.keys().cloned().collect::<Vec<_>>().join(";");
 
     let canonical_request = format!(
-        "{method}\n{uri_path}\n{query}\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
+        "{}\n{}\n{}\n{canonical_headers}\n{signed_headers}\n{payload_hash}",
+        request.method, request.uri_path, request.query
     );
 
-    let scope = format!("{date}/{region}/{service}/aws4_request");
+    let scope = format!("{date}/{}/{}/aws4_request", ctx.region, ctx.service);
     let string_to_sign = format!(
         "AWS4-HMAC-SHA256\n{datetime}\n{scope}\n{}",
         sha256_hex(canonical_request.as_bytes())
     );
 
-    let key = signing_key(secret_key, &date, region, service);
+    let key = signing_key(ctx.secret_key, &date, ctx.region, ctx.service);
     let sig = hex::encode(hmac_sha256(&key, string_to_sign.as_bytes()));
 
     let auth = format!(
-        "AWS4-HMAC-SHA256 Credential={access_key}/{scope}, SignedHeaders={signed_headers}, Signature={sig}"
+        "AWS4-HMAC-SHA256 Credential={}/{scope}, SignedHeaders={signed_headers}, Signature={sig}",
+        ctx.access_key
     );
 
     let mut result = headers;

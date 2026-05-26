@@ -55,9 +55,13 @@ pub async fn get_subscription(
     };
 
     let Some(billing) = &state.billing else {
-        return (StatusCode::NOT_IMPLEMENTED, Json(serde_json::json!({
-            "error": "billing not configured"
-        }))).into_response();
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            Json(serde_json::json!({
+                "error": "billing not configured"
+            })),
+        )
+            .into_response();
     };
 
     match billing.get_subscription(&ctx.tenant_id).await {
@@ -217,7 +221,10 @@ pub async fn admin_add_credits(
         return (StatusCode::NOT_IMPLEMENTED, "billing not configured").into_response();
     };
 
-    match billing.add_credits(&req.tenant_id, req.amount_cents, req.description.as_deref()).await {
+    match billing
+        .add_credits(&req.tenant_id, req.amount_cents, req.description.as_deref())
+        .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
             tracing::warn!(error = %e, "admin_add_credits failed");

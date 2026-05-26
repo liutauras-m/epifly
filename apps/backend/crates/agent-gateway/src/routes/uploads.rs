@@ -159,7 +159,10 @@ pub async fn complete(
     let parts: Vec<agent_core::CompletedPart> = body
         .parts
         .iter()
-        .map(|p| agent_core::CompletedPart { n: p.n, etag: p.etag.clone() })
+        .map(|p| agent_core::CompletedPart {
+            n: p.n,
+            etag: p.etag.clone(),
+        })
         .collect();
 
     let result = storage

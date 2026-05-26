@@ -12,7 +12,6 @@ fn thread_serialises_roundtrip() {
         last_active: Utc::now(),
         message_count: 3,
         summary: None,
-        metadata: serde_json::json!({"source": "api"}),
     };
     let json = serde_json::to_string(&t).unwrap();
     let restored: Thread = serde_json::from_str(&json).unwrap();

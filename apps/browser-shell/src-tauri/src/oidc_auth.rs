@@ -30,7 +30,10 @@ pub async fn open_in_system_browser(url: String) -> Result<(), String> {
 /// The caller (frontend) should pass the code and verifier to the backend
 /// `/v1/auth/zitadel/callback` endpoint for token exchange.
 #[command]
-pub async fn pkce_login(auth_url: String, extra_params: Option<String>) -> Result<serde_json::Value, String> {
+pub async fn pkce_login(
+    auth_url: String,
+    extra_params: Option<String>,
+) -> Result<serde_json::Value, String> {
     // Pick a random available port.
     let listener = TcpListener::bind("127.0.0.1:0")
         .map_err(|e| format!("could not bind callback listener: {e}"))?;
