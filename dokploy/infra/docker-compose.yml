@@ -324,9 +324,8 @@ services:
       DOKPLOY_ENVIRONMENT_ID: "${DOKPLOY_ENVIRONMENT_ID:?DOKPLOY_ENVIRONMENT_ID must be set in Shared Env}"
       DOKPLOY_APP_NAME: infra
     volumes:
-      - ../scripts/sync-domains.mjs:/sync.mjs:ro
-      - ../domains.yaml:/domains.yaml:ro
-    command: ["node", "/sync.mjs", "--app", "infra", "--trigger-redeploy"]
+      - ..:/app:ro
+    command: ["node", "/app/scripts/sync-domains.mjs", "--app", "infra", "--trigger-redeploy"]
     networks: [dokploy-network]
 
 volumes:
