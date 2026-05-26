@@ -1,8 +1,30 @@
-// Feature stores and actions (rune-based) live in subfolders:
-//   sdk/         - SDK provider + context (sdk-context.svelte.ts, sdk-provider.svelte)
-//   chat/        - chat.store.svelte.ts wrapping sdk.chat.stream
-//   threads/     - threads.store.svelte.ts wrapping sdk.threads.*
-//   workspaces/  - workspaces.store.svelte.ts wrapping sdk.workspaces.*
-//   files/       - files.actions.ts naming intent for each upload endpoint
-// See docs/plan.md for the full feature architecture.
-export {};
+// SDK provider
+export { default as SdkProvider } from "./sdk/sdk-provider.svelte";
+export { getSdkContext, setSdkContext } from "./sdk/sdk-context.svelte.js";
+export { createNativeTokenProvider, createWebTokenProvider } from "./sdk/token-provider.js";
+
+// Chat
+export type { UiMessage } from "./chat/chat.types.js";
+export { createChatStore } from "./chat/chat.store.svelte.js";
+export { loadThreadMessages } from "./chat/chat.actions.js";
+export { previewContent, isAssistant } from "./chat/chat.utils.js";
+
+// Threads
+export { createThreadsStore } from "./threads/threads.store.svelte.js";
+export { sortByRecent, threadTitle } from "./threads/threads.utils.js";
+
+// Workspaces
+export { createWorkspacesStore } from "./workspaces/workspaces.store.svelte.js";
+export { childrenOf, nodePath } from "./workspaces/workspaces.utils.js";
+
+// Capabilities
+export { createCapabilitiesStore } from "./capabilities/capabilities.store.svelte.js";
+export { filterCapabilities } from "./capabilities/capabilities.utils.js";
+
+// Files
+export {
+  uploadWorkspaceFile,
+  uploadUiAttachment,
+  uploadPersistentFile,
+  extractInvoice
+} from "./files/files.actions.js";

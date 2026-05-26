@@ -15,3 +15,141 @@
     scroll-behavior: auto !important;
   }
 }
+
+@keyframes epifly-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes epifly-message-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes epifly-sidebar-panel-swap {
+  from {
+    opacity: 0;
+    transform: translateX(-6px) scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes epifly-typing-dot {
+  0%,
+  70%,
+  100% {
+    opacity: 0.38;
+    transform: translateY(0);
+  }
+
+  35% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+.motion-enter {
+  animation: epifly-rise var(--motion-slow) var(--ease-emphasized) both;
+}
+
+.app-chat-composer-shell {
+  background:
+    linear-gradient(var(--background), var(--background)) padding-box,
+    linear-gradient(135deg, color-mix(in oklch, var(--ring) 28%, transparent), transparent 34%, color-mix(in oklch, var(--foreground) 16%, transparent)) border-box;
+  transition:
+    border-color var(--motion-base) var(--ease-standard),
+    box-shadow var(--motion-base) var(--ease-standard),
+    transform var(--motion-base) var(--ease-standard);
+}
+
+.app-chat-composer-shell:focus-within {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 45px oklch(0 0 0 / 9%);
+}
+
+.app-chat-message {
+  animation: epifly-message-in 280ms var(--ease-emphasized) both;
+}
+
+.app-chat-bubble {
+  transition:
+    background-color var(--motion-base) var(--ease-standard),
+    box-shadow var(--motion-base) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-standard);
+}
+
+.app-chat-bubble:hover {
+  transform: translateY(-1px);
+}
+
+.app-typing-dot {
+  animation: epifly-typing-dot 1s var(--ease-standard) infinite;
+}
+
+.app-sidebar-panel-swap {
+  animation: epifly-sidebar-panel-swap 220ms var(--ease-emphasized) both;
+}
+
+.app-sidebar-toggle {
+  position: fixed;
+  top: var(--sidebar-toggle-offset);
+  z-index: 50;
+  background: color-mix(in oklch, var(--background) 95%, transparent);
+  box-shadow: 0 1px 2px oklch(0 0 0 / 8%);
+  transition-duration: var(--sidebar-transition-duration);
+  transition-timing-function: var(--sidebar-transition-ease);
+}
+
+.app-sidebar-toggle-left {
+  left: var(--sidebar-toggle-offset);
+  transition-property: left, background-color, box-shadow;
+}
+
+.app-sidebar-toggle-right {
+  right: var(--sidebar-toggle-offset);
+  transition-property: right, background-color, box-shadow;
+}
+
+.app-jobs-sidebar {
+  width: 0;
+  overflow: hidden;
+  border-left-color: transparent;
+  transition: width var(--sidebar-transition-duration) var(--sidebar-transition-ease);
+}
+
+.app-jobs-sidebar[data-open="true"] {
+  width: var(--jobs-sidebar-width);
+  border-left-color: var(--border);
+}
+
+@media (min-width: 48rem) {
+  [data-slot="sidebar-wrapper"]:has([data-slot="sidebar"][data-state="expanded"]) > .app-sidebar-toggle-left {
+    left: calc(var(--sidebar-width) + var(--sidebar-toggle-offset));
+  }
+
+  [data-slot="sidebar-wrapper"]:has([data-slot="sidebar"][data-state="collapsed"]) > .app-sidebar-toggle-left {
+    left: calc(var(--sidebar-width-icon) + var(--sidebar-toggle-offset));
+  }
+
+  .app-sidebar-toggle-right[data-open="true"] {
+    right: calc(var(--jobs-sidebar-width) + var(--sidebar-toggle-offset));
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://shadcn-svelte.com/schema.json",
+  "style": "nova",
+  "tailwind": {
+    "config": "",
+    "css": "src/app.css",
+    "baseColor": "slate"
+  },
+  "aliases": {
+    "components": "@epifly/ui/components/ui",
+    "utils": "@epifly/ui/utils/cn",
+    "ui": "@epifly/ui/components/ui",
+    "hooks": "$lib/hooks"
+  }
+}

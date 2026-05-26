@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile",
+  "description": "Mobile-specific Epifly permissions",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

@@ -1,3 +1,11 @@
-// Runtime-neutral constants, types, and utilities shared by web and native.
-// Must not import Tauri, SvelteKit server, or browser-only APIs.
-export const APP_NAME = "Epifly";
+// Constants
+export * from "./constants/index.js";
+
+// Platform detection (runtime-neutral)
+export * from "./platform/index.js";
+
+// Shared types
+export type * from "./types/index.js";
+
+// Utilities
+export * from "./utils/index.js";

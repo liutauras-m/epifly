@@ -11,7 +11,17 @@ const config = {
       fallback: "index.html",
       precompress: false,
       strict: true
-    })
+    }),
+    alias: {
+      "@conusai/sdk": "../../packages/sdk/src/index.ts",
+      "@conusai/types": "../../packages/types/src/index.ts",
+      "@epifly/ui": "../../packages/ui/src/index.ts",
+      "@epifly/ui/*": "../../packages/ui/src/*",
+      "@epifly/features": "../../packages/features/src/index.ts",
+      "@epifly/features/*": "../../packages/features/src/*",
+      "@epifly/shared": "../../packages/shared/src/index.ts",
+      "@epifly/shared/*": "../../packages/shared/src/*"
+    }
   }
 };
 
