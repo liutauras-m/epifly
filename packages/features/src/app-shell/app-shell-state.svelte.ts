@@ -52,6 +52,11 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
   function load() {
     threadsStore.loadOnce({ limit: 20 });
     workspacesStore.loadTreeOnce(null);
+    workspacesStore.connectRealtime();
+
+    return () => {
+      workspacesStore.disconnectRealtime();
+    };
   }
 
   // Navigation — delegates to injected navigate, no direct SvelteKit dep.

@@ -1,8 +1,8 @@
 <script lang="ts">
-  import type { Snippet } from "svelte";
-
-  type Props = { children?: Snippet };
-  let { children }: Props = $props();
+  // Auth is not yet implemented. This page will hold the login form
+  // once the session/token strategy is decided.
 </script>
 
-{@render children?.()}
+<div class="flex min-h-svh items-center justify-center">
+  <p class="text-sm text-muted-foreground">Login — coming soon</p>
+</div>

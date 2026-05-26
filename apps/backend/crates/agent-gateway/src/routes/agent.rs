@@ -9,7 +9,7 @@
 use crate::mw::meter::AgentTurnStats;
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
-use agent_core::{ContextBuilder, PlanLimits, map_rig_error};
+use agent_core::{ContextBuilder, PlanLimits, WorkspaceChangeEvent, map_rig_error};
 use axum::{
     Extension, Json,
     extract::State,
@@ -1250,6 +1250,16 @@ pub async fn stream_agent(
                         )
                         .with_keys(all_changed_paths.clone()),
                     );
+
+                    state
+                        .realtime_service
+                        .publish_workspace_change(WorkspaceChangeEvent {
+                            op: "workspace.invalidated".into(),
+                            tenant_id: tenant_id.clone(),
+                            node_id: deduped.first().copied().unwrap_or("*").to_string(),
+                            kind: "workspace".into(),
+                        })
+                        .await;
                 }
 
                 // Emit threads invalidation if the turn either created a new thread

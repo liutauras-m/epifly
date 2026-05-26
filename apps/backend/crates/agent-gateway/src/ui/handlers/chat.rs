@@ -43,10 +43,13 @@ pub struct UiChatBody {
 
 pub async fn ui_stream(
     State(state): State<Arc<AppState>>,
-    user: SessionUser,
     headers: HeaderMap,
     Json(body): Json<UiChatBody>,
 ) -> Response {
+    let Some(user) = session_user_from_headers(&headers) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+
     let trimmed = body.message.trim();
     if trimmed.is_empty() && body.attachment_ids.is_empty() {
         return (
@@ -111,6 +114,20 @@ pub async fn ui_stream(
     agent::stream_agent(state, tenant, limits, req)
         .await
         .into_response()
+}
+
+fn session_user_from_headers(headers: &HeaderMap) -> Option<SessionUser> {
+    crate::auth::extract_from_headers(headers).or_else(|| {
+        (std::env::var("CONUSAI_TEST_MODE").as_deref() == Ok("1")).then(|| SessionUser {
+            name: "__dev__".into(),
+            plan: "enterprise".into(),
+            role: "user".into(),
+            exp: chrono::Utc::now()
+                .checked_add_signed(chrono::Duration::hours(1))
+                .expect("valid timestamp")
+                .timestamp(),
+        })
+    })
 }
 
 fn build_attachment_hint(

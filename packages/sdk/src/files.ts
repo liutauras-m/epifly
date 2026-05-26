@@ -1,5 +1,6 @@
 import type { FileToken } from '@conusai/types';
 import type { InternalClient } from './client.js';
+import { EP } from './endpoints.js';
 import type { ApiResult } from './types.js';
 
 export function files(client: InternalClient) {
@@ -9,7 +10,7 @@ export function files(client: InternalClient) {
       const form = new FormData();
       form.append('file', file);
       try {
-        const res = await client.fetch(`${client.baseUrl}/v1/files`, {
+        const res = await client.fetch(`${client.baseUrl}${EP.FILES}`, {
           method: 'POST',
           headers: token ? { Authorization: `Bearer ${token}` } : {},
           body: form,

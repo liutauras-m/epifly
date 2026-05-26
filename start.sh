@@ -210,7 +210,12 @@ _start_infra_and_gateway() {
 	: "${AWS_SECRET_ACCESS_KEY:=rustfsadmin}"
 	: "${REDB_PATH:=/tmp/conusai-local-gw.redb}"
 	: "${UI_SESSION_KEY:=conusai-foundry-dev-secret-change-me-32b}"
-	: "${JWT_SECRET:=change-me-in-production}"
+	if [[ "${CONUSAI_TEST_MODE:-0}" == "1" ]]; then
+		unset JWT_SECRET
+	else
+		: "${JWT_SECRET:=change-me-in-production}"
+		export JWT_SECRET
+	fi
 	# Tauri origins (tauri://localhost + https://tauri.localhost) are required
 	# for the Tauri webview's CSP.  :5174 is the browser-shell Vite dev port.
 	: "${WEB_ORIGIN:=http://localhost:3000,http://localhost:5173,http://localhost:5174,https://tauri.localhost,tauri://localhost}"
@@ -219,7 +224,7 @@ _start_infra_and_gateway() {
 	: "${RUST_LOG:=info}"
 
 	export QDRANT_URL S3_ENDPOINT S3_BUCKET AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
-	export REDB_PATH UI_SESSION_KEY JWT_SECRET WEB_ORIGIN
+	export REDB_PATH UI_SESSION_KEY WEB_ORIGIN
 	export EMBEDDING_BACKEND CONUSAI_CAPABILITIES_DIR RUST_LOG
 
 	echo "▶  Starting local gateway on :8080…"
@@ -227,6 +232,13 @@ _start_infra_and_gateway() {
 	"$LOCAL_GATEWAY_BIN" &
 	PIDS+=($!)
 	popd > /dev/null
+
+	if [[ "${CONUSAI_TEST_MODE:-0}" == "1" ]]; then
+		echo "⏳  Waiting for gateway (test mode uses in-memory stores; embeddings disabled)…"
+		_wait_http "http://localhost:8080/health" '^(200|503)$' 30
+		echo "✅  Gateway ready (test mode)"
+		return 0
+	fi
 
 	# fastembed downloads its model (~50 MB) on first run; 90 s is generous.
 	echo "⏳  Waiting for gateway (embeddings may load on first run, ~90 s)…"
@@ -265,8 +277,21 @@ _start_local() {
 _start_web() {
 	_start_infra_and_gateway
 
+	# The web app's checked-in app-local env may point at other development
+	# backends. In this mode the gateway is the one started above on :8080, so
+	# export the public URL before Vite loads its env files.
+	: "${PUBLIC_API_URL:=http://localhost:8080}"
+	export PUBLIC_API_URL
+
+	local web_port_pids
+	web_port_pids="$(lsof -ti tcp:5173 2>/dev/null || true)"
+	if [[ -n "$web_port_pids" ]]; then
+		echo "⏹   Stopping existing listener on :5173…"
+		kill $web_port_pids 2>/dev/null || true
+	fi
+
 	echo "▶  Starting SvelteKit web dev server on :5173…"
-	pnpm --filter web dev &
+	pnpm --filter web dev --port 5173 --strictPort &
 	PIDS+=($!)
 
 	_wait_http "http://localhost:5173" '^(200|30[0-9])$' 45

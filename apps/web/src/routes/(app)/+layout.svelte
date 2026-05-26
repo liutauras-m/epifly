@@ -2,7 +2,7 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { onMount } from "svelte";
-  import { getSdkContext, createAppShellState } from "@epifly/features";
+  import { getSdkContext, createAppShellState, setWorkspaceNodeContext } from "@epifly/features";
   import { AppJobsSidebar, AppMain, AppNavigationSidebar, AppShell } from "@epifly/ui";
   import type { Snippet } from "svelte";
 
@@ -17,6 +17,9 @@
     getThreadId: () => page.params.threadId ?? null,
     navigate: goto
   });
+
+  // Expose the selected workspace node to child pages via context.
+  setWorkspaceNodeContext(() => shell.selectedWorkspaceNodeId);
 
   onMount(shell.load);
 </script>

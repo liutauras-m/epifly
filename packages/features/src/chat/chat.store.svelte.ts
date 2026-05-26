@@ -1,5 +1,5 @@
 import type { ConusSdk, ChatStreamDelta } from "@conusai/sdk";
-import type { UiMessage } from "./chat.types.js";
+import type { UiMessage, UiTextMessage, UiStreamEvent } from "./chat.types.js";
 
 export function createChatStore(sdk: ConusSdk) {
   let messages = $state<UiMessage[]>([]);
@@ -8,7 +8,11 @@ export function createChatStore(sdk: ConusSdk) {
   let error = $state<string | null>(null);
   let abortController = $state<AbortController | null>(null);
 
-  async function send(message: string, workspaceNodeId?: string | null) {
+  async function send(
+    message: string,
+    workspaceNodeId?: string | null,
+    attachmentIds?: string[]
+  ) {
     const trimmed = message.trim();
     if (!trimmed || isStreaming) return;
 
@@ -22,55 +26,130 @@ export function createChatStore(sdk: ConusSdk) {
       id: crypto.randomUUID(),
       role: "user",
       content: trimmed
-    });
+    } satisfies UiTextMessage);
 
-    const assistantMessage: UiMessage = {
-      id: crypto.randomUUID(),
+    const assistantMessageId = crypto.randomUUID();
+    messages.push({
+      id: assistantMessageId,
       role: "assistant",
       content: "",
       pending: true
-    };
-
-    messages.push(assistantMessage);
+    } satisfies UiTextMessage);
 
     try {
       for await (const delta of sdk.chat.stream({
         message: trimmed,
         threadId,
         workspaceNodeId,
+        attachmentIds: attachmentIds?.length ? attachmentIds : undefined,
         signal: controller.signal
       })) {
-        applyDelta(delta, assistantMessage);
+        applyDelta(delta, assistantMessageId);
       }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
-      assistantMessage.pending = false;
+      setAssistantPending(assistantMessageId, false);
     } finally {
       isStreaming = false;
       abortController = null;
-      assistantMessage.pending = false;
+      setAssistantPending(assistantMessageId, false);
     }
   }
 
-  function applyDelta(delta: ChatStreamDelta, assistantMessage: UiMessage) {
+  function findAssistantMessage(assistantMessageId: string) {
+    return messages.find(
+      (msg): msg is UiTextMessage => msg.role === "assistant" && msg.id === assistantMessageId
+    );
+  }
+
+  function setAssistantPending(assistantMessageId: string, pending: boolean) {
+    const assistantMessage = findAssistantMessage(assistantMessageId);
+    if (assistantMessage) assistantMessage.pending = pending;
+  }
+
+  function insertBeforeAssistant(event: UiStreamEvent, assistantMessageId: string) {
+    const assistantIdx = messages.findIndex((msg) => msg.id === assistantMessageId);
+    if (assistantIdx !== -1) {
+      messages.splice(assistantIdx, 0, event);
+    } else {
+      messages.push(event);
+    }
+  }
+
+  function applyDelta(delta: ChatStreamDelta, assistantMessageId: string) {
     switch (delta.kind) {
-      case "text":
-        assistantMessage.content += delta.content;
+      case "text": {
+        const assistantMessage = findAssistantMessage(assistantMessageId);
+        if (assistantMessage) assistantMessage.content += delta.content;
         break;
+      }
 
       case "thread_id":
         threadId = delta.id;
         break;
 
-      case "tool_start":
-      case "tool_result":
-      case "routing_meta":
-      case "resource_invalidated":
-        // TODO: surface as structured stream events in chat-stream-status.svelte
+      case "tool_start": {
+        const event: UiStreamEvent = {
+          id: crypto.randomUUID(),
+          role: "event",
+          kind: "tool_start",
+          toolName: delta.name,
+          toolUseId: delta.id
+        };
+        insertBeforeAssistant(event, assistantMessageId);
         break;
+      }
+
+      case "tool_result": {
+        // Find the matching tool_start event and update it in-place.
+        const existing = messages.find(
+          (m): m is UiStreamEvent =>
+            m.role === "event" &&
+            m.kind === "tool_start" &&
+            m.toolUseId === delta.tool_use_id
+        );
+        if (existing) {
+          existing.kind = "tool_result";
+          existing.result = delta.result;
+          existing.error = delta.error;
+        } else {
+          const event: UiStreamEvent = {
+            id: crypto.randomUUID(),
+            role: "event",
+            kind: "tool_result",
+            toolUseId: delta.tool_use_id,
+            result: delta.result,
+            error: delta.error
+          };
+          insertBeforeAssistant(event, assistantMessageId);
+        }
+        break;
+      }
+
+      case "routing_meta": {
+        const event: UiStreamEvent = {
+          id: crypto.randomUUID(),
+          role: "event",
+          kind: "routing_meta",
+          capabilities: delta.selected_capabilities
+        };
+        insertBeforeAssistant(event, assistantMessageId);
+        break;
+      }
+
+      case "resource_invalidated": {
+        const event: UiStreamEvent = {
+          id: crypto.randomUUID(),
+          role: "event",
+          kind: "resource_invalidated",
+          resource: delta.resource
+        };
+        insertBeforeAssistant(event, assistantMessageId);
+        break;
+      }
 
       case "done":
-        assistantMessage.pending = false;
+        setAssistantPending(assistantMessageId, false);
         break;
     }
   }

@@ -1,6 +1,10 @@
 export const EP = {
+  AUTH_LOGIN: '/api/auth/login',
+  AUTH_LOGOUT: '/api/auth/logout',
+  AUTH_DEVICE_VERIFY: '/api/auth/device/verify',
   THREADS: '/v1/threads',
   THREAD_MESSAGES: (id: string) => `/v1/threads/${id}/messages`,
+  FILES: '/v1/files',
   WORKSPACES: '/v1/workspaces',
   WORKSPACES_TREE: '/v1/workspaces/tree',
   WORKSPACES_SEARCH: '/v1/workspaces/search',

@@ -5,13 +5,16 @@ export type { SidebarWorkspaceNode, CreateAppShellStateArgs } from "./app-shell/
 // Workspace adapters
 export { toSidebarWorkspaceNode } from "./workspaces/workspace-adapters.js";
 
+// Workspace node context (layout → page)
+export { setWorkspaceNodeContext, getWorkspaceNodeContext } from "./workspaces/workspace-context.svelte.js";
+
 // SDK provider
 export { default as SdkProvider } from "./sdk/sdk-provider.svelte";
 export { getSdkContext, setSdkContext } from "./sdk/sdk-context.svelte.js";
 export { createNativeTokenProvider, createWebTokenProvider } from "./sdk/token-provider.js";
 
 // Chat
-export type { UiMessage } from "./chat/chat.types.js";
+export type { UiMessage, UiTextMessage, UiStreamEvent, StreamEventKind } from "./chat/chat.types.js";
 export { createChatStore } from "./chat/chat.store.svelte.js";
 export { loadThreadMessages } from "./chat/chat.actions.js";
 export { previewContent, isAssistant } from "./chat/chat.utils.js";
@@ -35,3 +38,7 @@ export {
   uploadPersistentFile,
   extractInvoice
 } from "./files/files.actions.js";
+
+// Realtime
+export { createRealtimeStore } from "./realtime/realtime.store.svelte.js";
+export type { RealtimeMessage } from "./realtime/realtime.store.svelte.js";

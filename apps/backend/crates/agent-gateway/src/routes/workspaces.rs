@@ -4,7 +4,7 @@
 /// Access model: every node is private to owner_id; sharing is explicit per node.
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
-use agent_core::VirtualPath;
+use agent_core::{VirtualPath, WorkspaceChangeEvent};
 use axum::{
     Extension, Json,
     extract::{Path, Query, State},
@@ -149,6 +149,16 @@ pub async fn create(
         }
     }
     .map_err(map_err)?;
+
+    state
+        .realtime_service
+        .publish_workspace_change(WorkspaceChangeEvent {
+            op: "workspace.created".into(),
+            tenant_id: tenant.tenant_id.to_string(),
+            node_id: node.id.to_string(),
+            kind: format!("{:?}", node.kind).to_lowercase(),
+        })
+        .await;
 
     Ok(Json(node))
 }

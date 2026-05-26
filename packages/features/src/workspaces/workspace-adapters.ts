@@ -13,15 +13,19 @@ export type SidebarWorkspaceNode = {
   children?: SidebarWorkspaceNode[];
 };
 
-export function toSidebarWorkspaceNode(node: {
+type WorkspaceNodeLike = {
   id: string;
   name: string;
   kind: string;
-}): SidebarWorkspaceNode {
+  children?: WorkspaceNodeLike[];
+};
+
+export function toSidebarWorkspaceNode(node: WorkspaceNodeLike): SidebarWorkspaceNode {
   return {
     id: node.id,
     name: node.name,
-    kind: toSidebarWorkspaceKind(node.kind)
+    kind: toSidebarWorkspaceKind(node.kind),
+    children: node.children?.map((child) => toSidebarWorkspaceNode(child))
   };
 }
 

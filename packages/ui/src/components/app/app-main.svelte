@@ -10,6 +10,6 @@
   let { class: className, children }: Props = $props();
 </script>
 
-<main class={cn("flex flex-1 flex-col overflow-hidden", className)}>
+<main class={cn("flex h-full min-h-0 flex-1 flex-col overflow-hidden", className)}>
   {@render children?.()}
 </main>

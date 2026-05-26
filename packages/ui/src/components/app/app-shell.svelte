@@ -23,7 +23,7 @@
       class="app-sidebar-toggle app-sidebar-toggle-left hover:bg-accent"
     />
   {/if}
-  <Sidebar.Inset>
+  <Sidebar.Inset class="h-svh min-h-0 overflow-hidden">
     {@render children?.()}
   </Sidebar.Inset>
   {#if rightSidebar}

@@ -159,7 +159,11 @@
                   aria-label="Search files"
                   class="h-7 rounded-md border-sidebar-border bg-sidebar-accent/45 pl-7 pr-7 text-xs text-sidebar-foreground placeholder:text-sidebar-foreground/45 focus-visible:ring-sidebar-ring/35"
                   onkeydown={(event) => {
-                    if (event.key === "Escape") closeSearch();
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      closeSearch();
+                    }
                   }}
                 />
                 {#if searchQuery}

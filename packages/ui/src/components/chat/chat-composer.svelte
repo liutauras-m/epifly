@@ -63,13 +63,13 @@
 <form
   onsubmit={handleSubmit}
   class={cn(
-    "space-y-2 px-3 pb-[calc(0.75rem+var(--safe-bottom))] pt-3 sm:px-4",
+    "sticky bottom-0 z-30 space-y-2 bg-gradient-to-t from-background via-background/95 to-background/0 px-3 pb-[calc(0.75rem+var(--safe-bottom))] pt-6 backdrop-blur-xl sm:px-6",
     className
   )}
 >
   <div
     class={cn(
-      "app-chat-composer-shell flex min-h-14 items-end gap-2 rounded-[calc(var(--radius-app)+1rem)] border border-transparent bg-background/95 px-2 py-2 shadow-sm focus-within:border-ring/50 focus-within:ring-3 focus-within:ring-ring/15",
+      "app-chat-composer-shell mx-auto flex min-h-14 w-full max-w-3xl items-end gap-2 rounded-[calc(var(--radius-app)+1rem)] border border-transparent bg-background/95 px-2 py-2 shadow-sm focus-within:border-ring/50 focus-within:ring-3 focus-within:ring-ring/15",
       disabled && "bg-muted/25 text-muted-foreground"
     )}
   >
@@ -120,7 +120,7 @@
   </div>
 
   {#if helperText}
-    <p id="chat-composer-helper" class="px-3 text-xs leading-5 text-muted-foreground">
+    <p id="chat-composer-helper" class="mx-auto max-w-3xl px-3 text-xs leading-5 text-muted-foreground">
       {helperText}
     </p>
   {/if}
