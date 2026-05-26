@@ -158,6 +158,9 @@ services:
       # Share session cookie across the whole epifly zone so the web app
       # and Lago portal participate in the same Zitadel SSO session.
       ZITADEL_OIDC_DEFAULTLOGINURLV2: "https://auth.${APP_DOMAIN}/ui/login/"
+      # Tell the Zitadel 'ready' healthcheck binary to connect via HTTP
+      # (TLS is terminated by Traefik; --tlsMode external means no TLS here).
+      ZITADEL_TLS_ENABLED: "false"
     depends_on:
       postgres:
         condition: service_healthy
