@@ -10,7 +10,9 @@
  *   2. Inside a Dokploy `domain-sync` init container on every deploy:
  *      All creds come from environment variables (Dokploy Shared Env):
  *        APP_DOMAIN, DOKPLOY_URL, DOKPLOY_ENVIRONMENT_ID, DOKPLOY_API_KEY
- *      `DOKPLOY_APP_NAME=infra node /sync.mjs --app infra`
+ *      `DOKPLOY_APP_NAME=infra node /app/scripts/sync-domains.mjs --app infra`
+ *      (The compose mounts the whole dokploy/ dir at /app so the relative
+ *      `lib/dokploy-client.mjs` import resolves.)
  *
  * Flags:
  *   --dry-run      Print plan, don't mutate Dokploy

@@ -1,6 +1,6 @@
 # ConusAI Platform — Architecture Reference
 
-> **Audit date:** 2026-05-24
+> **Audit date:** 2026-05-26
 > **Workspace version:** 0.3.1 (Cargo workspace), pnpm workspace `@conusai/*` 0.6.0
 > **Status:** Source of truth — fully re-derived from current code. Supersedes all
 > prior revisions of this file.
@@ -99,7 +99,7 @@ conusai-platform/
 ├── renovate.json                   # Renovate bot config
 ├── justfile                        # `just <recipe>` runner (web/shell/backend/ios/android dev recipes)
 ├── Makefile                        # CI helpers (verify-routes-doc, …)
-├── docker-compose.yml              # Full local stack (Postgres, Redis, Zitadel, Lago, Qdrant, RustFS, Gateway, OTel, Jaeger)
+├── docker-compose.yml              # Full local stack (Postgres, Redis, Zitadel, Lago quad, Qdrant, RustFS, Gateway, OTel, Jaeger) — mirrors `dokploy/infra` for parity
 ├── start.sh / stop.sh              # Smoke wrapper around docker compose + host gateway
 ├── README.md
 ├── build_output.txt                # Last `cargo build` log (gitignored at root, sometimes committed)
@@ -173,6 +173,21 @@ conusai-platform/
 │   └── web/                        # Cross-app web spec collection
 │
 ├── scripts/                        # Repo-wide JS/Python helpers (see §10.5)
+├── tools/
+│   └── epifly/                     # `@conusai/epifly` TS CLI — deploy/destroy/diff/doctor/init/logs/secret/status/verify/wipe (tsup ESM, jest+ts-jest, commander)
+├── dokploy/                        # Production deployment stack (see §10.7)
+│   ├── .env.example                # Source of truth for all Shared Env keys
+│   ├── domains.yaml                # Per-app hostname registry consumed by `sync-domains.mjs`
+│   ├── generate-prod-env.mjs       # Local-dev secret generator → `.env.production` (mode 0600)
+│   ├── infra/                      # Postgres + Redis + Zitadel + Lago (api/worker/clock/migrate) + Qdrant + RustFS + pg-password-sync + domain-sync
+│   ├── gateway/                    # agent-gateway compose (Rust backend) + domain-sync init
+│   ├── web/                        # SvelteKit web compose + domain-sync init
+│   ├── observability/              # Jaeger + otel-collector + domain-sync init
+│   ├── capabilities/               # current-time + future MCP sidecars
+│   ├── epifly-deploy/scripts/      # `deploy.mjs` — 6-phase reconciler (volumes → secrets → composes → domains → deploys → verify)
+│   ├── scripts/                    # `sync-domains.mjs` (tRPC domain reconciler), `wipe-volumes.sh`
+│   └── lib/                        # ESM helpers (manifest, secrets, compose-vars, verify, docker, dokploy-client, dotenv)
+├── workspaces/                     # Per-tenant scratch trees (gitignored content)
 └── docs/
     ├── arch.md                     # ← this file
     ├── plan.md
@@ -1685,33 +1700,55 @@ prompt_template = """Extract all text visible in the attached image …
 
 ### 10.1 `docker-compose.yml`
 
-Service map (profiles in brackets):
+Rewritten 2026-05-26 to mirror `dokploy/infra/docker-compose.yml` so local-dev
+behaviour matches production. Service map (profiles in brackets):
 
 | Service | Image | Port(s) | Profiles | Purpose |
 |---------|-------|---------|----------|---------|
 | `postgres` | `postgres:17-alpine` | 5432 | infra, full | Shared DB for Zitadel + Lago |
-| `redis` | `redis:7-alpine` | 6379 | infra, full | Lago background queue |
-| `zitadel` | `ghcr.io/zitadel/zitadel:v2.68.0` | 8085→8080 | infra, full | Identity (OIDC) |
-| `lago-api` | `getlago/api:v1.30.0` | 3010→3000 | infra, full | Billing API |
-| `lago-worker` | `getlago/api:v1.30.0` (sidekiq) | — | infra, full | Lago background worker |
+| `redis` | `redis:7-alpine` | 6379 | infra, full | Lago Sidekiq queue + cache |
+| `zitadel` | `ghcr.io/zitadel/zitadel:v2.68.0` | 8085→8080 | infra, full | Identity (OIDC). `ZITADEL_TLS_ENABLED=false` + `--tlsMode disabled` so the bundled `zitadel ready` healthcheck speaks HTTP. |
+| `lago-migrate` | `getlago/api:v1.46.0` (one-shot, `./scripts/migrate.sh`, `restart: "no"`) | — | infra, full | Runs Rails migrations before api/worker/clock start |
+| `lago-api` | `getlago/api:v1.46.0` (`./scripts/start.api.sh`) | 3010→3000 | infra, full | Billing API |
+| `lago-worker` | `getlago/api:v1.46.0` (`./scripts/start.worker.sh`) | — | infra, full | Sidekiq worker (probe on :8080) |
+| `lago-clock` | `getlago/api:v1.46.0` (`./scripts/start.clock.sh`) | — | infra, full | Billing cron (subscriptions/invoices). Without it nothing invoices. |
 | `qdrant` | `qdrant/qdrant:v1.17.0` | 6333 (HTTP), 6334 (gRPC) | — | Vector store |
 | `rustfs-perms` | `alpine:3` | — | — | chown helper (RustFS UID 10001) |
-| `rustfs` | `rustfs/rustfs:latest` | 9000 (S3), 9001 (console) | — | S3-compatible storage |
-| `marker-api` | `ghcr.io/vikparuchuri/marker:latest` | 8081→8080 | marker | PDF → Markdown sidecar |
-| `agent-gateway` | local build (`apps/backend/Dockerfile`, target `gateway`) | 8080 | — | The Rust backend |
-| `current-time` | local build (`services/current-time/`) | 8082 | — | Example MCP sidecar |
+| `rustfs` | `rustfs/rustfs:latest` | 9000 (S3), 9001 (console) | — | S3-compatible storage. No healthcheck — image lacks curl/wget/bash. |
+| `marker-api` | `${MARKER_IMAGE:-ghcr.io/vikparuchuri/marker:latest}` | 8081→8080 | marker | PDF → Markdown sidecar (image override needed if private) |
+| `agent-gateway` | local build (`apps/backend/Dockerfile`, target `gateway`) | 8080 | — | The Rust backend. Receives `LAGO_API_URL`, `LAGO_API_KEY`, `PLATFORM_ADMIN_TOKEN`. |
+| `current-time` | local build (`services/current-time/`) | 8082 | — | Example MCP sidecar. Calls `conusai-gateway:8080` / `conusai-current-time:8082` over in-container DNS (no `host.docker.internal`). |
 | `web` | `node:22-slim` | 3000 | web, full | SvelteKit web app |
 | `jaeger` | `jaegertracing/all-in-one:1.58` | 16686 (UI), 14317 (OTLP) | observability | Trace UI |
 | `otel-collector` | `otel/opentelemetry-collector-contrib:0.123.0` | 4317 (gRPC), 4318 (HTTP) | observability | OTel fan-out |
 
-Volumes: `qdrant_data`, `rustfs_data`, `redb_data`, `postgres_data`.
+Lago config notes (match upstream `docs.getlago.com/guide/self-hosting/docker`):
+
+- Encryption env vars MUST be `LAGO_`-prefixed: `LAGO_ENCRYPTION_PRIMARY_KEY`,
+  `LAGO_ENCRYPTION_DETERMINISTIC_KEY`, `LAGO_ENCRYPTION_KEY_DERIVATION_SALT`.
+  Un-prefixed names are silently ignored → ActiveRecord-encrypted columns
+  become unrecoverable across deploys.
+- The four Lago services share a top-level `x-lago-backend-env: &lago-backend-env`
+  YAML anchor.
+- `lago-api` and `lago-worker` need a writable `/app/storage` (named volume
+  `lago_storage_data`) even with `LAGO_USE_AWS_S3=false` +
+  `LAGO_DISABLE_PDF_GENERATION=true` — the storage adapter initialises at boot.
+- Healthchecks use `start_period: 120s` + `start_interval: 2s` to absorb Rails
+  cold-boot.
+
+Volumes: `postgres_data`, `redis_data`, `qdrant_data`, `rustfs_data`,
+`redb_data`, `lago_storage_data`, `zitadel_machinekey`.
+
+Every service declares an explicit `hostname:` so cross-stack DNS resolves
+identically to the production `dokploy-network`.
 
 Profiles enable selective bring-up:
 
 - `./start.sh local` — backend + infra (Docker), gateway on host.
 - `docker compose --profile full up` — everything including web.
 - `docker compose --profile observability up` — adds Jaeger + otel-collector.
-- `docker compose --profile marker up` — adds Marker.
+- `docker compose --profile marker up` — adds Marker (requires `MARKER_IMAGE`
+  override unless the upstream public image exists).
 
 ### 10.2 `justfile` Recipes
 
@@ -1783,6 +1820,75 @@ e2e/
   wdio/             — WebdriverIO config + page objects
   web/              — cross-app web specs (separate from apps/web/e2e)
 ```
+
+### 10.7 Production Deployment — `dokploy/` + `tools/epifly`
+
+Production runs on a self-hosted **Dokploy** controller. There is no bespoke
+web UI — Dokploy is the UI. The repository ships a declarative orchestrator
+that reconciles the controller's state (composes, Shared Env, domains,
+deployments) from local sources of truth, plus a TypeScript CLI wrapper for
+operators.
+
+**Per-app composes** (one Dokploy "Compose" application each, all sharing the
+`dokploy-network` overlay):
+
+| Compose | File | Services |
+|---------|------|----------|
+| `infra` | [dokploy/infra/docker-compose.yml](../dokploy/infra/docker-compose.yml) | postgres, redis, zitadel, qdrant, rustfs, lago (migrate/api/worker/clock), `pg-password-sync` sidecar, `domain-sync` init |
+| `gateway` | [dokploy/gateway/docker-compose.yml](../dokploy/gateway/docker-compose.yml) | `agent-gateway` + `domain-sync` init |
+| `web` | [dokploy/web/docker-compose.yml](../dokploy/web/docker-compose.yml) | SvelteKit web + `domain-sync` init |
+| `observability` | [dokploy/observability/docker-compose.yml](../dokploy/observability/docker-compose.yml) | Jaeger + otel-collector + `domain-sync` init |
+| `capabilities` | [dokploy/capabilities/](../dokploy/capabilities) | current-time + future MCP sidecars |
+
+**Key orchestrator pieces:**
+
+- [dokploy/.env.example](../dokploy/.env.example) — canonical list of every
+  Shared Env key. Operators copy this; `generate-prod-env.mjs` produces a
+  mode-0600 `.env.production` with auto-generated secrets.
+- [dokploy/epifly-deploy/scripts/deploy.mjs](../dokploy/epifly-deploy/scripts/deploy.mjs)
+  — **6-phase reconciler** run by the `epifly-deploy` compose (or `epifly
+  deploy`): (1) ensure named volumes, (2) merge Shared Env (existing wins →
+  bootstrap → `SECRETS[k]()` guarded by `STATEFUL_SECRETS` volume check →
+  `.env.example` non-empty literal → empty), (3) create/update composes via
+  Dokploy REST API, (4) reconcile `domains.yaml` → `domain.byComposeId`,
+  (5) trigger `compose.deploy` in dependency order, (6) verify via
+  `lib/verify.mjs`.
+- [dokploy/scripts/sync-domains.mjs](../dokploy/scripts/sync-domains.mjs) —
+  per-app init container. **Must mount the whole `dokploy/` directory at
+  `/app`** (mounting only the script breaks the relative
+  `lib/dokploy-client.mjs` import with `ERR_MODULE_NOT_FOUND`).
+- [dokploy/lib/](../dokploy/lib) — zero-dep ESM helpers used both by the
+  orchestrator container and the TS CLI: `manifest.mjs` (app registry),
+  `secrets.mjs` (`SECRETS` + `STATEFUL_SECRETS` maps), `compose-vars.mjs`
+  (per-compose `${VAR}` interpolation), `verify.mjs` (post-deploy probes),
+  `docker.mjs`, `dokploy-client.mjs` (REST wrapper: `x-api-key`, `GET
+  /api/{procedure}?…`, `POST /api/{procedure}` JSON), `dotenv.mjs`.
+- [dokploy/infra/docker-compose.yml](../dokploy/infra/docker-compose.yml)'s
+  `pg-password-sync` sidecar (`docker:27-cli` + `/var/run/docker.sock`) runs
+  `ALTER USER … PASSWORD` over the in-container Unix socket on every deploy,
+  converging the live DB to whatever `POSTGRES_PASSWORD` is in Shared Env.
+  Both `zitadel` and `lago-api` `depends_on: pg-password-sync:
+  service_completed_successfully`.
+
+**`tools/epifly` CLI** (`@conusai/epifly` 0.1.0 — tsup ESM bundle, commander,
+jest+ts-jest):
+
+| Subcommand | Purpose |
+|------------|---------|
+| `init` | Interactive `.epifly.json` + first secret generation |
+| `deploy` | Idempotent full reconcile (volumes → secrets → composes → domains → deploys → verify) |
+| `diff` | Dry-run: prints which Shared Env keys / composes / domains would change |
+| `status` | Cluster snapshot (per-compose source/state, latest deployment, domains) |
+| `verify` | Post-deploy probes (Zitadel `/.well-known`, Lago `/health`, gateway `/health`) |
+| `logs` | Tails a Dokploy compose's service logs |
+| `secret` | `get`/`set`/`rotate` Shared Env keys (guarded by `STATEFUL_SECRETS`) |
+| `doctor` | Validates `.epifly.json`, API key, network reachability, manifest drift |
+| `destroy` | Removes one or all composes from the Dokploy project |
+| `wipe` | Destructive volume reset (per-volume or `--all`) — calls `dokploy/scripts/wipe-volumes.sh` |
+
+The CLI imports `APPS` from `dokploy/lib/manifest.mjs` so there is exactly one
+manifest source of truth across the orchestrator container and the operator
+CLI.
 
 ---
 
@@ -1950,9 +2056,13 @@ via `tauri.conf.json` (see §3).
 - `GET /healthz/embeddings` — returns 200 once the local embedding model is
   loaded (Qdrant unreachable → 503).
 - `GET /metrics` — Prometheus.
-- Docker healthchecks: `postgres` (pg_isready), `redis` (redis-cli ping),
-  `zitadel` (`/app/zitadel ready`), `lago-api` (curl /health), `qdrant` (TCP
-  probe), `rustfs` (true), `marker-api` (curl /health).
+- Docker healthchecks: `postgres` (`pg_isready`), `redis` (`redis-cli ping`),
+  `zitadel` (`/app/zitadel ready` — needs `ZITADEL_TLS_ENABLED=false` to speak
+  HTTP), `lago-api` / `lago-worker` / `lago-clock` (curl `/health` on :3000 or
+  Sidekiq probe on :8080, `start_period: 120s`), `qdrant` (TCP probe),
+  `marker-api` (curl `/health`). `rustfs` has **no** Docker healthcheck —
+  upstream image ships without curl/wget/bash; rely on `agent-gateway` retries
+  and the `/healthz/embeddings` app probe.
 
 ### 12.4 Rate Limiting & Quotas
 

@@ -1,8 +1,50 @@
+# Conusai local-dev stack. Mirrors dokploy/infra/docker-compose.yml as
+# closely as possible so behaviour you see locally matches production:
+#   - Lago v1.46 with LAGO_-prefixed env vars + dedicated migrate/clock
+#   - Zitadel with TLS off (--tlsMode disabled) for plain HTTP on :8085
+#   - In-container DNS only (no host.docker.internal references)
+#
+# Profiles:
+#   infra          Postgres, Redis, Zitadel, Lago (api/worker/clock/migrate)
+#   full           infra + web
+#   marker         optional Marker PDF extractor
+#   observability  Jaeger + OTel collector
+#   web            SvelteKit web app
+#
+# Common workflows:
+#   docker compose --profile infra up -d
+#   docker compose up -d agent-gateway current-time   # default profile
+
+# ── Lago shared env anchor ─────────────────────────────────────────────────
+# Keep variable names exactly as Lago's Rails app expects (see
+# https://docs.getlago.com/guide/self-hosting/docker). All Lago services
+# (migrate, api, worker, clock) share this block so names cannot drift.
+x-lago-backend-env: &lago-backend-env
+  RAILS_ENV: production
+  RAILS_LOG_TO_STDOUT: "true"
+  DATABASE_URL: "postgresql://conusai-postgres:5432/lago"
+  PGHOST: "conusai-postgres"
+  PGPORT: "5432"
+  PGUSER: "${POSTGRES_USER:-conusai}"
+  PGPASSWORD: "${POSTGRES_PASSWORD:-conusai}"
+  REDIS_URL: "redis://conusai-redis:6379/0"
+  LAGO_REDIS_CACHE_URL: "redis://conusai-redis:6379/1"
+  SECRET_KEY_BASE: "${LAGO_SECRET_KEY_BASE:-changeme_lago_secret_key_base_at_least_64_chars_long_here_xxxx}"
+  LAGO_ENCRYPTION_PRIMARY_KEY: "${LAGO_ENCRYPTION_KEY:-changeme_primary_32_chars_here_!}"
+  LAGO_ENCRYPTION_DETERMINISTIC_KEY: "${LAGO_ENCRYPTION_DET_KEY:-changeme_det_key_32_chars_here_!}"
+  LAGO_ENCRYPTION_KEY_DERIVATION_SALT: "${LAGO_ENCRYPTION_SALT:-changeme_salt_32_chars_here_xxxx}"
+  LAGO_RSA_PRIVATE_KEY: "${LAGO_RSA_PRIVATE_KEY:-}"
+  LAGO_DISABLE_SIGNUP: "true"
+  LAGO_SIDEKIQ_WEB: "false"
+  LAGO_DISABLE_PDF_GENERATION: "true"
+  LAGO_USE_AWS_S3: "false"
+
 services:
   # ── Postgres (shared: Zitadel + Lago) ────────────────────────────────────
   postgres:
     image: postgres:17-alpine
     container_name: conusai-postgres
+    hostname: conusai-postgres
     profiles: ["infra", "full"]
     restart: unless-stopped
     environment:
@@ -14,17 +56,21 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-conusai}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-conusai} -d $${POSTGRES_DB:-conusai}"]
       interval: 10s
       timeout: 5s
       retries: 10
 
-  # ── Redis (Lago) ──────────────────────────────────────────────────────────
+  # ── Redis (Lago queues + cache) ──────────────────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: conusai-redis
+    hostname: conusai-redis
     profiles: ["infra", "full"]
     restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redis_data:/data
     ports:
       - "6379:6379"
     healthcheck:
@@ -33,13 +79,17 @@ services:
       timeout: 5s
       retries: 10
 
-  # ── Zitadel identity provider ─────────────────────────────────────────────
+  # ── Zitadel identity provider ────────────────────────────────────────────
   zitadel:
     image: ghcr.io/zitadel/zitadel:v2.68.0
     container_name: conusai-zitadel
+    hostname: conusai-zitadel
     profiles: ["infra", "full"]
     restart: unless-stopped
-    command: start-from-init --masterkey "${ZITADEL_MASTERKEY:-MasterkeyNeedsToHave32Characters}" --tlsMode disabled
+    command: >
+      start-from-init
+      --masterkey "${ZITADEL_MASTERKEY:-MasterkeyNeedsToHave32Characters}"
+      --tlsMode disabled
     environment:
       ZITADEL_DATABASE_POSTGRES_HOST: conusai-postgres
       ZITADEL_DATABASE_POSTGRES_PORT: 5432
@@ -53,6 +103,9 @@ services:
       ZITADEL_EXTERNALSECURE: "false"
       ZITADEL_EXTERNALPORT: 8085
       ZITADEL_EXTERNALDOMAIN: localhost
+      # Make the bundled `zitadel ready` healthcheck client speak HTTP
+      # (matches --tlsMode disabled above).
+      ZITADEL_TLS_ENABLED: "false"
     depends_on:
       postgres:
         condition: service_healthy
@@ -64,10 +117,28 @@ services:
       timeout: 5s
       retries: 30
 
-  # ── Lago API (billing) ────────────────────────────────────────────────────
+  # ── Lago DB migrations (one-shot, runs every boot) ───────────────────────
+  # The official getlago/api start scripts do NOT run migrations on boot;
+  # upstream's compose ships a dedicated service that runs ./scripts/migrate.sh.
+  # Without it, lago-api boots against an empty `lago` DB and never reaches
+  # `/health`.
+  lago-migrate:
+    image: getlago/api:v1.46.0
+    container_name: conusai-lago-migrate
+    profiles: ["infra", "full"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *lago-backend-env
+    command: ["./scripts/migrate.sh"]
+
+  # ── Lago API (billing) ───────────────────────────────────────────────────
   lago-api:
-    image: getlago/api:v1.30.0
+    image: getlago/api:v1.46.0
     container_name: conusai-lago-api
+    hostname: conusai-lago-api
     profiles: ["infra", "full"]
     restart: unless-stopped
     depends_on:
@@ -75,50 +146,70 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      lago-migrate:
+        condition: service_completed_successfully
+    command: ["./scripts/start.api.sh"]
     environment:
-      RAILS_ENV: production
+      <<: *lago-backend-env
       LAGO_API_URL: "${LAGO_API_URL:-http://localhost:3010}"
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-conusai}:${POSTGRES_PASSWORD:-conusai}@conusai-postgres:5432/lago"
-      REDIS_URL: "redis://conusai-redis:6379/0"
-      SECRET_KEY_BASE: "${LAGO_SECRET_KEY_BASE:-changeme_lago_secret_key_base_at_least_64_chars_long_here}"
-      ENCRYPTION_DETERMINISTIC_KEY: "${LAGO_ENCRYPTION_DET_KEY:-changeme_det_key_32_chars_here}"
-      ENCRYPTION_KEY_DERIVATION_SALT: "${LAGO_ENCRYPTION_SALT:-changeme_salt_32}"
-      ENCRYPTION_PRIMARY_KEY: "${LAGO_ENCRYPTION_KEY:-changeme_primary_32_chars_here_!}"
-      LAGO_RSA_PRIVATE_KEY: "${LAGO_RSA_PRIVATE_KEY:-}"
-      STRIPE_API_KEY: "${STRIPE_SECRET_KEY:-}"
-      LAGO_DISABLE_SIGNUP: "true"
+      LAGO_FRONT_URL: "${LAGO_FRONT_URL:-http://localhost:3010}"
+    volumes:
+      - lago_storage_data:/app/storage
     ports:
       - "3010:3000"
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      interval: 10s
+      timeout: 60s
+      start_period: 120s
+      start_interval: 2s
 
-  # ── Lago Worker ───────────────────────────────────────────────────────────
+  # ── Lago Worker (Sidekiq) ────────────────────────────────────────────────
   lago-worker:
-    image: getlago/api:v1.30.0
+    image: getlago/api:v1.46.0
     container_name: conusai-lago-worker
+    hostname: conusai-lago-worker
     profiles: ["infra", "full"]
     restart: unless-stopped
-    command: ["bundle", "exec", "sidekiq"]
+    command: ["./scripts/start.worker.sh"]
     depends_on:
       lago-api:
         condition: service_healthy
     environment:
-      RAILS_ENV: production
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-conusai}:${POSTGRES_PASSWORD:-conusai}@conusai-postgres:5432/lago"
-      REDIS_URL: "redis://conusai-redis:6379/0"
-      SECRET_KEY_BASE: "${LAGO_SECRET_KEY_BASE:-changeme_lago_secret_key_base_at_least_64_chars_long_here}"
-      ENCRYPTION_DETERMINISTIC_KEY: "${LAGO_ENCRYPTION_DET_KEY:-changeme_det_key_32_chars_here}"
-      ENCRYPTION_KEY_DERIVATION_SALT: "${LAGO_ENCRYPTION_SALT:-changeme_salt_32}"
-      ENCRYPTION_PRIMARY_KEY: "${LAGO_ENCRYPTION_KEY:-changeme_primary_32_chars_here_!}"
-      LAGO_RSA_PRIVATE_KEY: "${LAGO_RSA_PRIVATE_KEY:-}"
+      <<: *lago-backend-env
+      LAGO_API_URL: "${LAGO_API_URL:-http://localhost:3010}"
+    volumes:
+      - lago_storage_data:/app/storage
+    healthcheck:
+      # start.worker.sh exposes a Sidekiq probe on :8080 (matches upstream).
+      test: ["CMD-SHELL", "curl -f http://localhost:8080 || exit 1"]
+      interval: 10s
+      timeout: 60s
+      start_period: 120s
+      start_interval: 2s
 
-  # ── Vector store ──────────────────────────────────────────────────────────
+  # ── Lago Clock (recurring jobs) ──────────────────────────────────────────
+  # Drives the billing/anniversary/subscription cron. Without it,
+  # subscription renewals never invoice customers.
+  lago-clock:
+    image: getlago/api:v1.46.0
+    container_name: conusai-lago-clock
+    hostname: conusai-lago-clock
+    profiles: ["infra", "full"]
+    restart: unless-stopped
+    command: ["./scripts/start.clock.sh"]
+    depends_on:
+      lago-api:
+        condition: service_healthy
+    environment:
+      <<: *lago-backend-env
+      LAGO_API_URL: "${LAGO_API_URL:-http://localhost:3010}"
+
+  # ── Vector store ─────────────────────────────────────────────────────────
   qdrant:
     image: qdrant/qdrant:v1.17.0
     container_name: conusai-qdrant
+    hostname: conusai-qdrant
     restart: unless-stopped
     ports:
       - "6333:6333"   # HTTP REST
@@ -126,25 +217,26 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
-      test: ["CMD", "bash", "-lc", "echo > /dev/tcp/127.0.0.1/6333"]
+      test: ["CMD-SHELL", "bash -lc 'echo > /dev/tcp/127.0.0.1/6333'"]
       interval: 10s
       timeout: 5s
       retries: 10
 
-  # ── Object storage permissions fix (RustFS runs as UID 10001) ───────────
+  # ── Object storage permissions fix (RustFS runs as UID 10001) ────────────
   rustfs-perms:
     image: alpine:3
     container_name: conusai-rustfs-perms
     user: root
     volumes:
       - rustfs_data:/fix_path
-    command: ["chown", "-R", "10001:10001", "/fix_path"]
+    command: ["sh", "-c", "chown -R 10001:10001 /fix_path && echo done"]
     restart: "no"
 
-  # ── Object Storage — RustFS (S3-compatible, Apache 2.0) ───────────────────
+  # ── Object Storage — RustFS (S3-compatible) ──────────────────────────────
   rustfs:
     image: rustfs/rustfs:latest
     container_name: conusai-rustfs
+    hostname: conusai-rustfs
     depends_on:
       rustfs-perms:
         condition: service_completed_successfully
@@ -159,16 +251,18 @@ services:
       - "9001:9001"   # Web console
     volumes:
       - rustfs_data:/data
-    healthcheck:
-      test: ["CMD", "sh", "-c", "true"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+    # No healthcheck: the rustfs:latest image is minimal (no curl/wget/bash)
+    # so we can't reliably probe inside the container. Rely on Docker's
+    # restart policy. Matches dokploy/infra/docker-compose.yml.
 
   # ── Marker PDF-to-markdown service (optional — profile: marker) ──────────
+  # NOTE: image `ghcr.io/vikparuchuri/marker:latest` is not publicly
+  # published by upstream — set MARKER_IMAGE to your own build if you need
+  # this service. Activated only via --profile marker.
   marker-api:
-    image: ghcr.io/vikparuchuri/marker:latest
+    image: "${MARKER_IMAGE:-ghcr.io/vikparuchuri/marker:latest}"
     container_name: conusai-marker
+    hostname: conusai-marker
     profiles: ["marker"]
     restart: unless-stopped
     ports:
@@ -179,13 +273,14 @@ services:
       timeout: 10s
       retries: 3
 
-  # ── Agent Gateway ─────────────────────────────────────────────────────────
+  # ── Agent Gateway ────────────────────────────────────────────────────────
   agent-gateway:
     build:
       context: .
       dockerfile: apps/backend/Dockerfile
       target: gateway
     container_name: conusai-gateway
+    hostname: conusai-gateway
     depends_on:
       qdrant:
         condition: service_healthy
@@ -214,11 +309,15 @@ services:
       RUSTFS_WEBHOOK_SECRET: "${RUSTFS_WEBHOOK_SECRET:-}"
       RUSTFS_NOTIFICATION_WEBHOOK_URL: "http://conusai-gateway:8080/internal/rustfs/events"
       REDB_PATH: "/data/conusai.redb"
-      MARKER_URL: "http://conusai-marker:8080"
+      MARKER_URL: "${MARKER_URL:-}"
       OTLP_ENDPOINT: "http://conusai-otel:4317"
       UI_SESSION_KEY: "${UI_SESSION_KEY:-conusai-foundry-dev-secret-change-me-32b}"
+      PLATFORM_ADMIN_TOKEN: "${PLATFORM_ADMIN_TOKEN:-}"
       WEB_ORIGIN: "${WEB_ORIGIN:-http://localhost:3000,http://localhost:5173,https://tauri.localhost,tauri://localhost}"
       EMBEDDING_BACKEND: "${EMBEDDING_BACKEND:-openai}"
+      # Billing — talk to Lago in-cluster, not via the host port
+      LAGO_API_URL: "${LAGO_API_URL_INTERNAL:-http://conusai-lago-api:3000}"
+      LAGO_API_KEY: "${LAGO_API_KEY:-}"
     ports:
       - "8080:8080"
     volumes:
@@ -232,11 +331,13 @@ services:
     build:
       context: ./services/current-time
     container_name: conusai-current-time
+    hostname: conusai-current-time
     restart: unless-stopped
     environment:
-      GATEWAY_URL: "http://host.docker.internal:8080"
+      # In-container DNS — same hostnames as production (dokploy/capabilities).
+      GATEWAY_URL: "http://conusai-gateway:8080"
+      SERVICE_URL: "http://conusai-current-time:8082"
       PLATFORM_ADMIN_TOKEN: "${PLATFORM_ADMIN_TOKEN:-}"
-      SERVICE_URL: "http://host.docker.internal:8082"
     ports:
       - "8082:8082"
     depends_on:
@@ -247,6 +348,7 @@ services:
   web:
     image: node:22-slim
     container_name: conusai-web
+    hostname: conusai-web
     profiles: ["web", "full"]
     working_dir: /app
     command: node apps/web/build
@@ -260,20 +362,22 @@ services:
     depends_on:
       - agent-gateway
 
-  # ── Observability ─────────────────────────────────────────────────────────
+  # ── Observability ────────────────────────────────────────────────────────
   jaeger:
     image: jaegertracing/all-in-one:1.58
     container_name: conusai-jaeger
+    hostname: conusai-jaeger
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
     ports:
       - "16686:16686"   # Jaeger UI
-      - "14317:4317"    # OTLP gRPC (host-side mapped to avoid conflict with otel-collector)
+      - "14317:4317"    # OTLP gRPC (host-side; avoids clash with otel-collector)
     profiles: ["observability"]
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.123.0
     container_name: conusai-otel
+    hostname: conusai-otel
     profiles: ["observability"]
     depends_on:
       - jaeger
@@ -284,7 +388,9 @@ services:
       - "4318:4318"   # HTTP OTLP
 
 volumes:
+  postgres_data:
+  redis_data:
   qdrant_data:
   rustfs_data:
   redb_data:
-  postgres_data:
+  lago_storage_data:
