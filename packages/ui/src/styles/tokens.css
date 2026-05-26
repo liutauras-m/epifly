@@ -1,0 +1,9 @@
+:root {
+  --app-header-height: 3rem;
+  --composer-height: 3.5rem;
+
+  --safe-top: env(safe-area-inset-top);
+  --safe-bottom: env(safe-area-inset-bottom);
+
+  --radius-app: 1rem;
+}

@@ -1,5 +1,4 @@
 packages:
-  - "apps/web"
-  - "apps/browser-shell"
+  - "apps/*"
   - "packages/*"
   - "tools/*"

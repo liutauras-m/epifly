@@ -1,0 +1,28 @@
+{
+  "name": "@epifly/features",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./sdk": "./src/sdk/index.ts",
+    "./chat": "./src/chat/index.ts",
+    "./threads": "./src/threads/index.ts",
+    "./workspaces": "./src/workspaces/index.ts",
+    "./files": "./src/files/index.ts"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@conusai/sdk": "workspace:*",
+    "@epifly/shared": "workspace:*"
+  },
+  "peerDependencies": {
+    "svelte": "^5.0.0"
+  },
+  "devDependencies": {
+    "svelte": "^5.0.0",
+    "typescript": "^5.7.0"
+  }
+}
