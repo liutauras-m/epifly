@@ -1,341 +1,1191 @@
-# ConusAI Architecture Hardening — Implementation Plan (2026-05-24)
-
-> **Source review:** "ConusAI Architecture Hardening Plan — Response to External Review (2026-05-24)"
-> **Validated against:** live codebase at `apps/backend/crates/{agent-core,agent-gateway}` and `apps/backend/evals/` on 2026‑05‑24.
-> **Compliance:** Project Instructions v0.3.2 — SRP, canonical names only, no new top‑level registries, no runtime Postgres, Rig 0.36+ hooks/streaming preserved.
+Below is the implementation brief I’d give to an AI coding agent. It is adjusted for the uploaded SDK files and for a shared **Web + Tauri v2 desktop/mobile** product. The goal is not “make folders.” The goal is to prevent the app from becoming a cross-platform lasagna.
 
 ---
 
-## 0. Codebase reality check (what already exists)
+# AI implementation instructions
 
-| Claim in review | Actual state in repo | Verdict |
-|---|---|---|
-| `manifest.rs` has no `schema_hash` / `permissions` / `egress_allowlist` | Confirmed — `ToolManifest` (apps/backend/crates/agent-core/src/capabilities/manifest.rs#L146-L201) lacks all three fields. | ✅ add as optional |
-| `CapabilityCard` lacks provenance | Confirmed — [card.rs](apps/backend/crates/agent-core/src/capabilities/card.rs) has no author/signature/approval. | ✅ add as optional |
-| `validator.rs` has no static injection scan | Confirmed — only structural validation; see [validator.rs](apps/backend/crates/agent-core/src/capabilities/validator.rs). | ✅ add `scan_for_injection_patterns` |
-| `providers/mcp.rs` + `remote_mcp.rs` lack schema‑hash pinning | Confirmed — [mcp.rs](apps/backend/crates/agent-core/src/capabilities/providers/mcp.rs), [remote_mcp.rs](apps/backend/crates/agent-core/src/capabilities/providers/remote_mcp.rs) pass through to `McpAdapter` with no hash check. | ✅ enforce on registration |
-| `semantic_router.rs` should take `task_tags` | The router already exposes `cfg.tags_any` (config‑level) but `rig_tools_for_prompt` does not accept per‑call tags. See [semantic_router.rs#L453-L489](apps/backend/crates/agent-core/src/capabilities/semantic_router.rs#L453). | ✅ add overload `rig_tools_for_prompt_with_tags` |
-| Qdrant cap collection is "not tenant‑scoped" | **Partially wrong.** Capability embeddings are global by design; tenant isolation happens post‑ANN via `is_visible_to()` (semantic_router.rs#L342). The `content_embeddings` collection **already** filters by `tenant_id` (qdrant_vector.rs#L348-L354). | ⚠️ rescope — see §2 |
-| `/metrics`, `/docs`, `/openapi.json` are unauthenticated | Confirmed — mounted in [main.rs#L207](apps/backend/crates/agent-gateway/src/main.rs#L207) and [routes/mod.rs#L247](apps/backend/crates/agent-gateway/src/routes/mod.rs#L247). | ✅ env‑gate |
-| Evals expansion fits existing `evals/runners/` | Confirmed — currently only `generic.rs` runner. | ✅ add new suites |
-| redb production risk → reject | Confirmed by Project Instructions v0.3.2 §metadata store. | ✅ reject, document |
-| `TaskProfileRegistry` proposal → reject | Confirmed — existing primitives cover the case. | ✅ reject |
+Build a Svelte 5 + SvelteKit app using shadcn-svelte UI components and the provided Conus SDK. The product must support:
 
-**Net:** four of the five P0/P1 areas land as‑is. The Qdrant work must be re‑scoped (see §2) to avoid changing the global‑capability invariant.
-
----
-
-## 1. P0 — MCP & capability security hardening
-
-**Goal:** make every capability load‑time decision (schema integrity, permissions, egress) explicit on the manifest, statically scanned, and provenance‑tagged on the card. SRP preserved by extending the modules that already own each concern.
-
-### 1.1 `manifest.rs` — optional security fields on `ToolManifest`
-
-File: [manifest.rs](apps/backend/crates/agent-core/src/capabilities/manifest.rs)
-
-Add (all `#[serde(default)]`, backward compatible):
-
-```rust
-// New enum in same file
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CapabilityPermission {
-    ReadWorkspace,
-    WriteWorkspace,
-    NetworkEgress,
-    InvokeLlm,
-    InvokeOtherCapability,
-}
-
-// Inside ToolManifest:
-#[serde(default, skip_serializing_if = "Option::is_none")]
-pub schema_hash: Option<String>,        // hex-encoded blake3 of input_schema set
-#[serde(default)]
-pub permissions: Vec<CapabilityPermission>,
-#[serde(default)]
-pub egress_allowlist: Vec<String>,      // host or host:port; empty = no egress
+```txt
+Web
+iOS
+Android
+macOS
+Windows
 ```
 
-**Storage choice:** hex `String` (32 bytes blake3) — keeps TOML human‑readable and matches the existing `[u8;32]` convention used by `moka` cache keys without forcing every reader to base64‑decode.
+Use a monorepo with separate runtime apps:
 
-**Helper on `ToolManifest`:**
+```txt
+apps/web       = SvelteKit web app, can use SSR/server routes
+apps/native    = SvelteKit SPA inside Tauri v2
+packages/sdk   = uploaded Conus SDK
+packages/ui    = shared Svelte UI components
+packages/shared = shared types, schemas, utilities
+```
 
-```rust
-pub fn compute_schema_hash(&self) -> String {
-    let mut h = blake3::Hasher::new();
-    for t in &self.tools {
-        h.update(t.name.as_bytes());
-        h.update(b"\0");
-        h.update(serde_json::to_vec(&t.input_schema).unwrap_or_default().as_slice());
-        h.update(b"\n");
+Do **not** build one runtime full of `if (tauri)` hacks. That is not architecture; that is denial with syntax highlighting.
+
+---
+
+# Required documentation sources
+
+Before implementation, read these docs and follow them as source of truth:
+
+```txt
+Svelte LLM docs
+https://svelte.dev/docs/llms
+
+Svelte full LLM docs
+https://svelte.dev/llms-full.txt
+
+SvelteKit LLM docs
+https://svelte.dev/docs/kit/llms.txt
+
+Tauri v2 docs
+https://v2.tauri.app/
+
+Tauri + SvelteKit guide
+https://v2.tauri.app/start/frontend/sveltekit/
+
+Tauri capabilities / permissions
+https://v2.tauri.app/security/capabilities/
+https://v2.tauri.app/security/permissions/
+
+shadcn-svelte components
+https://www.shadcn-svelte.com/docs/components
+
+shadcn-svelte Sidebar
+https://www.shadcn-svelte.com/docs/components/sidebar
+```
+
+Svelte officially exposes `/llms.txt`, `/llms-full.txt`, `/llms-medium.txt`, and package-level LLM docs for Svelte, SvelteKit, and CLI, so use those instead of guessing from stale examples. ([Svelte][1])
+
+For Tauri + SvelteKit, use `adapter-static`, SPA mode, and `build/` as `frontendDist`; Tauri does not support server-based SvelteKit solutions inside the app shell. ([Tauri][2])
+
+For shadcn-svelte, use the official component registry and keep components composable; the Sidebar docs explicitly say the sidebar files are starting points and can be customized as app-owned code. ([shadcn-svelte.com][3])
+
+---
+
+# Uploaded SDK assessment
+
+The uploaded SDK is already shaped as a client package. Keep it as a separate package, not scattered into the app.
+
+Current SDK modules include:
+
+```txt
+auth.ts
+capabilities.ts
+chat.ts
+chatApi.ts
+client.ts
+endpoints.ts
+files.ts
+glyphs.ts
+index.ts
+realtime.ts
+shells.ts
+threads.ts
+types.ts
+ui.ts
+workspaces.ts
+```
+
+The central factory is `createConusSdk(opts)`, which wires `auth`, `capabilities`, `chat`, `files`, `threads`, `ui`, `workspaces`, `realtime`, and `shells` around a shared internal client. 
+
+The SDK already has a useful `ApiResult<T>` pattern:
+
+```ts
+type ApiResult<T> =
+  | { data: T; error: null }
+  | { data: null; error: ApiError };
+```
+
+Use it consistently in the app. Do not throw errors from UI-facing feature stores unless the SDK method itself throws. The SDK’s `call` helper already converts failures into `{ data: null, error }`. 
+
+The chat streaming module exposes an async generator that yields typed deltas such as `text`, `tool_start`, `tool_result`, `routing_meta`, `resource_invalidated`, `thread_id`, and `done`. Build the UI around that event model instead of inventing a second stream protocol.  
+
+The SDK endpoint map is already centralized in `EP`. Do not hardcode endpoint strings in UI or feature code. 
+
+---
+
+# Final monorepo structure
+
+```txt
+repo/
+  apps/
+    web/
+      src/
+        app.css
+        app.d.ts
+        hooks.server.ts
+
+        routes/
+          +layout.svelte
+
+          (auth)/
+            login/
+              +page.svelte
+
+          (app)/
+            +layout.svelte
+            +page.svelte
+
+            chat/
+              +page.svelte
+              [threadId]/
+                +page.svelte
+
+            workspaces/
+              +page.svelte
+
+            settings/
+              +page.svelte
+
+        lib/
+          server/
+            auth/
+            api/
+            session/
+
+      svelte.config.js
+      vite.config.ts
+      package.json
+
+    native/
+      src/
+        app.css
+        app.d.ts
+
+        routes/
+          +layout.svelte
+          +layout.ts
+
+          (app)/
+            +layout.svelte
+            +page.svelte
+
+            chat/
+              +page.svelte
+              [threadId]/
+                +page.svelte
+
+            workspaces/
+              +page.svelte
+
+            settings/
+              +page.svelte
+
+        lib/
+          native/
+            platform.ts
+            token-provider.ts
+            safe-area.ts
+            window.ts
+
+      src-tauri/
+        tauri.conf.json
+        capabilities/
+          default.json
+          desktop.json
+          mobile.json
+        src/
+          main.rs
+          lib.rs
+        icons/
+
+      svelte.config.js
+      vite.config.ts
+      package.json
+
+  packages/
+    sdk/
+      src/
+        auth.ts
+        capabilities.ts
+        chat.ts
+        chatApi.ts
+        client.ts
+        endpoints.ts
+        files.ts
+        glyphs.ts
+        index.ts
+        realtime.ts
+        shells.ts
+        threads.ts
+        types.ts
+        ui.ts
+        workspaces.ts
+      package.json
+      tsconfig.json
+
+    ui/
+      src/
+        components/
+          ui/
+            button/
+            textarea/
+            sidebar/
+            dropdown-menu/
+            avatar/
+            separator/
+            scroll-area/
+            tooltip/
+            sheet/
+            skeleton/
+            sonner/
+
+          app/
+            app-shell.svelte
+            app-sidebar.svelte
+            app-mobile-header.svelte
+            app-main.svelte
+            app-safe-area.svelte
+
+          chat/
+            chat-composer.svelte
+            chat-empty-state.svelte
+            chat-thread.svelte
+            chat-message.svelte
+            chat-message-list.svelte
+            chat-stream-status.svelte
+            tool-event-row.svelte
+            routing-meta-row.svelte
+
+          workspace/
+            workspace-tree.svelte
+            workspace-switcher.svelte
+            workspace-node-row.svelte
+
+          account/
+            account-menu.svelte
+            user-avatar.svelte
+
+        styles/
+          tokens.css
+          motion.css
+
+        utils/
+          cn.ts
+
+        index.ts
+
+    features/
+      src/
+        sdk/
+          sdk-context.svelte.ts
+          sdk-provider.svelte
+          token-provider.ts
+
+        chat/
+          chat.types.ts
+          chat.store.svelte.ts
+          chat.actions.ts
+          chat.utils.ts
+
+        threads/
+          threads.store.svelte.ts
+          threads.utils.ts
+
+        workspaces/
+          workspaces.store.svelte.ts
+          workspaces.utils.ts
+
+        capabilities/
+          capabilities.store.svelte.ts
+          capabilities.utils.ts
+
+        files/
+          files.actions.ts
+
+    shared/
+      src/
+        constants/
+        platform/
+        types/
+        utils/
+
+  package.json
+  pnpm-workspace.yaml
+  turbo.json
+  tsconfig.base.json
+```
+
+---
+
+# Naming conventions
+
+Use kebab-case filenames:
+
+```txt
+app-shell.svelte
+chat-composer.svelte
+threads.store.svelte.ts
+sdk-context.svelte.ts
+token-provider.ts
+```
+
+Use PascalCase imports:
+
+```ts
+import AppShell from "@conusai/ui/components/app/app-shell.svelte";
+import ChatComposer from "@conusai/ui/components/chat/chat-composer.svelte";
+```
+
+Use `.svelte.ts` only when using Svelte runes:
+
+```txt
+chat.store.svelte.ts
+threads.store.svelte.ts
+sdk-context.svelte.ts
+```
+
+Use plain `.ts` for non-rune utilities:
+
+```txt
+chat.utils.ts
+token-provider.ts
+platform.ts
+```
+
+Do not name folders `layout`. SvelteKit already has `+layout.svelte`; calling a component folder `layout` just creates fog. Use:
+
+```txt
+components/app/
+```
+
+---
+
+# Package setup
+
+## `packages/sdk`
+
+Move the uploaded files into:
+
+```txt
+packages/sdk/src/
+```
+
+Add package exports:
+
+```json
+{
+  "name": "@conusai/sdk",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}
+```
+
+The SDK’s `index.ts` already exports `createConusSdk`, `ConusSdk`, `TokenProvider`, `ClientOpts`, `streamChat`, endpoint constants, and core types. Keep that public API. 
+
+## `packages/ui`
+
+shadcn-svelte components live here:
+
+```txt
+packages/ui/src/components/ui/
+```
+
+Product components live outside `ui`:
+
+```txt
+packages/ui/src/components/app/
+packages/ui/src/components/chat/
+packages/ui/src/components/workspace/
+packages/ui/src/components/account/
+```
+
+Do not put `chat-composer.svelte` into `components/ui`. It is not a primitive. It is product UI.
+
+---
+
+# Svelte 5 coding rules
+
+Use Svelte 5 runes and modern event syntax.
+
+## Props
+
+Use `$props()`:
+
+```svelte
+<script lang="ts">
+  type Props = {
+    disabled?: boolean;
+    placeholder?: string;
+    onSubmit?: (value: string) => void | Promise<void>;
+  };
+
+  let {
+    disabled = false,
+    placeholder = "Message...",
+    onSubmit
+  }: Props = $props();
+</script>
+```
+
+Do not use old `export let` in new components.
+
+## Events
+
+Use modern event attributes:
+
+```svelte
+<form onsubmit={handleSubmit}>
+<button onclick={handleClick}>
+```
+
+Do not use old `on:click` unless a specific dependency requires it.
+
+## Derived state
+
+Use `$derived`:
+
+```ts
+let canSend = $derived(message.trim().length > 0 && !isStreaming);
+```
+
+Do not use `$effect` for derived state. That is how clean code becomes plumbing with opinions.
+
+## Effects
+
+Use `$effect` only for:
+
+```txt
+focus management
+scroll-to-bottom
+external subscriptions
+analytics
+DOM measurement
+native bridge setup
+```
+
+---
+
+# SDK integration pattern
+
+Create a runtime-neutral SDK provider in `packages/features`.
+
+```txt
+packages/features/src/sdk/
+  sdk-context.svelte.ts
+  sdk-provider.svelte
+  token-provider.ts
+```
+
+## `sdk-context.svelte.ts`
+
+```ts
+import { getContext, setContext } from "svelte";
+import type { ConusSdk } from "@conusai/sdk";
+
+const SDK_CONTEXT = Symbol("conus-sdk");
+
+export function setSdkContext(sdk: ConusSdk) {
+  setContext(SDK_CONTEXT, sdk);
+}
+
+export function getSdkContext(): ConusSdk {
+  const sdk = getContext<ConusSdk | undefined>(SDK_CONTEXT);
+  if (!sdk) throw new Error("Conus SDK context is missing");
+  return sdk;
+}
+```
+
+## `sdk-provider.svelte`
+
+```svelte
+<script lang="ts">
+  import { createConusSdk, type TokenProvider } from "@conusai/sdk";
+  import { setSdkContext } from "./sdk-context.svelte";
+
+  type Props = {
+    baseUrl: string;
+    tokenProvider: TokenProvider;
+    children?: import("svelte").Snippet;
+  };
+
+  let { baseUrl, tokenProvider, children }: Props = $props();
+
+  const sdk = createConusSdk({
+    baseUrl,
+    tokenProvider,
+    fetch: globalThis.fetch.bind(globalThis)
+  });
+
+  setSdkContext(sdk);
+</script>
+
+{@render children?.()}
+```
+
+Reason: the uploaded SDK factory expects `fetch`, `baseUrl`, and `tokenProvider`. 
+
+---
+
+# Token provider rules
+
+The SDK expects:
+
+```ts
+interface TokenProvider {
+  get(): Promise<string | null>;
+}
+```
+
+That is already defined in the SDK. 
+
+Use separate token providers per runtime.
+
+## Web token provider
+
+For web, prefer server-managed auth/cookies where possible. If the browser app must call the API directly, expose a safe token retrieval method. Do not blindly store long-lived tokens in `localStorage`.
+
+```ts
+export function createWebTokenProvider(): TokenProvider {
+  return {
+    async get() {
+      return null;
     }
-    hex::encode(h.finalize().as_bytes())
+  };
 }
 ```
 
-`blake3` is already in the dependency graph (used by router cache); `hex` already in tree via `qdrant-client`. Verify with `cargo tree -p agent-core`.
+Adjust according to actual auth model.
 
-### 1.2 `card.rs` — provenance on `CapabilityCard`
+## Native token provider
 
-File: [card.rs](apps/backend/crates/agent-core/src/capabilities/card.rs)
+For Tauri, store tokens through a native-safe storage plugin or scoped app storage. Do not use random localStorage as the final implementation.
 
-Add a small `CapabilityProvenance` struct (kept inside the same module — provenance has no behaviour, no new abstraction):
-
-```rust
-#[derive(Clone, Debug, Default)]
-pub struct CapabilityProvenance {
-    pub author: Option<String>,
-    pub signature_id: Option<String>,
-    pub approval_status: ApprovalStatus,
-    pub recorded_schema_hash: Option<String>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum ApprovalStatus {
-    #[default]
-    Unreviewed,
-    Approved,
-    Quarantined { reason: String },
-}
-```
-
-Field added to `CapabilityCard`: `pub provenance: CapabilityProvenance`. Populated by:
-
-- `RegisteredToolStore` loaders (filesystem → `author = file owner`, others → defaults).
-- `CapabilityAdmin::create` / `update` sets `approval_status = Approved` for super‑admin actions (writes are already gated).
-
-### 1.3 `validator.rs` — static injection scanner
-
-File: [validator.rs](apps/backend/crates/agent-core/src/capabilities/validator.rs)
-
-Add a free function (no new struct):
-
-```rust
-/// Returns warnings (not errors) for suspicious tokens in manifest free‑text
-/// fields (description, tool descriptions, system_prompt). Errors only when
-/// patterns appear in tool input_schema descriptions, which agents see verbatim.
-pub fn scan_for_injection_patterns(m: &ToolManifest) -> ValidationReport;
-```
-
-Detected patterns (case‑insensitive, word‑boundary):
-
-- `ignore (all )?(previous|prior) instructions`
-- `system:\s*` / `assistant:\s*` injection inside descriptions
-- `<\|.*\|>` chat‑template tokens
-- bare URLs in `input_schema` field descriptions (suspicious "exfil hint")
-- `data:` URIs in any description string
-
-Hooked into:
-
-- `CapabilityFactory::build` (the existing entry point in [providers/mod.rs](apps/backend/crates/agent-core/src/capabilities/providers/mod.rs)) — runs the scan; `errors` block registration, `warnings` are surfaced on the card as `last_error = Some("warn: …")` (does NOT disable the capability).
-- `RegisteredToolAdmin::validate` — also runs the scan so the UI shows warnings before save.
-
-### 1.4 MCP schema‑hash pinning
-
-Files: [providers/mcp.rs](apps/backend/crates/agent-core/src/capabilities/providers/mcp.rs), [providers/remote_mcp.rs](apps/backend/crates/agent-core/src/capabilities/providers/remote_mcp.rs)
-
-Behaviour:
-
-1. On `McpProvider::new` / `RemoteMcpProvider::new`:
-   - compute `live_hash = ToolManifest::compute_schema_hash(&manifest)`.
-   - If `manifest.schema_hash` is set and differs → return `Err` ("schema drift: declared `<x>` ≠ live `<y>`; bump version or re‑approve").
-   - If unset → log `info!("capability '{}' has no pinned schema_hash, recording live {}", name, live_hash)` and write `card.provenance.recorded_schema_hash = Some(live_hash)`.
-2. Only `CapabilityAdmin::set_approved(name, expected_hash)` (new method, super‑admin gated) may flip `provenance.approval_status = Approved` and persist the hash back to the manifest.
-
-This preserves SRP — providers verify; admin approves; manifest stores. No new orchestrator.
-
-### 1.5 `semantic_router.rs` — per‑call task tag filter
-
-File: [semantic_router.rs](apps/backend/crates/agent-core/src/capabilities/semantic_router.rs#L453)
-
-Add a sibling overload (do not break callers):
-
-```rust
-pub async fn rig_tools_for_prompt_with_tags(
-    self: &Arc<Self>,
-    query: &str,
-    tenant: Option<&TenantContext>,
-    task_tags: &[&str],
-) -> anyhow::Result<Vec<Box<dyn ToolDyn>>>;
-```
-
-Implementation: clones `self.cfg`, replaces `tags_any` with `task_tags ∪ self.cfg.tags_any`, calls a private `select_with_cfg(cfg, query, tenant, hint)` helper. Cache key already includes config‑independent inputs; tags become part of the key via a new `tags_bytes()` mixin (parallel to `AttachmentHint::cache_bytes()`).
-
-**Verdict on output sanitization:** stays in `ArtifactBridge` (post‑execution). No change here. Confirmed against existing artifact pipeline.
-
-### 1.6 Tests added
-
-- `manifest::tests::compute_schema_hash_is_stable_over_field_order`
-- `manifest::tests::schema_hash_changes_on_input_schema_edit`
-- `validator::tests::scan_detects_ignore_previous_instructions`
-- `validator::tests::scan_flags_data_uri_in_description`
-- `providers::mcp::tests::rejects_on_schema_drift_when_pinned`
-- `providers::remote_mcp::tests::accepts_when_hash_matches`
-- `semantic_router::tests::rig_tools_for_prompt_with_tags_intersects_cfg_tags`
-
----
-
-## 2. P0 — Tenant‑scoped vector queries (re‑scoped)
-
-**Reality:** the codebase already has correct tenant isolation for the only collection that is per‑tenant:
-
-- `content_embeddings` — every call sets `Filter::must([Condition::matches("tenant_id", …)])` (qdrant_vector.rs#L348-L354) and every upsert writes `tenant_id` into payload (qdrant_vector.rs#L490).
-- `capability_embeddings` — **global by design** per Project Instructions. Tenant scoping happens after ANN via `card.is_visible_to(tenant_id)` (semantic_router.rs#L341).
-
-The review's wording ("router now calls the tenant‑scoped helper exclusively") would silently break the global‑capability invariant. Re‑scope to:
-
-### 2.1 Guard rails (not a refactor)
-
-File: [qdrant_vector.rs](apps/backend/crates/agent-core/src/store/qdrant_vector.rs)
-
-1. **Introduce `pub struct TenantScoped<'a>(&'a QdrantVectorStore, &'a str);`** with the three content methods (`search_content`, `upsert_content`, `delete_content_by_path`). The bare methods on `QdrantVectorStore` become **crate‑private** (`pub(crate)`).
-2. Public API for content vectors becomes:
-
-```rust
-impl QdrantVectorStore {
-    pub fn for_tenant<'a>(&'a self, tenant_id: &'a str) -> TenantScoped<'a> { ... }
-}
-```
-
-3. Every external caller (`agent-gateway/src/capabilities`, indexer jobs) goes through `for_tenant()`. Compile fails if anyone calls the raw method — that is the enforcement.
-
-### 2.2 Capability collection — assert, don't refactor
-
-Add a `debug_assert!` in `select_with_hint` post‑ANN filter and a **eval test** (`tenant_isolation` suite §4) that seeds two tenant‑scoped capabilities and verifies a tenant A query never returns tenant B's capability id.
-
-### 2.3 Audit
-
-Add `scripts/check-tenant-scoped-vector.mjs` (parallel to existing `scripts/check-cross-app-imports.mjs`) that greps for `search_content_embeddings\|upsert_content_embedding` outside `for_tenant`. Wired into `make verify`.
-
----
-
-## 3. P0 — Production gating for public endpoints
-
-File creation: `apps/backend/crates/agent-gateway/src/mw/env_gate.rs`
-
-```rust
-//! Gates a route subtree behind CONUSAI_ENV=development OR a valid admin JWT.
-use axum::{extract::Request, middleware::Next, response::Response, http::StatusCode};
-
-pub async fn env_or_admin(req: Request, next: Next) -> Result<Response, StatusCode> {
-    if std::env::var("CONUSAI_ENV").as_deref() == Ok("development") {
-        return Ok(next.run(req).await);
+```ts
+export function createNativeTokenProvider(): TokenProvider {
+  return {
+    async get() {
+      // TODO: read from secure/native storage abstraction
+      return null;
     }
-    // Reuse existing super‑admin JWT extractor; fall through to 404 (not 401)
-    // to avoid leaking the endpoint's existence in prod.
-    if mw::admin::is_super_admin_request(&req).await {
-        return Ok(next.run(req).await);
-    }
-    Err(StatusCode::NOT_FOUND)
+  };
 }
 ```
 
-Wiring:
+---
 
-- `mw/mod.rs` → `pub mod env_gate;`
-- [main.rs#L203-L209](apps/backend/crates/agent-gateway/src/main.rs#L203) → wrap the `/metrics` route layer.
-- [routes/mod.rs#L247](apps/backend/crates/agent-gateway/src/routes/mod.rs#L247) → wrap `/docs` + `/openapi.json` (split the `SwaggerUi` merge into its own `Router` first so the layer applies only to docs).
+# Chat implementation
 
-**Side effect:** the route inventory (`scripts/dump-routes.sh`) and `verify-routes-doc` make target must be updated to record the gated rows.
+The SDK already provides:
 
-**Non‑goal:** `/health`, `/healthz/embeddings` stay public (liveness probes).
+```ts
+sdk.chat.stream(params, opts)
+```
+
+`chatApi.ts` wraps `streamChat` and injects `baseUrl` and `fetch` from the internal client. 
+
+Use it directly in a rune store.
+
+## `chat.store.svelte.ts`
+
+```ts
+import type { ConusSdk, ChatStreamDelta } from "@conusai/sdk";
+
+export type UiMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  pending?: boolean;
+};
+
+export function createChatStore(sdk: ConusSdk) {
+  let messages = $state<UiMessage[]>([]);
+  let isStreaming = $state(false);
+  let threadId = $state<string | null>(null);
+  let error = $state<string | null>(null);
+  let abortController = $state<AbortController | null>(null);
+
+  async function send(message: string, workspaceNodeId?: string | null) {
+    const trimmed = message.trim();
+    if (!trimmed || isStreaming) return;
+
+    error = null;
+    isStreaming = true;
+
+    const controller = new AbortController();
+    abortController = controller;
+
+    messages.push({
+      id: crypto.randomUUID(),
+      role: "user",
+      content: trimmed
+    });
+
+    const assistantMessage: UiMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      content: "",
+      pending: true
+    };
+
+    messages.push(assistantMessage);
+
+    try {
+      for await (const delta of sdk.chat.stream({
+        message: trimmed,
+        threadId,
+        workspaceNodeId,
+        signal: controller.signal
+      })) {
+        applyDelta(delta, assistantMessage);
+      }
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      assistantMessage.pending = false;
+    } finally {
+      isStreaming = false;
+      abortController = null;
+      assistantMessage.pending = false;
+    }
+  }
+
+  function applyDelta(delta: ChatStreamDelta, assistantMessage: UiMessage) {
+    switch (delta.kind) {
+      case "text":
+        assistantMessage.content += delta.content;
+        break;
+
+      case "thread_id":
+        threadId = delta.id;
+        break;
+
+      case "tool_start":
+      case "tool_result":
+      case "routing_meta":
+      case "resource_invalidated":
+        // TODO: render as structured stream events in chat-stream-status.svelte
+        break;
+
+      case "done":
+        assistantMessage.pending = false;
+        break;
+    }
+  }
+
+  function stop() {
+    abortController?.abort();
+  }
+
+  return {
+    get messages() {
+      return messages;
+    },
+    get isStreaming() {
+      return isStreaming;
+    },
+    get threadId() {
+      return threadId;
+    },
+    get error() {
+      return error;
+    },
+    send,
+    stop
+  };
+}
+```
+
+Do not parse raw SSE in UI components. `chat.ts` already does parsing, backoff, tool events, routing metadata, invalidation events, and thread ID extraction. 
 
 ---
 
-## 4. P1 — Evals expansion
+# Threads implementation
 
-All work inside `apps/backend/evals/`. No new crate.
+Use `sdk.threads.list()` and `sdk.threads.messages(threadId)`.
 
-### 4.1 New runners (`evals/src/runners/`)
+The uploaded `threads.ts` unwraps the backend’s `{ data: [...] }` envelope so UI callers receive arrays directly. 
 
-- `routing.rs` — drives `SemanticCapabilityRouter::select` against a fixture of `(query, expected_top1_capability)` rows; emits per‑row score and aggregate top‑K recall.
-- `tenant_isolation.rs` — seeds two tenants × two `tenant_scope`‑restricted capabilities; runs `tool_definitions` for tenant A and asserts none of tenant B's names appear. Also runs the same for `for_tenant(B).search_content` to assert no doc cross‑bleed.
-- `security.rs` — feeds known injection prompts into the prompt path with a tool whose description has been tampered with (`schema_hash` mismatch) and asserts (a) registration fails, (b) at runtime the agent does not call the tool.
+Create:
 
-### 4.2 New scorers (`evals/src/scorers/`)
+```txt
+packages/features/src/threads/
+  threads.store.svelte.ts
+```
 
-- `top_k_recall.rs` — for routing suite (top‑1 / top‑5 / top‑10).
-- `boolean_pass.rs` — for isolation + security suites (binary outcome, fails the whole eval on any leak).
+Rules:
 
-### 4.3 Fixtures
+```txt
+load thread summaries for sidebar
+load messages when opening /chat/[threadId]
+keep route files thin
+do not duplicate ThreadSummary or ThreadMessage types
+```
 
-`apps/backend/evals/suites/{routing,tenant_isolation,security}/cases.toml` — each row a `[[case]]` table with `query`, `expected`, optional `tenant_id`, optional `inject`. Uses existing TOML loader pattern from `generic.rs`.
-
-### 4.4 CI hook
-
-`justfile` already has `just evals`; add `just evals-security` and wire into `make verify`.
-
----
-
-## 5. Documentation updates
-
-Single‑pass edits to [docs/arch.md](docs/arch.md) (audit date → 2026‑05‑24). Performed as one PR alongside the code changes.
-
-- **§12.1 redb** — append the production‑note paragraph from the review.
-- **§4.2 capabilities/** — append the security‑notes paragraph.
-- **§9.1 Feature Inventory** — add the three rows.
-- **§12.7 Full route surface** — annotate `/metrics`, `/docs`, `/openapi.json` as env‑gated.
-
-No other section changes. ADR not required (additive, backward‑compatible). If reviewers disagree, add `docs/adr/0006-capability-security-hardening.md` summarising §1.
+The SDK exports `ThreadMessage` and `ThreadSummary`; use those. 
 
 ---
 
-## 6. Out of scope (explicitly rejected from the external review)
+# Workspaces implementation
 
-| Proposal | Reason for rejection |
-|---|---|
-| Move metadata to Postgres in runtime | Forbidden by Project Instructions v0.3.2; redb is the single source of truth. Snapshot job to RustFS already planned in `apps/backend/crates/jobs/`. |
-| `TaskProfileRegistry` / new control‑plane abstraction | Violates "no unnecessary abstractions". `SemanticCapabilityRouter` + `NamespaceFilter` + `task_tags` (§1.5) + `PermissionHook` cover the same surface. |
-| Per‑tenant capability embeddings | Breaks the global‑capability invariant. Tenant scope stays a post‑ANN filter (§2.2). |
-| Sanitization inside capability providers | Output sanitization is `ArtifactBridge`'s job by design (post‑execution ownership). |
-| New top‑level "security" crate | Would create a cross‑cutting registry. All hardening fits inside `capabilities/` and `mw/`. |
+Use `sdk.workspaces`.
 
----
+Available methods include:
 
-## 7. Execution order, gates, and verification
+```txt
+tree
+get
+create
+search
+getContent
+patchContent
+move
+delete
+share
+unshare
+upload
+```
 
-| # | Step | Gate before merge |
-|---|---|---|
-| 1 | §1.1 manifest fields + `compute_schema_hash` + unit tests | `cargo test -p agent-core capabilities::manifest` |
-| 2 | §1.2 card provenance + §1.3 validator scanner | `cargo test -p agent-core capabilities::{card,validator}` |
-| 3 | §1.4 MCP pinning in both providers | `cargo test -p agent-core capabilities::providers` |
-| 4 | §1.5 router `with_tags` overload | `cargo test -p agent-core capabilities::semantic_router` |
-| 5 | §2.1 `TenantScoped` wrapper + caller migration | `cargo build --workspace` (compile failure = caller missed) + `scripts/check-tenant-scoped-vector.mjs` |
-| 6 | §3 env gate middleware + route wiring | `make verify-routes-doc` + manual `curl -i :8080/metrics` against `CONUSAI_ENV=production` → 404 |
-| 7 | §4 evals suites | `just evals && just evals-security` |
-| 8 | §5 arch.md update | `make verify` |
+These are already in `workspaces.ts`. 
 
-**Final gate:** full `cargo test --workspace`, `make verify`, `just evals`, `pnpm -w test` (front‑end smoke — unchanged but must still pass).
+Create:
 
----
+```txt
+packages/features/src/workspaces/
+  workspaces.store.svelte.ts
+  workspaces.utils.ts
+```
 
-## 8. Effort estimate (recalibrated against actual code shape)
+Rules:
 
-| Section | Original review | Adjusted (post‑codebase scan) | Reason for delta |
-|---|---|---|---|
-| §1 MCP & capability hardening | 3 h | **4 h** | extra provenance plumbing through `RegisteredToolStore`. |
-| §2 Tenant‑scoped vectors | 1.5 h | **1 h** | content side already scoped; only wrapper + audit script. |
-| §3 Public endpoint gating | 1 h | **1 h** | unchanged. |
-| §4 Evals expansion | 4 h | **4 h** | unchanged. |
-| §5 Docs | included | **0.5 h** | unchanged. |
-| **Total** | 9.5 h | **10.5 h** | small upward adjustment for provenance store wiring. |
-
-Token budget for execution (model‑side, generation only): **~45k**.
+```txt
+workspace tree state belongs in a feature store
+workspace node rendering belongs in UI components
+workspace API calls must go through SDK
+do not hardcode /v1/workspaces paths
+```
 
 ---
 
-## 9. Risk register
+# Files and uploads
 
-| Risk | Mitigation |
-|---|---|
-| Adding optional fields to `ToolManifest` breaks deserialization of existing TOMLs | All new fields `#[serde(default)]`; `schema_version` already supports `1.0`/`2.0` — increment to `2.1` only inside `default_schema_version()`. Existing `1.0` manifests load unchanged. |
-| `for_tenant` migration misses a caller | Compile‑time enforcement via `pub(crate)` + grep script in CI. |
-| Env gate returns 401 and leaks endpoint existence | Return `404 NOT_FOUND` (deliberate). |
-| Injection scanner false‑positives flood `last_error` | Warnings, not errors; logged as `warn:` prefix and surfaced in UI but never block. |
-| Schema‑hash drift after legitimate version bump | Bump `manifest.version` + super‑admin re‑approves via `CapabilityAdmin::set_approved`. |
+There are two upload APIs in the SDK:
+
+```txt
+files.upload(file)      -> /v1/files
+ui.upload(file)         -> EP.UI_UPLOAD
+workspaces.upload(file) -> EP.UI_UPLOAD
+```
+
+`files.upload` posts to `/v1/files`. 
+
+`ui.upload` posts to `EP.UI_UPLOAD`, and `ui.extractInvoice(fileId)` posts to `EP.UI_EXTRACT_INVOICE`. 
+
+Do not let components choose randomly between them. Create a single feature action:
+
+```txt
+packages/features/src/files/files.actions.ts
+```
+
+And explicitly name intent:
+
+```ts
+uploadWorkspaceFile(file)
+uploadUiAttachment(file)
+uploadPersistentFile(file)
+extractInvoice(fileId)
+```
+
+Otherwise six months from now nobody will know which upload endpoint is the “real” one. Classic little API crime scene.
 
 ---
 
-## 10. Frontend impact
+# Realtime and shells
 
-**None.** `CapabilityRendererRegistry`, `createChatStream`, shared runes in `packages/ui` are unaffected. The `/super-admin/capabilities/*` Askama templates gain two new read‑only cells (provenance, schema_hash) — single template diff, no JS changes.
+The SDK includes:
+
+```txt
+sdk.realtime.subscribe()
+sdk.shells.control(deviceId)
+sdk.shells.parseMessage(data)
+```
+
+`realtime.subscribe()` creates a websocket to `/api/realtime/workspace` and reconnects with exponential backoff and jitter. 
+
+`shells.control(deviceId)` opens a websocket to `/v1/shells/{deviceId}/control`. 
+
+Rules:
+
+```txt
+never open websocket connections directly in components
+wrap subscriptions inside feature stores
+close sockets in $effect cleanup
+show connection status in UI
+do not enable shell controls in mobile unless explicitly required
+```
+
+---
+
+# UI architecture
+
+Use shadcn-svelte for primitives:
+
+```bash
+pnpm dlx shadcn-svelte@latest add sidebar button textarea dropdown-menu avatar separator scroll-area tooltip sheet skeleton sonner
+```
+
+Minimum app shell:
+
+```txt
+AppShell
+AppSidebar
+AppMobileHeader
+ChatComposer
+ChatThread
+WorkspaceTree
+AccountMenu
+```
+
+The shadcn-svelte Sidebar must wrap the app with `Sidebar.Provider`, and the sidebar components are meant to be composed with things like DropdownMenu and Dialog. ([shadcn-svelte.com][3])
+
+## Desktop shell
+
+```txt
+persistent sidebar
+centered composer
+chat/thread area
+account footer
+workspace/thread navigation
+```
+
+## Mobile shell
+
+```txt
+no permanent sidebar
+top-left sidebar trigger
+off-canvas sidebar
+safe-area-aware composer
+large tap targets
+```
+
+## Tauri desktop
+
+```txt
+same app shell as web desktop
+optional custom titlebar later
+respect min window size
+updater only if configured
+```
+
+## Tauri mobile
+
+```txt
+safe-area padding
+keyboard-aware composer
+no hover-only UI
+avoid nested scroll traps
+back-button behavior on Android
+```
+
+---
+
+# Native app requirements
+
+In `apps/native`, configure SvelteKit exactly as a SPA/static app.
+
+## `apps/native/svelte.config.js`
+
+```js
+import adapter from "@sveltejs/adapter-static";
+import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
+
+const config = {
+  preprocess: vitePreprocess(),
+  kit: {
+    adapter: adapter({
+      pages: "build",
+      assets: "build",
+      fallback: "index.html"
+    })
+  }
+};
+
+export default config;
+```
+
+## `apps/native/src/routes/+layout.ts`
+
+```ts
+export const ssr = false;
+export const prerender = false;
+```
+
+This follows Tauri’s SvelteKit guidance: SPA mode is recommended because `load` functions then run in the webview and can access Tauri APIs; prerender/build-time `load` functions cannot. ([Tauri][2])
+
+## `apps/native/src-tauri/tauri.conf.json`
+
+```json
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ConusAI",
+  "version": "0.1.0",
+  "identifier": "com.conusai.app",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "ConusAI",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 360,
+        "minHeight": 640,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}
+```
+
+Adjust app name and identifier before release.
+
+---
+
+# Tauri security rules
+
+Use minimum capabilities.
+
+```txt
+src-tauri/capabilities/default.json
+src-tauri/capabilities/desktop.json
+src-tauri/capabilities/mobile.json
+```
+
+Start with only:
+
+```json
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default app permissions",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
+```
+
+Add plugins only when product requirements force it.
+
+Do not enable:
+
+```txt
+fs
+shell
+process
+clipboard
+http
+notification
+updater
+```
+
+unless there is an implemented feature using it. “Might need later” is not a permission model; it is optimism with liability.
+
+Tauri v2 capabilities define which permissions are granted to windows/webviews, and permissions can allow or deny commands with scopes, so keep these files explicit and small. ([Tauri][2])
+
+---
+
+# Styling rules
+
+Use:
+
+```txt
+Tailwind utilities in components
+CSS variables for design tokens
+motion.css for shared motion timing
+shadcn-svelte components for primitives
+```
+
+## `packages/ui/src/styles/tokens.css`
+
+```css
+:root {
+  --app-header-height: 3rem;
+  --composer-height: 3.5rem;
+
+  --safe-top: env(safe-area-inset-top);
+  --safe-bottom: env(safe-area-inset-bottom);
+
+  --radius-app: 1rem;
+}
+```
+
+## `packages/ui/src/styles/motion.css`
+
+```css
+:root {
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 240ms;
+
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+```
+
+Premium minimal design rule:
+
+```txt
+movement under 8px
+duration 120–240ms
+no animated blobs
+no glassmorphism abuse
+no “AI glow” unless explicitly designed
+focus states must be visible
+hover states must not be required on mobile
+```
+
+---
+
+# Implementation order
+
+## Phase 1 — repo foundation
+
+```txt
+create pnpm workspace
+create apps/web
+create apps/native
+create packages/sdk
+create packages/ui
+create packages/features
+create packages/shared
+move uploaded SDK files into packages/sdk/src
+wire TypeScript paths
+verify package imports
+```
+
+## Phase 2 — shadcn-svelte UI foundation
+
+```txt
+install shadcn-svelte in packages/ui or app-local strategy
+add sidebar, button, textarea, dropdown-menu, avatar, separator, scroll-area, tooltip, sheet, skeleton, sonner
+create tokens.css and motion.css
+create cn.ts
+create app-shell.svelte
+create app-sidebar.svelte
+create app-mobile-header.svelte
+create chat-composer.svelte
+```
+
+## Phase 3 — SDK provider
+
+```txt
+create sdk-context.svelte.ts
+create sdk-provider.svelte
+create web token provider
+create native token provider placeholder
+wrap apps/web and apps/native with provider
+```
+
+## Phase 4 — chat
+
+```txt
+create chat.store.svelte.ts
+use sdk.chat.stream
+render text deltas
+capture thread_id
+render tool/routing/resource events as subtle status rows
+implement stop streaming
+handle errors
+```
+
+## Phase 5 — threads/sidebar
+
+```txt
+load sdk.threads.list
+render recent threads in sidebar
+open /chat/[threadId]
+load sdk.threads.messages(threadId)
+keep routes thin
+```
+
+## Phase 6 — workspaces
+
+```txt
+load sdk.workspaces.tree
+render workspace tree
+wire workspaceNodeId into chat send
+support search later
+```
+
+## Phase 7 — native hardening
+
+```txt
+configure Tauri SPA static build
+add minimal capabilities
+add platform detection
+add safe-area component
+test desktop window sizes
+test iOS/Android keyboard behavior
+```
+
+---
+
+# Hard rules for the AI coding agent
+
+```txt
+1. Do not hardcode API paths outside packages/sdk.
+2. Do not parse SSE in components; use sdk.chat.stream.
+3. Do not put product components inside components/ui.
+4. Do not use export let in new Svelte components.
+5. Do not use on:click in new Svelte components.
+6. Do not use $effect for derived state.
+7. Do not put server code in shared packages used by native.
+8. Do not import Tauri APIs in shared UI components.
+9. Do not enable broad Tauri permissions.
+10. Do not create duplicate SDK clients per component.
+11. Do not use one SvelteKit config for both web and native.
+12. Do not store tokens in localStorage as final native auth.
+13. Do not build custom sidebar primitives before using shadcn-svelte Sidebar.
+14. Do not create folders for imaginary future features.
+```
+
+---
+
+# Final architecture
+
+```txt
+apps/web
+  SSR-capable SvelteKit web app
+
+apps/native
+  static SPA SvelteKit inside Tauri v2
+
+packages/sdk
+  uploaded Conus SDK, source of truth for API access
+
+packages/ui
+  shadcn-svelte primitives + shared product UI
+
+packages/features
+  Svelte rune stores and feature actions using SDK
+
+packages/shared
+  runtime-neutral constants, types, utilities
+```
+
+This is the clean version: SDK-owned networking, feature-owned state, UI-owned rendering, app-owned runtime configuration. Anything else will slowly become a haunted house with TypeScript.
+
+[1]: https://svelte.dev/docs/llms?utm_source=chatgpt.com "Docs for LLMs"
+[2]: https://v2.tauri.app/start/frontend/sveltekit/?utm_source=chatgpt.com "SvelteKit"
+[3]: https://shadcn-svelte.com/docs/components/sidebar?utm_source=chatgpt.com "Sidebar"
