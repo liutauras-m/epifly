@@ -102,7 +102,6 @@ conusai-platform/
 ├── docker-compose.yml              # Full local stack (Postgres, Redis, Zitadel, Lago quad, Qdrant, RustFS, Gateway, OTel, Jaeger) — mirrors `dokploy/infra` for parity
 ├── start.sh / stop.sh              # Smoke wrapper around docker compose + host gateway
 ├── README.md
-├── build_output.txt                # Last `cargo build` log (gitignored at root, sometimes committed)
 │
 ├── apps/
 │   ├── backend/                    # Cargo workspace member crates (see §5)
@@ -209,14 +208,12 @@ conusai-platform/
     ├── project-instructions.md
     ├── capability-authoring-guide.md
     ├── capability-gaps-plan.md
-    ├── capability-gaps-pan.md      # deprecated compatibility alias; canonical: capability-gaps-plan.md
     ├── adr/
     │   ├── 0007-everything-is-a-capability.md
     │   └── 0008-orchestration-hook-vs-subexecution.md
     ├── branding/
     │   ├── branding.md
     │   ├── index.html              # canonical desktop branding reference
-    │   ├── indes.html              # deprecated compatibility alias
     │   └── mobile.html
     ├── capabilities/
     │   ├── capabilities-arch.md

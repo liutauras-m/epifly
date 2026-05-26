@@ -106,3 +106,149 @@ pub async fn extract_api_key(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::StatusCode;
+    use axum::middleware::from_fn_with_state;
+    use axum::routing::get;
+    use axum::{Router, extract::Request};
+    use std::sync::{Mutex, OnceLock};
+    use tower::ServiceExt;
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn valid_api_key_maps_to_expected_tenant() {
+        let _guard = env_lock().lock().expect("env lock");
+        let raw_key = "super-secret-key";
+        let hash = hash_api_key(raw_key);
+
+        // Safety: process-global env mutation in tests is guarded by env_lock.
+        unsafe {
+            std::env::set_var("API_KEYS", format!("{hash}:tenant-abc:pro"));
+            std::env::set_var("CONUSAI_WORKSPACE_ROOT", "/tmp/conusai/workspaces");
+        }
+
+        async fn handler(req: Request) -> (StatusCode, String) {
+            let tenant = req.extensions().get::<ResolvedTenant>().cloned();
+            match tenant {
+                Some(ResolvedTenant(ctx)) => (StatusCode::OK, ctx.tenant_id.to_string()),
+                None => (StatusCode::INTERNAL_SERVER_ERROR, "missing tenant".into()),
+            }
+        }
+
+        let state = Arc::new(crate::state::AppState::with_in_memory_stores().expect("state"));
+        let app = Router::new()
+            .route("/", get(handler))
+            .layer(from_fn_with_state(Arc::clone(&state), extract_api_key))
+            .with_state(state);
+
+        let req = axum::http::Request::builder()
+            .uri("/")
+            .header("x-api-key", raw_key)
+            .body(Body::empty())
+            .expect("request");
+
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        assert_eq!(std::str::from_utf8(&body).expect("utf8"), "tenant-abc");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn invalid_api_key_is_rejected() {
+        let _guard = env_lock().lock().expect("env lock");
+        let good_hash = hash_api_key("known-good-key");
+
+        // Safety: process-global env mutation in tests is guarded by env_lock.
+        unsafe {
+            std::env::set_var("API_KEYS", format!("{good_hash}:tenant-a:free"));
+        }
+
+        async fn ok_handler() -> StatusCode {
+            StatusCode::OK
+        }
+
+        let state = Arc::new(crate::state::AppState::with_in_memory_stores().expect("state"));
+        let app = Router::new()
+            .route("/", get(ok_handler))
+            .layer(from_fn_with_state(Arc::clone(&state), extract_api_key))
+            .with_state(state);
+
+        let req = axum::http::Request::builder()
+            .uri("/")
+            .header("x-api-key", "wrong-key")
+            .body(Body::empty())
+            .expect("request");
+
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn missing_api_key_header_falls_through() {
+        let _guard = env_lock().lock().expect("env lock");
+        // Safety: process-global env mutation in tests is guarded by env_lock.
+        unsafe {
+            std::env::remove_var("API_KEYS");
+        }
+
+        async fn ok_handler() -> StatusCode {
+            StatusCode::OK
+        }
+
+        let state = Arc::new(crate::state::AppState::with_in_memory_stores().expect("state"));
+        let app = Router::new()
+            .route("/", get(ok_handler))
+            .layer(from_fn_with_state(Arc::clone(&state), extract_api_key))
+            .with_state(state);
+
+        let req = axum::http::Request::builder()
+            .uri("/")
+            .body(Body::empty())
+            .expect("request");
+
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn api_key_header_without_configuration_is_rejected() {
+        let _guard = env_lock().lock().expect("env lock");
+        // Safety: process-global env mutation in tests is guarded by env_lock.
+        unsafe {
+            std::env::remove_var("API_KEYS");
+        }
+
+        async fn ok_handler() -> StatusCode {
+            StatusCode::OK
+        }
+
+        let state = Arc::new(crate::state::AppState::with_in_memory_stores().expect("state"));
+        let app = Router::new()
+            .route("/", get(ok_handler))
+            .layer(from_fn_with_state(Arc::clone(&state), extract_api_key))
+            .with_state(state);
+
+        let req = axum::http::Request::builder()
+            .uri("/")
+            .header("x-api-key", "some-key")
+            .body(Body::empty())
+            .expect("request");
+
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+}

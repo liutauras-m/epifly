@@ -161,3 +161,139 @@ async fn handle_subscription_event(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use axum::extract::State;
+    use billing_core::error::BillingError;
+    use billing_core::events::UsageEvent;
+    use billing_core::provider::BillingProvider;
+    use billing_core::types::{CheckoutSession, Invoice, Subscription};
+    use common::types::TenantId;
+    use std::sync::Arc;
+
+    struct RejectingBilling;
+
+    #[async_trait]
+    impl BillingProvider for RejectingBilling {
+        async fn create_or_update_subscription(
+            &self,
+            _tenant_id: &TenantId,
+            _plan_key: &str,
+            _return_url: &str,
+        ) -> Result<CheckoutSession, BillingError> {
+            Err(BillingError::Config("unused in test".into()))
+        }
+
+        async fn cancel_subscription(&self, _tenant_id: &TenantId) -> Result<(), BillingError> {
+            Err(BillingError::Config("unused in test".into()))
+        }
+
+        async fn get_subscription(
+            &self,
+            _tenant_id: &TenantId,
+        ) -> Result<Subscription, BillingError> {
+            Err(BillingError::Config("unused in test".into()))
+        }
+
+        async fn report_usage(&self, _event: UsageEvent) -> Result<(), BillingError> {
+            Err(BillingError::Config("unused in test".into()))
+        }
+
+        async fn list_invoices(&self, _tenant_id: &TenantId) -> Result<Vec<Invoice>, BillingError> {
+            Err(BillingError::Config("unused in test".into()))
+        }
+
+        async fn portal_url(
+            &self,
+            _tenant_id: &TenantId,
+            _return_url: &str,
+        ) -> Result<String, BillingError> {
+            Err(BillingError::Config("unused in test".into()))
+        }
+
+        async fn ensure_customer(
+            &self,
+            _tenant_id: &TenantId,
+            _email: Option<&str>,
+        ) -> Result<String, BillingError> {
+            Err(BillingError::Config("unused in test".into()))
+        }
+
+        fn verify_webhook(&self, _payload: &[u8], _signature: &str) -> Result<(), BillingError> {
+            Err(BillingError::InvalidSignature)
+        }
+
+        async fn add_credits(
+            &self,
+            _tenant_id: &str,
+            _amount_cents: i64,
+            _description: Option<&str>,
+        ) -> Result<(), BillingError> {
+            Err(BillingError::Config("unused in test".into()))
+        }
+
+        async fn analytics_summary(&self) -> Result<serde_json::Value, BillingError> {
+            Err(BillingError::Config("unused in test".into()))
+        }
+
+        async fn ensure_plans(
+            &self,
+            _catalog: &billing_core::catalog::PlanCatalog,
+        ) -> Result<(), BillingError> {
+            Err(BillingError::Config("unused in test".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn webhook_rejects_malformed_payload() {
+        let state = Arc::new(crate::state::AppState::with_in_memory_stores().expect("state"));
+
+        let resp = handle_webhook(
+            State(state),
+            HeaderMap::new(),
+            Bytes::from_static(b"not-json"),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn webhook_duplicate_id_is_idempotent_ok() {
+        let state = Arc::new(crate::state::AppState::with_in_memory_stores().expect("state"));
+        let body = Bytes::from_static(
+            br#"{"webhook_id":"dup-1","webhook_type":"invoice.payment_succeeded"}"#,
+        );
+
+        let first = handle_webhook(State(Arc::clone(&state)), HeaderMap::new(), body.clone()).await;
+        let second = handle_webhook(State(state), HeaderMap::new(), body).await;
+
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(second.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn webhook_rejects_bad_signature_when_billing_enabled() {
+        let mut state = crate::state::AppState::with_in_memory_stores().expect("state");
+        state.billing = Some(Arc::new(RejectingBilling));
+        let state = Arc::new(state);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "X-Lago-Signature",
+            axum::http::HeaderValue::from_static("bad-signature"),
+        );
+
+        let resp = handle_webhook(
+            State(state),
+            headers,
+            Bytes::from_static(br#"{"webhook_type":"invoice.payment_succeeded"}"#),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+}

@@ -135,6 +135,19 @@ impl AppState {
                 );
             }
 
+            let auth_provider = std::env::var("CONUSAI_AUTH_PROVIDER")
+                .unwrap_or_else(|_| "legacy".to_string())
+                .to_lowercase();
+            let allow_legacy_in_prod = std::env::var("CONUSAI_ALLOW_LEGACY_AUTH_IN_PROD")
+                .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+                .unwrap_or(false);
+            if auth_provider != "zitadel" && !allow_legacy_in_prod {
+                errors.push(
+                    "legacy auth is disabled in production; set CONUSAI_AUTH_PROVIDER=zitadel or explicitly override with CONUSAI_ALLOW_LEGACY_AUTH_IN_PROD=1"
+                        .to_string(),
+                );
+            }
+
             // Per-tenant IAM credential encryption must be explicit in production
             // when RustFS integration is configured.
             if std::env::var_os("RUSTFS_ENDPOINT").is_some() {
@@ -712,4 +725,62 @@ fn build_job_registry(
     registry.register_scheduled(TenantBucketMigrationJob);
     registry.register_background(VideoTranscriptionJob);
     Arc::new(registry)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppState;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn set_min_prod_env() {
+        // Safety: tests mutate process env under env_lock to avoid races.
+        unsafe {
+            std::env::set_var("CONUSAI_ENV", "production");
+            std::env::set_var("JWT_SECRET", "test-jwt-secret");
+            std::env::set_var("UI_SESSION_KEY", "test-ui-session-key");
+            std::env::set_var("SUPER_ADMIN_EMAILS", "admin@example.com");
+            std::env::set_var("PLATFORM_ADMIN_TOKEN", "test-admin-token");
+            std::env::set_var("QDRANT_URL", "http://localhost:6334");
+            std::env::set_var("RUSTFS_WEBHOOK_SECRET", "test-webhook-secret");
+            std::env::set_var("LAGO_API_KEY", "test-lago-key");
+            std::env::remove_var("RUSTFS_ENDPOINT");
+        }
+    }
+
+    #[test]
+    fn validate_env_contracts_rejects_legacy_auth_in_production() {
+        let _guard = env_lock().lock().expect("env lock");
+        set_min_prod_env();
+        // Safety: tests mutate process env under env_lock to avoid races.
+        unsafe {
+            std::env::set_var("CONUSAI_AUTH_PROVIDER", "legacy");
+            std::env::remove_var("CONUSAI_ALLOW_LEGACY_AUTH_IN_PROD");
+        }
+
+        let err = AppState::validate_env_contracts().expect_err("should reject legacy in prod");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("legacy auth is disabled in production"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn validate_env_contracts_allows_legacy_auth_with_explicit_override() {
+        let _guard = env_lock().lock().expect("env lock");
+        set_min_prod_env();
+        // Safety: tests mutate process env under env_lock to avoid races.
+        unsafe {
+            std::env::set_var("CONUSAI_AUTH_PROVIDER", "legacy");
+            std::env::set_var("CONUSAI_ALLOW_LEGACY_AUTH_IN_PROD", "1");
+        }
+
+        let result = AppState::validate_env_contracts();
+        assert!(result.is_ok(), "{result:?}");
+    }
 }

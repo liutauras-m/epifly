@@ -188,3 +188,83 @@ fn extract_tenant_from_bucket(bucket_name: &str) -> Option<&str> {
     // Modern bucket name: ws-{tenant_id}
     bucket_name.strip_prefix("ws-")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::extract::State;
+    use axum::http::HeaderValue;
+    use hmac::Mac;
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn verify_hmac_accepts_valid_signature() {
+        let payload = br#"{"Records":[]}"#;
+        let secret = "test-secret";
+
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("hmac");
+        mac.update(payload);
+        let sig = mac.finalize().into_bytes();
+        let header = format!("sha256={}", hex::encode(sig));
+
+        assert!(verify_hmac(secret, payload, &header));
+    }
+
+    #[test]
+    fn verify_hmac_rejects_invalid_signature() {
+        let payload = br#"{"Records":[]}"#;
+        let secret = "test-secret";
+        assert!(!verify_hmac(secret, payload, "sha256=deadbeef"));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn rustfs_events_rejects_missing_secret() {
+        let _guard = env_lock().lock().expect("env lock");
+        // Safety: test-only env mutation guarded by a process-local mutex.
+        unsafe {
+            std::env::remove_var("RUSTFS_WEBHOOK_SECRET");
+        }
+
+        let state = Arc::new(crate::state::AppState::with_in_memory_stores().expect("state"));
+        let status = rustfs_events(
+            State(state),
+            HeaderMap::new(),
+            Bytes::from_static(br#"{"Records":[]}"#),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn rustfs_events_rejects_bad_signature() {
+        let _guard = env_lock().lock().expect("env lock");
+        // Safety: test-only env mutation guarded by a process-local mutex.
+        unsafe {
+            std::env::set_var("RUSTFS_WEBHOOK_SECRET", "test-secret");
+        }
+
+        let state = Arc::new(crate::state::AppState::with_in_memory_stores().expect("state"));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-rustfs-signature",
+            HeaderValue::from_static("sha256=deadbeef"),
+        );
+
+        let status = rustfs_events(
+            State(state),
+            headers,
+            Bytes::from_static(br#"{"Records":[]}"#),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+}
