@@ -14,6 +14,7 @@ use chrono::Utc;
 use common::error::HttpError;
 use common::memory::workspace::{NodeKind, WorkspaceNode, effective_user_id, validate_name};
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::instrument;
@@ -83,6 +84,41 @@ fn map_err(e: anyhow::Error) -> HttpError {
     } else {
         HttpError::internal(msg, None)
     }
+}
+
+async fn maybe_provision_root_listing<CheckSeeded, CheckSeededFuture, Provision, ProvisionFuture>(
+    state: &AppState,
+    tenant_id: &str,
+    mut is_tenant_seeded: CheckSeeded,
+    provision: Provision,
+) -> Result<bool, HttpError>
+where
+    CheckSeeded: FnMut() -> CheckSeededFuture,
+    CheckSeededFuture: Future<Output = bool>,
+    Provision: FnOnce() -> ProvisionFuture,
+    ProvisionFuture: Future<Output = Result<(), HttpError>>,
+{
+    let is_seeded = is_tenant_seeded().await;
+    if is_seeded {
+        return Ok(false);
+    }
+
+    let guard = {
+        let mut guards = state.onboarding_guards.lock().unwrap();
+        guards
+            .entry(tenant_id.to_owned())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    };
+    let _lock = guard.lock().await;
+
+    let still_seeded = is_tenant_seeded().await;
+    if still_seeded {
+        return Ok(false);
+    }
+
+    provision().await?;
+    Ok(true)
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -256,33 +292,25 @@ pub async fn tree(
         && nodes.is_empty()
         && let Some(ref onboarding) = state.onboarding
     {
-        let seeded = state
-            .workspace_store
-            .is_tenant_seeded(&tenant.tenant_id)
-            .await
-            .unwrap_or(true); // on error, assume seeded to avoid repeated provision
-
-        if !seeded {
-            // Acquire the per-tenant single-flight lock before provisioning.
-            let guard = {
-                let mut guards = state.onboarding_guards.lock().unwrap();
-                guards
-                    .entry(tenant.tenant_id.as_str().to_owned())
-                    .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-                    .clone()
-            };
-            let _lock = guard.lock().await;
-
-            // Re-check after acquiring lock (another request may have seeded).
-            let still_unseeded = state
-                .workspace_store
-                .is_tenant_seeded(&tenant.tenant_id)
-                .await
-                .unwrap_or(true);
-
-            if !still_unseeded {
+        let did_provision = maybe_provision_root_listing(
+            &state,
+            tenant.tenant_id.as_ref(),
+            || async {
+                state
+                    .workspace_store
+                    .is_tenant_seeded(&tenant.tenant_id)
+                    .await
+                    .unwrap_or(true)
+            },
+            || async {
                 use agent_core::store::onboarding::{OnboardingOptions, TenantKind};
-                let owner = tenant.user_id.as_deref().unwrap_or("__dev__");
+                #[cfg(debug_assertions)]
+                let owner: &str = tenant.user_id.as_deref().unwrap_or("__dev__");
+                #[cfg(not(debug_assertions))]
+                let owner: &str = tenant
+                    .user_id
+                    .as_deref()
+                    .ok_or_else(|| HttpError::agent("tenant has no resolved user"))?;
                 let opts = OnboardingOptions {
                     kind: TenantKind::Normal,
                     root_name: None,
@@ -294,15 +322,19 @@ pub async fn tree(
                         "tree safety-net: onboarding provision failed"
                     );
                 }
+                Ok(())
+            },
+        )
+        .await?;
 
-                // Re-fetch after provisioning so the root folder appears immediately.
-                let fresh = state
-                    .workspace_store
-                    .list_accessible_children(&tenant.tenant_id, user, None)
-                    .await
-                    .map_err(map_err)?;
-                return Ok(Json(apply_cursor(fresh, q.after)));
-            }
+        if did_provision {
+            // Re-fetch after provisioning so the root folder appears immediately.
+            let fresh = state
+                .workspace_store
+                .list_accessible_children(&tenant.tenant_id, user, None)
+                .await
+                .map_err(map_err)?;
+            return Ok(Json(apply_cursor(fresh, q.after)));
         }
     }
 
@@ -980,4 +1012,112 @@ pub async fn restore_version(
         .map_err(map_err)?;
 
     Ok(Json(updated))
+}
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::maybe_provision_root_listing;
+    use crate::state::AppState;
+    use std::collections::VecDeque;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    fn test_state() -> AppState {
+        AppState::with_in_memory_stores().expect("in-memory app state")
+    }
+
+    #[tokio::test]
+    async fn provision_called_once_when_unseeded() {
+        let state = test_state();
+        let seeded = Arc::new(Mutex::new(VecDeque::from([false, false])));
+        let calls = Arc::new(AtomicU32::new(0));
+
+        let did_provision = maybe_provision_root_listing(
+            &state,
+            "tenant-a",
+            {
+                let seeded = Arc::clone(&seeded);
+                move || {
+                    let seeded = Arc::clone(&seeded);
+                    async move { seeded.lock().unwrap().pop_front().unwrap_or(true) }
+                }
+            },
+            {
+                let calls = Arc::clone(&calls);
+                move || async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            },
+        )
+        .await
+        .expect("helper should not fail");
+
+        assert!(did_provision);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn provision_skipped_when_already_seeded() {
+        let state = test_state();
+        let seeded = Arc::new(Mutex::new(VecDeque::from([true])));
+        let calls = Arc::new(AtomicU32::new(0));
+
+        let did_provision = maybe_provision_root_listing(
+            &state,
+            "tenant-a",
+            {
+                let seeded = Arc::clone(&seeded);
+                move || {
+                    let seeded = Arc::clone(&seeded);
+                    async move { seeded.lock().unwrap().pop_front().unwrap_or(true) }
+                }
+            },
+            {
+                let calls = Arc::clone(&calls);
+                move || async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            },
+        )
+        .await
+        .expect("helper should not fail");
+
+        assert!(!did_provision);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn provision_skipped_when_concurrent_seed_wins_lock() {
+        let state = test_state();
+        let seeded = Arc::new(Mutex::new(VecDeque::from([false, true])));
+        let calls = Arc::new(AtomicU32::new(0));
+
+        let did_provision = maybe_provision_root_listing(
+            &state,
+            "tenant-a",
+            {
+                let seeded = Arc::clone(&seeded);
+                move || {
+                    let seeded = Arc::clone(&seeded);
+                    async move { seeded.lock().unwrap().pop_front().unwrap_or(true) }
+                }
+            },
+            {
+                let calls = Arc::clone(&calls);
+                move || async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            },
+        )
+        .await
+        .expect("helper should not fail");
+
+        assert!(!did_provision);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
 }
