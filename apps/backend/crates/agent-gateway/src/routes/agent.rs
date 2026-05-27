@@ -1297,6 +1297,16 @@ pub async fn stream_agent(
                         )
                         .with_keys(vec![tid.clone()]),
                     );
+
+                    state
+                        .realtime_service
+                        .publish_workspace_change(WorkspaceChangeEvent {
+                            op: "threads.invalidated".into(),
+                            tenant_id: tenant_id.clone(),
+                            node_id: tid.clone(),
+                            kind: "thread".into(),
+                        })
+                        .await;
                 }
 
                 let _ = tx.send(Ok(Event::default().data("[DONE]"))).await;

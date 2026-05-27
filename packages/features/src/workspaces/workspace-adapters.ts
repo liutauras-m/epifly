@@ -10,12 +10,14 @@ export type SidebarWorkspaceNode = {
   id: string;
   name: string;
   kind: "folder" | "thread" | "document";
+  parentId?: string | null;
   children?: SidebarWorkspaceNode[];
 };
 
 type WorkspaceNodeLike = {
   id: string;
   name: string;
+  parent_id?: string | null;
   kind: string;
   children?: WorkspaceNodeLike[];
 };
@@ -24,6 +26,7 @@ export function toSidebarWorkspaceNode(node: WorkspaceNodeLike): SidebarWorkspac
   return {
     id: node.id,
     name: node.name,
+    parentId: node.parent_id ?? null,
     kind: toSidebarWorkspaceKind(node.kind),
     children: node.children?.map((child) => toSidebarWorkspaceNode(child))
   };
@@ -31,9 +34,10 @@ export function toSidebarWorkspaceNode(node: WorkspaceNodeLike): SidebarWorkspac
 
 function toSidebarWorkspaceKind(kind: string): SidebarWorkspaceNode["kind"] {
   switch (kind) {
-    case "conversation": return "thread";
+    case "conversation": return "document";
     case "folder":       return "folder";
     case "document":     return "document";
+    case "file":         return "document";
     default:             return "document";
   }
 }

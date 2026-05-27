@@ -20,7 +20,7 @@
   import * as Skeleton from "../ui/skeleton/index.js";
   import AppSidebar from "./app-sidebar.svelte";
   import WorkspaceTree from "../workspace/workspace-tree.svelte";
-  import type { WorkspaceNode } from "../workspace/workspace-tree.svelte";
+  import type { WorkspaceDraft, WorkspaceNode } from "../workspace/workspace-tree.svelte";
 
   type ThreadItem = {
     id: string;
@@ -33,6 +33,8 @@
     /** Live workspace tree nodes from the workspaces store. */
     workspaceNodes?: WorkspaceNode[];
     workspaceLoading?: boolean;
+    workspaceCreating?: boolean;
+    workspaceError?: string | null;
     /** Live thread list from the threads store, sorted by recency. */
     threads?: ThreadItem[];
     threadsLoading?: boolean;
@@ -41,24 +43,29 @@
     onNewChat?: () => void;
     onThreadSelect?: (threadId: string) => void;
     onWorkspaceNodeSelect?: (nodeId: string) => void;
+    onWorkspaceNodeCreate?: (kind: "folder" | "document", name: string, parentId?: string | null) => unknown | Promise<unknown>;
   };
 
   let {
     activePath = "/",
     workspaceNodes = [],
     workspaceLoading = false,
+    workspaceCreating = false,
+    workspaceError = null,
     threads = [],
     threadsLoading = false,
     activeThreadId = null,
     selectedWorkspaceNodeId = null,
     onNewChat,
     onThreadSelect,
-    onWorkspaceNodeSelect
+    onWorkspaceNodeSelect,
+    onWorkspaceNodeCreate
   }: Props = $props();
 
   let searchOpen = $state(false);
   let searchQuery = $state("");
   let searchInputEl = $state<HTMLInputElement | null>(null);
+  let draft = $state<WorkspaceDraft | null>(null);
 
   /** Flatten workspace tree for search. */
   function flattenNodes(nodes: WorkspaceNode[]): WorkspaceNode[] {
@@ -71,6 +78,14 @@
   }
 
   const flatNodes = $derived(flattenNodes(workspaceNodes));
+  const selectedWorkspaceNode = $derived(
+    selectedWorkspaceNodeId ? flatNodes.find((node) => node.id === selectedWorkspaceNodeId) : undefined
+  );
+  const createTargetParentId = $derived(
+    selectedWorkspaceNode?.kind === "folder"
+      ? selectedWorkspaceNode.id
+      : selectedWorkspaceNode?.parentId ?? null
+  );
 
   const filteredSearchItems = $derived(
     flatNodes.filter((n) =>
@@ -91,6 +106,21 @@
   function closeSearch() {
     searchOpen = false;
     searchQuery = "";
+  }
+
+  function startDraft(kind: WorkspaceDraft["kind"]) {
+    searchOpen = false;
+    draft = {
+      kind,
+      parentId: createTargetParentId,
+      name: kind === "folder" ? "Untitled folder" : "Untitled.md"
+    };
+  }
+
+  async function commitDraft(name: string) {
+    if (!draft) return;
+    const result = await onWorkspaceNodeCreate?.(draft.kind, name, draft.parentId);
+    if (result !== null) draft = null;
   }
 
   /** Display at most 15 recent threads in the sidebar. */
@@ -208,13 +238,35 @@
               <Button.Button type="button" variant="ghost" size="icon-sm" aria-label="Search files" onclick={openSearch} class="size-7 text-sidebar-foreground/70 hover:text-sidebar-foreground">
                 <SearchIcon size={15} strokeWidth={1.75} aria-hidden="true" />
               </Button.Button>
-              <Button.Button type="button" variant="ghost" size="icon-sm" aria-label="New file" class="size-7 text-sidebar-foreground/70 hover:text-sidebar-foreground">
+              <Button.Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={createTargetParentId ? "New file in selected folder" : "New file"}
+                disabled={workspaceCreating || !onWorkspaceNodeCreate}
+                onclick={() => startDraft("document")}
+                class="size-7 text-sidebar-foreground/70 hover:text-sidebar-foreground disabled:opacity-45"
+              >
                 <FilePlusIcon size={15} strokeWidth={1.75} aria-hidden="true" />
               </Button.Button>
-              <Button.Button type="button" variant="ghost" size="icon-sm" aria-label="New folder" class="size-7 text-sidebar-foreground/70 hover:text-sidebar-foreground">
+              <Button.Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={createTargetParentId ? "New folder in selected folder" : "New folder"}
+                disabled={workspaceCreating || !onWorkspaceNodeCreate}
+                onclick={() => startDraft("folder")}
+                class="size-7 text-sidebar-foreground/70 hover:text-sidebar-foreground disabled:opacity-45"
+              >
                 <FolderPlusIcon size={15} strokeWidth={1.75} aria-hidden="true" />
               </Button.Button>
             </div>
+
+            {#if selectedWorkspaceNode && !searchOpen}
+              <p class="mb-1 truncate px-2 text-[0.68rem] leading-5 text-sidebar-foreground/45 group-data-[collapsible=icon]:hidden">
+                {selectedWorkspaceNode.kind === "folder" ? "Creating inside" : "Selected"}: {selectedWorkspaceNode.name}
+              </p>
+            {/if}
 
             {#if workspaceLoading}
               <div class="space-y-1 px-2 group-data-[collapsible=icon]:hidden" aria-label="Loading workspace">
@@ -222,16 +274,25 @@
                   <Skeleton.Skeleton class="h-6 w-full rounded-md" />
                 {/each}
               </div>
-            {:else if workspaceNodes.length > 0}
+            {:else if workspaceNodes.length > 0 || draft}
               <WorkspaceTree
                 nodes={workspaceNodes}
                 activeId={selectedWorkspaceNodeId ?? undefined}
                 onSelect={onWorkspaceNodeSelect}
+                {draft}
+                onDraftCommit={commitDraft}
+                onDraftCancel={() => (draft = null)}
                 class="group-data-[collapsible=icon]:hidden"
               />
             {:else}
               <p class="px-3 py-2 text-xs text-sidebar-foreground/40 group-data-[collapsible=icon]:hidden">
                 No files yet
+              </p>
+            {/if}
+
+            {#if workspaceError}
+              <p role="alert" class="px-3 py-1 text-xs text-destructive group-data-[collapsible=icon]:hidden">
+                {workspaceError}
               </p>
             {/if}
           </div>

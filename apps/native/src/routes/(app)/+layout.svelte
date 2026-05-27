@@ -31,11 +31,14 @@
     threadsLoading={shell.threadsLoading}
     workspaceNodes={shell.workspaceNodes}
     workspaceLoading={shell.workspaceLoading}
+    workspaceCreating={shell.workspaceCreating}
+    workspaceError={shell.workspaceError}
     activeThreadId={shell.activeThreadId}
     selectedWorkspaceNodeId={shell.selectedWorkspaceNodeId}
     onNewChat={shell.goToNewChat}
     onThreadSelect={shell.goToThread}
     onWorkspaceNodeSelect={shell.selectWorkspaceNode}
+    onWorkspaceNodeCreate={shell.createWorkspaceNode}
   />
 {/snippet}
 

@@ -1,59 +1,153 @@
 <script lang="ts">
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import FileTextIcon from "@lucide/svelte/icons/file-text";
+  import FolderIcon from "@lucide/svelte/icons/folder";
   import MessageSquareIcon from "@lucide/svelte/icons/message-square";
   import { cn } from "../../utils/cn.js";
-  import * as Button from "../ui/button/index.js";
-  import type { WorkspaceNode } from "./workspace-tree.svelte";
+  import type { WorkspaceDraft, WorkspaceNode } from "./workspace-tree.svelte";
   import WorkspaceNodeRow from "./workspace-node-row.svelte";
 
   type Props = {
-    node: WorkspaceNode;
+    node?: WorkspaceNode;
     activeId?: string;
     onSelect?: (id: string) => void;
     depth?: number;
+    draft?: WorkspaceDraft | null;
+    onDraftCommit?: (name: string) => void | Promise<void>;
+    onDraftCancel?: () => void;
   };
 
-  let { node, activeId, onSelect, depth = 0 }: Props = $props();
+  let {
+    node,
+    activeId,
+    onSelect,
+    depth = 0,
+    draft = null,
+    onDraftCommit,
+    onDraftCancel
+  }: Props = $props();
 
   let expanded = $state(true);
-  let isActive = $derived(node.id === activeId);
-  let hasChildren = $derived(node.kind === "folder" && !!node.children?.length);
+  let draftInputEl = $state<HTMLInputElement | null>(null);
+  let draftName = $state("");
+
+  let isDraft = $derived(!node && !!draft);
+  let isActive = $derived(!!node && node.id === activeId);
+  let hasChildren = $derived(!!node && node.kind === "folder" && !!node.children?.length);
+  let isDraftTarget = $derived(!!node && !!draft && draft.parentId === node.id);
+
+  $effect(() => {
+    if (isDraftTarget) expanded = true;
+  });
+
+  $effect(() => {
+    if (isDraft && draft) {
+      draftName = draft.name;
+      requestAnimationFrame(() => {
+        draftInputEl?.focus();
+        draftInputEl?.select();
+      });
+    }
+  });
+
+  async function commitDraft() {
+    const trimmed = draftName.trim();
+    if (!trimmed) {
+      onDraftCancel?.();
+      return;
+    }
+    await onDraftCommit?.(trimmed);
+  }
+
+  function handleDraftKeydown(event: KeyboardEvent) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void commitDraft();
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onDraftCancel?.();
+    }
+  }
 </script>
 
 <div>
-  <Button.Button
-    type="button"
-    variant="ghost"
-    onclick={() => {
-      if (node.kind === "folder") {
-        expanded = !expanded;
-      }
-      onSelect?.(node.id);
-    }}
-    class={cn(
-      "h-auto w-full justify-start gap-2 px-2 py-1.5 text-sm font-normal",
-      isActive && "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-    )}
-    style="padding-left: {0.5 + depth * 1}rem"
-    aria-expanded={node.kind === "folder" ? expanded : undefined}
-  >
-    {#if node.kind === "folder"}
-      <ChevronRightIcon class={cn("size-3.5 shrink-0 transition-transform", expanded && "rotate-90")} strokeWidth={1.75} aria-hidden="true" />
-    {:else if node.kind === "thread"}
-      <MessageSquareIcon class="size-3.5 shrink-0 text-muted-foreground" strokeWidth={1.75} aria-hidden="true" />
-    {:else}
-      <FileTextIcon class="size-3.5 shrink-0 text-muted-foreground" strokeWidth={1.75} aria-hidden="true" />
-    {/if}
-
-    <span class="flex-1 truncate text-left">{node.name}</span>
-  </Button.Button>
-
-  {#if hasChildren && expanded}
-    <div>
-      {#each (node.children ?? []) as child (child.id)}
-        <WorkspaceNodeRow node={child} {activeId} onSelect={onSelect} depth={depth + 1} />
-      {/each}
+  {#if isDraft && draft}
+    <div
+      class="flex min-h-7 items-center gap-2 rounded-md bg-sidebar-accent/75 px-2 py-1 text-sm text-sidebar-accent-foreground ring-1 ring-sidebar-ring/25"
+      style="padding-left: {0.5 + depth * 1}rem"
+      role="treeitem"
+      aria-selected="true"
+      aria-label={draft.kind === "folder" ? "Name new folder" : "Name new file"}
+    >
+      {#if draft.kind === "folder"}
+        <FolderIcon class="size-3.5 shrink-0 text-sidebar-foreground/70" strokeWidth={1.75} aria-hidden="true" />
+      {:else}
+        <FileTextIcon class="size-3.5 shrink-0 text-sidebar-foreground/70" strokeWidth={1.75} aria-hidden="true" />
+      {/if}
+      <input
+        bind:this={draftInputEl}
+        bind:value={draftName}
+        class="h-6 min-w-0 flex-1 rounded-[6px] border border-sidebar-ring/35 bg-background/95 px-2 text-xs text-foreground shadow-sm outline-none focus:border-sidebar-ring focus:ring-2 focus:ring-sidebar-ring/20"
+        aria-label={draft.kind === "folder" ? "New folder name" : "New file name"}
+        onkeydown={handleDraftKeydown}
+        onblur={() => void commitDraft()}
+      />
     </div>
+  {:else if node}
+    <div
+      class={cn(
+        "group flex min-h-7 items-center gap-1 rounded-md text-sm text-sidebar-foreground/78 transition-colors duration-[var(--motion-fast)] ease-[var(--ease-standard)] hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+        isActive && "bg-sidebar-accent text-sidebar-accent-foreground ring-1 ring-sidebar-ring/20"
+      )}
+      style="padding-left: {0.25 + depth * 1}rem"
+      role="treeitem"
+      aria-selected={isActive}
+      aria-expanded={node.kind === "folder" ? expanded : undefined}
+    >
+      {#if node.kind === "folder"}
+        <button
+          type="button"
+          class="flex size-6 shrink-0 items-center justify-center rounded-[6px] text-sidebar-foreground/60 outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring/40"
+          aria-label={expanded ? `Collapse ${node.name}` : `Expand ${node.name}`}
+          onclick={(event) => {
+            event.stopPropagation();
+            expanded = !expanded;
+            onSelect?.(node.id);
+          }}
+        >
+          <ChevronRightIcon class={cn("size-3.5 transition-transform duration-[var(--motion-fast)] ease-[var(--ease-standard)]", expanded && "rotate-90")} strokeWidth={1.75} aria-hidden="true" />
+        </button>
+      {:else}
+        <span class="flex size-6 shrink-0 items-center justify-center" aria-hidden="true"></span>
+      {/if}
+
+      <button
+        type="button"
+        class="flex min-w-0 flex-1 items-center gap-2 rounded-[6px] py-1 pr-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/40"
+        onclick={() => onSelect?.(node.id)}
+        aria-current={isActive ? "true" : undefined}
+      >
+        {#if node.kind === "folder"}
+          <FolderIcon class="size-3.5 shrink-0 text-sidebar-foreground/70" strokeWidth={1.75} aria-hidden="true" />
+        {:else if node.kind === "thread"}
+          <MessageSquareIcon class="size-3.5 shrink-0 text-sidebar-foreground/60" strokeWidth={1.75} aria-hidden="true" />
+        {:else}
+          <FileTextIcon class="size-3.5 shrink-0 text-sidebar-foreground/60" strokeWidth={1.75} aria-hidden="true" />
+        {/if}
+        <span class="flex-1 truncate">{node.name}</span>
+      </button>
+    </div>
+
+    {#if node.kind === "folder" && expanded}
+      <div role="group" class="mt-0.5 flex flex-col gap-0.5">
+        {#if draft && draft.parentId === node.id}
+          <WorkspaceNodeRow {draft} {activeId} onDraftCommit={onDraftCommit} onDraftCancel={onDraftCancel} depth={depth + 1} />
+        {/if}
+        {#each (node.children ?? []) as child (child.id)}
+          <WorkspaceNodeRow node={child} {activeId} onSelect={onSelect} {draft} onDraftCommit={onDraftCommit} onDraftCancel={onDraftCancel} depth={depth + 1} />
+        {/each}
+      </div>
+    {/if}
   {/if}
 </div>

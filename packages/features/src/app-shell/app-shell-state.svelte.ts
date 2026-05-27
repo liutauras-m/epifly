@@ -52,9 +52,11 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
   function load() {
     threadsStore.loadOnce({ limit: 20 });
     workspacesStore.loadTreeOnce(null);
+    threadsStore.connectRealtime();
     workspacesStore.connectRealtime();
 
     return () => {
+      threadsStore.disconnectRealtime();
       workspacesStore.disconnectRealtime();
     };
   }
@@ -62,7 +64,10 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
   // Navigation — delegates to injected navigate, no direct SvelteKit dep.
   function goToNewChat() { args.navigate("/"); }
   function goToThread(id: string) { args.navigate(`/chat/${id}`); }
-  function selectWorkspaceNode(id: string) { workspacesStore.selectNode(id); }
+  function selectWorkspaceNode(id: string) { void workspacesStore.selectAndLoadNode(id); }
+  function createWorkspaceNode(kind: "folder" | "document", name: string, parentId?: string | null) {
+    return workspacesStore.createNode(kind, name, parentId);
+  }
 
   return {
     get activePath() { return activePath; },
@@ -71,10 +76,13 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
     get workspaceNodes() { return workspaceNodes; },
     get threadsLoading() { return threadsStore.isLoading; },
     get workspaceLoading() { return workspacesStore.isLoading; },
+    get workspaceCreating() { return workspacesStore.isCreating; },
+    get workspaceError() { return workspacesStore.error; },
     get selectedWorkspaceNodeId() { return workspacesStore.selectedNodeId; },
     load,
     goToNewChat,
     goToThread,
-    selectWorkspaceNode
+    selectWorkspaceNode,
+    createWorkspaceNode
   };
 }

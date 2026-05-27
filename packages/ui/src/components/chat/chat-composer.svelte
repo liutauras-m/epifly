@@ -99,12 +99,12 @@
     {#if isStreaming}
       <Button.Button
         type="button"
-        size="icon-sm"
+        size="icon-lg"
         onclick={onStop}
         aria-label="Stop generating"
-        class="mb-1 rounded-full shadow-none"
+        class="mb-0 size-11 rounded-full bg-foreground text-background shadow-sm transition-transform duration-[var(--motion-fast)] ease-[var(--ease-standard)] hover:scale-105 hover:bg-foreground/90 active:scale-95"
       >
-        <SquareIcon size={15} strokeWidth={1.75} aria-hidden="true" />
+        <SquareIcon size={17} strokeWidth={1.9} aria-hidden="true" />
       </Button.Button>
     {:else}
       <Button.Button

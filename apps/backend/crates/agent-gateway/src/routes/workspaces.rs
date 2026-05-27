@@ -139,6 +139,16 @@ pub async fn create(
                 .write(&tenant.tenant_id, &node.virtual_path, "")
                 .await;
 
+            state
+                .realtime_service
+                .publish_workspace_change(WorkspaceChangeEvent {
+                    op: "workspace.created".into(),
+                    tenant_id: tenant.tenant_id.to_string(),
+                    node_id: node.id.to_string(),
+                    kind: format!("{:?}", node.kind).to_lowercase(),
+                })
+                .await;
+
             return Ok(Json(node));
         }
         NodeKind::File => {

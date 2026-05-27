@@ -6,6 +6,9 @@ export function createThreadsStore(sdk: ConusSdk) {
   let isLoading = $state(false);
   let hasLoaded = $state(false);
   let error = $state<string | null>(null);
+  let realtimeSocket: WebSocket | null = null;
+  let realtimeRefreshInFlight = false;
+  let pendingRealtimeRefresh = false;
 
   async function load(opts: { limit?: number } = {}) {
     if (isLoading) return;
@@ -36,6 +39,59 @@ export function createThreadsStore(sdk: ConusSdk) {
     return result.data;
   }
 
+  async function waitForIdleLoad() {
+    while (isLoading) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
+  async function refreshFromRealtime() {
+    if (realtimeRefreshInFlight) {
+      pendingRealtimeRefresh = true;
+      return;
+    }
+
+    realtimeRefreshInFlight = true;
+    try {
+      do {
+        pendingRealtimeRefresh = false;
+        await waitForIdleLoad();
+        await load({ limit: 20 });
+      } while (pendingRealtimeRefresh);
+    } finally {
+      realtimeRefreshInFlight = false;
+    }
+  }
+
+  function isThreadsChangeMessage(data: unknown) {
+    if (!data || typeof data !== "object") return false;
+    const record = data as Record<string, unknown>;
+    return (
+      (typeof record.op === "string" && record.op.startsWith("threads.")) ||
+      record.resource === "threads" ||
+      record.type === "threads"
+    );
+  }
+
+  function connectRealtime() {
+    if (realtimeSocket) return;
+
+    realtimeSocket = sdk.realtime.subscribe();
+    realtimeSocket.addEventListener("message", (event) => {
+      try {
+        const data = JSON.parse(typeof event.data === "string" ? event.data : "{}");
+        if (isThreadsChangeMessage(data)) void refreshFromRealtime();
+      } catch {
+        // Ignore malformed realtime messages.
+      }
+    });
+  }
+
+  function disconnectRealtime() {
+    realtimeSocket?.close();
+    realtimeSocket = null;
+  }
+
   return {
     get threads() { return threads; },
     get isLoading() { return isLoading; },
@@ -43,6 +99,8 @@ export function createThreadsStore(sdk: ConusSdk) {
     get error() { return error; },
     load,
     loadOnce,
-    loadMessages
+    loadMessages,
+    connectRealtime,
+    disconnectRealtime
   };
 }

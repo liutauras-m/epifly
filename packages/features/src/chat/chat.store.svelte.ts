@@ -47,7 +47,9 @@ export function createChatStore(sdk: ConusSdk) {
         applyDelta(delta, assistantMessageId);
       }
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      if (!isAbortError(e, controller.signal)) {
+        error = e instanceof Error ? e.message : String(e);
+      }
       setAssistantPending(assistantMessageId, false);
     } finally {
       isStreaming = false;
@@ -156,6 +158,15 @@ export function createChatStore(sdk: ConusSdk) {
 
   function stop() {
     abortController?.abort();
+  }
+
+  function isAbortError(errorValue: unknown, signal: AbortSignal) {
+    if (signal.aborted) return true;
+    if (errorValue instanceof DOMException && errorValue.name === "AbortError") return true;
+    if (errorValue instanceof Error) {
+      return errorValue.name === "AbortError" || errorValue.message.toLowerCase().includes("signal is aborted");
+    }
+    return false;
   }
 
   function reset() {
