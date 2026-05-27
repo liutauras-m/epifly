@@ -80,6 +80,30 @@ pub fn llm_output_tokens() -> Histogram<u64> {
         .build()
 }
 
+pub fn llm_upstream_retry_count() -> Counter<u64> {
+    opentelemetry::global::meter("conusai.agent")
+        .u64_counter("llm_upstream_retry_count")
+        .with_description("LLM upstream retries by provider, model, and status")
+        .with_unit("retries")
+        .build()
+}
+
+pub fn llm_upstream_timeout_count() -> Counter<u64> {
+    opentelemetry::global::meter("conusai.agent")
+        .u64_counter("llm_upstream_timeout_count")
+        .with_description("LLM upstream timeout count by provider and model")
+        .with_unit("timeouts")
+        .build()
+}
+
+pub fn llm_upstream_retry_exhausted_count() -> Counter<u64> {
+    opentelemetry::global::meter("conusai.agent")
+        .u64_counter("llm_upstream_retry_exhausted_count")
+        .with_description("LLM upstream retry exhaustion count by provider and model")
+        .with_unit("requests")
+        .build()
+}
+
 // ── Database metrics ──────────────────────────────────────────────────────────
 
 /// Histogram of database query durations.
@@ -181,4 +205,73 @@ pub fn embedding_cache_misses() -> Counter<u64> {
         )
         .with_unit("misses")
         .build()
+}
+
+// ── Model catalog metrics ─────────────────────────────────────────────────────
+
+/// Counter: model alias resolved to a canonical model ID.
+///
+/// Labels: `alias` (the string the client sent), `target` (canonical model ID).
+pub fn model_alias_used() -> Counter<u64> {
+    opentelemetry::global::meter("conusai.agent")
+        .u64_counter("llm_model_alias_used")
+        .with_description("Model alias resolved to canonical model ID")
+        .with_unit("resolutions")
+        .build()
+}
+
+/// Convenience wrapper: record one `model_alias_used` hit.
+pub fn record_model_alias_used(alias: &str, target: &str) {
+    model_alias_used().add(
+        1,
+        &[
+            KeyValue::new("alias", alias.to_string()),
+            KeyValue::new("target", target.to_string()),
+        ],
+    );
+}
+
+/// Counter: input token estimate exceeded the model's context-window limit
+/// (with safety margin).  Requests exceeding this are rejected before sending
+/// to the upstream provider.
+///
+/// Labels: `provider`, `model`.
+pub fn llm_input_token_estimate_exceeded() -> Counter<u64> {
+    opentelemetry::global::meter("conusai.agent")
+        .u64_counter("llm_input_token_estimate_exceeded")
+        .with_description(
+            "Requests rejected because estimated input tokens exceed model context limit",
+        )
+        .with_unit("requests")
+        .build()
+}
+
+/// Convenience wrapper: record one `llm_input_token_estimate_exceeded` hit.
+pub fn record_llm_input_token_estimate_exceeded(provider: &str, model: &str) {
+    llm_input_token_estimate_exceeded().add(
+        1,
+        &[
+            KeyValue::new("provider", provider.to_string()),
+            KeyValue::new("model", model.to_string()),
+        ],
+    );
+}
+// ── Tool execution metrics ────────────────────────────────────────────────────
+
+/// Counter: tool result truncated because it exceeded `max_tool_result_bytes`.
+///
+/// Label: `tool` — the full qualified tool name (e.g. `"code-project__run_tests"`).
+pub fn tool_result_truncated() -> Counter<u64> {
+    opentelemetry::global::meter("conusai.agent")
+        .u64_counter("llm_tool_result_truncated")
+        .with_description(
+            "Tool results truncated before re-feed to LLM (content exceeded max_tool_result_bytes)",
+        )
+        .with_unit("truncations")
+        .build()
+}
+
+/// Convenience wrapper: record one tool result truncation.
+pub fn record_tool_result_truncated(tool: &str) {
+    tool_result_truncated().add(1, &[KeyValue::new("tool", tool.to_string())]);
 }

@@ -4,6 +4,8 @@
 //! Cases 3–6 require a live RustFS/S3-compatible endpoint with IAM enabled and
 //! are gated on the `RUSTFS_TEST_ENDPOINT` environment variable; they are
 //! `#[ignore]`d unless that variable is set.
+//! Cases 8–10 are Phase 0 skeletons — ignored until Phase 2 handler isolation
+//! fixes land.
 //!
 //! To run the full suite against a local RustFS container:
 //!   RUSTFS_TEST_ENDPOINT=http://localhost:9000 \
@@ -13,6 +15,13 @@
 
 use agent_core::VirtualPath;
 use std::sync::Arc;
+use std::path::PathBuf;
+
+// ── Imports for Phase 2 agent isolation tests ─────────────────────────────────
+use agent_core::{PlanTier, TenantContext};
+use agent_gateway::agent::build_ctx;
+use agent_gateway::mw::tenant::ResolvedTenant;
+use agent_gateway::routes::chat::{ChatMessage, ChatRequest};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -357,5 +366,169 @@ async fn case6_tenant_b_cannot_finalize_tenant_a_staged_upload() {
     assert!(
         listed.is_empty(),
         "tenant B cannot list tenant A's staging prefix; found: {listed:?}"
+    );
+}
+
+// ── Step 0.4 skeletons: agent handler cross-tenant isolation ──────────────────
+//
+// These cases document the cross-tenant invariants that the Phase 2 handler
+// isolation work must enforce.  They are `#[ignore]`d until the relevant
+// fixes land so that `cargo test` stays green throughout Phase 0 and 1.
+
+/// When tenant A's credentials are used but the `thread_id` in the request
+/// belongs to tenant B, the agent endpoint must return 404 (not serve B's
+/// conversation history to A).
+#[tokio::test]
+async fn case8_thread_id_from_other_tenant_returns_404() {
+    unsafe { std::env::set_var("ANTHROPIC_API_KEY", "test-key") };
+    unsafe { std::env::set_var("CONUSAI_TEST_MODE", "1") };
+
+    let state = Arc::new(
+        agent_gateway::state::AppState::with_in_memory_stores()
+            .expect("in-memory AppState"),
+    );
+
+    // Create a thread under tenant-b.
+    let thread_b = state
+        .thread_store
+        .create("tenant-b", vec![])
+        .await
+        .expect("create thread for tenant-b");
+
+    // Request as tenant-a, referencing tenant-b's thread_id.
+    let tenant_a = ResolvedTenant(TenantContext::new(
+        "tenant-a",
+        Some("user-a"),
+        PlanTier::Free,
+        PathBuf::from("/tmp"),
+    ));
+    let limits = PlanTier::Free.limits();
+    let req = ChatRequest {
+        model: None,
+        messages: vec![ChatMessage {
+            role: "user".into(),
+            content: "hello".into(),
+        }],
+        max_tokens: None,
+        stream: None,
+        thread_id: Some(thread_b.id.to_string()),
+        workspace_node_id: None,
+        max_turns: None,
+        attachment_content: vec![],
+        forced_capability: None,
+    };
+
+    let result = build_ctx(&state, &tenant_a, limits, &req).await;
+    assert!(
+        result.is_err(),
+        "cross-tenant thread access must be rejected"
+    );
+    let err = result.err().unwrap();
+    assert_eq!(
+        err.status, 404,
+        "cross-tenant thread_id must return 404, got status {}",
+        err.status
+    );
+}
+
+/// When tenant A's credentials are used but the `workspace_node_id` in the
+/// request belongs to tenant B, the agent endpoint must return 403.
+#[tokio::test]
+async fn case9_workspace_node_id_from_other_tenant_returns_403() {
+    unsafe { std::env::set_var("ANTHROPIC_API_KEY", "test-key") };
+    unsafe { std::env::set_var("CONUSAI_TEST_MODE", "1") };
+
+    let state = Arc::new(
+        agent_gateway::state::AppState::with_in_memory_stores()
+            .expect("in-memory AppState"),
+    );
+
+    // Create a workspace node under tenant-b.
+    let node_b = state
+        .workspace_store
+        .create_folder("tenant-b", "user-b", None, "b-folder")
+        .await
+        .expect("create workspace node for tenant-b");
+
+    // Request as tenant-a, referencing tenant-b's node id.
+    let tenant_a = ResolvedTenant(TenantContext::new(
+        "tenant-a",
+        Some("user-a"),
+        PlanTier::Free,
+        PathBuf::from("/tmp"),
+    ));
+    let limits = PlanTier::Free.limits();
+    let req = ChatRequest {
+        model: None,
+        messages: vec![ChatMessage {
+            role: "user".into(),
+            content: "hello".into(),
+        }],
+        max_tokens: None,
+        stream: None,
+        thread_id: None,
+        workspace_node_id: Some(node_b.id.to_string()),
+        max_turns: None,
+        attachment_content: vec![],
+        forced_capability: None,
+    };
+
+    let result = build_ctx(&state, &tenant_a, limits, &req).await;
+    assert!(
+        result.is_err(),
+        "cross-tenant workspace_node_id access must be rejected"
+    );
+    let err = result.err().unwrap();
+    assert_eq!(
+        err.status, 403,
+        "cross-tenant workspace_node_id must return 403, got status {}",
+        err.status
+    );
+}
+
+/// A `forced_capability` value that names an unknown or tenant-inaccessible
+/// capability must be rejected with 400.
+#[tokio::test]
+async fn case10_unknown_forced_capability_is_rejected() {
+    unsafe { std::env::set_var("ANTHROPIC_API_KEY", "test-key") };
+    unsafe { std::env::set_var("CONUSAI_TEST_MODE", "1") };
+
+    let state = Arc::new(
+        agent_gateway::state::AppState::with_in_memory_stores()
+            .expect("in-memory AppState"),
+    );
+
+    let tenant = ResolvedTenant(TenantContext::new(
+        "tenant-a",
+        Some("user-a"),
+        PlanTier::Enterprise, // Enterprise to avoid plan-gating on tools
+        PathBuf::from("/tmp"),
+    ));
+    let limits = PlanTier::Enterprise.limits();
+    let req = ChatRequest {
+        model: None,
+        messages: vec![ChatMessage {
+            role: "user".into(),
+            content: "hello".into(),
+        }],
+        max_tokens: None,
+        stream: None,
+        thread_id: None,
+        workspace_node_id: None,
+        max_turns: None,
+        attachment_content: vec![],
+        forced_capability: Some("nonexistent-capability-xyz".into()),
+    };
+
+    let result = build_ctx(&state, &tenant, limits, &req).await;
+    assert!(
+        result.is_err(),
+        "unknown forced_capability must be rejected"
+    );
+    let err = result.err().unwrap();
+    assert_eq!(
+        err.status, 400,
+        "unknown forced_capability must return 400, got status {}",
+        err.status
     );
 }

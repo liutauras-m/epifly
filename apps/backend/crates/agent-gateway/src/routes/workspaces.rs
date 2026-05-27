@@ -103,13 +103,11 @@ where
         return Ok(false);
     }
 
-    let guard = {
-        let mut guards = state.onboarding_guards.lock().unwrap();
-        guards
-            .entry(tenant_id.to_owned())
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-            .clone()
-    };
+    let guard = state
+        .onboarding_guards
+        .entry(tenant_id.to_owned())
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone();
     let _lock = guard.lock().await;
 
     let still_seeded = is_tenant_seeded().await;
@@ -714,20 +712,12 @@ pub async fn delete_node(
     }
     let user = effective_user_id(tenant.user_id.as_deref());
 
-    // Get the node first so we can clean up RustFS content
-    let node = state
+    // Capture the delete plan before the store cascades.
+    let plan = state
         .workspace_store
-        .get_accessible_node(&tenant.tenant_id, user, id)
+        .plan_delete(&tenant.tenant_id, id)
         .await
         .map_err(map_err)?;
-
-    // Best-effort RustFS cleanup for conversations
-    if node.kind == NodeKind::Conversation {
-        let _ = state
-            .workspace_content
-            .delete(&tenant.tenant_id, &node.virtual_path)
-            .await;
-    }
 
     state
         .workspace_store
@@ -735,17 +725,56 @@ pub async fn delete_node(
         .await
         .map_err(map_err)?;
 
+    // Best-effort cleanup — never fail the API response on cleanup errors.
+    cleanup_after_delete(&state, &tenant.tenant_id, &plan).await;
+
     state
         .realtime_service
         .publish_workspace_change(WorkspaceChangeEvent {
             op: "workspace.deleted".into(),
             tenant_id: tenant.tenant_id.to_string(),
             node_id: id.to_string(),
-            kind: format!("{:?}", node.kind).to_lowercase(),
+            kind: "node".into(),
         })
         .await;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ── Cleanup helper ───────────────────────────────────────────────────────────
+
+/// Best-effort vector + content cleanup for every node in a delete plan.
+/// Uses `tokio::join!` (not `try_join!`) so both cleanups run even if one fails.
+/// Never propagates errors — the API response must not fail due to cleanup issues.
+async fn cleanup_after_delete(
+    state: &AppState,
+    tenant_id: &str,
+    plan: &[common::memory::store::DeletePlanNode],
+) {
+    for node in plan {
+        let content_key = node.object_key.as_deref().unwrap_or(node.virtual_path.as_str());
+        // Folders have no content object; skip content deletion to avoid unnecessary S3 calls.
+        let content_fut = async {
+            if node.kind == NodeKind::Folder {
+                Ok(())
+            } else {
+                state
+                    .workspace_content
+                    .delete_all_versions(tenant_id, content_key)
+                    .await
+            }
+        };
+        let (vec_res, content_res) = tokio::join!(
+            state.vector_store.delete_by_node_id(tenant_id, node.id),
+            content_fut,
+        );
+        if let Err(e) = vec_res {
+            tracing::error!(error = %e, node_id = %node.id, "vector cleanup failed after delete");
+        }
+        if let Err(e) = content_res {
+            tracing::error!(error = %e, node_id = %node.id, "content cleanup failed after delete");
+        }
+    }
 }
 
 // ── Helpers for presign routes ───────────────────────────────────────────────
@@ -762,14 +791,84 @@ fn presign_ttl() -> Duration {
     Duration::from_secs(presign_ttl_secs() as u64)
 }
 
+const HARD_MAX_UPLOAD_BYTES: u64 = 500 * 1024 * 1024;
+
+fn allowed_presign_content_type(content_type: &str) -> bool {
+    let essence = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    matches!(
+        essence.as_str(),
+        "application/json"
+            | "application/pdf"
+            | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            | "image/gif"
+            | "image/jpeg"
+            | "image/png"
+            | "image/webp"
+            | "text/csv"
+            | "text/markdown"
+            | "text/plain"
+    )
+}
+
+#[derive(Debug)]
+enum PresignPathError {
+    InvalidStoredPath(String),
+    MissingForFolder,
+    InvalidRequestedPath(String),
+    OutsideNode,
+}
+
+impl PresignPathError {
+    fn into_http(self) -> HttpError {
+        match self {
+            PresignPathError::InvalidStoredPath(message) => {
+                HttpError::agent(format!("stored workspace node path is invalid: {message}"))
+            }
+            PresignPathError::MissingForFolder => {
+                HttpError::validation("virtual_path", "virtual_path is required for folder nodes")
+            }
+            PresignPathError::InvalidRequestedPath(message) => {
+                HttpError::validation("virtual_path", message)
+            }
+            PresignPathError::OutsideNode => HttpError::forbidden("virtual_path outside node"),
+        }
+    }
+}
+
+fn resolve_presign_path(
+    node: &WorkspaceNode,
+    requested: Option<&str>,
+) -> Result<VirtualPath, PresignPathError> {
+    let node_path = VirtualPath::parse(&node.virtual_path)
+        .map_err(|e| PresignPathError::InvalidStoredPath(e.to_string()))?;
+
+    match node.kind {
+        NodeKind::Conversation | NodeKind::File => Ok(node_path),
+        NodeKind::Folder => {
+            let raw = requested.ok_or(PresignPathError::MissingForFolder)?;
+            let requested_path = VirtualPath::parse(raw)
+                .map_err(|e| PresignPathError::InvalidRequestedPath(e.to_string()))?;
+            if !requested_path.is_strict_child_of(&node_path) {
+                return Err(PresignPathError::OutsideNode);
+            }
+            Ok(requested_path)
+        }
+    }
+}
+
 // ── Presigned URL endpoints ──────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 pub struct PresignUploadBody {
-    pub virtual_path: String,
-    /// Accepted for forward compatibility — currently ignored by the presigner;
-    /// clients SHOULD repeat the Content-Type on the PUT.
-    #[allow(dead_code)]
+    /// Legacy-only for file/conversation nodes; the server derives their content
+    /// path from the node. Required for folder nodes and must be a strict child.
+    pub virtual_path: Option<String>,
     pub content_type: Option<String>,
     pub size_bytes: Option<u64>,
 }
@@ -798,18 +897,43 @@ pub async fn presign_upload(
 
     // Verify workspace node exists and is accessible
     let user = effective_user_id(tenant.user_id.as_deref());
-    let _node = state
+    let node = state
         .workspace_store
         .get_accessible_node(&tenant.tenant_id, user, id)
         .await
         .map_err(map_err)?;
 
+    let content_type = body
+        .content_type
+        .as_deref()
+        .ok_or_else(|| HttpError::validation("content_type", "content_type is required"))?;
+    if !allowed_presign_content_type(content_type) {
+        return Err(HttpError::validation(
+            "content_type",
+            "unsupported content type",
+        ));
+    }
+
+    let size = body
+        .size_bytes
+        .ok_or_else(|| HttpError::validation("size_bytes", "size_bytes is required"))?;
+    let max_upload = tenant
+        .plan
+        .limits()
+        .max_upload_bytes
+        .min(HARD_MAX_UPLOAD_BYTES);
+    if size > max_upload {
+        return Err(HttpError::validation(
+            "size_bytes",
+            format!("upload exceeds maximum size of {max_upload} bytes"),
+        ));
+    }
+
     // Check quota if size is provided
-    if let Some(size) = body.size_bytes
-        && let Err(e) = state
-            .storage_quota
-            .check(&tenant.tenant_id, &tenant.plan, size)
-            .await
+    if let Err(e) = state
+        .storage_quota
+        .check(&tenant.tenant_id, &tenant.plan, size)
+        .await
     {
         return Err(HttpError::validation(
             "size_bytes",
@@ -817,8 +941,8 @@ pub async fn presign_upload(
         ));
     }
 
-    let vp = VirtualPath::parse(&body.virtual_path)
-        .map_err(|e| HttpError::validation("virtual_path", format!("{e}")))?;
+    let vp = resolve_presign_path(&node, body.virtual_path.as_deref())
+        .map_err(PresignPathError::into_http)?;
 
     let storage = state
         .tenant_storage
@@ -839,7 +963,7 @@ pub async fn presign_upload(
     Ok(Json(PresignUploadResponse {
         url: url.to_string(),
         expires_at,
-        virtual_path: body.virtual_path,
+        virtual_path: vp.to_string(),
     }))
 }
 
@@ -863,14 +987,14 @@ pub async fn presign_download(
     Query(q): Query<PresignDownloadQuery>,
 ) -> Result<Json<PresignDownloadResponse>, HttpError> {
     let user = effective_user_id(tenant.user_id.as_deref());
-    let _node = state
+    let node = state
         .workspace_store
         .get_accessible_node(&tenant.tenant_id, user, id)
         .await
         .map_err(map_err)?;
 
-    let vp = VirtualPath::parse(&q.virtual_path)
-        .map_err(|e| HttpError::validation("virtual_path", format!("{e}")))?;
+    let vp = resolve_presign_path(&node, Some(q.virtual_path.as_str()))
+        .map_err(PresignPathError::into_http)?;
 
     let storage = state
         .tenant_storage
@@ -1005,6 +1129,42 @@ pub async fn restore_version(
         .await
         .map_err(map_err)?;
 
+    // Re-index the restored content — same path as patch_content.
+    {
+        let content = content_str.clone();
+        let tenant_id = tenant.tenant_id.clone();
+        let owner_id = node.owner_id.clone();
+        let node_id_str = id.to_string();
+        let embedding_svc = Arc::clone(&state.embedding_service);
+        let vector_store = Arc::clone(&state.vector_store);
+        tokio::spawn(async move {
+            const CHUNK: usize = 1500;
+            let chunks: Vec<String> = content
+                .chars()
+                .collect::<Vec<_>>()
+                .chunks(CHUNK)
+                .map(|c| c.iter().collect::<String>())
+                .collect();
+            if let Ok(embeddings) = embedding_svc.embed_documents(chunks.clone()).await {
+                for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
+                    let chunk_id = format!("{node_id_str}_{i}");
+                    let _ = vector_store
+                        .upsert_content_embedding_full(
+                            &chunk_id,
+                            &node_id_str,
+                            i as i32,
+                            chunk,
+                            emb,
+                            &tenant_id,
+                            &owner_id,
+                            &[],
+                        )
+                        .await;
+                }
+            }
+        });
+    }
+
     let updated = state
         .workspace_store
         .get_accessible_node(&tenant.tenant_id, user, id)
@@ -1018,7 +1178,7 @@ pub async fn restore_version(
 
 #[cfg(test)]
 mod tests {
-    use super::maybe_provision_root_listing;
+    use super::*;
     use crate::state::AppState;
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -1026,6 +1186,63 @@ mod tests {
 
     fn test_state() -> AppState {
         AppState::with_in_memory_stores().expect("in-memory app state")
+    }
+
+    fn workspace_node(kind: NodeKind, virtual_path: &str) -> WorkspaceNode {
+        WorkspaceNode {
+            id: Ulid::new(),
+            tenant_id: "tenant-a".into(),
+            owner_id: "user-a".into(),
+            parent_id: None,
+            kind,
+            name: virtual_path
+                .rsplit('/')
+                .next()
+                .unwrap_or(virtual_path)
+                .into(),
+            virtual_path: virtual_path.into(),
+            last_modified: Utc::now(),
+            shared_with: vec![],
+            metadata: serde_json::json!({}),
+            is_protected_root: false,
+        }
+    }
+
+    #[test]
+    fn presign_file_node_uses_node_path_and_ignores_legacy_body_path() {
+        let node = workspace_node(NodeKind::File, "node/foo.txt");
+        let resolved = resolve_presign_path(&node, Some("node/foo.txt/attachment.bin"))
+            .expect("file node path should resolve");
+        assert_eq!(resolved.as_str(), "node/foo.txt");
+    }
+
+    #[test]
+    fn presign_folder_node_accepts_strict_child() {
+        let node = workspace_node(NodeKind::Folder, "node/foo");
+        let resolved = resolve_presign_path(&node, Some("node/foo/attachment.bin"))
+            .expect("child path should resolve");
+        assert_eq!(resolved.as_str(), "node/foo/attachment.bin");
+    }
+
+    #[test]
+    fn presign_folder_node_rejects_same_path() {
+        let node = workspace_node(NodeKind::Folder, "node/foo");
+        let err = resolve_presign_path(&node, Some("node/foo")).unwrap_err();
+        assert!(matches!(err, PresignPathError::OutsideNode));
+    }
+
+    #[test]
+    fn presign_folder_node_rejects_sibling_prefix_attack() {
+        let node = workspace_node(NodeKind::Folder, "node/foo");
+        let err = resolve_presign_path(&node, Some("node/foobar/secret.txt")).unwrap_err();
+        assert!(matches!(err, PresignPathError::OutsideNode));
+    }
+
+    #[test]
+    fn presign_folder_node_rejects_percent_encoded_traversal() {
+        let node = workspace_node(NodeKind::Folder, "node/foo");
+        let err = resolve_presign_path(&node, Some("node/foo%2f..%2fsecret.txt")).unwrap_err();
+        assert!(matches!(err, PresignPathError::InvalidRequestedPath(_)));
     }
 
     #[tokio::test]

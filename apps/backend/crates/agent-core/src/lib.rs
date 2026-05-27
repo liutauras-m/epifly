@@ -7,10 +7,12 @@ pub mod identity;
 pub mod indexing;
 pub mod llm;
 pub mod memory;
+pub mod model_catalog;
 pub mod prompt;
 pub mod realtime;
 pub mod store;
 pub mod vector_store;
+pub mod workspace_ops;
 
 pub use agent::builder::{Agent, AgentBuilder};
 pub use agent::hooks::{OrchestrationHook, PermissionHook, TracingHook};
@@ -67,3 +69,10 @@ pub use llm::{
     CompletionProvider, LlmBinding, LlmChunk, LlmError, LlmRegistry, LlmRequest, LlmResponse,
     LlmStream, LlmUsage,
 };
+
+pub use model_catalog::{
+    ModelCatalog, ModelError, ModelId, ModelSpec, ProviderKind, StaticModelCatalog,
+    ToolRequirementReason, ToolRoutingDecision, estimate_input_tokens, token_estimate_exceeds_limit,
+};
+
+pub use workspace_ops::DeletePlanNode;

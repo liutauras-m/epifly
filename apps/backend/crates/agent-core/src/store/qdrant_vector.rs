@@ -466,6 +466,17 @@ impl QdrantVectorStore {
         Ok(())
     }
 
+    /// Delete all content embeddings for a workspace node by its ULID.
+    /// Delegates to [`delete_content_embeddings_for_doc`] with the string form of the ULID.
+    pub async fn delete_by_node_id(
+        &self,
+        _tenant_id: &str,
+        node_id: ulid::Ulid,
+    ) -> anyhow::Result<()> {
+        self.delete_content_embeddings_for_doc(&node_id.to_string())
+            .await
+    }
+
     #[instrument(skip(self, embedding))]
     #[allow(clippy::too_many_arguments)]
     pub async fn upsert_content_embedding_full(

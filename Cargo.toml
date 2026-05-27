@@ -109,6 +109,15 @@ bon          = { version = "3" }
 # Caching
 moka         = { version = "0.12", features = ["future"] }
 
+# Concurrent data structures
+dashmap      = { version = "6" }
+
+# Tokio utilities (CancellationToken, etc.)
+tokio-util   = { version = "0.7", features = ["rt"] }
+
+# Faster RwLock (no poisoning, fair)
+parking_lot  = { version = "0.12" }
+
 # indexmap for deterministic namespace index
 
 # CLI args

@@ -442,6 +442,53 @@ impl WorkspaceStore for RedbMetadataStore {
         Ok(node)
     }
 
+    async fn plan_delete(
+        &self,
+        tenant_id: &str,
+        node_id: Ulid,
+    ) -> anyhow::Result<Vec<common::memory::store::DeletePlanNode>> {
+        let tenant = tenant_id.to_string();
+        let root_id = node_id;
+        let db = Arc::clone(&self.db);
+        task::spawn_blocking(move || -> anyhow::Result<Vec<common::memory::store::DeletePlanNode>> {
+            let txn = db.begin_read()?;
+            let tbl = txn.open_table(NODES)?;
+
+            // Collect all nodes for this tenant once into (id, parent_id, kind, virtual_path).
+            let mut all_nodes: Vec<(Ulid, Option<Ulid>, common::memory::workspace::NodeKind, String)> = Vec::new();
+            let prefix = tenant.as_str();
+            let range = tbl.range((prefix, "")..(prefix, "\x7f"))?;
+            for item in range {
+                let (_, v) = item?;
+                let node = de_node(v.value())?;
+                all_nodes.push((node.id, node.parent_id, node.kind, node.virtual_path));
+            }
+
+            // BFS from root_id.
+            let mut result = Vec::new();
+            let mut worklist = vec![root_id];
+            while let Some(current) = worklist.pop() {
+                // Collect children.
+                for (nid, parent, _, _) in &all_nodes {
+                    if *parent == Some(current) {
+                        worklist.push(*nid);
+                    }
+                }
+                // Add this node to the plan.
+                if let Some((_, _, kind, vp)) = all_nodes.iter().find(|(nid, _, _, _)| *nid == current) {
+                    result.push(common::memory::store::DeletePlanNode {
+                        id: current,
+                        kind: *kind,
+                        virtual_path: vp.clone(),
+                        object_key: None,
+                    });
+                }
+            }
+            Ok(result)
+        })
+        .await?
+    }
+
     async fn delete_node(
         &self,
         tenant_id: &str,
@@ -455,17 +502,51 @@ impl WorkspaceStore for RedbMetadataStore {
             let txn = db.begin_write()?;
             {
                 let mut tbl = txn.open_table(NODES)?;
-                let maybe_node = tbl
+                // Verify root isn't protected before we start removing anything.
+                let root_node = tbl
                     .get((tenant.as_str(), nid.as_str()))?
                     .map(|v| de_node(v.value()))
                     .transpose()?;
-                if let Some(node) = maybe_node {
-                    if node.is_protected_root {
+                if let Some(ref root) = root_node {
+                    if root.is_protected_root {
                         anyhow::bail!("cannot delete protected workspace root folder");
                     }
-                    tbl.remove((tenant.as_str(), nid.as_str()))?;
-                    let mut idx = txn.open_table(IDX_PATH)?;
-                    let _ = idx.remove((tenant.as_str(), node.virtual_path.as_str()))?;
+                } else {
+                    return Ok(()); // already gone
+                }
+
+                // Collect all tenant node IDs + virtual paths in one scan.
+                let all: Vec<(Ulid, Option<Ulid>, String)> = {
+                    let prefix = tenant.as_str();
+                    let range = tbl.range((prefix, "")..(prefix, "\x7f"))?;
+                    let mut v = Vec::new();
+                    for item in range {
+                        let (_, val) = item?;
+                        let n = de_node(val.value())?;
+                        v.push((n.id, n.parent_id, n.virtual_path));
+                    }
+                    v
+                };
+
+                // BFS to collect the root and all descendants.
+                let mut to_remove: Vec<(Ulid, String)> = Vec::new();
+                let mut worklist = vec![ulid::Ulid::from_string(&nid)?];
+                while let Some(cur) = worklist.pop() {
+                    for (id, parent, _vp) in &all {
+                        if *parent == Some(cur) {
+                            worklist.push(*id);
+                        }
+                    }
+                    if let Some((_, _, vp)) = all.iter().find(|(id, _, _)| *id == cur) {
+                        to_remove.push((cur, vp.clone()));
+                    }
+                }
+
+                let mut idx = txn.open_table(IDX_PATH)?;
+                for (id, vp) in to_remove {
+                    let id_str = id.to_string();
+                    let _ = tbl.remove((tenant.as_str(), id_str.as_str()))?;
+                    let _ = idx.remove((tenant.as_str(), vp.as_str()))?;
                 }
             }
             txn.commit()?;

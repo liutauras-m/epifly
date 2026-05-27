@@ -33,6 +33,9 @@ pub const DEFAULT_MAX_INVOKES_PER_TURN: usize = 25;
 /// still serves all lexical + forced-pin results but bumps the Prometheus counter.
 pub const DEFAULT_MIN_CONFIDENCE: f64 = 0.60;
 
+/// Default maximum bytes for a single tool result before truncation (Step 1.6).
+pub const DEFAULT_MAX_TOOL_RESULT_BYTES: usize = 32 * 1024; // 32 KB
+
 // ── Config ────────────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -48,6 +51,9 @@ pub struct RouterQuotaConfig {
     pub quota: Option<Arc<QuotaChecker>>,
     /// URL shown in 429 bodies to direct users to the upgrade page.
     pub upgrade_url: String,
+    /// Maximum bytes for a single tool result content string before truncation.
+    /// Truncated results have `\n…[truncated N bytes]` appended (Step 1.6).
+    pub max_tool_result_bytes: usize,
 }
 
 impl std::fmt::Debug for RouterQuotaConfig {
@@ -56,6 +62,7 @@ impl std::fmt::Debug for RouterQuotaConfig {
             .field("max_tools_per_turn", &self.max_tools_per_turn)
             .field("max_invokes_per_turn", &self.max_invokes_per_turn)
             .field("min_confidence", &self.min_confidence)
+            .field("max_tool_result_bytes", &self.max_tool_result_bytes)
             .field("quota_enabled", &self.quota.is_some())
             .field("upgrade_url", &self.upgrade_url)
             .finish()
@@ -70,6 +77,7 @@ impl Default for RouterQuotaConfig {
             min_confidence: DEFAULT_MIN_CONFIDENCE,
             quota: None,
             upgrade_url: "/account/billing".into(),
+            max_tool_result_bytes: DEFAULT_MAX_TOOL_RESULT_BYTES,
         }
     }
 }
@@ -98,6 +106,10 @@ impl RouterQuotaConfig {
             min_confidence,
             quota: None,
             upgrade_url,
+            max_tool_result_bytes: env_usize(
+                "CONUSAI_MAX_TOOL_RESULT_BYTES",
+                DEFAULT_MAX_TOOL_RESULT_BYTES,
+            ),
         }
     }
 
@@ -211,6 +223,7 @@ where
                         min_confidence: cfg.min_confidence,
                         quota: cfg.quota.clone(),
                         upgrade_url: cfg.upgrade_url.clone(),
+                        max_tool_result_bytes: cfg.max_tool_result_bytes,
                     })
                 } else {
                     Arc::clone(&cfg)
@@ -296,6 +309,7 @@ mod tests {
             min_confidence: DEFAULT_MIN_CONFIDENCE,
             quota: None,
             upgrade_url: "/account/billing".into(),
+            max_tool_result_bytes: DEFAULT_MAX_TOOL_RESULT_BYTES,
         };
 
         let app = Router::new()
@@ -346,6 +360,7 @@ mod tests {
             min_confidence: DEFAULT_MIN_CONFIDENCE,
             quota: None,
             upgrade_url: "/billing".into(),
+            max_tool_result_bytes: DEFAULT_MAX_TOOL_RESULT_BYTES,
         };
 
         let app = Router::new()

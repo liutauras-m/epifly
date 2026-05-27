@@ -52,6 +52,10 @@ rand                  = { version = "0.8" }
 hex                   = { version = "0.4" }
 bytes.workspace       = true
 moka.workspace        = true
+dashmap.workspace     = true
+tokio-util.workspace  = true
+parking_lot.workspace = true
+thiserror.workspace   = true
 
 [dev-dependencies]
 wiremock.workspace = true

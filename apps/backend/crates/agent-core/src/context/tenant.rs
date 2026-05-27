@@ -52,6 +52,8 @@ pub struct PlanLimits {
     pub max_tools_per_turn: usize,
     /// Max tool invocations allowed within a single agent turn.
     pub max_invokes_per_turn: usize,
+    /// Max bytes accepted by a single direct upload request.
+    pub max_upload_bytes: u64,
 }
 
 impl PlanTier {
@@ -64,6 +66,7 @@ impl PlanTier {
                 rate_limit_rpm: 10,
                 max_tools_per_turn: 10,
                 max_invokes_per_turn: 5,
+                max_upload_bytes: 25 * 1024 * 1024,
             },
             PlanTier::Pro => PlanLimits {
                 max_tokens: 16_384,
@@ -71,6 +74,7 @@ impl PlanTier {
                 rate_limit_rpm: 60,
                 max_tools_per_turn: 25,
                 max_invokes_per_turn: 10,
+                max_upload_bytes: 250 * 1024 * 1024,
             },
             PlanTier::Enterprise => PlanLimits {
                 max_tokens: 128_000,
@@ -78,6 +82,7 @@ impl PlanTier {
                 rate_limit_rpm: 600,
                 max_tools_per_turn: 50,
                 max_invokes_per_turn: 25,
+                max_upload_bytes: 500 * 1024 * 1024,
             },
         }
     }

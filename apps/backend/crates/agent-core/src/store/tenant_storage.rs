@@ -57,22 +57,29 @@ pub struct VirtualPath(String);
 impl VirtualPath {
     /// Parse and validate a virtual path string. Returns `Err` on any violation.
     pub fn parse(input: &str) -> Result<Self, StorageError> {
-        if input.len() > 1024 {
+        let decoded = percent_decode_path(input)?;
+
+        if decoded.len() > 1024 {
             return Err(StorageError::InvalidPath(
                 "virtual path exceeds 1024 bytes".into(),
             ));
         }
-        if input.is_empty() {
+        if decoded.is_empty() {
             return Err(StorageError::InvalidPath(
                 "virtual path must not be empty".into(),
             ));
         }
-        if input.starts_with('/') || (input.len() >= 2 && input.chars().nth(1) == Some(':')) {
+        if decoded.contains('\\') {
+            return Err(StorageError::InvalidPath(
+                "virtual path must use '/' separators only".into(),
+            ));
+        }
+        if decoded.starts_with('/') || (decoded.len() >= 2 && decoded.chars().nth(1) == Some(':')) {
             return Err(StorageError::InvalidPath(
                 "virtual path must be relative (no leading '/' or drive letter)".into(),
             ));
         }
-        for segment in input.split('/') {
+        for segment in decoded.split('/') {
             if segment == ".." || segment == "." {
                 return Err(StorageError::InvalidPath(
                     "virtual path must not contain '..' or '.' segments".into(),
@@ -84,23 +91,87 @@ impl VirtualPath {
                 ));
             }
         }
-        if input.ends_with('/') {
+        if decoded.ends_with('/') {
             return Err(StorageError::InvalidPath(
                 "virtual path must not end with '/'".into(),
             ));
         }
-        for byte in input.bytes() {
+        for byte in decoded.bytes() {
             if byte < 0x20 || byte == b'\0' {
                 return Err(StorageError::InvalidPath(format!(
                     "virtual path contains invalid byte 0x{byte:02x}"
                 )));
             }
         }
-        Ok(VirtualPath(input.to_owned()))
+        Ok(VirtualPath(decoded))
     }
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// True if `self` is the same path as `parent` or a descendant of it.
+    pub fn is_same_or_within(&self, parent: &VirtualPath) -> bool {
+        let parent_components = parent.components();
+        let self_components = self.components();
+        self_components.len() >= parent_components.len()
+            && self_components
+                .iter()
+                .take(parent_components.len())
+                .eq(parent_components.iter())
+    }
+
+    /// True only when `self` is a strict descendant of `parent`.
+    pub fn is_strict_child_of(&self, parent: &VirtualPath) -> bool {
+        let parent_components = parent.components();
+        let self_components = self.components();
+        self_components.len() > parent_components.len()
+            && self_components
+                .iter()
+                .take(parent_components.len())
+                .eq(parent_components.iter())
+    }
+
+    fn components(&self) -> Vec<&str> {
+        self.0.split('/').collect()
+    }
+}
+
+fn percent_decode_path(input: &str) -> Result<String, StorageError> {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if i + 2 >= bytes.len() {
+                return Err(StorageError::InvalidPath(
+                    "virtual path contains incomplete percent escape".into(),
+                ));
+            }
+            let hi = hex_value(bytes[i + 1]).ok_or_else(|| {
+                StorageError::InvalidPath("virtual path contains invalid percent escape".into())
+            })?;
+            let lo = hex_value(bytes[i + 2]).ok_or_else(|| {
+                StorageError::InvalidPath("virtual path contains invalid percent escape".into())
+            })?;
+            out.push((hi << 4) | lo);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).map_err(|_| {
+        StorageError::InvalidPath("virtual path contains non-utf8 percent escape".into())
+    })
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -915,6 +986,25 @@ mod tests {
     }
 
     #[test]
+    fn virtual_path_percent_decodes_and_canonicalizes() {
+        let vp = VirtualPath::parse("Workspace/hello%20world.md").unwrap();
+        assert_eq!(vp.as_str(), "Workspace/hello world.md");
+    }
+
+    #[test]
+    fn virtual_path_rejects_percent_encoded_traversal() {
+        assert!(VirtualPath::parse("a%2f..%2fetc").is_err());
+        assert!(VirtualPath::parse("%2e%2e/secret.txt").is_err());
+        assert!(VirtualPath::parse("folder/%2e/secret.txt").is_err());
+    }
+
+    #[test]
+    fn virtual_path_rejects_mixed_separators() {
+        assert!(VirtualPath::parse("a\\b").is_err());
+        assert!(VirtualPath::parse("a%5cb").is_err());
+    }
+
+    #[test]
     fn virtual_path_rejects_dotdot() {
         assert!(VirtualPath::parse("../etc/passwd").is_err());
         assert!(VirtualPath::parse("a/../b").is_err());
@@ -928,6 +1018,11 @@ mod tests {
     #[test]
     fn virtual_path_rejects_empty_segments() {
         assert!(VirtualPath::parse("a//b").is_err());
+    }
+
+    #[test]
+    fn virtual_path_rejects_percent_encoded_empty_segments() {
+        assert!(VirtualPath::parse("a%2f%2fb").is_err());
     }
 
     #[test]
@@ -945,6 +1040,36 @@ mod tests {
     fn virtual_path_rejects_over_1024() {
         let long = "a".repeat(1025);
         assert!(VirtualPath::parse(&long).is_err());
+    }
+
+    #[test]
+    fn virtual_path_rejects_invalid_percent_escape() {
+        assert!(VirtualPath::parse("a/%zz/b").is_err());
+        assert!(VirtualPath::parse("a/%").is_err());
+    }
+
+    #[test]
+    fn virtual_path_containment_same_or_within() {
+        let parent = VirtualPath::parse("node/foo").unwrap();
+        let same = VirtualPath::parse("node/foo").unwrap();
+        let child = VirtualPath::parse("node/foo/bar.txt").unwrap();
+        let sibling_prefix = VirtualPath::parse("node/foobar").unwrap();
+
+        assert!(same.is_same_or_within(&parent));
+        assert!(child.is_same_or_within(&parent));
+        assert!(!sibling_prefix.is_same_or_within(&parent));
+    }
+
+    #[test]
+    fn virtual_path_containment_strict_child() {
+        let parent = VirtualPath::parse("node/foo").unwrap();
+        let same = VirtualPath::parse("node/foo").unwrap();
+        let child = VirtualPath::parse("node/foo/bar.txt").unwrap();
+        let sibling_prefix = VirtualPath::parse("node/foobar").unwrap();
+
+        assert!(!same.is_strict_child_of(&parent));
+        assert!(child.is_strict_child_of(&parent));
+        assert!(!sibling_prefix.is_strict_child_of(&parent));
     }
 
     #[test]

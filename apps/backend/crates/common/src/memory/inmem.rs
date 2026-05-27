@@ -315,6 +315,39 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         Ok(node.clone())
     }
 
+    async fn plan_delete(
+        &self,
+        tenant_id: &str,
+        node_id: Ulid,
+    ) -> anyhow::Result<Vec<crate::memory::store::DeletePlanNode>> {
+        let mut result = Vec::new();
+        let mut worklist = vec![node_id];
+        while let Some(current) = worklist.pop() {
+            let (children, node_opt): (Vec<Ulid>, Option<crate::memory::store::DeletePlanNode>) = {
+                let nodes = self.nodes.lock().unwrap();
+                let children = nodes
+                    .values()
+                    .filter(|n| n.tenant_id == tenant_id && n.parent_id == Some(current))
+                    .map(|n| n.id)
+                    .collect();
+                let plan_node = nodes.get(&current).filter(|n| n.tenant_id == tenant_id).map(
+                    |n| crate::memory::store::DeletePlanNode {
+                        id: n.id,
+                        kind: n.kind,
+                        virtual_path: n.virtual_path.clone(),
+                        object_key: None,
+                    },
+                );
+                (children, plan_node)
+            };
+            worklist.extend(children);
+            if let Some(pn) = node_opt {
+                result.push(pn);
+            }
+        }
+        Ok(result)
+    }
+
     async fn delete_node(
         &self,
         tenant_id: &str,

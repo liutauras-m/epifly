@@ -107,7 +107,7 @@ pub async fn issue_device(
     let token_hash = hex::encode(hash.as_bytes());
     let id = Uuid::new_v4().to_string();
 
-    state.device_tokens.lock().unwrap().insert(
+    state.device_tokens.insert(
         token_hash,
         DeviceToken {
             id: id.clone(),
@@ -147,16 +147,18 @@ pub async fn list_devices(
     require_shell_feature()?;
     require_platform_admin(&headers)?;
 
-    let tokens = state.device_tokens.lock().unwrap();
-    let mut result: Vec<DeviceSummary> = tokens
-        .values()
-        .filter(|t| !t.revoked)
-        .map(|t| DeviceSummary {
-            id: t.id.clone(),
-            tenant_id: t.tenant_id.clone(),
-            device_label: t.device_label.clone(),
-            created_at: t.created_at,
-            last_seen: t.last_seen,
+    let mut result: Vec<DeviceSummary> = state.device_tokens
+        .iter()
+        .filter(|e| !e.value().revoked)
+        .map(|e| {
+            let t = e.value();
+            DeviceSummary {
+                id: t.id.clone(),
+                tenant_id: t.tenant_id.clone(),
+                device_label: t.device_label.clone(),
+                created_at: t.created_at,
+                last_seen: t.last_seen,
+            }
         })
         .collect();
     result.sort_by_key(|d| std::cmp::Reverse(d.created_at));
@@ -185,10 +187,9 @@ pub async fn revoke_device(
     require_shell_feature()?;
     require_platform_admin(&headers)?;
 
-    let mut tokens = state.device_tokens.lock().unwrap();
-    for token in tokens.values_mut() {
-        if token.id == id {
-            token.revoked = true;
+    for mut entry in state.device_tokens.iter_mut() {
+        if entry.value().id == id {
+            entry.value_mut().revoked = true;
             return Ok(StatusCode::NO_CONTENT);
         }
     }
@@ -203,8 +204,7 @@ pub async fn validate_device_token(
     let hash = blake3::hash(token.as_bytes());
     let token_hash = hex::encode(hash.as_bytes());
 
-    let mut tokens = state.device_tokens.lock().unwrap();
-    if let Some(record) = tokens.get_mut(&token_hash)
+    if let Some(mut record) = state.device_tokens.get_mut(&token_hash)
         && !record.revoked
     {
         record.last_seen = Some(Utc::now());

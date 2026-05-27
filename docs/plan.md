@@ -1,6 +1,6 @@
-# Backend Refactor Plan — Agent Gateway & Workspaces (v3.3)
+# Backend Refactor Plan — Agent Gateway & Workspaces (v3.4)
 
-Driven by [docs/suggestion.md](docs/suggestion.md) + five rounds of reviewer feedback. Restructured into **5 phases** with sharper sequencing to keep blast radius small. Each step is independently executable by an AI coding agent.
+Driven by [docs/suggestion.md](docs/suggestion.md) + six rounds of reviewer feedback. Restructured into **6 phases** with sharper sequencing to keep blast radius small. Each step is independently executable by an AI coding agent.
 
 **v3 deltas vs v2:** twin `VirtualPath` containment methods (`is_strict_child_of` vs `is_same_or_within`); private path constructors; precise non-tool-model rules; tokenizer strategy; `request_id` across retries; module-direction rule for Step 2.1→2.7; typed `AgentEvent` sink (no `Bytes`); Phase 3 honestly scoped to include agent indexing call sites; dual-write failure semantics; `tokio::join!` instead of `try_join!` for best-effort cleanup; Phase 4 renamed to emphasize provider boundary over Rig.
 
@@ -9,6 +9,8 @@ Driven by [docs/suggestion.md](docs/suggestion.md) + five rounds of reviewer fee
 **v3.2 deltas vs v3.1:** Step 1.1 title no longer references the dead `is_within` name; Step 1.4 spells out resolve→route→gate execution order so text-only models skip tool-definition loading; `cleanup_after_delete` prefers `object_key` when present to avoid redoing the work in Phase 3; added explicit alias-resolution test requirement.
 
 **v3.3 deltas vs v3.2:** Step 3.6 property tests now reference both final method names (no `is_within` ghost); Step 2.3 equivalence is "event-sequence equivalent" via typed `AgentEvent` assertions instead of brittle byte equality; execution checklist now carries an explicit scope-creep stop condition.
+
+**v3.4 deltas vs v3.3:** Added **Phase 5 — Workspace semantics for UX** to land the backend primitives that unlock the product model in [docs/suggestion.md](docs/suggestion.md): semantic `WorkspaceNodeKind` (`folder | file | thread`), `thread_projections` durable index table, durable `ThreadProjectionJob` (replaces `spawn_index_job`), in-memory `ThreadRuntime` registry for streaming hot state, `node.tags[]` + `source_type` / `source_id` for tree+filters / polyhierarchy-lite, delete-as-pause semantics for thread nodes, and **mandatory** tool-payload redaction before any Markdown/search surface (separate from the logs/audit `RedactPiiHook`). Earlier steps annotated where they touch the same surfaces (Step 3.3 errors, Step 3.4 schema, Step 4.3 hook scope) so Phase 5 does not require re-migration.
 
 Primary files in scope:
 - [apps/backend/crates/agent-gateway/src/routes/agent.rs](apps/backend/crates/agent-gateway/src/routes/agent.rs) (~1771 lines)
@@ -414,6 +416,8 @@ Built-in hooks: `LogTokensHook`, `RedactPiiHook`, `EnforceMaxInputHook`. All tok
 
 Blind redaction of tool inputs will silently break legal-name lookups, email routing, workspace search, and billing references.
 
+> **Cross-reference (Phase 5):** Markdown projection of threads is a **separate surface** with different rules — see Step 5.4 (`ProjectionRedactor`). Do **not** reuse `RedactPiiHook` there: the projection writes a user-visible artifact and must redact unconditionally, while `RedactPiiHook` for prompts is opt-in. Two surfaces, two policies.
+
 ### Step 4.4 — Property + load tests
 - **Property test** (proptest) for `AgentTurnRunner`: for any sequence of tool_use/tool_result pairs (bounded depth ≤ `max_tool_calls`), runner terminates and emits exactly one `done` event.
 - **Cancellation test:** dropping the sink mid-stream stops tool execution within N ms.
@@ -421,6 +425,196 @@ Blind redaction of tool inputs will silently break legal-name lookups, email rou
 
 ### Phase 4 gate
 Same as Phase 3 plus load test report.
+
+---
+
+## Phase 5 — Workspace semantics for UX
+
+> **Why this phase exists.** The earlier phases harden the backend but do not let the product cross the line from "a chat with a file tree on the side" to "a workspace where conversations are first-class items alongside documents." [docs/suggestion.md](docs/suggestion.md) makes the case in detail: files and threads should **share infrastructure** but not **identity**, threads must survive UI rename/delete without ghost-recreation, and projection must be **durable** rather than a fire-and-forget `tokio::spawn`. This phase lands the backend primitives. It does **not** ship UI — that is the frontend's job once these primitives exist.
+>
+> **Hard scope:** no new domain concepts beyond what suggestion.md calls for at MVP. No `Project` / `Space` enum variant, no real polyhierarchy, no per-day MD splits, no sidecar-conflict UI, no export-derivative pipelines. Tags + filters cover the polyhierarchy story; a `Project` node kind is a separate future plan.
+>
+> **Phase 5 depends on:** Phase 2 (`AgentTurnRunner`, `AgentEvent`, `agent::persistence` exist), Phase 3 (`jobs::WorkspaceIndexJob` worker pattern exists, typed `WorkspaceStoreError` exists, stable `object_key` cutover complete so projection nodes do not have to play migration games).
+
+### Step 5.1 — `WorkspaceNodeKind` enum (semantic kind, not mime overload)
+File: `agent-core/src/workspace/node.rs`.
+
+1. Introduce the enum and persist it:
+   ```rust
+   #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+   #[serde(rename_all = "snake_case")]
+   pub enum WorkspaceNodeKind { Folder, File, Thread }
+   ```
+2. Add `kind: WorkspaceNodeKind` to `WorkspaceNode` (DB column + redb postcard payload). Backfill: all existing rows → `Folder` if `is_dir`, else `File`. No row becomes `Thread` in this step.
+3. Add two helper columns/fields for the search + filter story:
+   - `source_type: Option<String>` — `"upload" | "generated" | "thread_projection"` (free-form for future kinds; not an enum on the schema, by design).
+   - `source_id: Option<String>` — for `thread_projection` this is the `thread_id`. For `upload` this is the original `upload_id`. For `generated` it is the producing capability invocation id.
+4. Migration ordering rule: this lands **before** Step 5.2/5.3 so the projection code can write `kind = Thread` directly instead of writing `kind = File` and patching it later.
+5. SDK + types updates in [packages/types](packages/types) and [packages/sdk](packages/sdk) so the UI can distinguish kinds without sniffing mime types.
+6. **API rule:** existing `mime_type` stays — the UI still needs it for icons and previews — but the UI **must** branch on `kind`, not on `mime_type`. Add a deprecation note to any handler that infers a thread from `mime_type == "text/markdown"`.
+
+### Step 5.2 — `thread_projections` durable index table (redb)
+File: `agent-core/src/store/thread_projection.rs`.
+
+Deterministic `node_id` derivation alone is not enough once users rename/move/pause a projected node. Add a durable index in redb so the projector has a single source of truth for `(thread_id → node_id, status, last_seq, content_hash)`.
+
+```rust
+pub struct ThreadProjection {
+    pub tenant_id: TenantId,
+    pub thread_id: ThreadId,
+    pub node_id: NodeId,           // resolved once, then preserved across renames
+    pub folder_path: VirtualPath,  // last known location; updated on rename/move
+    pub status: ProjectionStatus,  // Active | Paused | Error
+    pub last_seq: u64,             // highest Message.seq included in current revision
+    pub content_hash: [u8; 32],    // blake3 of last rendered MD body
+    pub message_count: u32,
+    pub projected_at: DateTime<Utc>,
+    pub last_error: Option<String>,
+}
+
+pub enum ProjectionStatus { Active, Paused, Error }
+```
+
+rebd table: `TableDefinition<(&str, &str), &[u8]> = TableDefinition::new("thread_projections")` keyed by `(tenant_id, thread_id)` with postcard payload.
+
+**Lookup rules (must be implemented in this order):**
+1. Look up by `(tenant_id, thread_id)` in `thread_projections`. If present, use stored `node_id` — preserves renames.
+2. If absent, derive `node_id = ulid_from_blake3(tenant_id ‖ thread_id)`. Insert the row before projecting.
+3. Never derive on every projection "just in case" — that defeats rename preservation.
+
+Provides the answer to suggestion.md's "rename preservation, delete/pause behavior, projection health, admin reproject, debugging" list in one boring table.
+
+### Step 5.3 — `ThreadProjectionJob` durable job (replaces `spawn_index_job`)
+File: `jobs/src/thread_projection.rs`.
+
+Replace the fire-and-forget `tokio::spawn(spawn_index_job(...))` at the assistant-done hook with a durable enqueue, mirroring the Step 3.2 `WorkspaceIndexJob` shape so we do not invent a second job pattern.
+
+```rust
+pub struct ThreadProjectionJob {
+    pub tenant_id: TenantId,
+    pub thread_id: ThreadId,
+    pub reason: ProjectionReason,  // AssistantDone | ManualReproject | Backfill
+}
+```
+
+**Coalescing rules (mandatory — see suggestion.md "Use coalescing, not infinite jobs"):**
+- Uniqueness constraint: at most one job in `{pending, running}` per `(tenant_id, thread_id, kind=projection)`. Implement as `UNIQUE(tenant_id, thread_id, kind) WHERE status IN ('pending','running')`.
+- Enqueue path: if a non-terminal job already exists, set `dirty = true` and bump `requested_at`. Do not create a second job.
+- Worker path: while running, after each successful projection, check `dirty`. If set, clear it and run again. Else mark `done`.
+- Worker **must** always load the latest thread state from redb at the top of each iteration — never project from a snapshot captured at enqueue time.
+
+**Worker logic:**
+1. Claim next pending job; set `status = running`, `attempts += 1`.
+2. Resolve projection record via Step 5.2 lookup rules.
+3. If projection status is `Paused`, mark job `done` immediately. Do **not** project. Do **not** delete the row.
+4. Load thread + messages from redb (latest state).
+5. Render Markdown (Step 5.4 redaction applies). Compute `content_hash`.
+6. If `content_hash == projection.content_hash`, skip (no Qdrant churn, no realtime emit, mark `done` and clear `dirty`).
+7. Otherwise call `WorkspaceStore::patch_content(node_id, md_body)` — inherits the existing chunk → embed → upsert pipeline via Step 3.2's `WorkspaceIndexJob` (this means projection enqueues an index job; we do not double-index).
+8. Update `thread_projections` row: `last_seq`, `content_hash`, `message_count`, `projected_at`.
+9. Emit `WorkspaceChangeEvent::Updated { node_id, kind: "thread_projection" }` realtime event.
+10. Recovery on boot: any `running` job whose `updated_at` is older than 2 minutes is reset to `pending`. Documented in `jobs::recovery`.
+
+Metrics: `thread_projection_failures`, `thread_projection_skipped_unchanged`, `thread_projection_duration_ms`, `thread_projection_coalesced_count`.
+
+### Step 5.4 — `ProjectionRedactor` (mandatory, not opt-in)
+File: `agent-core/src/projection/redactor.rs`.
+
+The Markdown projection of a thread is a **user-visible artifact** that also feeds search. Embedding raw tool arguments and results into it leaks secrets, API tokens, internal URLs, and PII into both RustFS and Qdrant. This is **not** the same surface as the logs/audit `RedactPiiHook` (Step 4.3) — that hook is opt-in for prompt mutation; this one is mandatory.
+
+```rust
+pub trait ProjectionRedactor: Send + Sync {
+    fn redact_tool_args(&self, capability: &str, args: &Value) -> Value;
+    fn redact_tool_result(&self, capability: &str, result: &Value) -> Value;
+    fn redact_user_text(&self, text: &str) -> Cow<'_, str>;
+}
+```
+
+**Default policy (v1, deliberately conservative):**
+- Tool args: render only `capability_name` and a synthesized human summary (e.g. `"Searched workspace files"`, `"Read invoice.pdf"`). Do **not** include the raw JSON. Full payload stays in redb.
+- Tool results: never embedded verbatim. Summarized to `"ok"` / `"failed"` + a short caller-supplied summary line if the capability provides one.
+- User text: passed through a redaction sieve (email, phone, credit card, IBAN, JWT, bearer token, AWS key shapes). Match patterns from `common::redaction::patterns`.
+- Toggle per tenant: `thread_export.include_tool_details: bool` (default **false**). Even when `true`, the redactor still strips known-secret shapes — "include details" does not mean "include API keys."
+
+**Boundary rule:** every code path that writes a thread MD body **must** go through `ProjectionRedactor`. Enforced with a small `#[must_use]` token type passed from `render()` to `write()`. Bypassing it requires an explicit `unsafe_unredacted()` constructor — exists only for tests.
+
+### Step 5.5 — `node.tags[]` + tree+filters surface (polyhierarchy-lite)
+File: `agent-core/src/workspace/tags.rs`, `routes/workspaces.rs`.
+
+suggestion.md is correct that strict tree placement loses items. Full polyhierarchy is overbuild for MVP; tags + search filters cover the same need.
+
+1. Add `tags: Vec<String>` column to `workspace_nodes`. Normalize: lowercase, trim, dedupe; max 32 tags per node; max 64 chars each.
+2. Qdrant payload: include `tags` and `kind` in `content_embeddings_dN` payload so search can filter by both. This is a small addition to Step 3.2's existing payload, not a re-migration.
+3. New endpoints in `routes/workspaces.rs`:
+   - `PUT /v1/workspaces/{node_id}/tags` — replace set.
+   - `GET /v1/workspaces/search?tag=…&kind=thread&since=…` — server-side filter using existing list APIs + Qdrant filter. The UI's "Type: Files / Threads / Notes" / "Time: Today / This week" filters call this.
+4. Tag-rename is a synchronous batch update (small workloads); deferred to a Phase 6+ job if any tenant exceeds 10k tagged nodes.
+
+### Step 5.6 — Delete-as-pause for thread-kind nodes
+File: `routes/workspaces.rs::delete_node`, `agent-core/src/workspace/delete.rs`.
+
+The v3 plan's `DeletePlan` (Step 1.7) already gives us the right hook. Add one branch:
+
+```rust
+if node.kind == WorkspaceNodeKind::Thread {
+    thread_projection_store.set_status(tenant, thread_id, ProjectionStatus::Paused).await?;
+    workspace_store.hide_node(tenant, node_id).await?;  // soft-hide, not redb delete
+    return Ok(DeletePlanOutcome::ProjectionPaused);
+}
+// Otherwise fall through to existing DeletePlan cascade.
+```
+
+- `hide_node` flips a `hidden_at: Option<DateTime<Utc>>` column. List endpoints filter `WHERE hidden_at IS NULL` by default; `?include_hidden=true` shows paused projections (used by the UI's "Restore" affordance).
+- New endpoint: `POST /v1/threads/{thread_id}/projection/restore` — clears `hidden_at`, sets status `Active`, enqueues a fresh `ThreadProjectionJob`.
+- The next assistant turn on a paused thread does **not** silently resurrect the node. The chat UI shows a "This conversation is hidden from workspace · [Restore]" affordance. Backend exposes the paused status on the existing `GET /v1/threads/{id}/projection` endpoint (added in Step 5.7).
+- Hard delete of a paused thread node is only available via `DELETE /v1/admin/threads/{id}/projection?hard=true` (admin scope). Removes the projection row and node; does **not** touch redb thread/messages.
+
+### Step 5.7 — In-memory `ThreadRuntime` registry
+File: `agent-gateway/src/agent/runtime.rs`.
+
+suggestion.md's "memory as performance layer, not source of truth" maps cleanly onto the current chat path. The streaming handler already keeps short-lived state per request, but it is not addressable across requests (e.g. for stop, parallel branches, projection coalescing visibility). Add a runtime registry:
+
+```rust
+pub struct ThreadRuntime {
+    pub tenant_id: TenantId,
+    pub thread_id: ThreadId,
+    pub active_run_id: Option<RunId>,
+    pub stream_state: parking_lot::RwLock<StreamState>,
+    pub cancellation: CancellationToken,
+    pub last_activity: AtomicI64,
+}
+
+pub struct ThreadRuntimeRegistry {
+    runtimes: DashMap<(TenantId, ThreadId), Arc<ThreadRuntime>>,
+}
+```
+
+**Rules (must be implemented as written — these are exactly the pitfalls suggestion.md flags):**
+- `ThreadRuntime` holds only **derived / transient** state. Never the only copy of a message. The `AgentTurnRunner` (Phase 2) still persists user + assistant messages synchronously via `agent::persistence` before / after the model call.
+- GC: a background task evicts runtimes idle > 15 minutes. Re-creating a runtime on demand from the durable store is cheap.
+- The Step 2.5 cancellation token is now owned by the runtime, not the request. Stop-button from any device cancels the active stream.
+- New endpoint: `GET /v1/threads/{thread_id}/status` returns `{ running: bool, started_at, projection_status }`. UI uses this for the live indicator + the "hidden from workspace" banner described in Step 5.6.
+
+**Failure mode prevention:** registry **must not** be used as a write-cache for messages. Property test required: assert that for every `AgentEvent::Done`, a synchronous `thread_store.append_message` returned `Ok` **before** the event was emitted to the sink. This is the "don't make memory the source of truth" guarantee with teeth.
+
+### Step 5.8 — Acceptance criteria for Phase 5
+- After every assistant `done`, the projector worker drains exactly one `ThreadProjectionJob` (verified by `thread_projection_duration_ms` count metric).
+- Crash-restart of the gateway re-claims any stuck `running` job within 2 minutes (recovery test: kill -9 mid-projection, restart, assert job completes).
+- User renames the projected node via the workspace API; the next assistant turn projects to the **same** `node_id` at the **new** path (no ghost recreation, no orphaned node).
+- User deletes the projected node; status becomes `Paused`; next assistant turn does **not** create a new node. `GET /v1/threads/{id}/projection` reports `status: paused`. `POST /v1/threads/{id}/projection/restore` brings it back with a fresh `revision = N+1`.
+- A thread containing a tool call with a known-secret-shaped argument (e.g. `{"api_key": "sk-…"}`) produces an MD body containing **no** occurrence of the secret in either RustFS body or Qdrant chunks (assertion: grep the rendered body and the upserted chunk payload).
+- Search `?kind=thread&tag=invoices` returns only thread-kind nodes carrying the `invoices` tag.
+- Two concurrent assistant `done` events for the same `(tenant, thread)` produce **one** projection job execution (coalesced), with `dirty` round-tripping verified by `thread_projection_coalesced_count >= 1`.
+- Property test (Step 5.7) passes: no `AgentEvent::Done` is ever emitted before the corresponding `append_message` returned `Ok`.
+- All Phase 0 tenant-isolation tests (cases 1–10) still pass.
+
+### Phase 5 gate
+```
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+pnpm test:e2e:web
+```
+Plus the projection-specific tests above, plus a manual smoke: send a chat with a tool call → assert a `Thread`-kind node appears under the configured projection folder → rename it → send another turn → confirm the rename was preserved.
 
 ---
 
@@ -449,9 +643,16 @@ workspace/errors.rs
 
 agent-core/src/model_catalog.rs            ← Step 1.4
 agent-core/src/workspace/virtual_path.rs   ← Step 1.1 (is_same_or_within, is_strict_child_of)
+agent-core/src/workspace/node.rs           ← Step 5.1 (WorkspaceNodeKind, source_type, source_id)
+agent-core/src/workspace/tags.rs           ← Step 5.5
+agent-core/src/workspace/delete.rs         ← Step 5.6 (thread-aware DeletePlan branch)
 agent-core/src/store/workspace/errors.rs   ← Step 3.3
+agent-core/src/store/thread_projection.rs  ← Step 5.2 (durable index)
+agent-core/src/projection/redactor.rs      ← Step 5.4 (mandatory MD redactor)
+agent-gateway/src/agent/runtime.rs         ← Step 5.7 (ThreadRuntime registry)
 jobs/src/workspace_index.rs                ← Step 3.2
 jobs/src/workspace_backfill.rs             ← Step 3.5
+jobs/src/thread_projection.rs              ← Step 5.3 (replaces spawn_index_job)
 ```
 
 ## Execution checklist
@@ -461,6 +662,7 @@ jobs/src/workspace_backfill.rs             ← Step 3.5
 - [ ] **Phase 2** — Steps 2.1 → 2.9 (agent runtime only)
 - [ ] **Phase 3** — Steps 3.1 → 3.6 (workspace + storage migration only)
 - [ ] **Phase 4** — Steps 4.1 → 4.4 (provider abstraction)
+- [ ] **Phase 5** — Steps 5.1 → 5.8 (workspace semantics for UX: thread-kind nodes, durable projection, runtime registry)
 
 **Stop condition (scope creep guard):** if any step requires touching code outside its declared phase scope — e.g. a Phase 2 step needs to modify `workspaces.rs`, or a Phase 3 step needs to modify `agent.rs` outside the explicitly-scoped Step 3.2c call sites — **stop coding, write a short design note in the PR/commit describing the unplanned scope, and get explicit approval before continuing.** Shortcuts that quietly widen a phase are how this refactor turns into a crime scene.
 
@@ -480,3 +682,8 @@ jobs/src/workspace_backfill.rs             ← Step 3.5
 12. **Targeted tests every commit; full e2e at phase boundaries.** Do not run `pnpm test:e2e:web` per micro-step — it gets skipped.
 13. Preserve existing routing audit fields when refactoring; observability is already good — do not regress it.
 14. When unsure whether to place logic in `agent-core` vs `agent-gateway`, prefer `agent-core` (testable without HTTP).
+15. **Thread projection (Phase 5) is durable, not `tokio::spawn`.** Use the `ThreadProjectionJob` outbox. Coalesce per `(tenant, thread)`. Re-claim stuck jobs on boot.
+16. **Files and threads share infrastructure, not identity.** Distinguish via `WorkspaceNodeKind::Thread` (Step 5.1), not via `mime_type == "text/markdown"`. The UI branches on `kind`.
+17. **Delete of a thread node = pause projection, not delete redb.** Step 5.6 — never silently resurrect a deleted projection node on the next turn; the chat UI shows a `[Restore]` affordance instead.
+18. **`RedactPiiHook` (Step 4.3) and `ProjectionRedactor` (Step 5.4) are different surfaces with different defaults.** Hook = logs/audit, opt-in for prompts, prohibited for tool args. Redactor = mandatory for the MD body and search payload; never bypassable except via a test-only `unsafe_unredacted()` constructor.
+19. **In-memory `ThreadRuntime` (Step 5.7) is a performance layer, never the source of truth.** Property test must prove every `AgentEvent::Done` is preceded by a successful synchronous `append_message`.

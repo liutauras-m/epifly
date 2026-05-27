@@ -14,6 +14,7 @@ use agent_core::{
     StorageQuotaService, TenantOnboardingService, TenantStorageFactory, build_admin,
 };
 use agent_core::{LegacyIdentityProvider, ZitadelCacheStats, ZitadelProvider};
+use agent_core::{ModelCatalog, StaticModelCatalog};
 use base64::Engine as _;
 use billing_core::{BillingProvider, LagoProvider, PlanCatalog, QuotaChecker};
 use common::audit::AuditStore;
@@ -29,9 +30,10 @@ use jobs::{JobAdmin, JobContext, JobExecutor, JobRegistry};
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use rustfs_admin::RustFsAdminClient;
-use std::collections::HashMap;
+use dashmap::DashMap;
 use std::sync::Arc as StdArc;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 #[cfg(not(feature = "local-embeddings"))]
 use tracing::error;
 use tracing::{info, warn};
@@ -57,9 +59,9 @@ pub struct AppState {
     /// Router-decision metrics (set by `main.rs` at boot; None in test mode).
     pub router_metrics: Option<Arc<RouterMetrics>>,
     /// Per-tenant single-flight mutex for the onboarding safety net in the `tree` route.
-    pub onboarding_guards: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    pub onboarding_guards: Arc<DashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// In-memory device tokens for browser-shell (keyed by blake3 hash of plaintext token).
-    pub device_tokens: Mutex<HashMap<String, DeviceToken>>,
+    pub device_tokens: DashMap<String, DeviceToken>,
     pub thread_store: Arc<dyn ThreadStore>,
     pub audit_store: Arc<dyn AuditStore>,
     pub workspace_store: Arc<dyn WorkspaceStore>,
@@ -96,6 +98,11 @@ pub struct AppState {
     pub quota: Option<StdArc<QuotaChecker>>,
     /// Plan catalog loaded at boot.
     pub plan_catalog: StdArc<PlanCatalog>,
+    /// Shared upstream HTTP client for LLM/provider calls.
+    pub http_upstream: reqwest::Client,
+    /// Model capability catalog: resolves requested model strings to `ModelSpec`s
+    /// and enforces plan-tier gating.  Alias hits emit `model_alias_used` metric.
+    pub model_catalog: StdArc<dyn ModelCatalog>,
 }
 
 impl AppState {
@@ -510,8 +517,8 @@ impl AppState {
             storage_quota,
             rustfs_metrics: None,
             router_metrics: None,
-            onboarding_guards: Arc::new(Mutex::new(HashMap::new())),
-            device_tokens: Mutex::new(HashMap::new()),
+            onboarding_guards: Arc::new(DashMap::new()),
+            device_tokens: DashMap::new(),
             thread_store,
             audit_store,
             workspace_store,
@@ -535,6 +542,8 @@ impl AppState {
             billing,
             quota,
             plan_catalog,
+            http_upstream: build_upstream_http_client(),
+            model_catalog: StdArc::new(StaticModelCatalog::new().with_alias_env()),
         })
     }
 
@@ -604,8 +613,8 @@ impl AppState {
             storage_quota: noop_quota_service(),
             rustfs_metrics: None,
             router_metrics: None,
-            onboarding_guards: Arc::new(Mutex::new(HashMap::new())),
-            device_tokens: Mutex::new(HashMap::new()),
+            onboarding_guards: Arc::new(DashMap::new()),
+            device_tokens: DashMap::new(),
             thread_store,
             audit_store,
             workspace_store,
@@ -629,8 +638,20 @@ impl AppState {
             billing: None,
             quota: None,
             plan_catalog,
+            http_upstream: build_upstream_http_client(),
+            model_catalog: StdArc::new(StaticModelCatalog::new().with_alias_env()),
         })
     }
+}
+
+fn build_upstream_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(90))
+        .connect_timeout(Duration::from_secs(10))
+        .pool_idle_timeout(Duration::from_secs(30))
+        .tcp_keepalive(Duration::from_secs(60))
+        .build()
+        .expect("build upstream HTTP client")
 }
 
 fn is_production_env() -> bool {

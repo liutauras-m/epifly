@@ -7,13 +7,9 @@ use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer, ExposeHeaders};
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 
-mod auth;
-mod capabilities;
-mod metrics;
-mod mw;
-mod routes;
-mod state;
-mod ui;
+// The library crate (lib.rs) publishes all modules so integration tests can import them.
+// main.rs re-uses those modules via the library.
+use agent_gateway::{metrics, mw, routes, state, ui};
 
 use state::AppState;
 

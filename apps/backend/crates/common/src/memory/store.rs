@@ -1,7 +1,17 @@
 use super::thread::{Message, Thread};
-use super::workspace::WorkspaceNode;
+use super::workspace::{NodeKind, WorkspaceNode};
 use async_trait::async_trait;
 use ulid::Ulid;
+
+/// Minimal node reference captured before a delete for post-delete cleanup.
+#[derive(Debug, Clone)]
+pub struct DeletePlanNode {
+    pub id: Ulid,
+    pub kind: NodeKind,
+    pub virtual_path: String,
+    /// S3 object key override. When `None`, `virtual_path` is used for content cleanup.
+    pub object_key: Option<String>,
+}
 
 /// Pluggable persistent thread store.
 //
@@ -111,6 +121,15 @@ pub trait WorkspaceStore: Send + Sync + 'static {
         new_parent_path: Option<&str>,
     ) -> anyhow::Result<WorkspaceNode>;
 
+    /// Enumerate the root node and all its descendants that would be removed by
+    /// `delete_node`. Must be called **before** `delete_node` so that cleanup
+    /// logic retains the node list even when the store cascades.
+    async fn plan_delete(
+        &self,
+        tenant_id: &str,
+        node_id: Ulid,
+    ) -> anyhow::Result<Vec<DeletePlanNode>>;
+
     async fn delete_node(
         &self,
         tenant_id: &str,
@@ -212,4 +231,14 @@ pub trait WorkspaceContentStore: Send + Sync + 'static {
     async fn read(&self, tenant_id: &str, virtual_path: &str) -> anyhow::Result<String>;
     async fn write(&self, tenant_id: &str, virtual_path: &str, body: &str) -> anyhow::Result<()>;
     async fn delete(&self, tenant_id: &str, virtual_path: &str) -> anyhow::Result<()>;
+    /// Delete the object and all its stored versions (best-effort).
+    /// The default implementation delegates to `delete`; versioning-aware
+    /// backends override this with a full version sweep.
+    async fn delete_all_versions(
+        &self,
+        tenant_id: &str,
+        virtual_path: &str,
+    ) -> anyhow::Result<()> {
+        self.delete(tenant_id, virtual_path).await
+    }
 }
