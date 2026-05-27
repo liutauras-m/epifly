@@ -37,6 +37,7 @@ use async_trait::async_trait;
 use axum::response::sse::Event;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Instant;
@@ -636,40 +637,52 @@ impl AgentTurnRunner {
                     continue;
                 }
 
-                let parsed_input: Value = serde_json::from_str(&json_str).unwrap_or(json!({}));
-                info!(round, tool = name, "executing tool");
-                tool_calls_made += 1;
+                match serde_json::from_str(&json_str) {
+                    Ok(parsed_input) => {
+                        info!(round, tool = name, "executing tool");
+                        tool_calls_made += 1;
 
-                let (result_str, paths) =
-                    match resolve_and_invoke(&self.state, &name, &parsed_input, &self.tenant).await
-                    {
-                        Ok((v, p)) => (v.to_string(), p),
-                        Err(e) => {
-                            warn!(tool = name, error = %e, "tool invocation failed");
-                            (format!("Error: {e}"), vec![])
-                        }
-                    };
+                        let (result_str, paths) =
+                            match resolve_and_invoke(&self.state, &name, &parsed_input, &self.tenant).await
+                            {
+                                Ok((v, p)) => (v.to_string(), p),
+                                Err(e) => {
+                                    warn!(tool = name, error = %e, "tool invocation failed");
+                                    (format!("Error: {e}"), vec![])
+                                }
+                            };
 
-                all_changed_paths.extend(paths);
-                let result_str = truncate_tool_result(
-                    result_str,
-                    &name,
-                    self.state.router_quota.max_tool_result_bytes,
-                );
+                        all_changed_paths.extend(paths);
+                        let result_str = truncate_tool_result(
+                            result_str,
+                            &name,
+                            self.state.router_quota.max_tool_result_bytes,
+                        );
 
-                let _ = sink
-                    .emit(AgentEvent::ToolResult {
-                        tool_use_id: id.clone(),
-                        name: name.clone(),
-                        result: result_str.clone(),
-                    })
-                    .await;
+                        let _ = sink
+                            .emit(AgentEvent::ToolResult {
+                                tool_use_id: id.clone(),
+                                name: name.clone(),
+                                result: result_str.clone(),
+                            })
+                            .await;
 
-                tool_results.push(json!({
-                    "type": "tool_result",
-                    "tool_use_id": id,
-                    "content": result_str,
-                }));
+                        tool_results.push(json!({
+                            "type": "tool_result",
+                            "tool_use_id": id,
+                            "content": result_str,
+                        }));
+                    }
+                    Err(e) => {
+                        tool_results.push(json!({
+                            "type": "tool_result",
+                            "tool_use_id": id,
+                            "content": format!("Invalid tool input JSON: {e}"),
+                            "is_error": true,
+                        }));
+                        continue;
+                    }
+                }
             }
 
             self.ctx.messages.push(json!({"role": "user", "content": tool_results}));
