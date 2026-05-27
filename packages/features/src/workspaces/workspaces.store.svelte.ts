@@ -147,11 +147,30 @@ export function createWorkspacesStore(sdk: ConusSdk) {
       do {
         pendingRealtimeRefresh = false;
         await waitForIdleLoad();
-        await loadTree(null);
+        await refreshLoadedTree();
       } while (pendingRealtimeRefresh);
     } finally {
       realtimeRefreshInFlight = false;
     }
+  }
+
+  async function refreshLoadedTree() {
+    const loadedFolderIds = collectLoadedFolderIds(tree);
+    await loadTree(null);
+
+    for (const folderId of loadedFolderIds) {
+      const node = findNode(tree, folderId);
+      if (node?.kind === "folder") await loadChildren(folderId);
+    }
+
+    if (selectedNodeId && !findNode(tree, selectedNodeId)) selectedNodeId = null;
+  }
+
+  function collectLoadedFolderIds(nodes: WorkspaceTreeNode[]): string[] {
+    return nodes.flatMap((node) => {
+      const nested = node.children ? collectLoadedFolderIds(node.children) : [];
+      return node.kind === "folder" && node.children ? [node.id, ...nested] : nested;
+    });
   }
 
   function isWorkspaceChangeMessage(data: unknown) {

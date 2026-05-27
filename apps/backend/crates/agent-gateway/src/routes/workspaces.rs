@@ -703,6 +703,16 @@ pub async fn delete_node(
         .await
         .map_err(map_err)?;
 
+    state
+        .realtime_service
+        .publish_workspace_change(WorkspaceChangeEvent {
+            op: "workspace.deleted".into(),
+            tenant_id: tenant.tenant_id.to_string(),
+            node_id: id.to_string(),
+            kind: format!("{:?}", node.kind).to_lowercase(),
+        })
+        .await;
+
     Ok(StatusCode::NO_CONTENT)
 }
 
