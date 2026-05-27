@@ -1,8 +1,8 @@
 use crate::mw::RouterQuotaLayer;
 use crate::state::AppState;
 use axum::{
-    extract::DefaultBodyLimit,
     Router,
+    extract::DefaultBodyLimit,
     routing::{delete, get, patch, post},
 };
 use std::sync::Arc;
@@ -868,12 +868,10 @@ mod tests {
 
     fn admin_app(state: Arc<AppState>) -> Router {
         Router::new()
-            .merge(
-                admin_router().layer(middleware::from_fn_with_state(
-                    Arc::clone(&state),
-                    crate::mw::tenant::extract_tenant,
-                )),
-            )
+            .merge(admin_router().layer(middleware::from_fn_with_state(
+                Arc::clone(&state),
+                crate::mw::tenant::extract_tenant,
+            )))
             .with_state(state)
     }
 
@@ -891,7 +889,10 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/admin/jobs")
-                    .header("authorization", format!("Bearer {}", admin_token(UserRole::SuperAdmin)))
+                    .header(
+                        "authorization",
+                        format!("Bearer {}", admin_token(UserRole::SuperAdmin)),
+                    )
                     .body(Body::empty())
                     .expect("request"),
             )
@@ -915,7 +916,10 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/admin/jobs")
-                    .header("authorization", format!("Bearer {}", admin_token(UserRole::User)))
+                    .header(
+                        "authorization",
+                        format!("Bearer {}", admin_token(UserRole::User)),
+                    )
                     .body(Body::empty())
                     .expect("request"),
             )

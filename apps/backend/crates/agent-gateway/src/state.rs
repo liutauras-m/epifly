@@ -129,8 +129,7 @@ impl AppState {
         }
 
         if let Ok(model) = std::env::var("EMBEDDING_LOCAL_MODEL")
-            && agent_core::indexing::embedding_service::EmbeddingModel::from_name(&model)
-                .is_none()
+            && agent_core::indexing::embedding_service::EmbeddingModel::from_name(&model).is_none()
         {
             errors.push(format!(
                 "unknown EMBEDDING_LOCAL_MODEL={model} (supported: multilingual-e5-large, bge-small-en-v1.5, bge-m3, nomic-embed-text-v1.5, all-minilm-l6-v2)"
@@ -787,7 +786,10 @@ mod tests {
             std::env::set_var("QDRANT_URL", "http://localhost:6334");
             std::env::set_var("RUSTFS_WEBHOOK_SECRET", "test-webhook-secret");
             std::env::set_var("LAGO_API_KEY", "test-lago-key");
-            std::env::set_var("WEB_ORIGIN", "https://app.example.com,https://tauri.localhost");
+            std::env::set_var(
+                "WEB_ORIGIN",
+                "https://app.example.com,https://tauri.localhost",
+            );
             std::env::remove_var("RUSTFS_ENDPOINT");
         }
     }
@@ -834,10 +836,14 @@ mod tests {
             std::env::set_var("EMBEDDING_LOCAL_MODEL", "not-a-real-model");
         }
 
-        let err = AppState::validate_env_contracts().expect_err("should reject bad embedding config");
+        let err =
+            AppState::validate_env_contracts().expect_err("should reject bad embedding config");
         let msg = err.to_string();
         assert!(msg.contains("unknown EMBEDDING_BACKEND=openai"), "{msg}");
-        assert!(msg.contains("unknown EMBEDDING_LOCAL_MODEL=not-a-real-model"), "{msg}");
+        assert!(
+            msg.contains("unknown EMBEDDING_LOCAL_MODEL=not-a-real-model"),
+            "{msg}"
+        );
     }
 
     #[test]
@@ -861,10 +867,14 @@ mod tests {
         let _guard = env_lock().lock().expect("env lock");
         set_min_prod_env();
         unsafe {
-            std::env::set_var("WEB_ORIGIN", "https://app.example.com,http://localhost:3000");
+            std::env::set_var(
+                "WEB_ORIGIN",
+                "https://app.example.com,http://localhost:3000",
+            );
         }
 
-        let err = AppState::validate_env_contracts().expect_err("should reject localhost WEB_ORIGIN");
+        let err =
+            AppState::validate_env_contracts().expect_err("should reject localhost WEB_ORIGIN");
         let msg = err.to_string();
         assert!(
             msg.contains("WEB_ORIGIN contains development or wildcard origin in production"),

@@ -293,7 +293,10 @@ mod tests {
 
         let body = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
         let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(json, serde_json::json!({ "error": "billing not configured" }));
+        assert_eq!(
+            json,
+            serde_json::json!({ "error": "billing not configured" })
+        );
     }
 
     #[tokio::test]
