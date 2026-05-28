@@ -2,7 +2,7 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { onMount } from "svelte";
-  import { getSdkContext, createAppShellState, setWorkspaceNodeContext, setActiveThreadNodeContext } from "@epifly/features";
+  import { getSdkContext, createAppShellState, setWorkspaceNodeContext, setActiveThreadNodeContext, setWorkspaceActionsContext } from "@epifly/features";
   import { AppJobsSidebar, AppMain, AppNavigationSidebar, AppShell, WorkspaceCommandPalette } from "@epifly/ui";
   import type { PaletteCommand } from "@epifly/ui";
   import type { Snippet } from "svelte";
@@ -23,6 +23,8 @@
   setWorkspaceNodeContext(() => shell.selectedWorkspaceNodeId);
   // Expose the active thread's workspace location (breadcrumb + context indicator).
   setActiveThreadNodeContext(() => shell.activeThreadNode);
+  // Expose workspace write actions so chat pages can insert optimistic nodes (Step 7.1).
+  setWorkspaceActionsContext({ insertOptimisticThread: shell.insertOptimisticThread });
 
   onMount(shell.load);
 

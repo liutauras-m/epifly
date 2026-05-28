@@ -17,6 +17,11 @@
     summary?: string;
     lastActivityAt?: string;
     tags?: string[];
+    /**
+     * Phase 7.2 — true while the backend projection is still syncing.
+     * Optimistic nodes set this to render a pulsing indicator.
+     */
+    syncing?: boolean;
   };
 
   export type WorkspaceDraft = {

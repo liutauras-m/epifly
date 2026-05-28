@@ -13,6 +13,12 @@ export {
   getActiveThreadNodeContext,
 } from "./workspaces/workspace-context.svelte.js";
 export type { ActiveThreadNodeContext } from "./workspaces/workspace-context.svelte.js";
+// Workspace actions context — chat pages notify tree of optimistic events (Step 7.1)
+export {
+  setWorkspaceActionsContext,
+  getWorkspaceActionsContext,
+} from "./workspaces/workspace-context.svelte.js";
+export type { WorkspaceActionsContext } from "./workspaces/workspace-context.svelte.js";
 
 // SDK provider
 export { default as SdkProvider } from "./sdk/sdk-provider.svelte";
@@ -22,6 +28,7 @@ export { createNativeTokenProvider, createWebTokenProvider } from "./sdk/token-p
 // Chat
 export type { UiMessage, UiTextMessage, UiStreamEvent, StreamEventKind } from "./chat/chat.types.js";
 export { createChatStore } from "./chat/chat.store.svelte.js";
+export type { ChatStoreOptions } from "./chat/chat.store.svelte.js";
 export { loadThreadMessages } from "./chat/chat.actions.js";
 export { previewContent, isAssistant } from "./chat/chat.utils.js";
 

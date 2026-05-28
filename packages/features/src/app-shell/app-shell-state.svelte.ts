@@ -47,9 +47,22 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
 
   // Sidebar data — pure transformations, never side effects.
   const sortedThreads = $derived(sortByRecent(threadsStore.threads));
-  const workspaceNodes = $derived<SidebarWorkspaceNode[]>(
+
+  // Phase 7.1 — optimistic thread nodes inserted before backend projection arrives.
+  // Stored separately from the backend tree to avoid mixing UI state into WorkspaceNode[].
+  const optimisticThreadNodes = $state<SidebarWorkspaceNode[]>([]);
+
+  // Backend-only flat list — used for reconciliation without creating a dependency cycle.
+  const backendNodes = $derived<SidebarWorkspaceNode[]>(
     workspacesStore.tree.map(toSidebarWorkspaceNode)
   );
+  const flatBackendNodes = $derived(flattenNodes(backendNodes));
+
+  // Sidebar data — optimistic nodes at top so they appear immediately.
+  const workspaceNodes = $derived<SidebarWorkspaceNode[]>([
+    ...optimisticThreadNodes,
+    ...backendNodes,
+  ]);
 
   /** Flatten the workspace tree for O(n) lookups. */
   function flattenNodes(nodes: SidebarWorkspaceNode[]): SidebarWorkspaceNode[] {
@@ -72,6 +85,55 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
       ? (flatWorkspaceNodes.find((n) => n.kind === "thread" && n.threadId === activeThreadId) ?? null)
       : null
   );
+
+  /**
+   * Phase 7.1 — Auto-reconcile: when a real backend node arrives for an optimistic
+   * placeholder, remove the placeholder. Reads flatBackendNodes (not flatWorkspaceNodes)
+   * to avoid a dependency cycle.
+   */
+  $effect(() => {
+    if (optimisticThreadNodes.length === 0) return;
+    const backendThreadIds = new Set(
+      flatBackendNodes
+        .filter((n) => n.kind === "thread")
+        .map((n) => n.threadId)
+        .filter((id): id is string => Boolean(id))
+    );
+    for (let i = optimisticThreadNodes.length - 1; i >= 0; i--) {
+      const opt = optimisticThreadNodes[i];
+      if (opt.threadId && backendThreadIds.has(opt.threadId)) {
+        optimisticThreadNodes.splice(i, 1);
+      }
+    }
+  });
+
+  /**
+   * Step 7.1 — Insert a syncing placeholder for a brand-new thread the moment
+   * `thread_id` arrives in the chat stream. The node shows a pulsing indicator
+   * until the workspace realtime event fires and the real node is reconciled.
+   * Idempotent: no-ops if the thread is already in the tree.
+   */
+  function insertOptimisticThread(threadId: string, name: string): void {
+    // Don't insert if the real node is already present.
+    const alreadyInBackend = flatBackendNodes.some(
+      (n) => n.kind === "thread" && n.threadId === threadId
+    );
+    if (alreadyInBackend) return;
+    // Don't duplicate an existing optimistic entry.
+    const alreadyOptimistic = optimisticThreadNodes.some((n) => n.threadId === threadId);
+    if (alreadyOptimistic) return;
+
+    optimisticThreadNodes.push({
+      id: `optimistic:${threadId}`,
+      name,
+      kind: "thread",
+      threadId,
+      virtualPath: name,
+      parentId: null,
+      tags: [],
+      syncing: true,
+    });
+  }
 
   /** Call once from the layout's onMount. Stores dedupe internally. */
   function load() {
@@ -142,6 +204,7 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
     deleteWorkspaceNode,
     restoreThread,
     searchWorkspace,
+    insertOptimisticThread,
     selectSmartView: (kind: SmartViewKind) => smartViewsStore.selectView(kind),
     clearSmartView: () => smartViewsStore.clearView(),
   };

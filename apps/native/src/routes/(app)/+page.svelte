@@ -1,11 +1,17 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
-  import { getSdkContext, createChatStore, getWorkspaceNodeContext, uploadUiAttachment } from "@epifly/features";
+  import { getSdkContext, createChatStore, getWorkspaceNodeContext, getWorkspaceActionsContext, uploadUiAttachment } from "@epifly/features";
   import { AppSafeArea, ChatComposer, ChatEmptyState, ChatMessageList } from "@epifly/ui";
 
   const sdk = getSdkContext();
-  const chat = createChatStore(sdk);
   const wsNode = getWorkspaceNodeContext();
+  const wsActions = getWorkspaceActionsContext();
+
+  // Step 7.1 — when the backend assigns a new thread_id, optimistically insert
+  // a syncing node into the workspace tree so it appears instantly in the sidebar.
+  const chat = createChatStore(sdk, {
+    onNewThreadId: (threadId) => wsActions?.insertOptimisticThread(threadId, "New conversation"),
+  });
 
   let hasNavigated = $state(false);
   let fileInputEl = $state<HTMLInputElement | null>(null);

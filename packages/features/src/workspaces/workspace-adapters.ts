@@ -39,6 +39,12 @@ export type SidebarWorkspaceNode = {
   lastActivityAt?: string;
   tags: string[];
   relatedNodeIds?: string[];
+  /**
+   * Phase 7.2 — true while the backend projection is still in progress.
+   * Never comes from the real API; set only on optimistic nodes inserted
+   * client-side before the workspace realtime event arrives.
+   */
+  syncing?: boolean;
 };
 
 /**

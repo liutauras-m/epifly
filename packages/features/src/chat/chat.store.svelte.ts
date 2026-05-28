@@ -1,7 +1,16 @@
 import type { ConusSdk, ChatStreamDelta } from "@conusai/sdk";
 import type { UiMessage, UiTextMessage, UiStreamEvent } from "./chat.types.js";
 
-export function createChatStore(sdk: ConusSdk) {
+export type ChatStoreOptions = {
+  /**
+   * Phase 7.1 — Fired the first time a `thread_id` delta arrives in a stream,
+   * i.e. when a brand-new thread is created. Never fired for messages on an
+   * existing thread (those already have a threadId from `init`).
+   */
+  onNewThreadId?: (threadId: string) => void;
+};
+
+export function createChatStore(sdk: ConusSdk, options?: ChatStoreOptions) {
   let messages = $state<UiMessage[]>([]);
   let isStreaming = $state(false);
   let threadId = $state<string | null>(null);
@@ -87,6 +96,10 @@ export function createChatStore(sdk: ConusSdk) {
       }
 
       case "thread_id":
+        // Phase 7.1 — notify listeners on the very first thread_id (new thread).
+        if (!threadId) {
+          options?.onNewThreadId?.(delta.id);
+        }
         threadId = delta.id;
         break;
 

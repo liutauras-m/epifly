@@ -83,3 +83,28 @@ export function getActiveThreadNodeContext(): ActiveThreadNodeContext {
     }
   );
 }
+
+// ── Workspace actions context (Step 7.1) ───────────────────────────────────
+
+const WS_ACTIONS_CTX = Symbol("workspace-actions-ctx");
+
+/**
+ * Write-side workspace context for chat pages.
+ * Lets new-chat and thread pages notify the workspace tree of optimistic events
+ * without prop-drilling through SvelteKit's layout/page boundary.
+ */
+export type WorkspaceActionsContext = {
+  /**
+   * Insert a syncing placeholder node for a brand-new thread while its
+   * backend projection is in progress. Idempotent — safe to call more than once.
+   */
+  readonly insertOptimisticThread: (threadId: string, name: string) => void;
+};
+
+export function setWorkspaceActionsContext(actions: WorkspaceActionsContext): void {
+  setContext(WS_ACTIONS_CTX, actions);
+}
+
+export function getWorkspaceActionsContext(): WorkspaceActionsContext | null {
+  return getContext<WorkspaceActionsContext>(WS_ACTIONS_CTX) ?? null;
+}

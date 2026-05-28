@@ -2,6 +2,7 @@
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import FileTextIcon from "@lucide/svelte/icons/file-text";
   import FolderIcon from "@lucide/svelte/icons/folder";
+  import LoaderCircleIcon from "@lucide/svelte/icons/loader-circle";
   import MessageSquareIcon from "@lucide/svelte/icons/message-square";
   import MoreHorizontalIcon from "@lucide/svelte/icons/more-horizontal";
   import { cn } from "../../utils/cn.js";
@@ -276,6 +277,16 @@
             <FileTextIcon class="size-3.5 shrink-0 text-sidebar-foreground/60" strokeWidth={1.75} aria-hidden="true" />
           {/if}
           <span class="flex-1 truncate">{node.name}</span>
+
+          {#if node.syncing}
+            <!-- Phase 7.2 — syncing indicator: pulsing spinner, ≤8px, 180ms -->
+            <LoaderCircleIcon
+              class="size-3 shrink-0 animate-spin text-sidebar-foreground/35 [animation-duration:1.4s]"
+              strokeWidth={1.75}
+              aria-label="Still indexing…"
+              role="status"
+            />
+          {/if}
         </button>
 
         <!-- Context menu (hover/focus-visible only) — keyboard + mouse accessible -->

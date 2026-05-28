@@ -130,6 +130,85 @@ describe("updateName", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Phase 7.1 — optimistic thread node logic
+// ---------------------------------------------------------------------------
+
+type OptimisticNode = { id: string; name: string; kind: string; threadId: string; syncing: boolean };
+
+function makeOptimisticNode(threadId: string, name: string): OptimisticNode {
+  return {
+    id: `optimistic:${threadId}`,
+    name,
+    kind: "thread",
+    threadId,
+    syncing: true,
+  };
+}
+
+/** Simulate the insertOptimisticThread guard: idempotent, no duplicates. */
+function insertOptimistic(
+  optimisticNodes: OptimisticNode[],
+  backendThreadIds: Set<string>,
+  threadId: string,
+  name: string
+): OptimisticNode[] {
+  if (backendThreadIds.has(threadId)) return optimisticNodes; // real node present
+  if (optimisticNodes.some((n) => n.threadId === threadId)) return optimisticNodes; // already optimistic
+  return [...optimisticNodes, makeOptimisticNode(threadId, name)];
+}
+
+/** Simulate the auto-reconcile $effect: remove optimistic nodes whose real counterpart arrived. */
+function reconcile(optimisticNodes: OptimisticNode[], backendThreadIds: Set<string>): OptimisticNode[] {
+  return optimisticNodes.filter((n) => !backendThreadIds.has(n.threadId));
+}
+
+describe("optimistic thread node (Phase 7.1)", () => {
+  it("makeOptimisticNode has syncing:true and correct shape", () => {
+    const node = makeOptimisticNode("t_abc", "New conversation");
+    expect(node.syncing).toBe(true);
+    expect(node.threadId).toBe("t_abc");
+    expect(node.kind).toBe("thread");
+    expect(node.id).toBe("optimistic:t_abc");
+  });
+
+  it("insertOptimistic adds node when not present", () => {
+    const result = insertOptimistic([], new Set(), "t_1", "Chat");
+    expect(result).toHaveLength(1);
+    expect(result[0].threadId).toBe("t_1");
+  });
+
+  it("insertOptimistic is idempotent — no duplicates", () => {
+    const existing = [makeOptimisticNode("t_1", "Chat")];
+    const result = insertOptimistic(existing, new Set(), "t_1", "Chat");
+    expect(result).toHaveLength(1);
+  });
+
+  it("insertOptimistic skips when real node already in backend tree", () => {
+    const result = insertOptimistic([], new Set(["t_1"]), "t_1", "Chat");
+    expect(result).toHaveLength(0);
+  });
+
+  it("reconcile removes optimistic node once real node arrives", () => {
+    const nodes = [makeOptimisticNode("t_abc", "New conversation")];
+    const result = reconcile(nodes, new Set(["t_abc"]));
+    expect(result).toHaveLength(0);
+  });
+
+  it("reconcile keeps optimistic nodes whose real node has not arrived", () => {
+    const nodes = [makeOptimisticNode("t_abc", "Chat"), makeOptimisticNode("t_xyz", "Other")];
+    // only t_abc arrived
+    const result = reconcile(nodes, new Set(["t_abc"]));
+    expect(result).toHaveLength(1);
+    expect(result[0].threadId).toBe("t_xyz");
+  });
+
+  it("reconcile is a no-op when optimistic list is empty", () => {
+    const result = reconcile([], new Set(["t_1"]));
+    expect(result).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Revert semantics — no move is performed without explicit confirmation
 // ---------------------------------------------------------------------------
 
