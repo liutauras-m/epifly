@@ -58,6 +58,9 @@ pub async fn login_page() -> impl IntoResponse {
 
 /// `POST /v1/auth/login` — exchange credentials for a JWT.
 ///
+/// When `ZITADEL_ISSUER` is set (OIDC mode) this endpoint returns `410 Gone`
+/// so clients know to use the OIDC authorization-code flow instead.
+///
 /// **Production mode** (`JWT_SECRET` set): validates `email` + `password` against
 /// a credential store (currently env-var stub — plug in your user store here).
 ///
@@ -70,6 +73,7 @@ pub async fn login_page() -> impl IntoResponse {
     responses(
         (status = 200, description = "Login successful", body = LoginResponse),
         (status = 401, description = "Invalid credentials"),
+        (status = 410, description = "Endpoint removed — use OIDC flow"),
     ),
     tag = "auth",
 )]
@@ -77,6 +81,15 @@ pub async fn login(
     State(_state): State<Arc<AppState>>,
     Json(req): Json<LoginRequest>,
 ) -> impl IntoResponse {
+    // When OIDC is configured, this legacy endpoint is gone.
+    if std::env::var("ZITADEL_ISSUER").is_ok() {
+        return (
+            StatusCode::GONE,
+            Json(serde_json::json!({ "error_code": "use_oidc" })),
+        )
+            .into_response();
+    }
+
     if req.email.is_empty() || req.password.is_empty() {
         return (StatusCode::UNAUTHORIZED, "credentials required").into_response();
     }

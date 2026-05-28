@@ -6,7 +6,7 @@
 //! - Inactive token returns `AuthError::TokenExpired`.
 //! - Missing `sub` claim returns `AuthError::InvalidToken`.
 
-use agent_core::identity::zitadel::{ZitadelConfig, ZitadelProvider};
+use agent_core::identity::zitadel::{VerifyMode, ZitadelConfig, ZitadelProvider};
 use agent_core::identity::{AuthError, IdentityProvider};
 use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -15,11 +15,16 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn make_provider(server: &MockServer) -> ZitadelProvider {
     ZitadelProvider::new(ZitadelConfig {
+        issuer: server.uri(),
         domain: server.uri(),
         audience: "test-audience".into(),
+        verify_mode: VerifyMode::Introspection,
+        org_id_claim: "urn:zitadel:iam:user:resourceowner:id".into(),
+        roles_claim: "urn:zitadel:iam:org:project:roles".into(),
         introspection_client_id: "client".into(),
         introspection_client_secret: "secret".into(),
         mgmt_pat: "pat".into(),
+        is_dev: true,
     })
 }
 
@@ -29,7 +34,7 @@ fn active_response(sub: &str, tenant_id: &str) -> serde_json::Value {
         "sub": sub,
         "exp": 9_999_999_999u64,
         "email": format!("{sub}@example.com"),
-        "urn:zitadel:iam:org:id": tenant_id,
+        "urn:zitadel:iam:user:resourceowner:id": tenant_id,
         "urn:conusai:plan_tier": "pro",
         "urn:conusai:subscription_status": "active"
     })

@@ -34,6 +34,15 @@ pub async fn extract_tenant(
         return next.run(req).await;
     }
 
+    // In OIDC/prod mode, reject any attempt to inject a tenant via header —
+    // clients must use a real bearer token.
+    if state.auth_required
+        && (req.headers().contains_key("x-tenant-id")
+            || req.headers().contains_key("X-Tenant-ID"))
+    {
+        return HttpError::bad_request("tenant_header_forbidden").into_response();
+    }
+
     let request_id = req
         .headers()
         .get("x-request-id")

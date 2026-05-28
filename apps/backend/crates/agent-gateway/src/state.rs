@@ -190,7 +190,6 @@ impl AppState {
         }
 
         if is_prod {
-            require("JWT_SECRET", &mut errors);
             require("UI_SESSION_KEY", &mut errors);
             require("SUPER_ADMIN_EMAILS", &mut errors);
             require("PLATFORM_ADMIN_TOKEN", &mut errors);
@@ -216,6 +215,43 @@ impl AppState {
                 );
             }
 
+            // Zitadel mode: ZITADEL_ISSUER replaces JWT_SECRET.
+            // Legacy mode: JWT_SECRET still required (until Phase 9 removes it).
+            if auth_provider == "zitadel" {
+                require("ZITADEL_ISSUER", &mut errors);
+                require("ZITADEL_AUDIENCE", &mut errors);
+
+                // Ambiguity check: if ZITADEL_TOKEN_VERIFY_MODE is not set and
+                // both JWKS-only and introspection credentials are present, fail.
+                let verify_mode = std::env::var("ZITADEL_TOKEN_VERIFY_MODE");
+                let has_introspect_creds =
+                    std::env::var("ZITADEL_INTROSPECTION_CLIENT_ID").is_ok()
+                        && std::env::var("ZITADEL_INTROSPECTION_CLIENT_SECRET").is_ok()
+                        && !std::env::var("ZITADEL_INTROSPECTION_CLIENT_ID")
+                            .unwrap_or_default()
+                            .is_empty()
+                        && !std::env::var("ZITADEL_INTROSPECTION_CLIENT_SECRET")
+                            .unwrap_or_default()
+                            .is_empty();
+                if verify_mode.is_err() && has_introspect_creds {
+                    // Introspect creds present but no explicit mode → require explicit choice.
+                    errors.push(
+                        "ZITADEL_TOKEN_VERIFY_MODE must be set when introspection credentials are \
+                         present; choose 'jwks' (default, local) or 'introspection' (per-request)."
+                            .to_string(),
+                    );
+                }
+
+                // In introspection mode, require the introspection credentials.
+                if verify_mode.as_deref() == Ok("introspection") {
+                    require("ZITADEL_INTROSPECTION_CLIENT_ID", &mut errors);
+                    require("ZITADEL_INTROSPECTION_CLIENT_SECRET", &mut errors);
+                }
+            } else {
+                // Legacy auth still requires JWT_SECRET until Phase 9 removes the route.
+                require("JWT_SECRET", &mut errors);
+            }
+
             // Per-tenant IAM credential encryption must be explicit in production
             // when RustFS integration is configured.
             if std::env::var_os("RUSTFS_ENDPOINT").is_some() {
@@ -236,21 +272,6 @@ impl AppState {
                         "missing required env var: RUSTFS_IAM_ENC_KEY (per-tenant IAM encryption key)"
                             .to_string(),
                     ),
-                }
-            }
-
-            if std::env::var("CONUSAI_AUTH_PROVIDER")
-                .map(|v| v == "zitadel")
-                .unwrap_or(false)
-            {
-                for key in [
-                    "ZITADEL_DOMAIN",
-                    "ZITADEL_AUDIENCE",
-                    "ZITADEL_INTROSPECTION_CLIENT_ID",
-                    "ZITADEL_INTROSPECTION_CLIENT_SECRET",
-                    "ZITADEL_MGMT_PAT",
-                ] {
-                    require(key, &mut errors);
                 }
             }
         }
