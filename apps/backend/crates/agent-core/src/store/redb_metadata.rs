@@ -20,7 +20,7 @@ use common::error::Result as CResult;
 use common::memory::store::{ThreadStore, WorkspaceStore};
 use common::memory::thread::{Message, Thread};
 use common::memory::workspace::{
-    NodeKind, WorkspaceNode, effective_user_id, join_virtual_path, validate_name,
+    NodeKind, WorkspaceNode, WorkspaceNodeKind, effective_user_id, join_virtual_path, validate_name,
 };
 use common::types::ThreadId;
 use redb::{Database, ReadableTable, TableDefinition};
@@ -105,7 +105,13 @@ fn ser_node(v: &WorkspaceNode) -> anyhow::Result<Vec<u8>> {
 }
 
 fn de_node(bytes: &[u8]) -> anyhow::Result<WorkspaceNode> {
-    serde_json::from_slice(bytes).map_err(|e| anyhow::anyhow!("deserialize node: {e}"))
+    let mut node: WorkspaceNode =
+        serde_json::from_slice(bytes).map_err(|e| anyhow::anyhow!("deserialize node: {e}"))?;
+    // Backfill semantic_kind for pre-Step-5.1 folder nodes whose JSON lacked the field.
+    if node.kind == NodeKind::Folder && node.semantic_kind == WorkspaceNodeKind::File {
+        node.semantic_kind = WorkspaceNodeKind::Folder;
+    }
+    Ok(node)
 }
 
 // ── ThreadStore ───────────────────────────────────────────────────────────────
@@ -328,7 +334,7 @@ impl WorkspaceStore for RedbMetadataStore {
         owner_id: &str,
         parent_id: Option<Ulid>,
         name: &str,
-    ) -> anyhow::Result<WorkspaceNode> {
+    ) -> Result<WorkspaceNode, common::memory::store::WorkspaceStoreError> {
         validate_name(name, NodeKind::Folder)?;
         let parent_path = self.get_node_path(tenant_id, parent_id).await?;
         let virtual_path = join_virtual_path(parent_path.as_deref(), name);
@@ -343,7 +349,7 @@ impl WorkspaceStore for RedbMetadataStore {
         owner_id: &str,
         parent_id: Option<Ulid>,
         name: &str,
-    ) -> anyhow::Result<WorkspaceNode> {
+    ) -> Result<WorkspaceNode, common::memory::store::WorkspaceStoreError> {
         validate_name(name, NodeKind::Conversation)?;
         let parent_path = self.get_node_path(tenant_id, parent_id).await?;
         let virtual_path = join_virtual_path(parent_path.as_deref(), name);
@@ -358,7 +364,7 @@ impl WorkspaceStore for RedbMetadataStore {
         tenant_id: &str,
         _user_id: &str,
         parent_id: Option<Ulid>,
-    ) -> anyhow::Result<Vec<WorkspaceNode>> {
+    ) -> Result<Vec<WorkspaceNode>, common::memory::store::WorkspaceStoreError> {
         let tenant = tenant_id.to_string();
         let db = Arc::clone(&self.db);
         task::spawn_blocking(move || -> anyhow::Result<Vec<WorkspaceNode>> {
@@ -383,7 +389,9 @@ impl WorkspaceStore for RedbMetadataStore {
             nodes.sort_by(|a, b| a.name.cmp(&b.name));
             Ok(nodes)
         })
-        .await?
+        .await
+        .unwrap_or_else(|e| Err(anyhow::anyhow!(e)))
+        .map_err(Into::into)
     }
 
     async fn get_accessible_node(
@@ -391,7 +399,7 @@ impl WorkspaceStore for RedbMetadataStore {
         tenant_id: &str,
         _user_id: &str,
         id: Ulid,
-    ) -> anyhow::Result<WorkspaceNode> {
+    ) -> Result<WorkspaceNode, common::memory::store::WorkspaceStoreError> {
         let tenant = tenant_id.to_string();
         let node_id = id.to_string();
         let db = Arc::clone(&self.db);
@@ -403,7 +411,9 @@ impl WorkspaceStore for RedbMetadataStore {
                 None => anyhow::bail!("node {node_id} not found"),
             }
         })
-        .await?
+        .await
+        .unwrap_or_else(|e| Err(anyhow::anyhow!(e)))
+        .map_err(Into::into)
     }
 
     async fn get_ancestors(
@@ -411,7 +421,7 @@ impl WorkspaceStore for RedbMetadataStore {
         tenant_id: &str,
         user_id: &str,
         node_id: Ulid,
-    ) -> anyhow::Result<Vec<WorkspaceNode>> {
+    ) -> Result<Vec<WorkspaceNode>, common::memory::store::WorkspaceStoreError> {
         let mut ancestors = Vec::new();
         let mut current = self
             .get_accessible_node(tenant_id, user_id, node_id)
@@ -430,7 +440,7 @@ impl WorkspaceStore for RedbMetadataStore {
         node_id: Ulid,
         new_parent: Option<Ulid>,
         _new_parent_path: Option<&str>,
-    ) -> anyhow::Result<WorkspaceNode> {
+    ) -> Result<WorkspaceNode, common::memory::store::WorkspaceStoreError> {
         let mut node = self
             .get_accessible_node(tenant_id, user_id, node_id)
             .await?;
@@ -446,7 +456,7 @@ impl WorkspaceStore for RedbMetadataStore {
         &self,
         tenant_id: &str,
         node_id: Ulid,
-    ) -> anyhow::Result<Vec<common::memory::store::DeletePlanNode>> {
+    ) -> Result<Vec<common::memory::store::DeletePlanNode>, common::memory::store::WorkspaceStoreError> {
         let tenant = tenant_id.to_string();
         let root_id = node_id;
         let db = Arc::clone(&self.db);
@@ -486,7 +496,9 @@ impl WorkspaceStore for RedbMetadataStore {
             }
             Ok(result)
         })
-        .await?
+        .await
+        .unwrap_or_else(|e| Err(anyhow::anyhow!(e)))
+        .map_err(Into::into)
     }
 
     async fn delete_node(
@@ -494,7 +506,7 @@ impl WorkspaceStore for RedbMetadataStore {
         tenant_id: &str,
         _user_id: &str,
         node_id: Ulid,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), common::memory::store::WorkspaceStoreError> {
         let tenant = tenant_id.to_string();
         let nid = node_id.to_string();
         let db = Arc::clone(&self.db);
@@ -552,7 +564,9 @@ impl WorkspaceStore for RedbMetadataStore {
             txn.commit()?;
             Ok(())
         })
-        .await?
+        .await
+        .unwrap_or_else(|e| Err(anyhow::anyhow!(e)))
+        .map_err(Into::into)
     }
 
     async fn rename_node(
@@ -561,7 +575,7 @@ impl WorkspaceStore for RedbMetadataStore {
         user_id: &str,
         node_id: Ulid,
         new_name: String,
-    ) -> anyhow::Result<WorkspaceNode> {
+    ) -> Result<WorkspaceNode, common::memory::store::WorkspaceStoreError> {
         let node = self
             .get_accessible_node(tenant_id, user_id, node_id)
             .await?;
@@ -599,7 +613,7 @@ impl WorkspaceStore for RedbMetadataStore {
             txn.commit()?;
             Ok(updated)
         })
-        .await??;
+        .await.unwrap_or_else(|e| Err(anyhow::anyhow!(e)))?;
         Ok(updated)
     }
 
@@ -609,7 +623,7 @@ impl WorkspaceStore for RedbMetadataStore {
         _owner_id: &str,
         node_id: Ulid,
         with_user_id: &str,
-    ) -> anyhow::Result<WorkspaceNode> {
+    ) -> Result<WorkspaceNode, common::memory::store::WorkspaceStoreError> {
         let uid = with_user_id.to_string();
         self.modify_node(tenant_id, node_id, move |n| {
             if !n.shared_with.contains(&uid) {
@@ -617,6 +631,7 @@ impl WorkspaceStore for RedbMetadataStore {
             }
         })
         .await
+        .map_err(Into::into)
     }
 
     async fn unshare_node(
@@ -625,17 +640,19 @@ impl WorkspaceStore for RedbMetadataStore {
         _owner_id: &str,
         node_id: Ulid,
         with_user_id: &str,
-    ) -> anyhow::Result<WorkspaceNode> {
+    ) -> Result<WorkspaceNode, common::memory::store::WorkspaceStoreError> {
         let uid = with_user_id.to_string();
         self.modify_node(tenant_id, node_id, move |n| {
             n.shared_with.retain(|u| u != &uid);
         })
         .await
+        .map_err(Into::into)
     }
 
-    async fn bump_last_modified(&self, tenant_id: &str, node_id: Ulid) -> anyhow::Result<()> {
+    async fn bump_last_modified(&self, tenant_id: &str, node_id: Ulid) -> Result<(), common::memory::store::WorkspaceStoreError> {
         self.modify_node(tenant_id, node_id, |n| n.last_modified = Utc::now())
             .await
+            .map_err(Into::into)
             .map(|_| ())
     }
 
@@ -645,7 +662,7 @@ impl WorkspaceStore for RedbMetadataStore {
         _user_id: &str,
         query: &str,
         limit: usize,
-    ) -> anyhow::Result<Vec<WorkspaceNode>> {
+    ) -> Result<Vec<WorkspaceNode>, common::memory::store::WorkspaceStoreError> {
         let tenant = tenant_id.to_string();
         let q = query.to_lowercase();
         let db = Arc::clone(&self.db);
@@ -674,7 +691,9 @@ impl WorkspaceStore for RedbMetadataStore {
             }
             Ok(nodes)
         })
-        .await?
+        .await
+        .unwrap_or_else(|e| Err(anyhow::anyhow!(e)))
+        .map_err(Into::into)
     }
 
     async fn semantic_search_nodes(
@@ -683,7 +702,7 @@ impl WorkspaceStore for RedbMetadataStore {
         user_id: &str,
         query: &str,
         limit: usize,
-    ) -> anyhow::Result<Vec<WorkspaceNode>> {
+    ) -> Result<Vec<WorkspaceNode>, common::memory::store::WorkspaceStoreError> {
         // Semantic search is done via QdrantVectorStore by the caller.
         // Fall back to name search here.
         self.search_nodes(tenant_id, user_id, query, limit).await
@@ -694,7 +713,7 @@ impl WorkspaceStore for RedbMetadataStore {
         _tenant_id: &str,
         _node_id: Ulid,
         _content: &str,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), common::memory::store::WorkspaceStoreError> {
         // Content indexing is handled by the QdrantVectorStore + EmbeddingService pipeline.
         Ok(())
     }
@@ -704,7 +723,7 @@ impl WorkspaceStore for RedbMetadataStore {
         tenant_id: &str,
         node_id: Ulid,
         thread_id: &str,
-    ) -> anyhow::Result<WorkspaceNode> {
+    ) -> Result<WorkspaceNode, common::memory::store::WorkspaceStoreError> {
         let tid = thread_id.to_string();
         self.modify_node(tenant_id, node_id, move |n| {
             if n.metadata.is_null() {
@@ -713,9 +732,10 @@ impl WorkspaceStore for RedbMetadataStore {
             n.metadata["thread_id"] = json!(tid);
         })
         .await
+        .map_err(Into::into)
     }
 
-    async fn is_tenant_seeded(&self, tenant_id: &str) -> anyhow::Result<bool> {
+    async fn is_tenant_seeded(&self, tenant_id: &str) -> Result<bool, common::memory::store::WorkspaceStoreError> {
         let key = tenant_id.to_string();
         let db = Arc::clone(&self.db);
         task::spawn_blocking(move || -> anyhow::Result<bool> {
@@ -727,10 +747,12 @@ impl WorkspaceStore for RedbMetadataStore {
             };
             Ok(tbl.get(key.as_str())?.is_some())
         })
-        .await?
+        .await
+        .unwrap_or_else(|e| Err(anyhow::anyhow!(e)))
+        .map_err(Into::into)
     }
 
-    async fn mark_tenant_seeded(&self, tenant_id: &str) -> anyhow::Result<()> {
+    async fn mark_tenant_seeded(&self, tenant_id: &str) -> Result<(), common::memory::store::WorkspaceStoreError> {
         let key = tenant_id.to_string();
         let db = Arc::clone(&self.db);
         task::spawn_blocking(move || -> anyhow::Result<()> {
@@ -742,7 +764,9 @@ impl WorkspaceStore for RedbMetadataStore {
             txn.commit()?;
             Ok(())
         })
-        .await?
+        .await
+        .unwrap_or_else(|e| Err(anyhow::anyhow!(e)))
+        .map_err(Into::into)
     }
 
     async fn create_protected_root_folder(
@@ -750,7 +774,7 @@ impl WorkspaceStore for RedbMetadataStore {
         tenant_id: &str,
         owner_id: &str,
         name: &str,
-    ) -> anyhow::Result<WorkspaceNode> {
+    ) -> Result<WorkspaceNode, common::memory::store::WorkspaceStoreError> {
         validate_name(name, NodeKind::Folder)?;
         let virtual_path = name.to_owned();
         let mut node = WorkspaceNode::new_folder(tenant_id, owner_id, None, name, &virtual_path);
@@ -759,7 +783,7 @@ impl WorkspaceStore for RedbMetadataStore {
         Ok(node)
     }
 
-    async fn purge_tenant_data(&self, tenant_id: &str) -> anyhow::Result<()> {
+    async fn purge_tenant_data(&self, tenant_id: &str) -> Result<(), common::memory::store::WorkspaceStoreError> {
         let tenant = tenant_id.to_string();
         let db = Arc::clone(&self.db);
         task::spawn_blocking(move || -> anyhow::Result<()> {
@@ -821,7 +845,88 @@ impl WorkspaceStore for RedbMetadataStore {
             txn.commit()?;
             Ok(())
         })
-        .await?
+        .await
+        .unwrap_or_else(|e| Err(anyhow::anyhow!(e)))
+        .map_err(Into::into)
+    }
+
+    async fn upsert_node(&self, node: WorkspaceNode) -> Result<(), common::memory::store::WorkspaceStoreError> {
+        self.insert_node(node).await.map_err(Into::into)
+    }
+
+    async fn get_hidden_at(
+        &self,
+        tenant_id: &str,
+        node_id: Ulid,
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, common::memory::store::WorkspaceStoreError> {
+        let tenant = tenant_id.to_string();
+        let nid = node_id.to_string();
+        let db = Arc::clone(&self.db);
+        task::spawn_blocking(move || {
+            let rtx = db.begin_read()?;
+            let tbl = rtx.open_table(NODES)?;
+            match tbl.get((tenant.as_str(), nid.as_str()))? {
+                Some(v) => {
+                    let n = de_node(v.value())?;
+                    Ok(n.hidden_at)
+                }
+                None => Ok(None),
+            }
+        })
+        .await
+        .unwrap_or_else(|e| Err(anyhow::anyhow!(e)))
+        .map_err(Into::into)
+    }
+
+    async fn hide_node(
+        &self,
+        tenant_id: &str,
+        node_id: Ulid,
+    ) -> Result<(), common::memory::store::WorkspaceStoreError> {
+        self.modify_node(tenant_id, node_id, |n| {
+            n.hidden_at = Some(chrono::Utc::now());
+        })
+        .await
+        .map(|_| ())
+        .map_err(Into::into)
+    }
+
+    async fn unhide_node(
+        &self,
+        tenant_id: &str,
+        node_id: Ulid,
+    ) -> Result<(), common::memory::store::WorkspaceStoreError> {
+        self.modify_node(tenant_id, node_id, |n| {
+            n.hidden_at = None;
+        })
+        .await
+        .map(|_| ())
+        .map_err(Into::into)
+    }
+
+    async fn scan_nodes_needing_backfill(
+        &self,
+    ) -> Result<Vec<WorkspaceNode>, common::memory::store::WorkspaceStoreError> {
+        let db = Arc::clone(&self.db);
+        task::spawn_blocking(move || -> anyhow::Result<Vec<WorkspaceNode>> {
+            let txn = db.begin_read()?;
+            let tbl = txn.open_table(NODES)?;
+            let mut result = Vec::new();
+            for item in tbl.iter()? {
+                let (_, v) = item?;
+                match de_node(v.value()) {
+                    Ok(node) if node.object_key.is_none() => result.push(node),
+                    Ok(_) => {} // already migrated
+                    Err(e) => {
+                        tracing::warn!(error = %e, "backfill scan: skipping unreadable node row");
+                    }
+                }
+            }
+            Ok(result)
+        })
+        .await
+        .unwrap_or_else(|e| Err(anyhow::anyhow!(e)))
+        .map_err(Into::into)
     }
 }
 

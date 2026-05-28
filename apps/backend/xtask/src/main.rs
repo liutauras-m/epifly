@@ -3,12 +3,14 @@
 //! Usage:
 //!   cargo xtask capabilities lint [--dir <path>]
 //!   cargo xtask capabilities lint --strict
+//!   cargo xtask audit-object-keys --db <path>
 
 use agent_core::capabilities::manifest::{ToolKind, ToolManifest};
 use agent_core::capabilities::validator::RegisteredToolValidator;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
+use redb::{Database, ReadableTable, TableDefinition};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -21,6 +23,7 @@ fn main() -> anyhow::Result<()> {
             CapabilitiesCommand::Lint(args) => lint(args),
             CapabilitiesCommand::Validate(args) => validate_capabilities(args),
         },
+        Command::AuditObjectKeys(args) => audit_object_keys(args),
     }
 }
 
@@ -43,6 +46,13 @@ enum Command {
         #[command(subcommand)]
         sub: CapabilitiesCommand,
     },
+    /// Report object_key migration coverage for the Step 3.5 cutover gate.
+    ///
+    /// Opens a redb workspace database and counts nodes that still rely on
+    /// the legacy virtual_path key (object_key IS NULL).  Exit code 0 means
+    /// 100% coverage; exit code 1 means migration is incomplete.
+    #[command(name = "audit-object-keys")]
+    AuditObjectKeys(AuditObjectKeysArgs),
 }
 
 #[derive(Subcommand)]
@@ -512,6 +522,133 @@ fn lint_one(path: &Path) -> (usize, usize) {
 
     println!("  {} [{}]", status, rel);
     (errors, warnings)
+}
+
+// ── audit-object-keys ─────────────────────────────────────────────────────────
+
+#[derive(Parser)]
+struct AuditObjectKeysArgs {
+    /// Path to the redb workspace database file.
+    #[arg(long, short)]
+    db: PathBuf,
+
+    /// Print sample node IDs that still need migration (up to 50).
+    #[arg(long)]
+    show_sample: bool,
+}
+
+/// Minimal node shape for the audit — only the fields we need.
+#[derive(Deserialize)]
+struct AuditNode {
+    #[serde(default)]
+    object_key: Option<String>,
+    id: Option<serde_json::Value>,
+}
+
+/// Workspace nodes table — mirrors the definition in `redb_metadata.rs`.
+const WORKSPACE_NODES: TableDefinition<(&str, &str), &[u8]> =
+    TableDefinition::new("workspace_nodes");
+
+fn audit_object_keys(args: AuditObjectKeysArgs) -> anyhow::Result<()> {
+    if !args.db.exists() {
+        anyhow::bail!("database not found: {}", args.db.display());
+    }
+
+    let db = Database::open(&args.db)
+        .with_context(|| format!("failed to open redb at {}", args.db.display()))?;
+
+    let txn = db.begin_read().context("begin read txn")?;
+
+    let tbl = match txn.open_table(WORKSPACE_NODES) {
+        Ok(t) => t,
+        Err(redb::TableError::TableDoesNotExist(_)) => {
+            println!(
+                "{}",
+                "workspace_nodes table not found — database has never been written to".yellow()
+            );
+            return Ok(());
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    let mut total = 0usize;
+    let mut needing: Vec<String> = Vec::new();
+    let mut unreadable = 0usize;
+
+    for item in tbl.iter().context("iterate nodes table")? {
+        let (_, v) = item.context("read node row")?;
+        total += 1;
+        match serde_json::from_slice::<AuditNode>(v.value()) {
+            Ok(node) if node.object_key.is_none() => {
+                let id = node
+                    .id
+                    .as_ref()
+                    .map(|v| match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    })
+                    .unwrap_or_else(|| "<unknown>".into());
+                needing.push(id);
+            }
+            Ok(_) => {}
+            Err(_) => {
+                unreadable += 1;
+            }
+        }
+    }
+
+    let migrated = total.saturating_sub(needing.len());
+    let coverage_pct = if total == 0 {
+        100.0f64
+    } else {
+        (migrated as f64 / total as f64) * 100.0
+    };
+
+    println!();
+    println!("  {} total workspace nodes", total);
+    println!("  {} migrated ({:.1}%)", migrated, coverage_pct);
+    println!(
+        "  {} still need backfill (object_key IS NULL)",
+        needing.len()
+    );
+    if unreadable > 0 {
+        println!(
+            "  {} {unreadable} node row(s) could not be deserialized",
+            "WARN".yellow().bold(),
+        );
+    }
+    println!();
+
+    if args.show_sample && !needing.is_empty() {
+        println!("Sample node IDs needing migration (up to 50):");
+        for id in needing.iter().take(50) {
+            println!("  - {id}");
+        }
+        println!();
+    }
+
+    if needing.is_empty() {
+        println!(
+            "{}",
+            "✓ 100% coverage — ready for Step 3.5 cutover"
+                .green()
+                .bold()
+        );
+        Ok(())
+    } else {
+        println!(
+            "{}",
+            format!(
+                "✗ Migration incomplete — {}/{} nodes still need backfill. \
+                 Run: POST /internal/jobs/workspace-backfill-object-key/trigger",
+                needing.len(),
+                total
+            )
+            .red()
+            .bold()
+        );
+        std::process::exit(1);
+    }
 }
 
 fn find_workspace_root(start: &Path) -> Option<PathBuf> {

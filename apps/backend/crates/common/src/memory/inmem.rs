@@ -185,7 +185,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         owner_id: &str,
         parent_id: Option<Ulid>,
         name: &str,
-    ) -> anyhow::Result<WorkspaceNode> {
+    ) -> Result<WorkspaceNode, crate::memory::store::WorkspaceStoreError> {
         validate_name(name, NodeKind::Folder).map_err(|e| anyhow::anyhow!("{e}"))?;
         let parent_path = if let Some(pid) = parent_id {
             self.get_node(pid)
@@ -207,7 +207,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         owner_id: &str,
         parent_id: Option<Ulid>,
         name: &str,
-    ) -> anyhow::Result<WorkspaceNode> {
+    ) -> Result<WorkspaceNode, crate::memory::store::WorkspaceStoreError> {
         validate_name(name, NodeKind::Conversation).map_err(|e| anyhow::anyhow!("{e}"))?;
         let parent_path = if let Some(pid) = parent_id {
             self.get_node(pid)
@@ -229,7 +229,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         tenant_id: &str,
         user_id: &str,
         parent_id: Option<Ulid>,
-    ) -> anyhow::Result<Vec<WorkspaceNode>> {
+    ) -> Result<Vec<WorkspaceNode>, crate::memory::store::WorkspaceStoreError> {
         let nodes = self.nodes.lock().unwrap();
         let mut result: Vec<WorkspaceNode> = nodes
             .values()
@@ -249,7 +249,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         tenant_id: &str,
         user_id: &str,
         id: Ulid,
-    ) -> anyhow::Result<WorkspaceNode> {
+    ) -> Result<WorkspaceNode, crate::memory::store::WorkspaceStoreError> {
         let node = self
             .get_node(id)
             .filter(|n| n.tenant_id == tenant_id)
@@ -257,7 +257,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
                 anyhow::anyhow!(crate::error::ConusAiError::NotFound(format!("node {id}")))
             })?;
         if !Self::check_access(&node, user_id) {
-            anyhow::bail!(crate::error::ConusAiError::NotFound(format!("node {id}")));
+            return Err(crate::memory::store::WorkspaceStoreError::NotFound);
         }
         Ok(node)
     }
@@ -267,7 +267,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         tenant_id: &str,
         user_id: &str,
         node_id: Ulid,
-    ) -> anyhow::Result<Vec<WorkspaceNode>> {
+    ) -> Result<Vec<WorkspaceNode>, crate::memory::store::WorkspaceStoreError> {
         let mut ancestors = vec![];
         let mut current_id = node_id;
         loop {
@@ -299,7 +299,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         node_id: Ulid,
         new_parent: Option<Ulid>,
         new_parent_path: Option<&str>,
-    ) -> anyhow::Result<WorkspaceNode> {
+    ) -> Result<WorkspaceNode, crate::memory::store::WorkspaceStoreError> {
         let mut nodes = self.nodes.lock().unwrap();
         let node = nodes
             .get_mut(&node_id)
@@ -319,7 +319,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         &self,
         tenant_id: &str,
         node_id: Ulid,
-    ) -> anyhow::Result<Vec<crate::memory::store::DeletePlanNode>> {
+    ) -> Result<Vec<crate::memory::store::DeletePlanNode>, crate::memory::store::WorkspaceStoreError> {
         let mut result = Vec::new();
         let mut worklist = vec![node_id];
         while let Some(current) = worklist.pop() {
@@ -353,7 +353,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         tenant_id: &str,
         user_id: &str,
         node_id: Ulid,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), crate::memory::store::WorkspaceStoreError> {
         // Verify access first; block deletion of protected roots.
         {
             let nodes = self.nodes.lock().unwrap();
@@ -366,7 +366,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
                     )))
                 })?;
             if node.is_protected_root {
-                anyhow::bail!("cannot delete protected workspace root folder");
+                return Err(crate::memory::store::WorkspaceStoreError::Forbidden);
             }
         }
 
@@ -394,7 +394,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         user_id: &str,
         node_id: Ulid,
         new_name: String,
-    ) -> anyhow::Result<WorkspaceNode> {
+    ) -> Result<WorkspaceNode, crate::memory::store::WorkspaceStoreError> {
         let mut nodes = self.nodes.lock().unwrap();
         let node = nodes
             .get_mut(&node_id)
@@ -422,7 +422,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         owner_id: &str,
         node_id: Ulid,
         with_user_id: &str,
-    ) -> anyhow::Result<WorkspaceNode> {
+    ) -> Result<WorkspaceNode, crate::memory::store::WorkspaceStoreError> {
         let mut nodes = self.nodes.lock().unwrap();
         let node = nodes
             .get_mut(&node_id)
@@ -445,7 +445,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         owner_id: &str,
         node_id: Ulid,
         with_user_id: &str,
-    ) -> anyhow::Result<WorkspaceNode> {
+    ) -> Result<WorkspaceNode, crate::memory::store::WorkspaceStoreError> {
         let mut nodes = self.nodes.lock().unwrap();
         let node = nodes
             .get_mut(&node_id)
@@ -460,7 +460,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         Ok(node.clone())
     }
 
-    async fn bump_last_modified(&self, _tenant_id: &str, node_id: Ulid) -> anyhow::Result<()> {
+    async fn bump_last_modified(&self, _tenant_id: &str, node_id: Ulid) -> Result<(), crate::memory::store::WorkspaceStoreError> {
         if let Some(node) = self.nodes.lock().unwrap().get_mut(&node_id) {
             node.last_modified = Utc::now();
         }
@@ -473,7 +473,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         user_id: &str,
         query: &str,
         limit: usize,
-    ) -> anyhow::Result<Vec<WorkspaceNode>> {
+    ) -> Result<Vec<WorkspaceNode>, crate::memory::store::WorkspaceStoreError> {
         let q = query.to_lowercase();
         let nodes = self.nodes.lock().unwrap();
         let content = self.content.lock().unwrap();
@@ -499,7 +499,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         _tenant_id: &str,
         node_id: Ulid,
         content: &str,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), crate::memory::store::WorkspaceStoreError> {
         self.content
             .lock()
             .unwrap()
@@ -513,7 +513,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         user_id: &str,
         query: &str,
         limit: usize,
-    ) -> anyhow::Result<Vec<WorkspaceNode>> {
+    ) -> Result<Vec<WorkspaceNode>, crate::memory::store::WorkspaceStoreError> {
         // In-memory store has no embedding engine — fall back to full-text search.
         self.search_nodes(tenant_id, user_id, query, limit).await
     }
@@ -523,7 +523,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         tenant_id: &str,
         node_id: Ulid,
         thread_id: &str,
-    ) -> anyhow::Result<WorkspaceNode> {
+    ) -> Result<WorkspaceNode, crate::memory::store::WorkspaceStoreError> {
         let mut nodes = self.nodes.lock().unwrap();
         let node = nodes
             .get_mut(&node_id)
@@ -546,11 +546,11 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         Ok(node.clone())
     }
 
-    async fn is_tenant_seeded(&self, tenant_id: &str) -> anyhow::Result<bool> {
+    async fn is_tenant_seeded(&self, tenant_id: &str) -> Result<bool, crate::memory::store::WorkspaceStoreError> {
         Ok(self.seeded.lock().unwrap().contains(tenant_id))
     }
 
-    async fn mark_tenant_seeded(&self, tenant_id: &str) -> anyhow::Result<()> {
+    async fn mark_tenant_seeded(&self, tenant_id: &str) -> Result<(), crate::memory::store::WorkspaceStoreError> {
         self.seeded.lock().unwrap().insert(tenant_id.to_owned());
         Ok(())
     }
@@ -560,7 +560,7 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         tenant_id: &str,
         owner_id: &str,
         name: &str,
-    ) -> anyhow::Result<WorkspaceNode> {
+    ) -> Result<WorkspaceNode, crate::memory::store::WorkspaceStoreError> {
         validate_name(name, NodeKind::Folder).map_err(|e| anyhow::anyhow!("{e}"))?;
         let virtual_path = name.to_owned();
         let mut node = WorkspaceNode::new_folder(tenant_id, owner_id, None, name, virtual_path);
@@ -569,13 +569,76 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         Ok(node)
     }
 
-    async fn purge_tenant_data(&self, tenant_id: &str) -> anyhow::Result<()> {
+    async fn purge_tenant_data(&self, tenant_id: &str) -> Result<(), crate::memory::store::WorkspaceStoreError> {
         self.nodes
             .lock()
             .unwrap()
             .retain(|_, node| node.tenant_id != tenant_id);
         self.seeded.lock().unwrap().remove(tenant_id);
         Ok(())
+    }
+
+    async fn upsert_node(&self, node: WorkspaceNode) -> Result<(), crate::memory::store::WorkspaceStoreError> {
+        self.nodes.lock().unwrap().insert(node.id, node);
+        Ok(())
+    }
+
+    async fn get_hidden_at(
+        &self,
+        tenant_id: &str,
+        node_id: Ulid,
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, crate::memory::store::WorkspaceStoreError> {
+        Ok(self
+            .nodes
+            .lock()
+            .unwrap()
+            .get(&node_id)
+            .filter(|n| n.tenant_id == tenant_id)
+            .and_then(|n| n.hidden_at))
+    }
+
+    async fn hide_node(
+        &self,
+        tenant_id: &str,
+        node_id: Ulid,
+    ) -> Result<(), crate::memory::store::WorkspaceStoreError> {
+        let mut nodes = self.nodes.lock().unwrap();
+        let node = nodes
+            .get_mut(&node_id)
+            .filter(|n| n.tenant_id == tenant_id)
+            .ok_or_else(|| anyhow::anyhow!("node not found"))?;
+        node.hidden_at = Some(chrono::Utc::now());
+        Ok(())
+    }
+
+    async fn unhide_node(
+        &self,
+        tenant_id: &str,
+        node_id: Ulid,
+    ) -> Result<(), crate::memory::store::WorkspaceStoreError> {
+        let mut nodes = self.nodes.lock().unwrap();
+        let node = nodes
+            .get_mut(&node_id)
+            .filter(|n| n.tenant_id == tenant_id)
+            .ok_or_else(|| anyhow::anyhow!("node not found"))?;
+        node.hidden_at = None;
+        Ok(())
+    }
+
+    async fn scan_nodes_needing_backfill(
+        &self,
+    ) -> Result<Vec<WorkspaceNode>, crate::memory::store::WorkspaceStoreError> {
+        // In-memory stores are ephemeral — content does not persist between restarts, so
+        // there is never a legacy virtual_path → node_id backfill to perform.
+        // Return the nodes that lack object_key for completeness (tests can inspect them),
+        // but the caller should no-op on an empty result.
+        let nodes = self.nodes.lock().unwrap();
+        let result = nodes
+            .values()
+            .filter(|n| n.object_key.is_none())
+            .cloned()
+            .collect();
+        Ok(result)
     }
 }
 
@@ -594,29 +657,45 @@ impl InMemoryWorkspaceContent {
 
 #[async_trait]
 impl WorkspaceContentStore for InMemoryWorkspaceContent {
-    async fn read(&self, tenant_id: &str, virtual_path: &str) -> anyhow::Result<String> {
+    async fn read(
+        &self,
+        tenant_id: &str,
+        key: &str,
+        _legacy_key: Option<&str>,
+    ) -> anyhow::Result<String> {
         Ok(self
             .store
             .lock()
             .unwrap()
-            .get(&(tenant_id.to_owned(), virtual_path.to_owned()))
+            .get(&(tenant_id.to_owned(), key.to_owned()))
             .cloned()
             .unwrap_or_default())
     }
 
-    async fn write(&self, tenant_id: &str, virtual_path: &str, body: &str) -> anyhow::Result<()> {
+    async fn write(
+        &self,
+        tenant_id: &str,
+        key: &str,
+        _legacy_key: Option<&str>,
+        body: &str,
+    ) -> anyhow::Result<()> {
         self.store.lock().unwrap().insert(
-            (tenant_id.to_owned(), virtual_path.to_owned()),
+            (tenant_id.to_owned(), key.to_owned()),
             body.to_owned(),
         );
         Ok(())
     }
 
-    async fn delete(&self, tenant_id: &str, virtual_path: &str) -> anyhow::Result<()> {
+    async fn delete(
+        &self,
+        tenant_id: &str,
+        key: &str,
+        _legacy_key: Option<&str>,
+    ) -> anyhow::Result<()> {
         self.store
             .lock()
             .unwrap()
-            .remove(&(tenant_id.to_owned(), virtual_path.to_owned()));
+            .remove(&(tenant_id.to_owned(), key.to_owned()));
         Ok(())
     }
 }

@@ -1,7 +1,51 @@
 use super::thread::{Message, Thread};
 use super::workspace::{NodeKind, WorkspaceNode};
 use async_trait::async_trait;
+use thiserror::Error;
 use ulid::Ulid;
+
+// ── Typed workspace store error ───────────────────────────────────────────────
+
+#[derive(Debug, Error)]
+pub enum WorkspaceStoreError {
+    #[error("validation: {0}")]
+    Validation(String),
+    #[error("node not found")]
+    NotFound,
+    #[error("forbidden")]
+    Forbidden,
+    #[error("conflict")]
+    Conflict,
+    #[error("storage: {0}")]
+    Storage(String),
+}
+
+impl From<anyhow::Error> for WorkspaceStoreError {
+    fn from(e: anyhow::Error) -> Self {
+        let msg = e.to_string();
+        if msg.contains("not found") {
+            Self::NotFound
+        } else if msg.contains("validation error") || msg.contains("invalid name") {
+            Self::Validation(msg)
+        } else if msg.contains("forbidden") || msg.contains("permission denied") {
+            Self::Forbidden
+        } else if msg.contains("conflict") || msg.contains("already exists") {
+            Self::Conflict
+        } else {
+            Self::Storage(msg)
+        }
+    }
+}
+
+impl From<crate::error::ConusAiError> for WorkspaceStoreError {
+    fn from(e: crate::error::ConusAiError) -> Self {
+        match e {
+            crate::error::ConusAiError::NotFound(_) => Self::NotFound,
+            crate::error::ConusAiError::Validation(msg) => Self::Validation(msg),
+            _ => Self::Storage(e.to_string()),
+        }
+    }
+}
 
 /// Minimal node reference captured before a delete for post-delete cleanup.
 #[derive(Debug, Clone)]
@@ -81,7 +125,7 @@ pub trait WorkspaceStore: Send + Sync + 'static {
         owner_id: &str,
         parent_id: Option<Ulid>,
         name: &str,
-    ) -> anyhow::Result<WorkspaceNode>;
+    ) -> Result<WorkspaceNode, WorkspaceStoreError>;
 
     async fn create_conversation(
         &self,
@@ -89,28 +133,28 @@ pub trait WorkspaceStore: Send + Sync + 'static {
         owner_id: &str,
         parent_id: Option<Ulid>,
         name: &str,
-    ) -> anyhow::Result<WorkspaceNode>;
+    ) -> Result<WorkspaceNode, WorkspaceStoreError>;
 
     async fn list_accessible_children(
         &self,
         tenant_id: &str,
         user_id: &str,
         parent_id: Option<Ulid>,
-    ) -> anyhow::Result<Vec<WorkspaceNode>>;
+    ) -> Result<Vec<WorkspaceNode>, WorkspaceStoreError>;
 
     async fn get_accessible_node(
         &self,
         tenant_id: &str,
         user_id: &str,
         id: Ulid,
-    ) -> anyhow::Result<WorkspaceNode>;
+    ) -> Result<WorkspaceNode, WorkspaceStoreError>;
 
     async fn get_ancestors(
         &self,
         tenant_id: &str,
         user_id: &str,
         node_id: Ulid,
-    ) -> anyhow::Result<Vec<WorkspaceNode>>;
+    ) -> Result<Vec<WorkspaceNode>, WorkspaceStoreError>;
 
     async fn move_node(
         &self,
@@ -119,7 +163,7 @@ pub trait WorkspaceStore: Send + Sync + 'static {
         node_id: Ulid,
         new_parent: Option<Ulid>,
         new_parent_path: Option<&str>,
-    ) -> anyhow::Result<WorkspaceNode>;
+    ) -> Result<WorkspaceNode, WorkspaceStoreError>;
 
     /// Enumerate the root node and all its descendants that would be removed by
     /// `delete_node`. Must be called **before** `delete_node` so that cleanup
@@ -128,14 +172,14 @@ pub trait WorkspaceStore: Send + Sync + 'static {
         &self,
         tenant_id: &str,
         node_id: Ulid,
-    ) -> anyhow::Result<Vec<DeletePlanNode>>;
+    ) -> Result<Vec<DeletePlanNode>, WorkspaceStoreError>;
 
     async fn delete_node(
         &self,
         tenant_id: &str,
         user_id: &str,
         node_id: Ulid,
-    ) -> anyhow::Result<()>;
+    ) -> Result<(), WorkspaceStoreError>;
 
     /// Rename a workspace node. Protected root folders can be renamed by admins
     /// (`tenant:admin` role is checked at the route layer, not here).
@@ -146,7 +190,7 @@ pub trait WorkspaceStore: Send + Sync + 'static {
         user_id: &str,
         node_id: Ulid,
         new_name: String,
-    ) -> anyhow::Result<WorkspaceNode>;
+    ) -> Result<WorkspaceNode, WorkspaceStoreError>;
 
     async fn share_node(
         &self,
@@ -154,7 +198,7 @@ pub trait WorkspaceStore: Send + Sync + 'static {
         owner_id: &str,
         node_id: Ulid,
         with_user_id: &str,
-    ) -> anyhow::Result<WorkspaceNode>;
+    ) -> Result<WorkspaceNode, WorkspaceStoreError>;
 
     async fn unshare_node(
         &self,
@@ -162,9 +206,13 @@ pub trait WorkspaceStore: Send + Sync + 'static {
         owner_id: &str,
         node_id: Ulid,
         with_user_id: &str,
-    ) -> anyhow::Result<WorkspaceNode>;
+    ) -> Result<WorkspaceNode, WorkspaceStoreError>;
 
-    async fn bump_last_modified(&self, tenant_id: &str, node_id: Ulid) -> anyhow::Result<()>;
+    async fn bump_last_modified(
+        &self,
+        tenant_id: &str,
+        node_id: Ulid,
+    ) -> Result<(), WorkspaceStoreError>;
 
     /// Full-text search over node names AND virtual_path accessible to `user_id`.
     async fn search_nodes(
@@ -173,7 +221,7 @@ pub trait WorkspaceStore: Send + Sync + 'static {
         user_id: &str,
         query: &str,
         limit: usize,
-    ) -> anyhow::Result<Vec<WorkspaceNode>>;
+    ) -> Result<Vec<WorkspaceNode>, WorkspaceStoreError>;
 
     /// Semantic (embedding + ANN) search over content accessible to `user_id`.
     /// Falls back to `search_nodes` if the store does not support embeddings.
@@ -183,7 +231,7 @@ pub trait WorkspaceStore: Send + Sync + 'static {
         user_id: &str,
         query: &str,
         limit: usize,
-    ) -> anyhow::Result<Vec<WorkspaceNode>>;
+    ) -> Result<Vec<WorkspaceNode>, WorkspaceStoreError>;
 
     /// Store a content snippet and persist its embedding so it can be searched.
     /// Called after each successful RustFS write in `patch_content`.
@@ -193,7 +241,7 @@ pub trait WorkspaceStore: Send + Sync + 'static {
         tenant_id: &str,
         node_id: Ulid,
         content: &str,
-    ) -> anyhow::Result<()>;
+    ) -> Result<(), WorkspaceStoreError>;
 
     /// Persist `thread_id` into `metadata.thread_id`. Idempotent; merges into existing
     /// metadata rather than overwriting. Caller is responsible for the access check
@@ -203,13 +251,13 @@ pub trait WorkspaceStore: Send + Sync + 'static {
         tenant_id: &str,
         node_id: Ulid,
         thread_id: &str,
-    ) -> anyhow::Result<WorkspaceNode>;
+    ) -> Result<WorkspaceNode, WorkspaceStoreError>;
 
     /// Returns true if the tenant has been provisioned with a default workspace root folder.
-    async fn is_tenant_seeded(&self, tenant_id: &str) -> anyhow::Result<bool>;
+    async fn is_tenant_seeded(&self, tenant_id: &str) -> Result<bool, WorkspaceStoreError>;
 
     /// Mark the tenant as seeded — idempotent.
-    async fn mark_tenant_seeded(&self, tenant_id: &str) -> anyhow::Result<()>;
+    async fn mark_tenant_seeded(&self, tenant_id: &str) -> Result<(), WorkspaceStoreError>;
 
     /// Create a protected root folder (parent_id = None) that cannot be deleted or moved.
     async fn create_protected_root_folder(
@@ -217,28 +265,103 @@ pub trait WorkspaceStore: Send + Sync + 'static {
         tenant_id: &str,
         owner_id: &str,
         name: &str,
-    ) -> anyhow::Result<WorkspaceNode>;
+    ) -> Result<WorkspaceNode, WorkspaceStoreError>;
 
     /// Permanently delete all workspace nodes, threads, messages, audit events, and the
     /// seeding flag for `tenant_id`. Called during tenant teardown — irreversible.
-    async fn purge_tenant_data(&self, tenant_id: &str) -> anyhow::Result<()>;
+    async fn purge_tenant_data(&self, tenant_id: &str) -> Result<(), WorkspaceStoreError>;
+
+    /// Insert or replace a fully-constructed `WorkspaceNode` with a pre-set id.
+    ///
+    /// Used by the thread projection system to create/update `Thread`-kind nodes
+    /// with a deterministic id derived from `(tenant_id, thread_id)`.
+    async fn upsert_node(&self, node: WorkspaceNode) -> Result<(), WorkspaceStoreError>;
+
+    /// Return the `hidden_at` timestamp for a node (if hidden). `None` means visible.
+    async fn get_hidden_at(
+        &self,
+        tenant_id: &str,
+        node_id: Ulid,
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, WorkspaceStoreError>;
+
+    /// Soft-hide a node (set `hidden_at = now`). Used for delete-as-pause on Thread nodes.
+    async fn hide_node(
+        &self,
+        tenant_id: &str,
+        node_id: Ulid,
+    ) -> Result<(), WorkspaceStoreError>;
+
+    /// Un-hide a node (clear `hidden_at`). Used by the projection restore endpoint.
+    async fn unhide_node(
+        &self,
+        tenant_id: &str,
+        node_id: Ulid,
+    ) -> Result<(), WorkspaceStoreError>;
+
+    /// Return all `File`/`Conversation` nodes whose `object_key` is `None` — i.e. nodes
+    /// that were created before the Step 3.4 stable-key migration and still use the legacy
+    /// `virtual_path` key.
+    ///
+    /// Used exclusively by `WorkspaceBackfillObjectKeyJob` (Step 3.5). The result is not
+    /// ordered; the job processes all entries and marks each one done by setting its
+    /// `object_key` via `upsert_node`, so the scan is naturally idempotent and resumable
+    /// (already-migrated nodes disappear from the result on the next run).
+    ///
+    /// Default implementation returns `Ok(vec![])` — safe for stores that do not need the
+    /// backfill (e.g., pure in-memory test stores that never persist).
+    async fn scan_nodes_needing_backfill(
+        &self,
+    ) -> Result<Vec<WorkspaceNode>, WorkspaceStoreError> {
+        Ok(vec![])
+    }
 }
 
 /// Reads and writes the markdown body of Conversation nodes from RustFS.
+///
+/// Step 3.4 migration: every method takes a `key` (primary, used first) and an optional
+/// `legacy_key` (only present when `WorkspaceNode.object_key` is `Some`).
+///
+/// - `key`        = `object_key` when available, otherwise `virtual_path`.
+/// - `legacy_key` = `Some(virtual_path)` when `object_key` is set, `None` otherwise.
+///
+/// Implementations use the pair to perform dual-read (try `key` first, fall back to
+/// `legacy_key`) and dual-write (write `key` as primary; mirror to `legacy_key`
+/// best-effort). Callers that have no `WorkspaceNode` (e.g. context-builder paths) pass
+/// `legacy_key = None`.
 #[async_trait]
 pub trait WorkspaceContentStore: Send + Sync + 'static {
     /// Returns `""` if the object doesn't exist yet (newly created conversation).
-    async fn read(&self, tenant_id: &str, virtual_path: &str) -> anyhow::Result<String>;
-    async fn write(&self, tenant_id: &str, virtual_path: &str, body: &str) -> anyhow::Result<()>;
-    async fn delete(&self, tenant_id: &str, virtual_path: &str) -> anyhow::Result<()>;
+    async fn read(
+        &self,
+        tenant_id: &str,
+        key: &str,
+        legacy_key: Option<&str>,
+    ) -> anyhow::Result<String>;
+
+    async fn write(
+        &self,
+        tenant_id: &str,
+        key: &str,
+        legacy_key: Option<&str>,
+        body: &str,
+    ) -> anyhow::Result<()>;
+
+    async fn delete(
+        &self,
+        tenant_id: &str,
+        key: &str,
+        legacy_key: Option<&str>,
+    ) -> anyhow::Result<()>;
+
     /// Delete the object and all its stored versions (best-effort).
     /// The default implementation delegates to `delete`; versioning-aware
     /// backends override this with a full version sweep.
     async fn delete_all_versions(
         &self,
         tenant_id: &str,
-        virtual_path: &str,
+        key: &str,
+        legacy_key: Option<&str>,
     ) -> anyhow::Result<()> {
-        self.delete(tenant_id, virtual_path).await
+        self.delete(tenant_id, key, legacy_key).await
     }
 }
