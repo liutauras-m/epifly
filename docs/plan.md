@@ -476,38 +476,38 @@ Smart Views.
 
 ## Execution checklist
 
-- [ ] 0.1 Adapter honors `semantic_kind` (+`threadId`,`virtualPath`) — test-first
-- [ ] 0.2 Tree endpoint returns Thread nodes (hidden filtered)
-- [ ] 0.3 Remove `"conversation"` fallback
-- [ ] 0.4 Work-unit fields foundation (metadata pass-through)
-- [ ] 1.1 Open-as-chat on thread nodes
-- [ ] 1.2 Recents fast-lane (≤8)
-- [ ] 1.3 Spatial stability (tree never auto-sorts)
-- [x] 1.4 Breadcrumb in chat header
-- [ ] 1.5 Active context indicator (static)
-- [ ] 2.1 Smart Views lane framework
-- [ ] 2.2 Unsorted view
-- [ ] 2.3 Recently-updated view
-- [ ] 3.1 Drag-and-drop move (+ accessible "Move to…")
-- [ ] 3.2 Rename in place
-- [ ] 3.3 Unsorted as default home
-- [x] 3.4 Suggested filing (suggest→confirm, heuristic v1)
-- [ ] 3.5 Command palette (Cmd+K)
-- [ ] 4.1 View-as-document peek
-- [ ] 4.2 Progressive-disclosure guardrail
-- [ ] 4.3 Generated summary preview
-- [ ] 5.1 Restore endpoint + SDK + delete=soft-delete
-- [ ] 5.2 Restore UX
-- [x] 5.3 Paused smart view
-- [ ] 6.1 Thread folder → chat `workspaceNodeId`
-- [ ] 6.2 Visible context disclosure (live)
-- [ ] 6.3 Ambient retrieval bias (flagged, default off)
-- [ ] 7.1 Optimistic thread node
-- [ ] 7.2 Syncing indicator + "still indexing"
-- [ ] 8.1 Relationship fields from known signals
-- [ ] 8.2 Related-items surfacing
-- [ ] 8.3 Status + Needs-review (defined trigger)
-- [ ] 8.4 Entity extraction (deferred, gated)
+- [x] 0.1 Adapter honors `semantic_kind` (+`threadId`,`virtualPath`) — test-first
+- [x] 0.2 Tree endpoint returns Thread nodes (hidden filtered)
+- [x] 0.3 Remove `"conversation"` fallback
+- [x] 0.4 Work-unit fields foundation (metadata pass-through)
+- [x] 1.1 Open-as-chat on thread nodes
+- [x] 1.2 Recents fast-lane (≤8)
+- [x] 1.3 Spatial stability (tree never auto-sorts)
+- [x] 1.4 Breadcrumb in chat header (crumb-click wired 2026-05-28)
+- [x] 1.5 Active context indicator (static)
+- [x] 2.1 Smart Views lane framework
+- [x] 2.2 Unsorted view
+- [x] 2.3 Recently-updated view
+- [x] 3.1 Drag-and-drop move (+ accessible "Move to…")
+- [x] 3.2 Rename in place
+- [x] 3.3 Unsorted as default home
+- [x] 3.4 Suggested filing (suggest→confirm, heuristic v1) (2026-05-28)
+- [x] 3.5 Command palette (Cmd+K)
+- [x] 4.1 View-as-document peek
+- [x] 4.2 Progressive-disclosure guardrail
+- [x] 4.3 Generated summary preview
+- [x] 5.1 Restore endpoint + SDK + delete=soft-delete
+- [x] 5.2 Restore UX
+- [x] 5.3 Paused smart view (?paused=true backend param, 2026-05-28)
+- [x] 6.1 Thread folder → chat `workspaceNodeId`
+- [x] 6.2 Visible context disclosure (live)
+- [x] 6.3 Ambient retrieval bias (flagged, default off) — CONUS_WORKSPACE_SIBLING_BIAS env var, agent-core ContextBuilder, 4 tests, 2026-05-28
+- [x] 7.1 Optimistic thread node
+- [x] 7.2 Syncing indicator + "still indexing"
+- [x] 8.1 Relationship fields from known signals — attachment_ids → ThreadProjectionInput → WorkspaceNode.metadata, 3 tests, 2026-05-28
+- [x] 8.2 Related-items surfacing — workspace-peek.store resolves related_node_ids + linked_file_ids, PeekRelatedItem, navigateToRelated, 2026-05-28
+- [x] 8.3 Status + Needs-review (defined trigger)
+- [ ] 8.4 Entity extraction (deferred, gated) — EXPLICITLY OUT OF SCOPE
 
 ## Notes for the executing agent
 

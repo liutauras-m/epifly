@@ -83,6 +83,11 @@ pub struct ThreadProjectionInput {
     /// Ignored if a projection row already exists (rename-preservation).
     #[serde(default)]
     pub folder_path: Option<String>,
+    /// Step 8.1 — object-key IDs of files attached during the turn that triggered
+    /// this projection. Merged (additive) into `metadata.linked_file_ids` on the
+    /// resulting workspace node.
+    #[serde(default)]
+    pub linked_file_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -195,6 +200,7 @@ impl BackgroundJob for ThreadProjectionJob {
             let node_id_str = proj.node_id.to_string();
 
             // Ensure the workspace node exists with the correct semantic_kind = Thread.
+            // Step 8.1 — pass linked_file_ids so metadata.linked_file_ids is updated.
             ensure_thread_node(
                 workspace_store.as_ref(),
                 workspace_content.as_ref(),
@@ -202,6 +208,7 @@ impl BackgroundJob for ThreadProjectionJob {
                 &proj,
                 &virtual_path,
                 &md_body,
+                &payload.linked_file_ids,
             )
             .await?;
 
@@ -283,6 +290,9 @@ fn compute_hash(body: &str) -> String {
 }
 
 /// Ensure a `Thread`-kind workspace node exists and write the projected content.
+///
+/// Step 8.1: also writes `metadata.source_thread_id` and merges any new `linked_file_ids`
+/// (additive — never removes previously recorded IDs).
 async fn ensure_thread_node(
     workspace_store: &dyn common::memory::store::WorkspaceStore,
     workspace_content: &dyn common::memory::store::WorkspaceContentStore,
@@ -290,6 +300,7 @@ async fn ensure_thread_node(
     proj: &ThreadProjection,
     virtual_path: &str,
     md_body: &str,
+    linked_file_ids: &[String],
 ) -> anyhow::Result<()> {
     use common::memory::workspace::WorkspaceNodeKind;
 
@@ -302,7 +313,7 @@ async fn ensure_thread_node(
         .await;
 
     match existing {
-        Ok(node) => {
+        Ok(mut node) => {
             // Node exists — write content with stable key.
             let (content_key, legacy_key) = match &node.object_key {
                 Some(ok) => (ok.as_str().to_owned(), Some(node.virtual_path.clone())),
@@ -312,6 +323,14 @@ async fn ensure_thread_node(
                 .write(tenant_id, &content_key, legacy_key.as_deref(), md_body)
                 .await
                 .map_err(|e| anyhow::anyhow!("write projected content: {e}"))?;
+
+            // Step 8.1 — merge relationship metadata; always set source_thread_id.
+            let updated_meta =
+                merge_relationship_metadata(&node.metadata, linked_file_ids, &proj.thread_id);
+            if updated_meta != node.metadata {
+                node.metadata = updated_meta;
+                let _ = workspace_store.upsert_node(node).await;
+            }
         }
         Err(_) => {
             // Node does not exist — create it with semantic_kind = Thread.
@@ -329,6 +348,12 @@ async fn ensure_thread_node(
             node.semantic_kind = WorkspaceNodeKind::Thread;
             node.source_type = Some("thread_projection".to_owned());
             node.source_id = Some(proj.thread_id.clone());
+            // Step 8.1 — set relationship metadata from scratch.
+            node.metadata = merge_relationship_metadata(
+                &serde_json::Value::Null,
+                linked_file_ids,
+                &proj.thread_id,
+            );
 
             // Save the node.
             let _ = workspace_store.upsert_node(node).await;
@@ -340,6 +365,57 @@ async fn ensure_thread_node(
         }
     }
     Ok(())
+}
+
+/// Step 8.1 — merge relationship fields into existing metadata.
+///
+/// - Sets `source_thread_id` (always).
+/// - Merges `linked_file_ids` additively (never removes existing IDs).
+/// - Initialises `related_node_ids`, `source_thread_ids`, `derived_task_ids` to `[]`
+///   if not already present, so downstream readers never need to handle absence.
+fn merge_relationship_metadata(
+    existing: &serde_json::Value,
+    linked_file_ids: &[String],
+    source_thread_id: &str,
+) -> serde_json::Value {
+    let mut map = match existing.as_object() {
+        Some(m) => m.clone(),
+        None => serde_json::Map::new(),
+    };
+
+    // Always record the originating thread.
+    map.insert(
+        "source_thread_id".to_owned(),
+        serde_json::Value::String(source_thread_id.to_owned()),
+    );
+
+    // Initialise empty arrays for other relationship fields if absent.
+    for key in &["related_node_ids", "source_thread_ids", "derived_task_ids"] {
+        map.entry((*key).to_owned())
+            .or_insert_with(|| serde_json::Value::Array(vec![]));
+    }
+
+    // Merge linked_file_ids additively.
+    let mut existing_ids: Vec<String> = map
+        .get("linked_file_ids")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    for id in linked_file_ids {
+        if !existing_ids.contains(id) {
+            existing_ids.push(id.clone());
+        }
+    }
+    map.insert(
+        "linked_file_ids".to_owned(),
+        serde_json::json!(existing_ids),
+    );
+
+    serde_json::Value::Object(map)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -459,6 +535,7 @@ mod tests {
             thread_id: "t1".into(),
             reason: ProjectionReason::AssistantDone,
             folder_path: None,
+            linked_file_ids: vec![],
         })
         .unwrap();
 
@@ -507,5 +584,154 @@ mod tests {
             coalescer.try_claim("acme", "t1").is_some(),
             "after release, new events can claim"
         );
+    }
+
+    // ── Step 8.1: linked_file_ids recorded in metadata ───────────────────────
+
+    #[tokio::test]
+    async fn linked_file_ids_recorded_in_workspace_node_metadata() {
+        let proj_store = agent_core::InMemoryThreadProjectionStore::new();
+        let workspace_store: Arc<dyn common::memory::store::WorkspaceStore> =
+            Arc::new(InMemoryWorkspaceStore::new());
+        let workspace_content: Arc<dyn common::memory::store::WorkspaceContentStore> =
+            Arc::new(InMemoryWorkspaceContent::new());
+        let thread_store: Arc<dyn common::memory::store::ThreadStore> =
+            Arc::new(InMemoryThreadStore::new());
+
+        // Pre-create a thread with one message so projection produces content.
+        let thread = thread_store.create("acme", vec![]).await.unwrap();
+        thread_store
+            .append(
+                "acme",
+                &thread.id.to_string(),
+                common::memory::thread::Message {
+                    role: "user".into(),
+                    content: "Hello".into(),
+                    tool_calls: None,
+                    timestamp: chrono::Utc::now(),
+                    seq: 0,
+                },
+            )
+            .await
+            .unwrap();
+        thread_store
+            .append(
+                "acme",
+                &thread.id.to_string(),
+                common::memory::thread::Message {
+                    role: "assistant".into(),
+                    content: "Hi there".into(),
+                    tool_calls: None,
+                    timestamp: chrono::Utc::now(),
+                    seq: 1,
+                },
+            )
+            .await
+            .unwrap();
+
+        let coalescer = ProjectionCoalescer::new();
+        let ctx = projection_job_ctx(
+            thread_store,
+            Arc::clone(&workspace_store),
+            workspace_content,
+            proj_store.clone(),
+            coalescer,
+        );
+
+        let tid = thread.id.to_string();
+        let input = serde_json::to_value(ThreadProjectionInput {
+            tenant_id: "acme".into(),
+            thread_id: tid.clone(),
+            reason: ProjectionReason::AssistantDone,
+            folder_path: None,
+            linked_file_ids: vec![
+                "tenants/acme/uploads/invoice.pdf".to_owned(),
+                "tenants/acme/uploads/photo.png".to_owned(),
+            ],
+        })
+        .unwrap();
+
+        let result = ThreadProjectionJob.run(input, ctx).await.unwrap();
+        assert_eq!(result["projected"], 1, "thread must be projected");
+
+        // Resolve the node ID via the projection store.
+        let proj = proj_store
+            .resolve_or_create("acme", &tid, "Conversations")
+            .await
+            .unwrap();
+        let node = workspace_store
+            .get_accessible_node("acme", "__system__", proj.node_id)
+            .await
+            .unwrap();
+
+        let meta = node
+            .metadata
+            .as_object()
+            .expect("metadata must be a JSON object");
+
+        // source_thread_id must be set.
+        assert_eq!(
+            meta.get("source_thread_id").and_then(|v| v.as_str()),
+            Some(tid.as_str()),
+            "source_thread_id must equal the thread_id"
+        );
+
+        // linked_file_ids must contain both attached file keys.
+        let ids: Vec<&str> = meta
+            .get("linked_file_ids")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+        assert!(
+            ids.contains(&"tenants/acme/uploads/invoice.pdf"),
+            "invoice.pdf must be in linked_file_ids"
+        );
+        assert!(
+            ids.contains(&"tenants/acme/uploads/photo.png"),
+            "photo.png must be in linked_file_ids"
+        );
+
+        // Other relationship arrays must be initialised to empty.
+        for key in &["related_node_ids", "source_thread_ids", "derived_task_ids"] {
+            let arr = meta
+                .get(*key)
+                .and_then(|v| v.as_array())
+                .unwrap_or_else(|| panic!("{key} must be present as an array"));
+            assert!(arr.is_empty(), "{key} must be empty for a fresh projection");
+        }
+    }
+
+    // ── Step 8.1: merge_relationship_metadata is additive ────────────────────
+
+    #[test]
+    fn merge_relationship_metadata_is_additive() {
+        let existing = serde_json::json!({
+            "linked_file_ids": ["old-key"],
+            "source_thread_id": "t_old"
+        });
+        let merged = merge_relationship_metadata(&existing, &["new-key".to_owned()], "t_new");
+        let ids: Vec<&str> = merged["linked_file_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert!(ids.contains(&"old-key"), "old key must be preserved");
+        assert!(ids.contains(&"new-key"), "new key must be added");
+        assert_eq!(
+            merged["source_thread_id"].as_str(),
+            Some("t_new"),
+            "source_thread_id updated to latest"
+        );
+    }
+
+    #[test]
+    fn merge_relationship_metadata_deduplicates_ids() {
+        let existing = serde_json::json!({ "linked_file_ids": ["dup"] });
+        let merged =
+            merge_relationship_metadata(&existing, &["dup".to_owned(), "dup".to_owned()], "t1");
+        let ids = merged["linked_file_ids"].as_array().unwrap();
+        let count = ids.iter().filter(|v| v.as_str() == Some("dup")).count();
+        assert_eq!(count, 1, "duplicates must be deduplicated");
     }
 }

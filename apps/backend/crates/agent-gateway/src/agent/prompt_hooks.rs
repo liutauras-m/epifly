@@ -335,6 +335,7 @@ mod tests {
             messages: vec![text_msg(MessageRole::User, original)],
             effective_system: None,
             workspace_node_id: None,
+            attachment_ids: vec![],
             max_invokes_per_turn: 10,
             routing_meta: serde_json::json!({}),
         };
@@ -362,6 +363,7 @@ mod tests {
             messages: vec![text_msg(MessageRole::User, "Email: secret@domain.com")],
             effective_system: None,
             workspace_node_id: None,
+            attachment_ids: vec![],
             max_invokes_per_turn: 10,
             routing_meta: serde_json::json!({}),
         };
@@ -391,6 +393,7 @@ mod tests {
             messages: vec![text_msg(MessageRole::User, "Hi")],
             effective_system: None,
             workspace_node_id: None,
+            attachment_ids: vec![],
             max_invokes_per_turn: 10,
             routing_meta: serde_json::json!({}),
         };
@@ -413,6 +416,7 @@ mod tests {
             messages: vec![text_msg(MessageRole::User, &huge)],
             effective_system: None,
             workspace_node_id: None,
+            attachment_ids: vec![],
             max_invokes_per_turn: 10,
             routing_meta: serde_json::json!({}),
         };

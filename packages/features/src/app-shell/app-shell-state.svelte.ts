@@ -307,7 +307,23 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
     get peekContent() { return peekStore.content; },
     get peekLoading() { return peekStore.isLoading; },
     get peekError() { return peekStore.error; },
+    // Phase 8.2 — related items resolved from metadata.
+    get peekRelatedItems() { return peekStore.relatedItems; },
     openPeek: (nodeId: string, name?: string, summary?: string) => peekStore.open(nodeId, name, summary),
     closePeek: () => peekStore.close(),
+    /**
+     * Phase 8.2 — navigate to a related workspace item.
+     * Threads open as chat; folders/documents select in the tree.
+     */
+    navigateToRelated(nodeId: string) {
+      // Find the node in the flat workspace list to determine kind + threadId.
+      const node = flatWorkspaceNodes.find((n) => n.id === nodeId);
+      if (node?.kind === "thread" && node.threadId) {
+        void args.navigate(`/chat/${node.threadId}`);
+      } else if (node) {
+        workspacesStore.selectNode(node.id);
+      }
+      peekStore.close();
+    },
   };
 }

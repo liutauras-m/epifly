@@ -42,6 +42,12 @@ pub struct ChatRequest {
     /// Set by the UI stream handler after fetching bytes from object storage.
     #[serde(default)]
     pub attachment_content: Vec<Value>,
+    /// Original object-key IDs of attached files (Step 8.1).
+    /// Passed through to the thread projection job so it can record `linked_file_ids`
+    /// in the workspace node's metadata. These are not sent to the LLM — only stored
+    /// for relationship tracking.
+    #[serde(default)]
+    pub attachment_ids: Vec<String>,
     /// Optional capability name to pin before semantic routing (PR 2.A).
     ///
     /// When set, tools from this capability are **prepended** before any semantic

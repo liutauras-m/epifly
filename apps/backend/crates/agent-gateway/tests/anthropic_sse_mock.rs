@@ -156,6 +156,7 @@ fn minimal_ctx(routing_meta: serde_json::Value) -> AgentCtx {
         }],
         effective_system: None,
         workspace_node_id: None,
+        attachment_ids: vec![],
         max_invokes_per_turn: 5,
         routing_meta,
     }

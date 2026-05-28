@@ -361,6 +361,7 @@ mod sse_harness {
             workspace_node_id: None,
             max_turns: None,
             attachment_content: vec![],
+            attachment_ids: vec![],
             forced_capability: None,
         };
 

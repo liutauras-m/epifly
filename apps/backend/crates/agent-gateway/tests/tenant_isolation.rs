@@ -414,6 +414,7 @@ async fn case8_thread_id_from_other_tenant_returns_404() {
         workspace_node_id: None,
         max_turns: None,
         attachment_content: vec![],
+        attachment_ids: vec![],
         forced_capability: None,
     };
 
@@ -468,6 +469,7 @@ async fn case9_workspace_node_id_from_other_tenant_returns_403() {
         workspace_node_id: Some(node_b.id.to_string()),
         max_turns: None,
         attachment_content: vec![],
+        attachment_ids: vec![],
         forced_capability: None,
     };
 
@@ -514,6 +516,7 @@ async fn case10_unknown_forced_capability_is_rejected() {
         workspace_node_id: None,
         max_turns: None,
         attachment_content: vec![],
+        attachment_ids: vec![],
         forced_capability: Some("nonexistent-capability-xyz".into()),
     };
 

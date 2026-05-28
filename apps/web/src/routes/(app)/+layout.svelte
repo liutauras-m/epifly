@@ -112,6 +112,8 @@
   content={shell.peekContent}
   isLoading={shell.peekLoading}
   error={shell.peekError}
+  relatedItems={shell.peekRelatedItems}
+  onNavigateRelated={(id) => shell.navigateToRelated(id)}
   onClose={shell.closePeek}
 />
 

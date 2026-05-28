@@ -107,6 +107,8 @@ pub async fn ui_stream(
         workspace_node_id: body.workspace_node_id,
         max_turns: None,
         attachment_content,
+        // Step 8.1 — carry original object keys for linked_file_ids metadata.
+        attachment_ids: body.attachment_ids,
         forced_capability: body.forced_capability,
     };
 

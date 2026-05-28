@@ -539,11 +539,13 @@ impl AgentTurnRunner {
                     .await;
 
                     if let Some(node_id) = self.ctx.workspace_node_id {
+                        // Step 8.1 — forward attachment object keys for linked_file_ids metadata.
                         enqueue_projection_job(
                             &self.state,
                             self.ctx.tenant_id.clone(),
                             tid.clone(),
                             node_id,
+                            self.ctx.attachment_ids.clone(),
                         );
                     }
                 }
@@ -923,6 +925,7 @@ mod tests {
             }],
             effective_system: None,
             workspace_node_id: None,
+            attachment_ids: vec![],
             max_invokes_per_turn: 10,
             routing_meta: serde_json::json!({}),
         }

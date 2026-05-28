@@ -39,6 +39,9 @@ pub struct AgentCtx {
     pub effective_system: Option<String>,
     /// Parsed workspace node ULID, used to index chat content for search.
     pub workspace_node_id: Option<_Ulid>,
+    /// Step 8.1 — original attachment object keys, forwarded to the projection job
+    /// to record `linked_file_ids` in the workspace node metadata.
+    pub attachment_ids: Vec<String>,
     pub max_invokes_per_turn: usize,
     /// Routing metadata emitted as the first SSE delta in streaming turns (PR 3.B).
     pub routing_meta: Value,
@@ -509,10 +512,15 @@ pub async fn build_ctx(
 
     let effective_system = if let Some(ref node_id_str) = req.workspace_node_id {
         if let Ok(node_id) = node_id_str.parse::<_Ulid>() {
+            // Step 6.3 — sibling bias: default off; enable with CONUS_WORKSPACE_SIBLING_BIAS=1.
+            let sibling_bias = std::env::var("CONUS_WORKSPACE_SIBLING_BIAS")
+                .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+                .unwrap_or(false);
             let ctx_builder = ContextBuilder::new(
                 Arc::clone(&state.workspace_store),
                 Arc::clone(&state.workspace_content),
-            );
+            )
+            .with_sibling_bias(sibling_bias);
             let ws_ctx = ctx_builder.build_for_node(&tenant.0, node_id, 6000).await;
             if ws_ctx.is_empty() {
                 base_system
@@ -594,6 +602,8 @@ pub async fn build_ctx(
         messages: history,
         effective_system,
         workspace_node_id,
+        // Step 8.1 — forward original attachment object keys for metadata recording.
+        attachment_ids: req.attachment_ids.clone(),
         max_invokes_per_turn: state.router_quota.max_invokes_per_turn.max(1),
         routing_meta,
     })

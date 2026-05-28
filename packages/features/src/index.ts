@@ -15,7 +15,7 @@ export {
 export type { ActiveThreadNodeContext } from "./workspaces/workspace-context.svelte.js";
 // Workspace peek store — "View as document" (Phase 4.1)
 export { createPeekStore } from "./workspaces/workspace-peek.store.svelte.js";
-export type { PeekStore } from "./workspaces/workspace-peek.store.svelte.js";
+export type { PeekStore, PeekRelatedItem } from "./workspaces/workspace-peek.store.svelte.js";
 // Workspace actions context — chat pages notify tree of optimistic events (Step 7.1)
 export {
   setWorkspaceActionsContext,
@@ -31,7 +31,7 @@ export { createNativeTokenProvider, createWebTokenProvider } from "./sdk/token-p
 // Chat
 export type { UiMessage, UiTextMessage, UiStreamEvent, StreamEventKind } from "./chat/chat.types.js";
 export { createChatStore } from "./chat/chat.store.svelte.js";
-export type { ChatStoreOptions } from "./chat/chat.store.svelte.js";
+export type { ChatActivityStatus, ChatStoreOptions } from "./chat/chat.store.svelte.js";
 export { loadThreadMessages } from "./chat/chat.actions.js";
 export { previewContent, isAssistant } from "./chat/chat.utils.js";
 

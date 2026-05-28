@@ -995,6 +995,7 @@ pub async fn restore_thread_projection(
             thread_id: thread_id.clone(),
             reason: ProjectionReason::ManualReproject,
             folder_path: Some(proj.folder_path.clone()),
+            linked_file_ids: vec![],
         })
         .expect("ThreadProjectionInput serializable");
 
@@ -1182,7 +1183,11 @@ mod tests {
         active.owner_id = "__system__".into();
         active.semantic_kind = WorkspaceNodeKind::Thread;
         active.hidden_at = None;
-        state.workspace_store.upsert_node(active.clone()).await.unwrap();
+        state
+            .workspace_store
+            .upsert_node(active.clone())
+            .await
+            .unwrap();
 
         // Paused thread — MUST appear in paused view.
         let mut paused = workspace_node(NodeKind::File, "Conversations/paused.md");
@@ -1190,7 +1195,11 @@ mod tests {
         paused.owner_id = "__system__".into();
         paused.semantic_kind = WorkspaceNodeKind::Thread;
         paused.hidden_at = Some(chrono::Utc::now());
-        state.workspace_store.upsert_node(paused.clone()).await.unwrap();
+        state
+            .workspace_store
+            .upsert_node(paused.clone())
+            .await
+            .unwrap();
 
         // Replicate filter_nodes handler logic with paused=true.
         let mut nodes = state

@@ -65,11 +65,15 @@ pub async fn persist_assistant_message(
 /// Replaces the old fire-and-forget `spawn_index_job`. If a job is already
 /// running for this `(tenant_id, thread_id)`, the coalescer bumps a dirty flag
 /// instead of spawning a second job.
+///
+/// `linked_file_ids`: object-key IDs of files attached during this turn (Step 8.1).
+/// They are merged into the workspace node's `metadata.linked_file_ids`.
 pub fn enqueue_projection_job(
     state: &Arc<AppState>,
     tenant_id: String,
     thread_id: String,
     node_id: ulid::Ulid,
+    linked_file_ids: Vec<String>,
 ) {
     use jobs::jobs::{ProjectionReason, ThreadProjectionInput};
 
@@ -84,6 +88,7 @@ pub fn enqueue_projection_job(
         thread_id: thread_id.clone(),
         reason: ProjectionReason::AssistantDone,
         folder_path: Some(folder),
+        linked_file_ids,
     })
     .expect("ThreadProjectionInput is serializable");
 
@@ -118,5 +123,5 @@ pub fn spawn_index_job(
     node_id: ulid::Ulid,
     thread_id: String,
 ) {
-    enqueue_projection_job(state, tenant_id, thread_id, node_id);
+    enqueue_projection_job(state, tenant_id, thread_id, node_id, vec![]);
 }
