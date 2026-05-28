@@ -31,6 +31,8 @@ export { sortByRecent, threadTitle } from "./threads/threads.utils.js";
 
 // Workspaces
 export { createWorkspacesStore } from "./workspaces/workspaces.store.svelte.js";
+export { createSmartViewsStore } from "./workspaces/smart-views.store.svelte.js";
+export type { SmartViewKind } from "./workspaces/smart-views.store.svelte.js";
 export { childrenOf, nodePath } from "./workspaces/workspaces.utils.js";
 
 // Capabilities

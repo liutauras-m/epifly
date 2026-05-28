@@ -2,6 +2,8 @@ import type { ConusSdk } from "@conusai/sdk";
 import { createThreadsStore } from "../threads/threads.store.svelte.js";
 import { sortByRecent } from "../threads/threads.utils.js";
 import { createWorkspacesStore } from "../workspaces/workspaces.store.svelte.js";
+import { createSmartViewsStore } from "../workspaces/smart-views.store.svelte.js";
+import type { SmartViewKind } from "../workspaces/smart-views.store.svelte.js";
 import { toSidebarWorkspaceNode } from "../workspaces/workspace-adapters.js";
 import type { SidebarWorkspaceNode } from "../workspaces/workspace-adapters.js";
 
@@ -37,6 +39,7 @@ export type { SidebarWorkspaceNode };
 export function createAppShellState(args: CreateAppShellStateArgs) {
   const threadsStore = createThreadsStore(args.sdk);
   const workspacesStore = createWorkspacesStore(args.sdk);
+  const smartViewsStore = createSmartViewsStore(args.sdk);
 
   // Route-derived — reactive because the getters are called inside $derived.
   const activePath = $derived(args.getPathname());
@@ -112,11 +115,18 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
     get selectedWorkspaceNodeId() { return workspacesStore.selectedNodeId; },
     /** The workspace node (thread projection) for the active thread, or null. */
     get activeThreadNode() { return activeThreadNode; },
+    // Smart Views
+    get smartViewActive() { return smartViewsStore.activeView; },
+    get smartViewResults() { return smartViewsStore.results; },
+    get smartViewLoading() { return smartViewsStore.isLoading; },
+    get smartViewError() { return smartViewsStore.error; },
     load,
     goToNewChat,
     goToThread,
     selectWorkspaceNode,
     createWorkspaceNode,
-    searchWorkspace
+    searchWorkspace,
+    selectSmartView: (kind: SmartViewKind) => smartViewsStore.selectView(kind),
+    clearSmartView: () => smartViewsStore.clearView(),
   };
 }

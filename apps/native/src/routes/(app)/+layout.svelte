@@ -43,6 +43,12 @@
     onWorkspaceNodeSelect={shell.selectWorkspaceNode}
     onWorkspaceNodeCreate={shell.createWorkspaceNode}
     onSearch={shell.searchWorkspace}
+    smartViewActive={shell.smartViewActive}
+    smartViewResults={shell.smartViewResults}
+    smartViewLoading={shell.smartViewLoading}
+    smartViewError={shell.smartViewError}
+    onSelectSmartView={shell.selectSmartView}
+    onClearSmartView={shell.clearSmartView}
   />
 {/snippet}
 

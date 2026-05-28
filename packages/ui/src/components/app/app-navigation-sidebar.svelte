@@ -20,7 +20,9 @@
   import * as Skeleton from "../ui/skeleton/index.js";
   import AppSidebar from "./app-sidebar.svelte";
   import WorkspaceTree from "../workspace/workspace-tree.svelte";
+  import WorkspaceSmartViews from "../workspace/workspace-smart-views.svelte";
   import type { WorkspaceDraft, WorkspaceNode } from "../workspace/workspace-tree.svelte";
+  import type { SmartViewKind } from "../workspace/workspace-smart-views.svelte";
 
   type ThreadItem = {
     id: string;
@@ -48,6 +50,13 @@
     onWorkspaceNodeCreate?: (kind: "folder" | "document", name: string, parentId?: string | null) => unknown | Promise<unknown>;
     /** Backend search — if provided, results replace the local name filter. */
     onSearch?: (query: string) => Promise<WorkspaceNode[]>;
+    // Smart Views
+    smartViewActive?: SmartViewKind | null;
+    smartViewResults?: WorkspaceNode[];
+    smartViewLoading?: boolean;
+    smartViewError?: string | null;
+    onSelectSmartView?: (kind: SmartViewKind) => void;
+    onClearSmartView?: () => void;
   };
 
   let {
@@ -65,7 +74,13 @@
     onOpenThread,
     onWorkspaceNodeSelect,
     onWorkspaceNodeCreate,
-    onSearch
+    onSearch,
+    smartViewActive = null,
+    smartViewResults = [],
+    smartViewLoading = false,
+    smartViewError = null,
+    onSelectSmartView,
+    onClearSmartView,
   }: Props = $props();
 
   let searchOpen = $state(false);
@@ -346,6 +361,19 @@
         {/if}
       </Sidebar.GroupContent>
     </Sidebar.Group>
+
+    <!-- Smart Views lane (filters, not folders) -->
+    <WorkspaceSmartViews
+      activeView={smartViewActive}
+      results={smartViewResults}
+      isLoading={smartViewLoading}
+      error={smartViewError}
+      activeNodeId={selectedWorkspaceNodeId}
+      onSelectView={onSelectSmartView}
+      onClearView={onClearSmartView}
+      onSelectNode={onWorkspaceNodeSelect}
+      {onOpenThread}
+    />
 
     <!-- Chat history section -->
     <Sidebar.Group aria-label="Chat history" class="mt-2 pt-1">
