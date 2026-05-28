@@ -1,5 +1,4 @@
 export const EP = {
-  AUTH_LOGIN: '/v1/auth/login',
   AUTH_LOGOUT: '/api/auth/logout',
   AUTH_DEVICE_VERIFY: '/api/auth/device/verify',
   THREADS: '/v1/threads',

@@ -27,10 +27,8 @@ export type { WorkspaceActionsContext, FilingHint } from "./workspaces/workspace
 export { default as SdkProvider } from "./sdk/sdk-provider.svelte";
 export { getSdkContext, setSdkContext } from "./sdk/sdk-context.svelte.js";
 export {
-  clearWebAccessToken,
   createNativeTokenProvider,
   createWebTokenProvider,
-  setWebAccessToken,
 } from "./sdk/token-provider.js";
 
 // Chat

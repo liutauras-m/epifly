@@ -1,45 +1,22 @@
 <script lang="ts">
   import { page } from "$app/state";
-  import { goto } from "$app/navigation";
-  import { getSdkContext, setWebAccessToken } from "@epifly/features";
-  import { AuthOnboardingPanel } from "@epifly/ui";
 
-  const sdk = getSdkContext();
-  const prompt = $derived(page.url.searchParams.get("prompt") ?? "hello");
-
-  let email = $state("");
-  let password = $state("");
-  let isSubmitting = $state(false);
-  let error = $state<string | null>(null);
-
-  async function handleSubmit() {
-    if (isSubmitting) return;
-    error = null;
-    isSubmitting = true;
-
-    try {
-      const session = await sdk.auth.login(email.trim(), password);
-      setWebAccessToken(session.access_token);
-      await goto("/");
-    } catch {
-      error = "We could not sign you in. Check your email and password, then try again.";
-    } finally {
-      isSubmitting = false;
-    }
-  }
+  const returnTo = $derived(encodeURIComponent(page.url.searchParams.get("returnTo") ?? "/"));
+  const loginHref = $derived(`/auth/login?returnTo=${returnTo}`);
 </script>
 
 <svelte:head>
   <title>Account · Epifly</title>
 </svelte:head>
 
-<AuthOnboardingPanel
-  {prompt}
-  {email}
-  {password}
-  {error}
-  {isSubmitting}
-  onEmailChange={(value) => (email = value)}
-  onPasswordChange={(value) => (password = value)}
-  onSubmit={handleSubmit}
-/>
+<div class="flex min-h-svh items-center justify-center p-6">
+  <div class="w-full max-w-sm space-y-4 text-center">
+    <h1 class="text-2xl font-semibold tracking-tight">Sign in to Epifly</h1>
+    <a
+      href={loginHref}
+      class="inline-flex w-full items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+    >
+      Continue with Zitadel
+    </a>
+  </div>
+</div>

@@ -1,42 +1,25 @@
 import type { TokenProvider } from "@conusai/sdk";
 
-const WEB_ACCESS_TOKEN_KEY = "epifly.web.access_token";
-
-function getSessionStorage() {
-  if (typeof globalThis.sessionStorage === "undefined") return null;
-  return globalThis.sessionStorage;
-}
-
-export function setWebAccessToken(token: string) {
-  getSessionStorage()?.setItem(WEB_ACCESS_TOKEN_KEY, token);
-}
-
-export function clearWebAccessToken() {
-  getSessionStorage()?.removeItem(WEB_ACCESS_TOKEN_KEY);
-}
-
 /**
- * Web token provider.
- * For web, prefer server-managed auth/cookies where possible.
- * Do not store long-lived tokens in localStorage.
- * Replace this stub with real auth token retrieval.
+ * Web token provider — returns null because the SvelteKit BFF proxy injects
+ * the Authorization header server-side. The browser never holds a token.
  */
 export function createWebTokenProvider(): TokenProvider {
   return {
     async get() {
-      return getSessionStorage()?.getItem(WEB_ACCESS_TOKEN_KEY) ?? null;
-    }
+      return null;
+    },
   };
 }
 
 /**
- * Native token provider placeholder.
- * The final implementation should read from a scoped native storage abstraction.
+ * Native token provider — will be implemented in Phase 5 (OS keychain + Tauri
+ * command bridge). Until then returns null; native auth is gated by Phase 4.
  */
 export function createNativeTokenProvider(): TokenProvider {
   return {
     async get() {
       return null;
-    }
+    },
   };
 }
