@@ -223,6 +223,13 @@ async fn main() -> Result<()> {
     // ── Build Axum router ────────────────────────────────────────────────
     let app = Router::new()
         .merge(routes::public_router())
+        // Auth routes: rate-limited by IP (10 rpm). State required for rate limiter access.
+        .merge(
+            routes::auth_router().layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&state),
+                mw::auth_rate_limit,
+            )),
+        )
         .route(
             "/metrics",
             get(metrics_handler).with_state(Arc::clone(&prom_registry)),

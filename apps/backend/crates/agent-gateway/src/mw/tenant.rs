@@ -1,3 +1,4 @@
+use crate::auth::audit;
 use crate::state::AppState;
 use agent_core::identity::binding;
 use agent_core::{PlanTier, TenantContext};
@@ -38,8 +39,7 @@ pub async fn extract_tenant(
     // In OIDC/prod mode, reject any attempt to inject a tenant via header —
     // clients must use a real bearer token.
     if state.auth_required
-        && (req.headers().contains_key("x-tenant-id")
-            || req.headers().contains_key("X-Tenant-ID"))
+        && (req.headers().contains_key("x-tenant-id") || req.headers().contains_key("X-Tenant-ID"))
     {
         return HttpError::bad_request("tenant_header_forbidden").into_response();
     }
@@ -62,14 +62,18 @@ pub async fn extract_tenant(
                     match binding::resolve_tenant(db, &issuer, &org_id, sub).await {
                         Ok(b) => {
                             // Replace org_id with application tenant_id from binding
+                            let resolved_sub = sub.to_string();
+                            audit::login_success(&issuer, &resolved_sub, &org_id);
                             identity_ctx.tenant_id = b.tenant_id.into();
                         }
-                        Err(binding::BindingError::NotProvisioned(org)) => {
+                        Err(binding::BindingError::NotProvisioned(ref org)) => {
                             warn!(request_id, org_id = %org, "tenant not provisioned");
+                            audit::tenant_binding_failure(&issuer, org, "not_provisioned");
                             return HttpError::forbidden("tenant_not_provisioned").into_response();
                         }
-                        Err(binding::BindingError::Suspended(tid)) => {
+                        Err(binding::BindingError::Suspended(ref tid)) => {
                             warn!(request_id, tenant_id = %tid, "tenant suspended");
+                            audit::tenant_binding_failure(&issuer, &org_id, "suspended");
                             return HttpError::forbidden("tenant_suspended").into_response();
                         }
                         Err(e) => {
@@ -90,6 +94,7 @@ pub async fn extract_tenant(
                         auth.outcome = "invalid_token",
                         "bearer token rejected"
                     );
+                    audit::login_failure("invalid_token");
                     return HttpError::auth("invalid token").into_response();
                 }
                 warn!(

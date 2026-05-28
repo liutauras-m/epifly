@@ -4,26 +4,46 @@ import * as client from "openid-client";
 import type { IDToken } from "openid-client";
 import { getOidcConfig } from "$lib/server/auth/oidc";
 import { consumeOidcTransaction, createSession } from "$lib/server/auth/session";
+import { checkRateLimit, rateLimitKey } from "$lib/server/auth/rate-limit";
+import { auditLoginSuccess, auditLoginFailure } from "$lib/server/auth/audit";
 import { env } from "$env/dynamic/private";
 
 const ORG_CLAIM = env.ZITADEL_ORG_CLAIM ?? "urn:zitadel:iam:user:resourceowner:id";
 
-export const GET: RequestHandler = async ({ url, cookies }) => {
+export const GET: RequestHandler = async ({ url, cookies, request }) => {
+  const rawIp =
+    request.headers.get("cf-connecting-ip") ??
+    request.headers.get("x-forwarded-for")?.split(",")[0] ??
+    undefined;
+  const rawUa = request.headers.get("user-agent") ?? undefined;
+
+  // Rate limit callbacks to prevent replay-storm abuse
+  const key = rateLimitKey(request.headers);
+  if (!checkRateLimit(`cb:${key}`, 20)) {
+    auditLoginFailure({ reason: "rate_limited", rawIp, rawUa });
+    throw error(429, "too_many_requests");
+  }
+
   const cfg = await getOidcConfig();
 
-  // Retrieve the state from the OIDC tx cookie
   const txState = cookies.get("__Host-epifly_oidc_tx");
-  if (!txState) throw error(400, "missing_oidc_transaction");
+  if (!txState) {
+    auditLoginFailure({ reason: "missing_oidc_transaction", rawIp, rawUa });
+    throw error(400, "missing_oidc_transaction");
+  }
 
-  // Consume the transaction row (single-use — double-callback → null)
   const tx = await consumeOidcTransaction(txState);
-  if (!tx) throw error(400, "transaction_already_consumed");
+  if (!tx) {
+    auditLoginFailure({ reason: "transaction_already_consumed", rawIp, rawUa });
+    throw error(400, "transaction_already_consumed");
+  }
 
-  // Validate state parameter from IdP matches what we sent
   const returnedState = url.searchParams.get("state");
-  if (!returnedState || returnedState !== tx.state) throw error(400, "state_mismatch");
+  if (!returnedState || returnedState !== tx.state) {
+    auditLoginFailure({ reason: "state_mismatch", rawIp, rawUa });
+    throw error(400, "state_mismatch");
+  }
 
-  // Exchange code for tokens
   let tokenSet: client.TokenEndpointResponse & { claims(): IDToken | undefined };
   try {
     tokenSet = (await client.authorizationCodeGrant(
@@ -37,28 +57,39 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
       { redirect_uri: cfg.redirectUri }
     )) as client.TokenEndpointResponse & { claims(): IDToken | undefined };
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error("[auth/callback] code exchange failed:", msg);
+    const reason = e instanceof Error ? e.message : "exchange_failed";
+    // Never log the full error message — it may contain grant details
+    auditLoginFailure({ reason: "exchange_failed", rawIp, rawUa });
     throw redirect(302, `/auth/error?reason=exchange_failed`);
   }
 
   const { access_token, refresh_token, id_token, expires_in } = tokenSet;
-  if (!access_token || !refresh_token) throw redirect(302, `/auth/error?reason=missing_tokens`);
+  if (!access_token || !refresh_token) {
+    auditLoginFailure({ reason: "missing_tokens", rawIp, rawUa });
+    throw redirect(302, `/auth/error?reason=missing_tokens`);
+  }
 
-  // Extract claims from the verified ID token
   const claims: IDToken | undefined = tokenSet.claims();
-  if (!claims) throw redirect(302, `/auth/error?reason=missing_claims`);
+  if (!claims) {
+    auditLoginFailure({ reason: "missing_claims", rawIp, rawUa });
+    throw redirect(302, `/auth/error?reason=missing_claims`);
+  }
 
   const tenantOrgId = (claims[ORG_CLAIM] as string | undefined) ?? "";
-  if (!tenantOrgId) throw redirect(302, `/auth/error?reason=missing_org_claim`);
+  if (!tenantOrgId) {
+    auditLoginFailure({ reason: "missing_org_claim", rawIp, rawUa });
+    throw redirect(302, `/auth/error?reason=missing_org_claim`);
+  }
 
   const userIss = String(claims.iss ?? cfg.issuer);
   const userSub = String(claims.sub ?? "");
-  if (!userSub) throw redirect(302, `/auth/error?reason=missing_sub`);
+  if (!userSub) {
+    auditLoginFailure({ reason: "missing_sub", rawIp, rawUa });
+    throw redirect(302, `/auth/error?reason=missing_sub`);
+  }
 
   const accessExpiresAt = new Date(Date.now() + (expires_in ?? 3600) * 1000);
 
-  // Create session — the fresh session id prevents session fixation
   const sessionId = await createSession({
     userIss,
     userSub,
@@ -69,7 +100,8 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
     accessExpiresAt,
   });
 
-  // Clear tx cookie; set session cookie
+  auditLoginSuccess({ iss: userIss, sub: userSub, orgId: tenantOrgId, rawIp, rawUa });
+
   cookies.delete("__Host-epifly_oidc_tx", { path: "/auth/callback" });
   cookies.set("__Host-epifly_sid", sessionId, {
     httpOnly: true,

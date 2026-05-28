@@ -16,6 +16,7 @@
 //! if let Some(user) = crate::auth::extract_from_headers(req.headers()) { ... }
 //! ```
 
+pub mod audit;
 mod extractor;
 mod verifier;
 

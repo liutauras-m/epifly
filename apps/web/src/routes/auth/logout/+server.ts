@@ -2,7 +2,8 @@ import { redirect } from "@sveltejs/kit";
 import type { RequestHandler } from "./$types";
 import * as client from "openid-client";
 import { getOidcConfig } from "$lib/server/auth/oidc";
-import { revokeSession } from "$lib/server/auth/session";
+import { revokeSession, loadSession } from "$lib/server/auth/session";
+import { auditLogout } from "$lib/server/auth/audit";
 
 export const GET: RequestHandler = async ({ cookies }) => {
   const cfg = await getOidcConfig();
@@ -11,11 +12,17 @@ export const GET: RequestHandler = async ({ cookies }) => {
   let idToken: string | null = null;
 
   if (sid) {
-    // Revoke session row; retrieve id_token hint and refresh token for cleanup
+    // Load session identity before revocation for the audit event
+    const loaded = await loadSession(sid).catch(() => null);
+
     const revoked = await revokeSession(sid);
 
     if (revoked) {
       idToken = revoked.idToken;
+
+      if (loaded) {
+        auditLogout({ iss: loaded.userIss, sub: loaded.userSub });
+      }
 
       // Best-effort: revoke the refresh token at Zitadel (2s timeout)
       if (revoked.refreshToken) {
@@ -27,18 +34,16 @@ export const GET: RequestHandler = async ({ cookies }) => {
         } catch (e) {
           console.warn(
             "[auth/logout] refresh token revocation best-effort failed:",
-            e instanceof Error ? e.message : e
+            e instanceof Error ? e.message : "unknown"
           );
         }
       }
     }
   }
 
-  // Clear both auth cookies regardless
   cookies.delete("__Host-epifly_sid", { path: "/" });
   cookies.delete("__Host-epifly_oidc_tx", { path: "/auth/callback" });
 
-  // Redirect to Zitadel's end_session_endpoint to terminate the IdP browser session
   const metadata = cfg.serverConfig.serverMetadata();
   const endSessionUrl = metadata.end_session_endpoint;
 

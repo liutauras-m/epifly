@@ -626,8 +626,6 @@ pub fn public_router() -> Router<Arc<AppState>> {
         .route("/health", get(health::health))
         .route("/healthz/embeddings", get(health::embeddings_ready))
         .route("/login", get(auth::login_page))
-        .route("/v1/auth/login", post(auth::login))
-        .route("/v1/auth/legacy/login", post(auth::login))
         // Lago billing webhooks — signature verified inside handler.
         .route(
             "/v1/billing/webhooks",
@@ -641,6 +639,15 @@ pub fn public_router() -> Router<Arc<AppState>> {
         )
         // OpenAPI spec + Swagger UI
         .merge(SwaggerUi::new("/docs").url("/openapi.json", ApiDoc::openapi()))
+        .layer(DefaultBodyLimit::max(DEFAULT_JSON_BODY_LIMIT))
+}
+
+/// Auth routes — assembled separately so `main.rs` can apply IP rate limiting
+/// (which requires the state instance) as a layer before merging.
+pub fn auth_router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/v1/auth/login", post(auth::login))
+        .route("/v1/auth/legacy/login", post(auth::login))
         .layer(DefaultBodyLimit::max(DEFAULT_JSON_BODY_LIMIT))
 }
 
