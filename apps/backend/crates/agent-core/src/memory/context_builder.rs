@@ -218,10 +218,7 @@ mod tests {
         ws.upsert_node(node.clone()).await.unwrap();
         // new_conversation always sets object_key; write with that key so
         // node_content_keys_ref's primary-key lookup finds the content.
-        let key = node
-            .object_key
-            .as_deref()
-            .unwrap_or(virtual_path);
+        let key = node.object_key.as_deref().unwrap_or(virtual_path);
         wc.write("acme", key, None, content).await.unwrap();
         node
     }

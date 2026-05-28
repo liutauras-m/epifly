@@ -60,8 +60,11 @@ pub fn hash_api_key(raw_key: &str) -> String {
 /// Middleware: check `X-API-Key` header and resolve tenant if valid.
 /// If `X-API-Key` is absent, falls through to the next middleware (JWT auth).
 /// If `X-API-Key` is present but invalid, rejects immediately with 401.
+///
+/// API key entries are read from `state.api_keys` (populated at startup from the
+/// `API_KEYS` env var) — no per-request env lookup.
 pub async fn extract_api_key(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     mut req: Request,
     next: Next,
 ) -> Response {
@@ -76,16 +79,13 @@ pub async fn extract_api_key(
         return next.run(req).await;
     };
 
-    let api_keys_raw = std::env::var("API_KEYS").unwrap_or_default();
-    if api_keys_raw.is_empty() {
-        warn!("API_KEYS env var not set but X-API-Key header provided — rejecting");
+    if state.api_keys.is_empty() {
+        warn!("no API keys configured but X-API-Key header provided — rejecting");
         return HttpError::auth("API key authentication not configured").into_response();
     }
 
-    let entries = parse_api_keys(&api_keys_raw);
     let key_hash = hash_api_key(&key);
-
-    let matched = entries.iter().find(|e| e.hash_hex == key_hash);
+    let matched = state.api_keys.iter().find(|e| e.hash_hex == key_hash);
 
     match matched {
         Some(entry) => {
@@ -110,41 +110,38 @@ pub async fn extract_api_key(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::Router;
     use axum::body::Body;
+    use axum::extract::Request;
     use axum::http::StatusCode;
     use axum::middleware::from_fn_with_state;
     use axum::routing::get;
-    use axum::{Router, extract::Request};
-    use std::sync::{Mutex, OnceLock};
     use tower::ServiceExt;
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
+    /// Build an `AppState` with specific API key entries — no env mutation needed.
+    fn state_with_api_keys(entries: Vec<ApiKeyEntry>) -> Arc<crate::state::AppState> {
+        let mut state =
+            crate::state::AppState::with_in_memory_stores().expect("in-memory AppState");
+        state.api_keys = entries;
+        Arc::new(state)
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn valid_api_key_maps_to_expected_tenant() {
-        let _guard = env_lock().lock().expect("env lock");
         let raw_key = "super-secret-key";
-        let hash = hash_api_key(raw_key);
-
-        // Safety: process-global env mutation in tests is guarded by env_lock.
-        unsafe {
-            std::env::set_var("API_KEYS", format!("{hash}:tenant-abc:pro"));
-            std::env::set_var("CONUSAI_WORKSPACE_ROOT", "/tmp/conusai/workspaces");
-        }
+        let state = state_with_api_keys(vec![ApiKeyEntry {
+            hash_hex: hash_api_key(raw_key),
+            tenant_id: "tenant-abc".into(),
+            plan: PlanTier::Pro,
+        }]);
 
         async fn handler(req: Request) -> (StatusCode, String) {
-            let tenant = req.extensions().get::<ResolvedTenant>().cloned();
-            match tenant {
+            match req.extensions().get::<ResolvedTenant>().cloned() {
                 Some(ResolvedTenant(ctx)) => (StatusCode::OK, ctx.tenant_id.to_string()),
                 None => (StatusCode::INTERNAL_SERVER_ERROR, "missing tenant".into()),
             }
         }
 
-        let state = Arc::new(crate::state::AppState::with_in_memory_stores().expect("state"));
         let app = Router::new()
             .route("/", get(handler))
             .layer(from_fn_with_state(Arc::clone(&state), extract_api_key))
@@ -154,32 +151,28 @@ mod tests {
             .uri("/")
             .header("x-api-key", raw_key)
             .body(Body::empty())
-            .expect("request");
+            .unwrap();
 
-        let resp = app.oneshot(req).await.expect("response");
+        let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
-            .expect("body");
-        assert_eq!(std::str::from_utf8(&body).expect("utf8"), "tenant-abc");
+            .unwrap();
+        assert_eq!(std::str::from_utf8(&body).unwrap(), "tenant-abc");
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn invalid_api_key_is_rejected() {
-        let _guard = env_lock().lock().expect("env lock");
-        let good_hash = hash_api_key("known-good-key");
-
-        // Safety: process-global env mutation in tests is guarded by env_lock.
-        unsafe {
-            std::env::set_var("API_KEYS", format!("{good_hash}:tenant-a:free"));
-        }
+        let state = state_with_api_keys(vec![ApiKeyEntry {
+            hash_hex: hash_api_key("known-good-key"),
+            tenant_id: "tenant-a".into(),
+            plan: PlanTier::Free,
+        }]);
 
         async fn ok_handler() -> StatusCode {
             StatusCode::OK
         }
 
-        let state = Arc::new(crate::state::AppState::with_in_memory_stores().expect("state"));
         let app = Router::new()
             .route("/", get(ok_handler))
             .layer(from_fn_with_state(Arc::clone(&state), extract_api_key))
@@ -189,26 +182,21 @@ mod tests {
             .uri("/")
             .header("x-api-key", "wrong-key")
             .body(Body::empty())
-            .expect("request");
+            .unwrap();
 
-        let resp = app.oneshot(req).await.expect("response");
+        let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn missing_api_key_header_falls_through() {
-        let _guard = env_lock().lock().expect("env lock");
-        // Safety: process-global env mutation in tests is guarded by env_lock.
-        unsafe {
-            std::env::remove_var("API_KEYS");
-        }
+        // No API keys configured; no X-API-Key header → falls through to the next layer.
+        let state = state_with_api_keys(vec![]);
 
         async fn ok_handler() -> StatusCode {
             StatusCode::OK
         }
 
-        let state = Arc::new(crate::state::AppState::with_in_memory_stores().expect("state"));
         let app = Router::new()
             .route("/", get(ok_handler))
             .layer(from_fn_with_state(Arc::clone(&state), extract_api_key))
@@ -217,26 +205,21 @@ mod tests {
         let req = axum::http::Request::builder()
             .uri("/")
             .body(Body::empty())
-            .expect("request");
+            .unwrap();
 
-        let resp = app.oneshot(req).await.expect("response");
+        let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn api_key_header_without_configuration_is_rejected() {
-        let _guard = env_lock().lock().expect("env lock");
-        // Safety: process-global env mutation in tests is guarded by env_lock.
-        unsafe {
-            std::env::remove_var("API_KEYS");
-        }
+        // X-API-Key provided but state has no configured keys → 401.
+        let state = state_with_api_keys(vec![]);
 
         async fn ok_handler() -> StatusCode {
             StatusCode::OK
         }
 
-        let state = Arc::new(crate::state::AppState::with_in_memory_stores().expect("state"));
         let app = Router::new()
             .route("/", get(ok_handler))
             .layer(from_fn_with_state(Arc::clone(&state), extract_api_key))
@@ -246,9 +229,9 @@ mod tests {
             .uri("/")
             .header("x-api-key", "some-key")
             .body(Body::empty())
-            .expect("request");
+            .unwrap();
 
-        let resp = app.oneshot(req).await.expect("response");
+        let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }

@@ -63,8 +63,24 @@ fn signing_key() -> &'static [u8] {
 
 /// Verify an HMAC-signed session token and return the decoded `SessionUser`.
 /// Returns `None` on invalid signature, malformed token, or expired `exp`.
+///
+/// **Timing-safe**: the HMAC is always computed before any early return so that
+/// malformed tokens and wrong-signature tokens take the same amount of time.
+/// Without this, a missing `.` separator would return faster than a bad
+/// signature, giving an attacker a timing oracle.
 pub fn verify(token: &str) -> Option<SessionUser> {
-    let (payload_b64, sig_b64) = token.split_once('.')?;
+    // Always run the HMAC computation to prevent a timing side-channel.
+    // For malformed tokens (no '.') we hash the whole token as a dummy input
+    // so the wall-clock time matches a real (but rejected) verification attempt.
+    let (payload_b64, sig_b64) = match token.split_once('.') {
+        Some(parts) => parts,
+        None => {
+            let mut dummy = HmacSha256::new_from_slice(signing_key()).ok()?;
+            dummy.update(token.as_bytes());
+            let _ = dummy.finalize();
+            return None;
+        }
+    };
     let mut mac = HmacSha256::new_from_slice(signing_key()).ok()?;
     mac.update(payload_b64.as_bytes());
     let expected = B64.encode(mac.finalize().into_bytes());

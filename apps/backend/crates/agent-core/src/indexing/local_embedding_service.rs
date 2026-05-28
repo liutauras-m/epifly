@@ -26,11 +26,14 @@ use crate::indexing::EmbeddingService;
 use crate::indexing::embedding_service::EmbeddingModel;
 use async_trait::async_trait;
 use fastembed::{EmbeddingModel as FastEmbedModel, InitOptions, TextEmbedding};
-use tokio::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tracing::info;
 
 pub struct LocalEmbeddingService {
-    inner: Mutex<TextEmbedding>,
+    /// Wrapped in `Arc<std::sync::Mutex>` (not tokio) so it can be moved into
+    /// `tokio::task::spawn_blocking` closures. Embedding is CPU-bound; holding
+    /// a tokio async mutex across it would block the async thread pool.
+    inner: Arc<Mutex<TextEmbedding>>,
     model: EmbeddingModel,
     /// Prefix to prepend to query strings (e.g. "query: " for e5 models).
     query_prefix: &'static str,
@@ -62,7 +65,7 @@ impl LocalEmbeddingService {
         let emb = TextEmbedding::try_new(opts)
             .map_err(|e| anyhow::anyhow!("failed to init local embedding model: {e}"))?;
         Ok(Self {
-            inner: Mutex::new(emb),
+            inner: Arc::new(Mutex::new(emb)),
             model,
             query_prefix,
             passage_prefix,
@@ -107,20 +110,29 @@ impl EmbeddingService for LocalEmbeddingService {
 
     async fn embed_query(&self, text: &str) -> anyhow::Result<Vec<f32>> {
         let prefixed = format!("{}{text}", self.query_prefix);
-        let mut guard = self.inner.lock().await;
-        let results = guard
-            .embed(vec![prefixed.as_str()], None)
-            .map_err(|e| anyhow::anyhow!("fastembed embed_query failed: {e}"))?;
-        let embedding: Vec<f32> = results
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("fastembed returned empty result"))?;
-        let expected = self.model.dims() as usize;
-        if embedding.len() != expected {
+        let inner = Arc::clone(&self.inner);
+        let expected_dims = self.model.dims() as usize;
+
+        let embedding = tokio::task::spawn_blocking(move || {
+            let mut guard = inner
+                .lock()
+                .map_err(|_| anyhow::anyhow!("fastembed mutex poisoned"))?;
+            let results = guard
+                .embed(vec![prefixed.as_str()], None)
+                .map_err(|e| anyhow::anyhow!("fastembed embed_query failed: {e}"))?;
+            results
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("fastembed returned empty result"))
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn_blocking panicked: {e}"))??;
+
+        if embedding.len() != expected_dims {
             anyhow::bail!(
                 "embedding dim mismatch: got {}, expected {} — model mismatch",
                 embedding.len(),
-                expected
+                expected_dims
             );
         }
         Ok(embedding)
@@ -135,24 +147,33 @@ impl EmbeddingService for LocalEmbeddingService {
             .map(|t| format!("{}{t}", self.passage_prefix))
             .collect();
 
-        let mut all_results: Vec<Vec<f32>> = Vec::with_capacity(prefixed.len());
-        let mut guard = self.inner.lock().await;
-        for chunk in prefixed.chunks(self.max_batch) {
-            let refs: Vec<&str> = chunk.iter().map(|s| s.as_str()).collect();
-            let batch = guard
-                .embed(refs, None)
-                .map_err(|e| anyhow::anyhow!("fastembed embed_documents failed: {e}"))?;
-            all_results.extend(batch);
-        }
-        drop(guard);
+        let inner = Arc::clone(&self.inner);
+        let max_batch = self.max_batch;
+        let expected_dims = self.model.dims() as usize;
 
-        let expected = self.model.dims() as usize;
+        let all_results = tokio::task::spawn_blocking(move || {
+            let mut guard = inner
+                .lock()
+                .map_err(|_| anyhow::anyhow!("fastembed mutex poisoned"))?;
+            let mut all: Vec<Vec<f32>> = Vec::with_capacity(prefixed.len());
+            for chunk in prefixed.chunks(max_batch) {
+                let refs: Vec<&str> = chunk.iter().map(|s| s.as_str()).collect();
+                let batch = guard
+                    .embed(refs, None)
+                    .map_err(|e| anyhow::anyhow!("fastembed embed_documents failed: {e}"))?;
+                all.extend(batch);
+            }
+            Ok::<_, anyhow::Error>(all)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("spawn_blocking panicked: {e}"))??;
+
         for (i, emb) in all_results.iter().enumerate() {
-            if emb.len() != expected {
+            if emb.len() != expected_dims {
                 anyhow::bail!(
                     "embedding[{i}] dim mismatch: got {}, expected {} — model mismatch",
                     emb.len(),
-                    expected
+                    expected_dims
                 );
             }
         }

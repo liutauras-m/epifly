@@ -44,6 +44,9 @@ pub struct AppState {
     pub registry: Arc<RwLock<CapabilityRegistry>>,
     pub rate_limiter: RateLimiter,
     pub llm: Arc<LlmRegistry>,
+    /// API key entries parsed from `API_KEYS` at startup.
+    /// Middleware reads this field instead of re-parsing the env var on every request.
+    pub api_keys: Vec<crate::mw::api_key::ApiKeyEntry>,
     /// RustFS / S3-compatible file store (root credentials — admin path only)
     pub file_store: Option<Arc<dyn ObjectStore>>,
     /// RustFS admin client (root credentials — used for bootstrap and provisioning)
@@ -279,9 +282,9 @@ impl AppState {
                 .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?,
         );
         let thread_projection_store: Arc<dyn agent_core::ThreadProjectionStore> =
-            agent_core::build_thread_projection_store(
-                agent_core::ProjectionStoreBackend::Redb(metadata_store.db()),
-            )
+            agent_core::build_thread_projection_store(agent_core::ProjectionStoreBackend::Redb(
+                metadata_store.db(),
+            ))
             .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?;
         let projection_coalescer = ProjectionCoalescer::new();
 
@@ -530,6 +533,9 @@ impl AppState {
             registry,
             rate_limiter: RateLimiter::new(),
             llm,
+            api_keys: crate::mw::api_key::parse_api_keys(
+                &std::env::var("API_KEYS").unwrap_or_default(),
+            ),
             file_store,
             rustfs_admin,
             cred_store: Some(cred_store),
@@ -639,6 +645,7 @@ impl AppState {
             registry,
             rate_limiter: RateLimiter::new(),
             llm,
+            api_keys: vec![],
             file_store: None,
             rustfs_admin: None,
             cred_store: None,

@@ -3,6 +3,7 @@ use axum::{Router, extract::State, http::StatusCode, response::IntoResponse, rou
 use jobs::JobSchedulerService;
 use prometheus::Encoder;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use tower_http::cors::{AllowHeaders, AllowOrigin, CorsLayer, ExposeHeaders};
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
@@ -189,8 +190,25 @@ async fn main() -> Result<()> {
         }
     }
 
+    // ── Graceful shutdown token ──────────────────────────────────────────
+    let shutdown = CancellationToken::new();
+
+    // Fire the token on SIGTERM so the scheduler stops cleanly.
+    {
+        let token = shutdown.clone();
+        tokio::spawn(async move {
+            if let Ok(mut sigterm) =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            {
+                sigterm.recv().await;
+                info!("SIGTERM received — triggering graceful shutdown");
+                token.cancel();
+            }
+        });
+    }
+
     // ── Start cron scheduler ─────────────────────────────────────────────
-    let _scheduler = JobSchedulerService::start(&state.job_registry).await?;
+    let _scheduler = JobSchedulerService::start(&state.job_registry, shutdown.clone()).await?;
     info!("job scheduler started");
 
     // ── Event-driven workspace indexer ───────────────────────────────────

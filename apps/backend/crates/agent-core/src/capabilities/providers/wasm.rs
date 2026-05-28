@@ -34,6 +34,7 @@ impl CapabilityProvider for WasmProvider {
         let loader = WasmToolLoader::new().map_err(|e| anyhow::anyhow!("{e}"))?;
         loader
             .invoke_tool(&self.card, tool_name, input)
+            .await
             .map_err(|e| anyhow::anyhow!("{e}"))
     }
 }

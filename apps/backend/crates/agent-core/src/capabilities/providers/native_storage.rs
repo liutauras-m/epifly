@@ -60,6 +60,7 @@ impl CapabilityProvider for ReadTextProvider {
         let rel = input["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
+        require_relative(rel)?;
         let full =
             safe_join(Path::new(&workspace_root), rel).map_err(|e| anyhow::anyhow!("{e}"))?;
         let content = tokio::fs::read_to_string(&full)
@@ -101,6 +102,7 @@ impl CapabilityProvider for WriteTextProvider {
         let rel = input["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
+        require_relative(rel)?;
         let content = input["content"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: content"))?;
@@ -291,6 +293,7 @@ impl CapabilityProvider for PutObjectProvider {
         let rel = input["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
+        require_relative(rel)?;
         let full =
             safe_join(Path::new(&workspace_root), rel).map_err(|e| anyhow::anyhow!("{e}"))?;
         if let Some(parent) = full.parent() {
@@ -397,6 +400,7 @@ impl CapabilityProvider for EnsureFolderProvider {
         let rel = input["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
+        require_relative(rel)?;
         let full =
             safe_join(Path::new(&workspace_root), rel).map_err(|e| anyhow::anyhow!("{e}"))?;
         tokio::fs::create_dir_all(&full)
@@ -436,6 +440,7 @@ impl CapabilityProvider for EnsureDateFolderProvider {
         }
         let workspace_root = workspace_root_for(tenant);
         let base = input["base_path"].as_str().unwrap_or("uploads");
+        require_relative(base)?;
         let now = Utc::now();
         let date_path = format!("{}/{}", base, now.format("%Y/%m/%d"));
         let full = safe_join(Path::new(&workspace_root), &date_path)
@@ -482,6 +487,8 @@ impl CapabilityProvider for MoveObjectProvider {
         let to = input["to"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: to"))?;
+        require_relative(from)?;
+        require_relative(to)?;
         let src =
             safe_join(Path::new(&workspace_root), from).map_err(|e| anyhow::anyhow!("{e}"))?;
         let dst = safe_join(Path::new(&workspace_root), to).map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -529,6 +536,7 @@ impl CapabilityProvider for TagObjectProvider {
         let rel = input["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
+        require_relative(rel)?;
         let tags = input.get("tags").cloned().unwrap_or(json!({}));
         // Derive sidecar path: `dir/.filename.meta.json`
         let sidecar_rel = {
@@ -1236,6 +1244,21 @@ impl CapabilityProvider for BulkDeleteProvider {
     }
 }
 
+// ── path safety helper ────────────────────────────────────────────────────────
+
+/// Reject explicitly absolute paths from LLM/user input **before** `safe_join`.
+///
+/// `safe_join` already detects when the canonicalized result escapes the base,
+/// so this is a belt-and-suspenders defence that makes the error message clear
+/// and eliminates any platform-specific edge-case in how `Path::join` handles
+/// absolute inputs (on Unix, `base.join("/abs")` silently replaces the base).
+fn require_relative(rel: &str) -> anyhow::Result<()> {
+    if Path::new(rel).is_absolute() {
+        anyhow::bail!("path must be relative, not absolute: {rel}");
+    }
+    Ok(())
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONSOLIDATED DOMAIN PROVIDERS (Phase 1 — capabilities consolidation refactor)
 // StorageWorkspaceProvider: 11 workspace-tree tools in one card.
@@ -1756,6 +1779,7 @@ impl StorageWorkspaceProvider {
         let rel = input["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
+        require_relative(rel)?;
         let full = safe_join(Path::new(workspace_root), rel).map_err(|e| anyhow::anyhow!("{e}"))?;
         tokio::fs::create_dir_all(&full)
             .await
@@ -1769,6 +1793,7 @@ impl StorageWorkspaceProvider {
         workspace_root: &str,
     ) -> anyhow::Result<Value> {
         let base = input["base_path"].as_str().unwrap_or("uploads");
+        require_relative(base)?;
         let now = Utc::now();
         let date_path = format!("{}/{}", base, now.format("%Y/%m/%d"));
         let full =
@@ -1783,6 +1808,7 @@ impl StorageWorkspaceProvider {
         let rel = input["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
+        require_relative(rel)?;
         let tags = input.get("tags").cloned().unwrap_or(json!({}));
         let sidecar_rel = {
             let p = std::path::Path::new(rel);
@@ -1853,6 +1879,7 @@ impl StorageFsProvider {
         let rel = input["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
+        require_relative(rel)?;
         let full = safe_join(Path::new(workspace_root), rel).map_err(|e| anyhow::anyhow!("{e}"))?;
         let content = tokio::fs::read_to_string(&full)
             .await
@@ -1864,6 +1891,7 @@ impl StorageFsProvider {
         let rel = input["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
+        require_relative(rel)?;
         let content = input["content"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: content"))?;
@@ -1883,6 +1911,7 @@ impl StorageFsProvider {
         let rel = input["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: path"))?;
+        require_relative(rel)?;
         let full = safe_join(Path::new(workspace_root), rel).map_err(|e| anyhow::anyhow!("{e}"))?;
         if let Some(parent) = full.parent() {
             tokio::fs::create_dir_all(parent)
@@ -1912,6 +1941,8 @@ impl StorageFsProvider {
         let to = input["to"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing required field: to"))?;
+        require_relative(from)?;
+        require_relative(to)?;
         let src = safe_join(Path::new(workspace_root), from).map_err(|e| anyhow::anyhow!("{e}"))?;
         let dst = safe_join(Path::new(workspace_root), to).map_err(|e| anyhow::anyhow!("{e}"))?;
         if let Some(parent) = dst.parent() {
@@ -1927,6 +1958,7 @@ impl StorageFsProvider {
 
     async fn list_paths(&self, input: &Value, workspace_root: &str) -> anyhow::Result<Value> {
         let prefix = input["prefix"].as_str().unwrap_or(".");
+        require_relative(prefix)?;
         let base = if prefix == "." {
             Path::new(workspace_root).to_path_buf()
         } else {
@@ -2065,4 +2097,79 @@ fn workspace_root_for(tenant: Option<&TenantContext>) -> String {
             std::env::var("CONUSAI_WORKSPACE_ROOT")
                 .unwrap_or_else(|_| "/tmp/conusai/workspaces".into())
         })
+}
+
+// ── Path traversal tests ──────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_manifest(name: &str) -> ToolManifest {
+        serde_json::from_value(serde_json::json!({
+            "name": name,
+            "version": "1.0",
+            "description": "test",
+            "kind": "native",
+            "tools": []
+        }))
+        .expect("test_manifest")
+    }
+
+    /// `require_relative` must reject absolute paths.
+    #[test]
+    fn require_relative_rejects_absolute_paths() {
+        assert!(
+            require_relative("/etc/passwd").is_err(),
+            "absolute path must be rejected"
+        );
+        assert!(
+            require_relative("/tmp/secret").is_err(),
+            "absolute /tmp path must be rejected"
+        );
+    }
+
+    /// `require_relative` must accept normal relative paths and ".".
+    #[test]
+    fn require_relative_accepts_normal_relative_paths() {
+        assert!(require_relative("notes.md").is_ok());
+        assert!(require_relative("subdir/file.txt").is_ok());
+        assert!(require_relative("uploads").is_ok());
+        assert!(require_relative(".").is_ok());
+    }
+
+    /// End-to-end: invoking `ReadTextProvider` with an absolute path must fail
+    /// with a clear "relative" error before any filesystem access.
+    #[tokio::test]
+    async fn read_text_provider_rejects_absolute_path() {
+        let provider = ReadTextProvider::new(test_manifest("read"));
+        let result = provider
+            .invoke(
+                "read_file",
+                &serde_json::json!({ "path": "/etc/passwd" }),
+                None,
+            )
+            .await;
+        assert!(result.is_err(), "absolute path must be rejected by invoke");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("relative"),
+            "error must mention 'relative'; got: {msg}"
+        );
+    }
+
+    /// End-to-end: invoking `StorageFsProvider` read_file with `../../secret`
+    /// must fail (caught by `safe_join` after `require_relative` passes).
+    #[tokio::test]
+    async fn storage_fs_provider_rejects_traversal_path() {
+        let provider = StorageFsProvider::new(test_manifest("storage-fs"));
+        let result = provider
+            .invoke(
+                "read_file",
+                &serde_json::json!({ "path": "../../etc/passwd" }),
+                None,
+            )
+            .await;
+        assert!(result.is_err(), "traversal path must be rejected");
+    }
 }
