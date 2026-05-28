@@ -8,6 +8,15 @@
     parentId?: string | null;
     kind: "folder" | "thread" | "document";
     children?: WorkspaceNode[];
+    /** For kind === "thread": the originating thread_id. */
+    threadId?: string | null;
+    /** Full virtual path, e.g. "Clients/Acme/Kickoff". */
+    virtualPath?: string;
+    /** Work-unit status sourced from metadata. */
+    status?: "active" | "paused" | "done" | "archived";
+    summary?: string;
+    lastActivityAt?: string;
+    tags?: string[];
   };
 
   export type WorkspaceDraft = {

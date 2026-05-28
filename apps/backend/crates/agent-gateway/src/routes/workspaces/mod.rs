@@ -337,11 +337,15 @@ pub async fn tree(
     Query(q): Query<TreeQuery>,
 ) -> Result<Json<Vec<WorkspaceNode>>, HttpError> {
     let user = effective_user_id(tenant.user_id.as_deref());
-    let nodes = state
+    let mut nodes = state
         .workspace_store
         .list_accessible_children(&tenant.tenant_id, user, q.parent_id)
         .await
         .map_err(map_err)?;
+
+    // Exclude paused / soft-deleted nodes (hidden_at is set for Thread-kind nodes
+    // that the user has "deleted" — they still exist in the store for Restore).
+    nodes.retain(|n| n.hidden_at.is_none());
 
     // § 1.6 Runtime safety net: first-time root listing for unseeded tenants.
     // If this is a root-level query, the list is empty, and the tenant has not
@@ -387,11 +391,12 @@ pub async fn tree(
 
         if did_provision {
             // Re-fetch after provisioning so the root folder appears immediately.
-            let fresh = state
+            let mut fresh = state
                 .workspace_store
                 .list_accessible_children(&tenant.tenant_id, user, None)
                 .await
                 .map_err(map_err)?;
+            fresh.retain(|n| n.hidden_at.is_none());
             return Ok(Json(apply_cursor(fresh, q.after)));
         }
     }
