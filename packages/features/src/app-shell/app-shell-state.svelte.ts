@@ -48,6 +48,28 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
     workspacesStore.tree.map(toSidebarWorkspaceNode)
   );
 
+  /** Flatten the workspace tree for O(n) lookups. */
+  function flattenNodes(nodes: SidebarWorkspaceNode[]): SidebarWorkspaceNode[] {
+    const out: SidebarWorkspaceNode[] = [];
+    for (const n of nodes) {
+      out.push(n);
+      if (n.children?.length) out.push(...flattenNodes(n.children));
+    }
+    return out;
+  }
+
+  const flatWorkspaceNodes = $derived(flattenNodes(workspaceNodes));
+
+  /**
+   * The workspace node that corresponds to the currently active thread.
+   * Used to derive the breadcrumb and ambient context for the chat header.
+   */
+  const activeThreadNode = $derived(
+    activeThreadId
+      ? (flatWorkspaceNodes.find((n) => n.kind === "thread" && n.threadId === activeThreadId) ?? null)
+      : null
+  );
+
   /** Call once from the layout's onMount. Stores dedupe internally. */
   function load() {
     threadsStore.loadOnce({ limit: 20 });
@@ -88,6 +110,8 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
     get workspaceCreating() { return workspacesStore.isCreating; },
     get workspaceError() { return workspacesStore.error; },
     get selectedWorkspaceNodeId() { return workspacesStore.selectedNodeId; },
+    /** The workspace node (thread projection) for the active thread, or null. */
+    get activeThreadNode() { return activeThreadNode; },
     load,
     goToNewChat,
     goToThread,

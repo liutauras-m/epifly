@@ -11,6 +11,8 @@
     node?: WorkspaceNode;
     activeId?: string;
     onSelect?: (id: string) => void;
+    /** Called when a kind:"thread" row is clicked. Receives the threadId. */
+    onOpenThread?: (threadId: string) => void;
     depth?: number;
     draft?: WorkspaceDraft | null;
     onDraftCommit?: (name: string) => void | Promise<void>;
@@ -21,6 +23,7 @@
     node,
     activeId,
     onSelect,
+    onOpenThread,
     depth = 0,
     draft = null,
     onDraftCommit,
@@ -132,6 +135,9 @@
             expanded = true;
             // Only load children if not yet fetched
             if (node.children === undefined) onSelect?.(node.id);
+          } else if (node.kind === "thread" && node.threadId) {
+            // Thread rows navigate to the conversation, never just "select".
+            onOpenThread?.(node.threadId);
           } else {
             onSelect?.(node.id);
           }
@@ -155,7 +161,7 @@
           <WorkspaceNodeRow {draft} {activeId} onDraftCommit={onDraftCommit} onDraftCancel={onDraftCancel} depth={depth + 1} />
         {/if}
         {#each (node.children ?? []) as child (child.id)}
-          <WorkspaceNodeRow node={child} {activeId} onSelect={onSelect} {draft} onDraftCommit={onDraftCommit} onDraftCancel={onDraftCancel} depth={depth + 1} />
+          <WorkspaceNodeRow node={child} {activeId} onSelect={onSelect} {onOpenThread} {draft} onDraftCommit={onDraftCommit} onDraftCancel={onDraftCancel} depth={depth + 1} />
         {/each}
       </div>
     {/if}

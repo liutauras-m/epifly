@@ -2,7 +2,7 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { onMount } from "svelte";
-  import { getSdkContext, createAppShellState, setWorkspaceNodeContext } from "@epifly/features";
+  import { getSdkContext, createAppShellState, setWorkspaceNodeContext, setActiveThreadNodeContext } from "@epifly/features";
   import { AppJobsSidebar, AppMain, AppNavigationSidebar, AppShell } from "@epifly/ui";
   import type { Snippet } from "svelte";
 
@@ -20,6 +20,8 @@
 
   // Expose the selected workspace node to child pages via context.
   setWorkspaceNodeContext(() => shell.selectedWorkspaceNodeId);
+  // Expose the active thread's workspace location (breadcrumb + context indicator).
+  setActiveThreadNodeContext(() => shell.activeThreadNode);
 
   onMount(shell.load);
 </script>
@@ -37,6 +39,7 @@
     selectedWorkspaceNodeId={shell.selectedWorkspaceNodeId}
     onNewChat={shell.goToNewChat}
     onThreadSelect={shell.goToThread}
+    onOpenThread={shell.goToThread}
     onWorkspaceNodeSelect={shell.selectWorkspaceNode}
     onWorkspaceNodeCreate={shell.createWorkspaceNode}
     onSearch={shell.searchWorkspace}

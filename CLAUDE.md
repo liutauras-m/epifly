@@ -33,6 +33,8 @@ packages/shared   Runtime-neutral constants, types, utilities
 12. Do not store tokens in `localStorage` as the final native auth strategy.
 13. Do not build custom sidebar primitives before using the shadcn-svelte Sidebar component.
 14. Do not create folders for features that have no implemented code yet.
+15. Do not branch UI or SDK adapters on storage `kind`/`mime_type` to tell files from conversations. Branch on `semantic_kind`.
+16. Do not surface engineering terms (`projection`, `semantic_kind`, `source_id`) in the UI. Use user-facing vocabulary (Conversation, Document, Context, Paused, Restore, Move to…).
 
 ## Svelte 5 coding patterns
 
@@ -229,20 +231,31 @@ Motion constraints:
 
 ## Implementation status (May 2026)
 
-### Done
+### Frontend — done
 - Phase 1: All packages, pnpm workspace, TypeScript paths
 - Phase 2: All UI components, styles, primitives
 - Phase 3: SDK provider and context in both apps
 - Phase 4: Chat store with full streaming, delta handling, stop, errors
-- Phase 5: Thread store and routes; sidebar wiring is a stub (see gaps)
-- Phase 6: Workspace store; tree wiring is a stub (see gaps)
+- Phase 5: Thread store + routes; sidebar wired to `createThreadsStore()` (real recents)
+- Phase 6: Workspace store + tree wired to `createWorkspacesStore()` (real nodes, lazy children, search, create)
 - Phase 7: Native hardening — adapter-static, SSR off, capabilities, safe-area
+- Chat pages in both apps integrate `createChatStore()` end-to-end (verified on the iOS simulator)
+- Responsive/layout pass: `--toggle-bar-height` token, `--safe-left/right` defaults, keyboard-resize
+  viewport meta, scroll anchoring (no glassmorphism)
 
-### Open gaps
-1. **Sidebar threads** — `app-navigation-sidebar.svelte` renders hardcoded placeholder history. Wire `createThreadsStore()` and replace the mock.
-2. **Workspace tree** — same component renders a hardcoded folder tree. Wire `createWorkspacesStore()` and replace.
-3. **Token providers** — both `createWebTokenProvider()` and `createNativeTokenProvider()` return `null`. Implement real auth once the auth flow is designed.
-4. **Chat pages** — `+page.svelte` files in both apps are thin stubs. Integrate `createChatStore()` with the chat UI components.
+### Backend — done
+- agent-gateway/workspaces refactor Phases 0–5 complete (typed AgentMessage, parking_lot registry,
+  workspace module split + durable indexing + object-key migration, provider abstraction + prompt
+  hooks + property tests, WorkspaceNodeKind/thread_projections/ProjectionRedactor/tags/ThreadRuntime)
+- `ThreadProjectionStore` has a factory (`build_thread_projection_store` / `ProjectionStoreBackend`)
+  plus a shared contract-test suite (InMemory + redb-in-memory backend)
+
+### Open gaps / active work
+1. **Token providers** — `createWebTokenProvider()` and `createNativeTokenProvider()` still return
+   `null`. Real auth is unbuilt (see architecture rule 12; auth flow design is TBD).
+2. **Workspace ⇄ Chat unification (active roadmap)** — chat conversations are not yet first-class
+   nodes in the workspace tree. See `docs/plan.md` (Plan v4.1). The load-bearing fix is the SDK
+   adapter branching on storage `kind` instead of `semantic_kind` (Step 0.1).
 
 ## Running the apps
 
@@ -268,35 +281,53 @@ Rust/Axum at `apps/backend`. Workspace `Cargo.toml` at repo root. The native cra
 
 Rust toolchain: 1.95 (pinned via `rust-toolchain.toml`). iOS target: `aarch64-apple-ios-sim`. Android targets: `aarch64-linux-android`, `armv7-linux-androideabi`.
 
-## Backend refactor — agent gateway & workspaces (plan v3.4)
+## Active plan — docs/plan.md (Plan v4.1: Workspace as Spatial Memory)
 
-The authoritative roadmap is [docs/plan.md](docs/plan.md). It is six phases (0 → 5), step-numbered, and each step is independently executable. Treat it as the single source of truth — do not duplicate its contents in commit messages or other docs.
+The authoritative roadmap is [docs/plan.md](docs/plan.md). The backend agent-gateway/workspaces
+refactor (the former v3.x plan, Phases 0–5) is **complete**; `docs/plan.md` now holds **Plan v4.1**,
+a frontend-led plan to make chat conversations first-class nodes in the workspace tree (9 phases,
+0 → 8, step-numbered, each independently executable). Treat it as the single source of truth — do
+not duplicate its contents in commit messages or other docs.
 
 ### How to execute the plan
 
-**One step at a time. One concern per phase.** If a step requires touching code outside its declared phase scope, stop and write a short "unplanned scope" note before continuing (the plan's Stop condition, plan.md line 667).
+**One step at a time. One concern per phase.** If a step requires touching code outside its declared
+phase scope, stop and write a short "unplanned scope" note before continuing (the plan's Stop
+condition, in "Notes for the executing agent").
 
 **Per-step rhythm:**
 1. Pick the next unchecked step from the plan's Execution checklist.
 2. State the contract in one paragraph (files, behavior delta, the test that proves it) before coding.
-3. Write the failing test first when the step is test-verifiable (0.3, 0.4, 1.1, 1.5, 2.3, 3.6, 4.4, 5.8). Pure renames skip — the compiler is the test.
-4. Implement directly with Write/Edit. Do not delegate code writing to sub-agents (use them only for read-only exploration).
-5. Run the fast gate: `cargo fmt && cargo clippy -p <touched> --all-targets -- -D warnings && cargo test -p <touched>`. Cross-crate → `--workspace`. Storage/migration → testcontainers.
+3. Write the failing test first when the step is test-verifiable (most v4.1 steps are — e.g. 0.1
+   adapter mapping, 1.1 open-as-chat, 3.1 move, 5.1 restore). Pure renames skip — the compiler is the test.
+4. Implement directly with Write/Edit. Do not delegate code writing to sub-agents (use them only for
+   read-only exploration).
+5. Run the fast gate. Frontend: `pnpm --filter @epifly/ui exec svelte-check` (+ touched apps) and
+   `pnpm --filter @epifly/features test`. Backend: `cargo fmt && cargo clippy -p <touched>
+   --all-targets -- -D warnings && cargo test -p <touched>` (cross-crate → `--workspace`;
+   storage/routes → testcontainers).
 6. Commit with a 3-line evaluation note in the body: *what changed*, *what's verified*, *what's deferred*.
-7. Tick the plan's checklist line. One step = one commit, except where the plan calls out sub-commits (3.2a/b/c, 3.4, 3.5).
+7. Tick the plan's checklist line. One step = one commit unless a step explicitly calls out sub-commits.
 
 **Per-phase gate (mandatory before next phase):**
-- `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace`
-- `pnpm test:e2e:web` — never per-step, only at phase boundaries
-- Phase-specific extras: Phase 1 → manual presign smoke; Phase 3 → testcontainer integration tests (RustFS + Postgres + Qdrant); Phase 4 → load test report; Phase 5 → rename/pause/restore smoke + secret-leak grep.
-- Write a 5–10 line phase eval in the PR description: items closed, metrics now emitted, followups deferred.
+- `svelte-check` on touched packages (`@epifly/ui`, `native`, `web`) → 0 errors.
+- `pnpm --filter @epifly/features test` for store/adapter changes.
+- Backend-touching steps (e.g. 0.2 tree route, 5.1 restore, 6.3 retrieval, 8.x memory):
+  `cargo clippy --workspace --all-targets -- -D warnings` + `cargo test --workspace`; routes/storage
+  use testcontainers; secret-leak grep on any new route.
+- `pnpm test:e2e:web` — never per-step, only at phase boundaries.
+- Write a 5–10 line phase eval in the PR description; confirm the surface still answers the plan's
+  five user questions.
 
-**Pre-flight audit before resuming:** the tree already contains partial Phase 0/1/2 work (`agent-gateway/src/agent/` skeleton, `agent-core/src/model_catalog.rs`, Phase 0 test files). Before implementing anything, audit each phase's checklist against the actual code and tick the boxes that are already done. Do not re-implement them.
+**Pre-flight audit before resuming:** read the plan's "Current-state audit" table and tick what's
+already done before writing anything — much plumbing already exists (backend
+`WorkspaceNodeKind`/`source_id`/`hidden_at`, SDK `move`/`filterNodes`, the UI tree row's thread
+rendering). **Phase 0 is load-bearing:** until the SDK adapter reads `semantic_kind` (Step 0.1),
+every later phase is invisible. Verify backend route/param shapes before assuming they exist.
 
-### Non-negotiable invariants (mirrored from plan.md "Notes for the executing agent")
+### Backend architecture invariants (from the completed v3.x refactor — still load-bearing)
 
-These are load-bearing — violating them is the failure mode the plan was written to prevent:
+These describe the shipped backend. They remain true and must not be regressed:
 
 1. **Onboarding is a misnaming bug, not a logic bug.** Step 0.1 renames; never invert the condition.
 2. **Never use `str::starts_with` for path containment.** Use `VirtualPath::is_strict_child_of` for child uploads, `is_same_or_within` for content routes. `VirtualPath` constructors must be private — the security boundary is `parse`.
@@ -309,9 +340,35 @@ These are load-bearing — violating them is the failure mode the plan was writt
 9. **Storage migration is dual-read / dual-write / backfill / cutover.** Never "copy keys and switch." New key is primary; legacy is best-effort.
 10. **Indexing jobs check `content_version` before upserting.** Stale-write races are the default failure mode.
 11. **Thread projection is durable, not `tokio::spawn`.** Use `ThreadProjectionJob` with coalescing per `(tenant, thread)` and boot-time reclaim of stuck `running` jobs.
-12. **Files and threads share infrastructure, not identity.** Distinguish via `WorkspaceNodeKind::Thread`, never via `mime_type == "text/markdown"`. The UI branches on `kind`.
+12. **Files and threads share infrastructure, not identity.** Distinguish via `semantic_kind` (`WorkspaceNodeKind::Thread`), never via the storage `kind`/`mime_type`. The UI **and the SDK adapter** branch on `semantic_kind` — branching on storage `kind` is exactly the bug Plan v4.1 Step 0.1 fixes.
 13. **Delete of a thread node = pause projection, not redb delete.** Never silently resurrect a deleted projection node on the next turn. UI shows `[Restore]` instead.
 14. **`RedactPiiHook` ≠ `ProjectionRedactor`.** Hook is logs/audit (opt-in for prompts, prohibited for tool args). Redactor is mandatory for the MD body and search payload; bypass only via test-only `unsafe_unredacted()`.
 15. **`ThreadRuntime` is a performance layer, never the source of truth.** Every `AgentEvent::Done` must be preceded by a successful synchronous `append_message` — assert this with a property test (Step 5.7).
 16. **`agent-core` over `agent-gateway`** when placement is ambiguous — `agent-core` is testable without HTTP.
 17. Preserve existing routing audit fields when refactoring; observability is already good. Do not regress it.
+
+### Frontend / workspace-UX invariants (Plan v4.1)
+
+Product model: **a workspace is spatial memory, not a folder tree.** A conversation is a living
+document you talk to — one `node_id`, openable as chat, readable as a document, living in one place.
+Every surface should answer the user's five questions: *where am I, what am I working on, what does
+the assistant know here, where will this save, how do I find it later.*
+
+18. **Branch on `semantic_kind`, never storage `kind`/mime** — in the SDK adapter and the UI (see #12).
+19. **One `node_id`, every lane.** Recents, Tree, Smart Views, and search render the *same* node;
+    selecting in one reflects in all. Never fork identity between a "conversation" and its "node".
+20. **Tree order is user-owned — never auto-sort it.** Recency lives only in the Recents lane.
+21. **Delete of a conversation = pause (`hidden_at`), never destroy.** Always offer `[Restore]`.
+22. **Suggest, never silently act.** The system may propose a folder; the user confirms. No silent
+    auto-move; placement and order stay user-owned.
+23. **Nothing is orphaned.** Every conversation has a visible home (a folder or the **Unsorted**
+    view) from the moment it exists.
+24. **Context is visible.** When ambient context is used, the UI names the place ("Using context from …").
+25. **Optimistic, never blocking.** Projection is async; show a "syncing" affordance, never block
+    chat or the tree.
+26. **Keep engineering terms out of the UI** (see rule 16). Users see *Conversation / Workspace /
+    Document / Context / Paused / Restore / Move to / View as document*.
+27. **Every pointer action has a keyboard path.** Move/rename/delete/pause/restore reachable via menu
+    + Cmd+K; drag-and-drop is never the only path.
+28. **No graph UI.** The relationship/memory layer is backend intelligence for search, related-items,
+    and suggestions — never a visual graph canvas.

@@ -26,6 +26,7 @@ export { default as AppMobileHeader } from "./components/app/app-mobile-header.s
 export { default as AppMain } from "./components/app/app-main.svelte";
 export { default as AppSafeArea } from "./components/app/app-safe-area.svelte";
 
+export { default as ChatBreadcrumb } from "./components/chat/chat-breadcrumb.svelte";
 export { default as ChatComposer } from "./components/chat/chat-composer.svelte";
 export { default as ChatEmptyState } from "./components/chat/chat-empty-state.svelte";
 export { default as ChatThread } from "./components/chat/chat-thread.svelte";

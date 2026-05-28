@@ -7,6 +7,12 @@ export { toSidebarWorkspaceNode } from "./workspaces/workspace-adapters.js";
 
 // Workspace node context (layout → page)
 export { setWorkspaceNodeContext, getWorkspaceNodeContext } from "./workspaces/workspace-context.svelte.js";
+// Active thread node context — breadcrumb + context indicator (Steps 1.4/1.5)
+export {
+  setActiveThreadNodeContext,
+  getActiveThreadNodeContext,
+} from "./workspaces/workspace-context.svelte.js";
+export type { ActiveThreadNodeContext } from "./workspaces/workspace-context.svelte.js";
 
 // SDK provider
 export { default as SdkProvider } from "./sdk/sdk-provider.svelte";

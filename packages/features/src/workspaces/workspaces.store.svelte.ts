@@ -23,8 +23,10 @@ export function createWorkspacesStore(sdk: ConusSdk) {
     if (result.error) {
       error = result.error.message;
     } else {
-      const sortedNodes = sortRecentFirst(result.data);
-      tree = parentId ? setChildren(tree, parentId, sortedNodes) : preserveLoadedBranches(sortedNodes, tree);
+      // Step 1.3: do NOT sort here — tree order is user-owned (stable, spatial).
+      // Recency sort lives only in the Recents lane (threads store).
+      const nodes = result.data;
+      tree = parentId ? setChildren(tree, parentId, nodes) : preserveLoadedBranches(nodes, tree);
       hasLoaded = true;
     }
   }
@@ -42,7 +44,8 @@ export function createWorkspacesStore(sdk: ConusSdk) {
       return;
     }
 
-    tree = setChildren(tree, parentId, sortRecentFirst(result.data));
+    // Step 1.3: no sort — tree order is user-owned.
+    tree = setChildren(tree, parentId, result.data);
   }
 
   /** Load only if not already loaded. Use for initial mount. */

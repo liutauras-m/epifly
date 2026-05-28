@@ -1,11 +1,12 @@
 <script lang="ts">
   import { page } from "$app/state";
-  import { getSdkContext, createChatStore, loadThreadMessages, getWorkspaceNodeContext, uploadUiAttachment } from "@epifly/features";
-  import { AppSafeArea, ChatComposer, ChatMessageList, ChatEmptyState } from "@epifly/ui";
+  import { getSdkContext, createChatStore, loadThreadMessages, getWorkspaceNodeContext, getActiveThreadNodeContext, uploadUiAttachment } from "@epifly/features";
+  import { AppSafeArea, ChatBreadcrumb, ChatComposer, ChatMessageList, ChatEmptyState } from "@epifly/ui";
 
   const sdk = getSdkContext();
   const chat = createChatStore(sdk);
   const wsNode = getWorkspaceNodeContext();
+  const threadNode = getActiveThreadNodeContext();
 
   let isLoadingHistory = $state(true);
   let fileInputEl = $state<HTMLInputElement | null>(null);
@@ -78,6 +79,16 @@
 />
 
 <AppSafeArea class="flex h-full min-h-0 flex-1 flex-col pt-[calc(var(--safe-top)+var(--sidebar-toggle-offset)+2.75rem)]">
+  <!-- Breadcrumb + context indicator (Steps 1.4 / 1.5) -->
+  {#if threadNode.virtualPath}
+    <div class="flex shrink-0 items-center gap-2 border-b border-border/40 px-6 py-1.5">
+      <ChatBreadcrumb virtualPath={threadNode.virtualPath} />
+      <span class="ml-auto shrink-0 rounded-full bg-muted/60 px-2 py-0.5 text-[0.65rem] text-muted-foreground/70">
+        Context: {threadNode.placeName ?? "Workspace"}
+      </span>
+    </div>
+  {/if}
+
   {#if isLoadingHistory}
     <div class="flex flex-1 items-center justify-center" aria-label="Loading conversation">
       <span class="text-sm text-muted-foreground">Loading…</span>

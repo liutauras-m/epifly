@@ -42,6 +42,8 @@
     selectedWorkspaceNodeId?: string | null;
     onNewChat?: () => void;
     onThreadSelect?: (threadId: string) => void;
+    /** Called when a thread node in the workspace tree is clicked. Navigates to the conversation. */
+    onOpenThread?: (threadId: string) => void;
     onWorkspaceNodeSelect?: (nodeId: string) => void;
     onWorkspaceNodeCreate?: (kind: "folder" | "document", name: string, parentId?: string | null) => unknown | Promise<unknown>;
     /** Backend search — if provided, results replace the local name filter. */
@@ -60,6 +62,7 @@
     selectedWorkspaceNodeId = null,
     onNewChat,
     onThreadSelect,
+    onOpenThread,
     onWorkspaceNodeSelect,
     onWorkspaceNodeCreate,
     onSearch
@@ -158,8 +161,8 @@
     if (result !== null) draft = null;
   }
 
-  /** Display at most 15 recent threads in the sidebar. */
-  const recentThreads = $derived(threads.slice(0, 15));
+  /** Recents lane — at most 8, ordered by recency (piles + files principle). */
+  const recentThreads = $derived(threads.slice(0, 8));
 </script>
 
 <AppSidebar>
@@ -322,6 +325,7 @@
                 nodes={workspaceNodes}
                 activeId={selectedWorkspaceNodeId ?? undefined}
                 onSelect={onWorkspaceNodeSelect}
+                {onOpenThread}
                 {draft}
                 onDraftCommit={commitDraft}
                 onDraftCancel={() => (draft = null)}
