@@ -45,11 +45,10 @@ pub use context::conversation::{ConversationService, DefaultConversationService}
 pub use context::tenant::{
     PlanLimits, PlanTier, SubscriptionStatus, TenantClaims, TenantContext, UserRole,
 };
-pub use identity::legacy::LegacyIdentityProvider;
 pub use identity::zitadel::{ZitadelCacheStats, ZitadelProvider};
 pub use identity::{
     AuthError, IdentityContext, IdentityManager, IdentityProvider, TenantCreated, TenantManager,
-    TenantSummary,
+    TenantSummary, TestIdentityProvider,
 };
 #[cfg(feature = "local-embeddings")]
 pub use indexing::LocalEmbeddingService;

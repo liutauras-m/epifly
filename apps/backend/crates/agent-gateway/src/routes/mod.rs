@@ -86,7 +86,6 @@ impl Modify for SecurityAddon {
         )
     ),
     paths(
-        auth::login,
         health::health,
         chat::completions,
         agent::agent_completions,
@@ -153,18 +152,6 @@ pub const ROUTE_TABLE: &[RouteEntry] = &[
     RouteEntry {
         method: "GET",
         path: "/login",
-        auth: "none",
-        router: "public",
-    },
-    RouteEntry {
-        method: "POST",
-        path: "/v1/auth/login",
-        auth: "none",
-        router: "public",
-    },
-    RouteEntry {
-        method: "POST",
-        path: "/v1/auth/legacy/login",
         auth: "none",
         router: "public",
     },
@@ -642,14 +629,6 @@ pub fn public_router() -> Router<Arc<AppState>> {
         .layer(DefaultBodyLimit::max(DEFAULT_JSON_BODY_LIMIT))
 }
 
-/// Auth routes — assembled separately so `main.rs` can apply IP rate limiting
-/// (which requires the state instance) as a layer before merging.
-pub fn auth_router() -> Router<Arc<AppState>> {
-    Router::new()
-        .route("/v1/auth/login", post(auth::login))
-        .route("/v1/auth/legacy/login", post(auth::login))
-        .layer(DefaultBodyLimit::max(DEFAULT_JSON_BODY_LIMIT))
-}
 
 /// Super-admin only routes (JWT-protected with role=super_admin).
 pub fn admin_router() -> Router<Arc<AppState>> {
@@ -856,65 +835,49 @@ pub fn protected_router(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_core::{PlanTier, TenantClaims, UserRole};
+    use agent_core::{PlanTier, TenantContext, UserRole};
     use axum::{
         Router,
         body::Body,
         http::{Request, StatusCode},
         middleware,
     };
-    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
-    use std::sync::{Mutex, OnceLock};
+    use crate::mw::tenant::ResolvedTenant;
     use tower::ServiceExt;
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
+    /// Build an admin app that injects a `ResolvedTenant` with `role` directly,
+    /// bypassing bearer-token auth (no JWT or Zitadel needed in unit tests).
+    fn admin_app_with_role(state: Arc<AppState>, role: UserRole) -> Router {
+        let mut ctx = TenantContext::new(
+            "tenant-admin",
+            None::<&str>,
+            PlanTier::Enterprise,
+            "/tmp/conusai/workspaces",
+        );
+        ctx.role = role;
 
-    fn admin_token(role: UserRole) -> String {
-        encode(
-            &Header::new(Algorithm::HS256),
-            &TenantClaims {
-                sub: "admin-user".into(),
-                tenant_id: "tenant-admin".into(),
-                plan: PlanTier::Enterprise,
-                role,
-                subscription_status: agent_core::SubscriptionStatus::Active,
-                exp: 4_102_444_800,
-            },
-            &EncodingKey::from_secret(b"test-jwt-secret"),
-        )
-        .expect("jwt")
-    }
-
-    fn admin_app(state: Arc<AppState>) -> Router {
+        // Layer order: Extension (outer, runs first) → extract_tenant (inner) → admin_router.
+        // extract_tenant short-circuits when ResolvedTenant is already present.
         Router::new()
-            .merge(admin_router().layer(middleware::from_fn_with_state(
-                Arc::clone(&state),
-                crate::mw::tenant::extract_tenant,
-            )))
+            .merge(
+                admin_router()
+                    .layer(middleware::from_fn_with_state(
+                        Arc::clone(&state),
+                        crate::mw::tenant::extract_tenant,
+                    ))
+                    .layer(axum::Extension(ResolvedTenant(ctx))),
+            )
             .with_state(state)
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn admin_router_allows_super_admin_after_tenant_extraction() {
-        let _guard = env_lock().lock().expect("env lock");
-        unsafe {
-            std::env::set_var("JWT_SECRET", "test-jwt-secret");
-        }
-
         let state = Arc::new(AppState::with_in_memory_stores().expect("state"));
-        let app = admin_app(state);
+        let app = admin_app_with_role(state, UserRole::SuperAdmin);
         let resp = app
             .oneshot(
                 Request::builder()
                     .uri("/admin/jobs")
-                    .header(
-                        "authorization",
-                        format!("Bearer {}", admin_token(UserRole::SuperAdmin)),
-                    )
                     .body(Body::empty())
                     .expect("request"),
             )
@@ -925,23 +888,13 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn admin_router_rejects_non_super_admin_after_tenant_extraction() {
-        let _guard = env_lock().lock().expect("env lock");
-        unsafe {
-            std::env::set_var("JWT_SECRET", "test-jwt-secret");
-        }
-
         let state = Arc::new(AppState::with_in_memory_stores().expect("state"));
-        let app = admin_app(state);
+        let app = admin_app_with_role(state, UserRole::User);
         let resp = app
             .oneshot(
                 Request::builder()
                     .uri("/admin/jobs")
-                    .header(
-                        "authorization",
-                        format!("Bearer {}", admin_token(UserRole::User)),
-                    )
                     .body(Body::empty())
                     .expect("request"),
             )
@@ -973,25 +926,15 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn admin_router_rejects_oversized_job_run_payload() {
-        let _guard = env_lock().lock().expect("env lock");
-        unsafe {
-            std::env::set_var("JWT_SECRET", "test-jwt-secret");
-        }
-
         let state = Arc::new(AppState::with_in_memory_stores().expect("state"));
-        let app = admin_app(state);
+        let app = admin_app_with_role(state, UserRole::SuperAdmin);
         let oversized = vec![b'a'; DEFAULT_JSON_BODY_LIMIT + 1];
         let resp = app
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/admin/jobs/example/run")
-                    .header(
-                        "authorization",
-                        format!("Bearer {}", admin_token(UserRole::SuperAdmin)),
-                    )
                     .header("content-type", "application/json")
                     .body(Body::from(oversized))
                     .expect("request"),

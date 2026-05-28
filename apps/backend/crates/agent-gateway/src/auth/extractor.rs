@@ -8,8 +8,7 @@
 //!      injects the HMAC token as a request header instead.
 //!
 //! Bearer JWT (`Authorization: Bearer`) is handled separately in `mw/tenant.rs` for
-//! external API clients that obtain a JWT_SECRET-signed token out-of-band.
-//! Adding it here as priority #0 is the correct next step when external clients land.
+//! Zitadel OIDC tokens and API keys.
 
 use super::verifier::{SESSION_HEADER, SessionUser, verify};
 use axum::{

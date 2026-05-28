@@ -407,9 +407,7 @@ document. **If you add a route, add it to both `ROUTE_TABLE` and the matching
 |--------|------|------|---------|-------|
 | `GET`  | `/health`                          | none      | `health::health`                       | Liveness probe |
 | `GET`  | `/healthz/embeddings`              | none      | `health::embeddings_ready`             | Returns 200 when embedding model is loaded |
-| `GET`  | `/login`                           | none      | `auth::login_page`                     | Tiny HTML stub used for legacy adapter |
-| `POST` | `/v1/auth/login`                   | none      | `auth::login`                          | Legacy HMAC login → returns JWT |
-| `POST` | `/v1/auth/legacy/login`            | none      | `auth::login`                          | Alias for above |
+| `GET`  | `/login`                           | none      | `auth::login_page`                     | Redirects browser to SvelteKit `/auth/login` |
 | `POST` | `/v1/billing/webhooks`             | hmac-sig  | `billing_webhook::handle_webhook`      | Lago webhooks, sig verified inside handler |
 | `POST` | `/admin/capabilities/register`     | platform-token | `admin_capabilities::register_capability` | Self-registration for sidecar MCP services |
 | `GET`  | `/openapi.json`                    | none      | `utoipa-swagger-ui`                    | Generated OpenAPI 3.1 spec |
@@ -540,20 +538,18 @@ Located in `apps/backend/crates/agent-gateway/src/mw/`:
 
 ### 5.4 Authentication Adapters
 
-Three identity providers live in `agent-core::identity/`:
+Identity providers live in `agent-core::identity/`:
 
-- **`legacy.rs::LegacyIdentityProvider`** — HMAC-SHA256 JWT signed with
-  `JWT_SECRET`. Tenant id = JWT `sub`. Used for unit tests and CLI eval runs.
-- **`zitadel.rs::ZitadelProvider`** — OIDC introspection via Zitadel's
-  `/oauth/v2/introspect`. Uses `ZITADEL_DOMAIN`, `ZITADEL_AUDIENCE`,
-  `ZITADEL_INTROSPECTION_CLIENT_ID/_SECRET`, `ZITADEL_MGMT_PAT`. Tokens cached
+- **`zitadel.rs::ZitadelProvider`** — OIDC RS256 JWT verification via JWKS
+  (default) or per-request introspection. Uses `ZITADEL_ISSUER`, `ZITADEL_AUDIENCE`,
+  and optionally `ZITADEL_INTROSPECTION_CLIENT_ID/_SECRET`. Tokens cached
   in `moka` with `ZitadelCacheStats` (hits/misses → Prometheus).
-- **`web` (apps/web)** — adapter pattern in `src/lib/server/session.ts`. By
-  default `LocalHmacAdapter` signs cookies with `UI_SESSION_KEY`. When
-  `BACKEND_AUTH_LOGIN_URL` is set, `BackendJwtAdapter` decodes a JWT from the
-  backend and stores it in the session cookie (still HMAC-protected as
-  defence-in-depth). The OIDC PKCE callback (`/auth/callback`) sets the same
-  cookie name (`conusai_session`, TTL 24h).
+- **`mod.rs::TestIdentityProvider`** — stub used in in-memory test states. Always
+  returns `Unauthenticated`, harmless when `auth_required = false`.
+- **`web` (apps/web)** — BFF pattern: OIDC PKCE callback at `/auth/callback` exchanges
+  the code for tokens, stores only an opaque `epifly_sid` session cookie. The raw
+  access token is kept server-side (never exposed to the browser). `UI_SESSION_KEY`
+  signs the session cookie (HttpOnly, Secure in production, SameSite=Lax, TTL 24h).
 
 Cookies in apps/web:
 
@@ -927,19 +923,17 @@ All env vars consumed by the backend. Format: `Name | Default | Description`.
 
 | Name | Default | Description |
 |------|---------|-------------|
-| `CONUSAI_AUTH_PROVIDER` | `legacy` | `legacy` or `zitadel` |
-| `JWT_SECRET` | _empty_ | HMAC key for legacy JWT |
-| `UI_SESSION_KEY` | _required prod_ | HMAC key for the apps/web session cookie |
-| `CONUSAI_UI_TENANT_ID` | `dev` | Tenant id for the legacy `LocalHmacAdapter` cookies |
+| `UI_SESSION_KEY` | _required prod_ | HMAC key for the `apps/web` session cookie (BFF) |
 | `CONUSAI_WORKSPACE_ROOT` | _unset_ | Override workspace root for tests |
-| `DEV_PASSWORD` | _empty_ | Password for legacy `/v1/auth/login` |
-| `SUPER_ADMIN_EMAILS` | _empty_ | Comma-separated emails that get super-admin |
-| `ZITADEL_DOMAIN` | _required for zitadel_ | Zitadel base URL |
+| `SUPER_ADMIN_EMAILS` | _empty_ | Comma-separated emails that get super-admin role |
+| `ZITADEL_ISSUER` | _required prod_ | Zitadel OIDC issuer URL |
+| `ZITADEL_DOMAIN` | _required prod_ | Zitadel base URL (tenant management) |
 | `ZITADEL_AUDIENCE` | `conusai-agent-gateway` | OIDC `aud` claim |
-| `ZITADEL_INTROSPECTION_CLIENT_ID` | _empty_ | OIDC introspection client |
+| `ZITADEL_INTROSPECTION_CLIENT_ID` | _empty_ | OIDC introspection client (optional, JWKS default) |
 | `ZITADEL_INTROSPECTION_CLIENT_SECRET` | _empty_ | OIDC introspection client secret |
-| `ZITADEL_MGMT_PAT` | _empty_ | Management API PAT (for org creation) |
-| `API_KEYS` | _empty_ | `key=tenant,key=tenant,…` API key allowlist |
+| `ZITADEL_TOKEN_VERIFY_MODE` | `jwks` | `jwks` (local, default) or `introspection` (per-request) |
+| `ZITADEL_MGMT_PAT` | _empty_ | Management API PAT (for org/user creation) |
+| `API_KEYS` | _empty_ | `<blake3>:<tenant>:<plan>` API key allowlist |
 
 #### 5.12.3 Storage (RustFS / S3)
 

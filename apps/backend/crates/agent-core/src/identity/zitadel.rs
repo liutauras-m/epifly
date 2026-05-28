@@ -29,10 +29,18 @@ pub struct ZitadelCacheStats {
 }
 
 impl ZitadelCacheStats {
-    pub fn hit(&self) { self.cache_hits.fetch_add(1, Ordering::Relaxed); }
-    pub fn miss(&self) { self.cache_misses.fetch_add(1, Ordering::Relaxed); }
-    pub fn hits(&self) -> u64 { self.cache_hits.load(Ordering::Relaxed) }
-    pub fn misses(&self) -> u64 { self.cache_misses.load(Ordering::Relaxed) }
+    pub fn hit(&self) {
+        self.cache_hits.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn miss(&self) {
+        self.cache_misses.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn hits(&self) -> u64 {
+        self.cache_hits.load(Ordering::Relaxed)
+    }
+    pub fn misses(&self) -> u64 {
+        self.cache_misses.load(Ordering::Relaxed)
+    }
 }
 
 // ── VerifyMode ────────────────────────────────────────────────────────────────
@@ -82,8 +90,8 @@ impl ZitadelConfig {
             .trim_end_matches('/')
             .to_string();
 
-        let audience = std::env::var("ZITADEL_AUDIENCE")
-            .unwrap_or_else(|_| "conusai-agent-gateway".into());
+        let audience =
+            std::env::var("ZITADEL_AUDIENCE").unwrap_or_else(|_| "conusai-agent-gateway".into());
 
         let verify_mode = match std::env::var("ZITADEL_TOKEN_VERIFY_MODE")
             .as_deref()
@@ -352,10 +360,7 @@ impl ZitadelProvider {
             .map_err(|e| AuthError::Provider(format!("JWKS fetch failed: {e}")))?;
 
         if !resp.status().is_success() {
-            return Err(AuthError::Provider(format!(
-                "JWKS HTTP {}",
-                resp.status()
-            )));
+            return Err(AuthError::Provider(format!("JWKS HTTP {}", resp.status())));
         }
 
         let jwk_set: JwkSet = resp
@@ -429,10 +434,7 @@ impl ZitadelProvider {
         }
 
         // 3. Get kid (required for RS256 with multiple keys).
-        let kid = header
-            .kid
-            .as_deref()
-            .unwrap_or("");
+        let kid = header.kid.as_deref().unwrap_or("");
 
         // 4. Look up JWK components (triggers single-flight refresh on miss).
         let (n, e) = self.get_jwk_components(kid).await?;
@@ -522,7 +524,6 @@ impl ZitadelProvider {
         self.token_cache.insert(cache_key, ctx.clone()).await;
         Ok(ctx)
     }
-
 }
 
 // ── JWT claims validation (JWKS path, public for tests) ──────────────────────
@@ -601,7 +602,7 @@ pub(crate) fn validate_jwt_claims(
         tenant_id: TenantId::from(tenant_id),
         email,
         roles,
-        plan_tier: PlanTier::Free,  // plan tier comes from tenant binding in Phase 6
+        plan_tier: PlanTier::Free, // plan tier comes from tenant binding in Phase 6
         subscription_status: SubscriptionStatus::Active,
     })
 }
@@ -627,16 +628,24 @@ fn parse_subscription_status(s: Option<&str>) -> SubscriptionStatus {
 }
 
 fn parse_roles(roles_map: Option<&HashMap<String, serde_json::Value>>) -> Vec<UserRole> {
-    let Some(map) = roles_map else { return vec![UserRole::User]; };
+    let Some(map) = roles_map else {
+        return vec![UserRole::User];
+    };
     let mut roles = vec![];
-    if map.contains_key("super_admin") { roles.push(UserRole::SuperAdmin); }
-    else if map.contains_key("admin") { roles.push(UserRole::Admin); }
-    else { roles.push(UserRole::User); }
+    if map.contains_key("super_admin") {
+        roles.push(UserRole::SuperAdmin);
+    } else if map.contains_key("admin") {
+        roles.push(UserRole::Admin);
+    } else {
+        roles.push(UserRole::User);
+    }
     roles
 }
 
 fn map_project_roles(role_keys: Option<&[String]>) -> Vec<UserRole> {
-    let Some(keys) = role_keys else { return vec![UserRole::User]; };
+    let Some(keys) = role_keys else {
+        return vec![UserRole::User];
+    };
     let mut roles = Vec::new();
     if keys.iter().any(|k| k == "platform.admin") {
         roles.push(UserRole::SuperAdmin);
@@ -680,13 +689,19 @@ impl IdentityProvider for ZitadelProvider {
 
 #[async_trait]
 impl TenantManager for ZitadelProvider {
-    async fn create_tenant(&self, name: &str, owner_email: &str) -> Result<TenantCreated, AuthError> {
+    async fn create_tenant(
+        &self,
+        name: &str,
+        owner_email: &str,
+    ) -> Result<TenantCreated, AuthError> {
         let url = format!("{}/management/v1/orgs", self.config.issuer);
         let resp = self
             .client
             .post(&url)
             .bearer_auth(&self.config.mgmt_pat)
-            .json(&CreateOrgRequest { name: name.to_string() })
+            .json(&CreateOrgRequest {
+                name: name.to_string(),
+            })
             .send()
             .await
             .map_err(|e| AuthError::Provider(e.to_string()))?;
@@ -731,39 +746,67 @@ impl TenantManager for ZitadelProvider {
         }
 
         #[derive(Deserialize)]
-        struct ListOrgsResp { result: Option<Vec<OrgEntry>> }
+        struct ListOrgsResp {
+            result: Option<Vec<OrgEntry>>,
+        }
         #[derive(Deserialize)]
-        struct OrgEntry { id: Option<String>, name: Option<String> }
+        struct OrgEntry {
+            id: Option<String>,
+            name: Option<String>,
+        }
 
         let data: ListOrgsResp = resp
             .json()
             .await
             .map_err(|e| AuthError::Provider(e.to_string()))?;
 
-        Ok(data.result.unwrap_or_default().into_iter().filter_map(|o| {
-            Some(TenantSummary {
-                tenant_id: TenantId::from(o.id?),
-                name: o.name.unwrap_or_default(),
-                owner_email: None,
-                plan_tier: PlanTier::Free,
-                subscription_status: SubscriptionStatus::Active,
+        Ok(data
+            .result
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|o| {
+                Some(TenantSummary {
+                    tenant_id: TenantId::from(o.id?),
+                    name: o.name.unwrap_or_default(),
+                    owner_email: None,
+                    plan_tier: PlanTier::Free,
+                    subscription_status: SubscriptionStatus::Active,
+                })
             })
-        }).collect())
+            .collect())
     }
 
-    async fn invite_user(&self, _tenant_id: &TenantId, _email: &str, _role: UserRole) -> Result<(), AuthError> {
+    async fn invite_user(
+        &self,
+        _tenant_id: &TenantId,
+        _email: &str,
+        _role: UserRole,
+    ) -> Result<(), AuthError> {
         tracing::info!(tenant_id = %_tenant_id, email = %_email, role = %_role,
             "ZitadelProvider::invite_user — stub (implement Zitadel user creation)");
         Ok(())
     }
 
-    async fn update_plan_claim(&self, tenant_id: &TenantId, tier: PlanTier, status: SubscriptionStatus) -> Result<(), AuthError> {
-        let url = format!("{}/management/v1/orgs/{}/metadata/bulk", self.config.issuer, tenant_id);
+    async fn update_plan_claim(
+        &self,
+        tenant_id: &TenantId,
+        tier: PlanTier,
+        status: SubscriptionStatus,
+    ) -> Result<(), AuthError> {
+        let url = format!(
+            "{}/management/v1/orgs/{}/metadata/bulk",
+            self.config.issuer, tenant_id
+        );
 
         #[derive(Serialize)]
-        struct MetadataEntry { key: String, value: String }
+        struct MetadataEntry {
+            key: String,
+            value: String,
+        }
         #[derive(Serialize)]
-        struct BulkSetMetadataRequest { metadata: Vec<MetadataEntry> }
+        struct BulkSetMetadataRequest {
+            metadata: Vec<MetadataEntry>,
+        }
 
         let body = BulkSetMetadataRequest {
             metadata: vec![
@@ -840,8 +883,7 @@ IsEvCkbG04tNoj1MJEM=
 
     // Corresponding JWK components (base64url) for the key above.
     // e = 65537 = AQAB always for standard RSA keys.
-    const TEST_RSA_PUBLIC_N: &str =
-        "ucn1ssAwkNK5MJrMh7wXd4UTUnurG2RP6Pb-df-XM62q3STjr1AG2Jnh8naF2EqbthS8\
+    const TEST_RSA_PUBLIC_N: &str = "ucn1ssAwkNK5MJrMh7wXd4UTUnurG2RP6Pb-df-XM62q3STjr1AG2Jnh8naF2EqbthS8\
          j6_ASuwU-7_Dmn217ZUaiIyqxLVDdJOXIm72RaTNUn4-8K9NAdkcQBfRMbkiaPmR-YPs\
          NaA4FgXbZ9DgeQmnGIz1PB9KQZ1gxZQIIHzvzzWJmB3P7dgyTn7AMws__tzYTCQqE1LW\
          IChP6qZvahFomP5Vb0AnaT5T1TSq7GDYXz-ClSGvnwqTeXJ-Oy0OVJNKgXGK40f1UE7S\
@@ -961,8 +1003,7 @@ IsEvCkbG04tNoj1MJEM=
     #[test]
     fn rejects_wrong_issuer() {
         let config = test_config(VerifyMode::Jwks);
-        let claims =
-            make_test_claims("https://evil.issuer", "user|123", "test-gateway", "org-abc");
+        let claims = make_test_claims("https://evil.issuer", "user|123", "test-gateway", "org-abc");
         let token = sign_test_jwt(&claims);
         let key = test_decoding_key();
         let result = validate_jwt_claims(&token, &key, &config);
@@ -993,15 +1034,24 @@ IsEvCkbG04tNoj1MJEM=
         let config = test_config(VerifyMode::Jwks);
         #[derive(Serialize)]
         struct NoOrgClaims {
-            iss: String, sub: String, aud: Vec<String>, exp: u64, nbf: u64, iat: u64,
+            iss: String,
+            sub: String,
+            aud: Vec<String>,
+            exp: u64,
+            nbf: u64,
+            iat: u64,
         }
         let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         let claims = NoOrgClaims {
             iss: "https://auth.test.epifly".into(),
             sub: "user|123".into(),
             aud: vec!["test-gateway".into()],
-            exp: now + 3600, nbf: now - 5, iat: now - 5,
+            exp: now + 3600,
+            nbf: now - 5,
+            iat: now - 5,
         };
         let key = EncodingKey::from_rsa_pem(TEST_RSA_PRIVATE_KEY.as_bytes()).unwrap();
         let mut header = Header::new(Algorithm::RS256);
@@ -1022,7 +1072,10 @@ IsEvCkbG04tNoj1MJEM=
         let provider = ZitadelProvider::new(test_config(VerifyMode::Jwks));
         // Build an HS256 token — alg header will be HS256.
         let claims = make_test_claims(
-            "https://auth.test.epifly", "user|123", "test-gateway", "org-abc",
+            "https://auth.test.epifly",
+            "user|123",
+            "test-gateway",
+            "org-abc",
         );
         let hs_key = EncodingKey::from_secret(b"some-secret");
         let token = encode(&Header::new(Algorithm::HS256), &claims, &hs_key).unwrap();

@@ -41,7 +41,7 @@ pub async fn resolve_tenant(
     // Fast path: binding exists
     let existing = sqlx::query_as::<_, TenantBinding>(
         "SELECT tenant_id, plan_tier, status FROM tenant_identity_bindings \
-         WHERE zitadel_issuer = $1 AND zitadel_org_id = $2"
+         WHERE zitadel_issuer = $1 AND zitadel_org_id = $2",
     )
     .bind(issuer)
     .bind(org_id)
@@ -71,7 +71,7 @@ pub async fn resolve_tenant(
         "INSERT INTO tenant_identity_bindings \
          (tenant_id, zitadel_issuer, zitadel_org_id, plan_tier, status, created_by_sub) \
          VALUES ($1, $2, $3, 'free', 'active', $4) \
-         ON CONFLICT (zitadel_issuer, zitadel_org_id) DO NOTHING"
+         ON CONFLICT (zitadel_issuer, zitadel_org_id) DO NOTHING",
     )
     .bind(&tenant_id)
     .bind(issuer)
@@ -83,7 +83,7 @@ pub async fn resolve_tenant(
     // Re-read so we get the row (handles concurrent inserts gracefully)
     let b = sqlx::query_as::<_, TenantBinding>(
         "SELECT tenant_id, plan_tier, status FROM tenant_identity_bindings \
-         WHERE zitadel_issuer = $1 AND zitadel_org_id = $2"
+         WHERE zitadel_issuer = $1 AND zitadel_org_id = $2",
     )
     .bind(issuer)
     .bind(org_id)

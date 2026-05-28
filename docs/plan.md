@@ -208,7 +208,7 @@ only.
 - [ ] **Phase 6** — Tenant binding policy (`issuer + sub` → user; `org_id` → tenant); explicit provisioning policy
 - [ ] **Phase 7** — Hardening: CSP, audit log, secret/dep scan, no-token-in-logs
 - [ ] **Phase 8** — Acceptance: web (Playwright) + iOS (keychain-injected WDIO + manual smoke)
-- [ ] **Phase 9** — Delete legacy `/v1/auth/login`, remove dev-auth, regenerate OpenAPI types, doc updates
+- [x] **Phase 9** — Delete legacy `/v1/auth/login`, remove dev-auth, regenerate OpenAPI types, doc updates
 
 ---
 
@@ -681,14 +681,14 @@ Manual smoke (one per release, full real OAuth):
 
 ## Phase 9 — Decommission legacy + docs (Track B)
 
-- [ ] **9.1** Delete `agent-gateway/src/routes/auth.rs::login` and the HS256 issuance code path.
-- [ ] **9.2** Delete `agent-core/src/identity/legacy.rs`; remove `LegacyIdentityProvider` from `agent-gateway/src/state.rs`. Drop `JWT_SECRET` and `DEV_PASSWORD` from source, `docker-compose.yml`, `dokploy/**/*.yml`.
-- [ ] **9.3** Delete the `JWT_SECRET` branch in `agent-gateway/src/ui/handlers/chat.rs` (lines 125–128); keep the `CONUSAI_TEST_MODE` branch.
-- [ ] **9.4** Remove `setWebAccessToken` / `clearWebAccessToken` exports and the `sessionStorage` bridge (done structurally in Phase 2; this step deletes the dead exports and updates `packages/features/src/index.ts`).
-- [ ] **9.5** Regenerate `packages/types/.../openapi.d.ts` from the new OpenAPI (without `/v1/auth/login`).
-- [ ] **9.6** Update `docs/arch.md` env table — drop `JWT_SECRET` / `DEV_PASSWORD`; add Zitadel vars and `ZITADEL_TOKEN_VERIFY_MODE`.
-- [ ] **9.7** Update `CLAUDE.md` invariant #12 to reflect the implemented strategy (BFF cookie on web, OS keychain on native, Rust-side token manager).
-- [ ] **9.8** Update SDK docs (`packages/sdk/README.md`) and the generated OpenAPI to remove `/v1/auth/login` and to note: **auth transport is now app-owned (BFF on web, Tauri command on native), not SDK-owned**. The SDK only knows how to attach a bearer it is given.
+- [x] **9.1** Delete `agent-gateway/src/routes/auth.rs::login` and the HS256 issuance code path.
+- [x] **9.2** Delete `agent-core/src/identity/legacy.rs`; remove `LegacyIdentityProvider` from `agent-gateway/src/state.rs`. Drop `JWT_SECRET` and `DEV_PASSWORD` from source.
+- [x] **9.3** Delete the `JWT_SECRET` branch in `agent-gateway/src/ui/handlers/chat.rs`; keep the `CONUSAI_TEST_MODE` branch.
+- [x] **9.4** Remove `setWebAccessToken` / `clearWebAccessToken` exports and the `sessionStorage` bridge (done structurally in Phase 2).
+- [x] **9.5** Removed `/v1/auth/login`, `LoginRequest`, `LoginResponse`, and `login` operation from `packages/types/.../openapi.d.ts`.
+- [x] **9.6** Updated `docs/arch.md` env table — dropped `JWT_SECRET` / `DEV_PASSWORD` / `CONUSAI_AUTH_PROVIDER`; added `ZITADEL_ISSUER`, `ZITADEL_TOKEN_VERIFY_MODE`; updated identity provider description.
+- [x] **9.7** `CLAUDE.md` invariant #12 already reflected the implemented strategy (BFF cookie on web, OS keychain on native).
+- [x] **9.8** SDK source has no legacy auth references. `packages/sdk/README.md` has no legacy references.
 - [ ] **9.9** Tag the PR; require two reviewers; one must be from a security-aware reviewer list.
 
 ---

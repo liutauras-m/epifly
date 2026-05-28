@@ -14,7 +14,7 @@ use agent_core::{
     RedbMetadataStore, RustFsContentStore, SemanticCapabilityRouter, SemanticRouterConfig,
     StorageQuotaService, TenantOnboardingService, TenantStorageFactory, build_admin,
 };
-use agent_core::{LegacyIdentityProvider, ZitadelCacheStats, ZitadelProvider};
+use agent_core::{TestIdentityProvider, ZitadelCacheStats, ZitadelProvider};
 use agent_core::{ModelCatalog, StaticModelCatalog};
 use base64::Engine as _;
 use billing_core::{BillingProvider, LagoProvider, PlanCatalog, QuotaChecker};
@@ -109,7 +109,7 @@ pub struct AppState {
     pub manifest_watcher: Option<ManifestWatcher>,
     /// Token cache counters when Zitadel is the active provider; None for legacy.
     pub zitadel_cache_stats: Option<StdArc<ZitadelCacheStats>>,
-    /// True when auth is required for every request (JWT_SECRET set or Zitadel configured).
+    /// True when auth is required for every request (Zitadel OIDC configured).
     /// When false, dev-mode X-Tenant-ID / default "dev" tenant fallback is active.
     pub auth_required: bool,
     /// Postgres connection pool for tenant_identity_bindings lookup (Phase 6).
@@ -205,54 +205,33 @@ impl AppState {
                 );
             }
 
-            let auth_provider = std::env::var("CONUSAI_AUTH_PROVIDER")
-                .unwrap_or_else(|_| "legacy".to_string())
-                .to_lowercase();
-            let allow_legacy_in_prod = std::env::var("CONUSAI_ALLOW_LEGACY_AUTH_IN_PROD")
-                .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-                .unwrap_or(false);
-            if auth_provider != "zitadel" && !allow_legacy_in_prod {
+            // Production requires Zitadel OIDC; legacy HS256 auth is removed.
+            require("ZITADEL_ISSUER", &mut errors);
+            require("ZITADEL_AUDIENCE", &mut errors);
+
+            // Ambiguity check: if ZITADEL_TOKEN_VERIFY_MODE is not set and both
+            // JWKS-only and introspection credentials are present, require an explicit choice.
+            let verify_mode = std::env::var("ZITADEL_TOKEN_VERIFY_MODE");
+            let has_introspect_creds = std::env::var("ZITADEL_INTROSPECTION_CLIENT_ID").is_ok()
+                && std::env::var("ZITADEL_INTROSPECTION_CLIENT_SECRET").is_ok()
+                && !std::env::var("ZITADEL_INTROSPECTION_CLIENT_ID")
+                    .unwrap_or_default()
+                    .is_empty()
+                && !std::env::var("ZITADEL_INTROSPECTION_CLIENT_SECRET")
+                    .unwrap_or_default()
+                    .is_empty();
+            if verify_mode.is_err() && has_introspect_creds {
                 errors.push(
-                    "legacy auth is disabled in production; set CONUSAI_AUTH_PROVIDER=zitadel or explicitly override with CONUSAI_ALLOW_LEGACY_AUTH_IN_PROD=1"
+                    "ZITADEL_TOKEN_VERIFY_MODE must be set when introspection credentials are \
+                     present; choose 'jwks' (default, local) or 'introspection' (per-request)."
                         .to_string(),
                 );
             }
 
-            // Zitadel mode: ZITADEL_ISSUER replaces JWT_SECRET.
-            // Legacy mode: JWT_SECRET still required (until Phase 9 removes it).
-            if auth_provider == "zitadel" {
-                require("ZITADEL_ISSUER", &mut errors);
-                require("ZITADEL_AUDIENCE", &mut errors);
-
-                // Ambiguity check: if ZITADEL_TOKEN_VERIFY_MODE is not set and
-                // both JWKS-only and introspection credentials are present, fail.
-                let verify_mode = std::env::var("ZITADEL_TOKEN_VERIFY_MODE");
-                let has_introspect_creds =
-                    std::env::var("ZITADEL_INTROSPECTION_CLIENT_ID").is_ok()
-                        && std::env::var("ZITADEL_INTROSPECTION_CLIENT_SECRET").is_ok()
-                        && !std::env::var("ZITADEL_INTROSPECTION_CLIENT_ID")
-                            .unwrap_or_default()
-                            .is_empty()
-                        && !std::env::var("ZITADEL_INTROSPECTION_CLIENT_SECRET")
-                            .unwrap_or_default()
-                            .is_empty();
-                if verify_mode.is_err() && has_introspect_creds {
-                    // Introspect creds present but no explicit mode → require explicit choice.
-                    errors.push(
-                        "ZITADEL_TOKEN_VERIFY_MODE must be set when introspection credentials are \
-                         present; choose 'jwks' (default, local) or 'introspection' (per-request)."
-                            .to_string(),
-                    );
-                }
-
-                // In introspection mode, require the introspection credentials.
-                if verify_mode.as_deref() == Ok("introspection") {
-                    require("ZITADEL_INTROSPECTION_CLIENT_ID", &mut errors);
-                    require("ZITADEL_INTROSPECTION_CLIENT_SECRET", &mut errors);
-                }
-            } else {
-                // Legacy auth still requires JWT_SECRET until Phase 9 removes the route.
-                require("JWT_SECRET", &mut errors);
+            // In introspection mode, require the introspection credentials.
+            if verify_mode.as_deref() == Ok("introspection") {
+                require("ZITADEL_INTROSPECTION_CLIENT_ID", &mut errors);
+                require("ZITADEL_INTROSPECTION_CLIENT_SECRET", &mut errors);
             }
 
             // Per-tenant IAM credential encryption must be explicit in production
@@ -461,33 +440,22 @@ impl AppState {
         let tool_admin = Arc::new(build_admin(Arc::clone(&registry), Arc::clone(&audit_store)));
 
         // ── Identity provider ─────────────────────────────────────────────
-        let auth_provider =
-            std::env::var("CONUSAI_AUTH_PROVIDER").unwrap_or_else(|_| "legacy".into());
         let (identity, zitadel_cache_stats): (
             StdArc<dyn IdentityManager>,
             Option<StdArc<ZitadelCacheStats>>,
-        ) = if auth_provider == "zitadel" {
-            match ZitadelProvider::from_env() {
-                Ok(p) => {
-                    info!("identity provider: Zitadel OIDC");
-                    let stats = StdArc::clone(&p.stats);
-                    (StdArc::new(p) as StdArc<dyn IdentityManager>, Some(stats))
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "Zitadel provider init failed — falling back to legacy");
-                    (
-                        StdArc::new(LegacyIdentityProvider::from_env())
-                            as StdArc<dyn IdentityManager>,
-                        None,
-                    )
-                }
+        ) = match ZitadelProvider::from_env() {
+            Ok(p) => {
+                info!("identity provider: Zitadel OIDC");
+                let stats = StdArc::clone(&p.stats);
+                (StdArc::new(p) as StdArc<dyn IdentityManager>, Some(stats))
             }
-        } else {
-            info!("identity provider: legacy HMAC/JWT");
-            (
-                StdArc::new(LegacyIdentityProvider::from_env()) as StdArc<dyn IdentityManager>,
-                None,
-            )
+            Err(e) => {
+                warn!(error = %e, "Zitadel provider not configured — all bearer tokens will be rejected");
+                (
+                    StdArc::new(TestIdentityProvider) as StdArc<dyn IdentityManager>,
+                    None,
+                )
+            }
         };
 
         // ── Plan catalog ──────────────────────────────────────────────────
@@ -618,7 +586,7 @@ impl AppState {
             plan_catalog,
             http_upstream: build_upstream_http_client(),
             model_catalog: StdArc::new(StaticModelCatalog::new().with_alias_env()),
-            auth_required: !std::env::var("JWT_SECRET").unwrap_or_default().is_empty()
+            auth_required: std::env::var("ZITADEL_ISSUER").is_ok()
                 || std::env::var("ZITADEL_DOMAIN").is_ok(),
             workspace_root: std::env::var("CONUSAI_WORKSPACE_ROOT")
                 .unwrap_or_else(|_| "/tmp/conusai/workspaces".into()),
@@ -688,7 +656,7 @@ impl AppState {
 
         let plan_catalog = StdArc::new(PlanCatalog::default());
         let identity: StdArc<dyn IdentityManager> =
-            StdArc::new(LegacyIdentityProvider::from_env()) as StdArc<dyn IdentityManager>;
+            StdArc::new(TestIdentityProvider) as StdArc<dyn IdentityManager>;
 
         Ok(Self {
             registry,
@@ -917,7 +885,8 @@ mod tests {
         // Safety: tests mutate process env under env_lock to avoid races.
         unsafe {
             std::env::set_var("CONUSAI_ENV", "production");
-            std::env::set_var("JWT_SECRET", "test-jwt-secret");
+            std::env::set_var("ZITADEL_ISSUER", "https://idp.test.example");
+            std::env::set_var("ZITADEL_AUDIENCE", "epifly-gateway");
             std::env::set_var("UI_SESSION_KEY", "test-ui-session-key");
             std::env::set_var("SUPER_ADMIN_EMAILS", "admin@example.com");
             std::env::set_var("PLATFORM_ADMIN_TOKEN", "test-admin-token");
@@ -929,37 +898,31 @@ mod tests {
                 "https://app.example.com,https://tauri.localhost",
             );
             std::env::remove_var("RUSTFS_ENDPOINT");
+            std::env::remove_var("ZITADEL_INTROSPECTION_CLIENT_ID");
+            std::env::remove_var("ZITADEL_INTROSPECTION_CLIENT_SECRET");
+            std::env::remove_var("ZITADEL_TOKEN_VERIFY_MODE");
         }
     }
 
     #[test]
-    fn validate_env_contracts_rejects_legacy_auth_in_production() {
+    fn validate_env_contracts_requires_zitadel_in_production() {
         let _guard = env_lock().lock().expect("env lock");
         set_min_prod_env();
         // Safety: tests mutate process env under env_lock to avoid races.
         unsafe {
-            std::env::set_var("CONUSAI_AUTH_PROVIDER", "legacy");
-            std::env::remove_var("CONUSAI_ALLOW_LEGACY_AUTH_IN_PROD");
+            std::env::remove_var("ZITADEL_ISSUER");
         }
 
-        let err = AppState::validate_env_contracts().expect_err("should reject legacy in prod");
+        let err = AppState::validate_env_contracts().expect_err("should reject missing Zitadel");
         let msg = err.to_string();
-        assert!(
-            msg.contains("legacy auth is disabled in production"),
-            "{msg}"
-        );
+        assert!(msg.contains("ZITADEL_ISSUER"), "{msg}");
     }
 
     #[test]
-    fn validate_env_contracts_allows_legacy_auth_with_explicit_override() {
+    fn validate_env_contracts_accepts_zitadel_jwks_mode() {
         let _guard = env_lock().lock().expect("env lock");
         set_min_prod_env();
-        // Safety: tests mutate process env under env_lock to avoid races.
-        unsafe {
-            std::env::set_var("CONUSAI_AUTH_PROVIDER", "legacy");
-            std::env::set_var("CONUSAI_ALLOW_LEGACY_AUTH_IN_PROD", "1");
-        }
-
+        // No ZITADEL_TOKEN_VERIFY_MODE and no introspection creds → OK (JWKS default)
         let result = AppState::validate_env_contracts();
         assert!(result.is_ok(), "{result:?}");
     }

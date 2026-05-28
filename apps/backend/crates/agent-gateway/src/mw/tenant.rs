@@ -115,7 +115,7 @@ pub async fn extract_tenant(
     }
 
     // 3. Dev-mode fallback: X-Tenant-ID header or default "dev" tenant.
-    //    Only active when neither JWT_SECRET nor ZITADEL_DOMAIN is configured.
+    //    Only active when ZITADEL_ISSUER is not configured.
     if !state.auth_required {
         let header_tid = req
             .headers()

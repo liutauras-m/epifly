@@ -105,30 +105,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/auth/login": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * `POST /v1/auth/login` — exchange credentials for a JWT.
-         * @description **Production mode** (`JWT_SECRET` set): validates `email` + `password` against
-         *     a credential store (currently env-var stub — plug in your user store here).
-         *
-         *     **Dev mode** (`JWT_SECRET` unset): issues a JWT signed with a hardcoded dev
-         *     secret for any non-empty email. Suitable for local development ONLY.
-         */
-        post: operations["login"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/capabilities": {
         parameters: {
             query?: never;
@@ -452,21 +428,6 @@ export interface components {
             id: string;
             token: string;
         };
-        LoginRequest: {
-            /** @description User identifier (email or username). */
-            email: string;
-            /** @description Password (dev mode: any non-empty value accepted). */
-            password: string;
-            /** @description Tenant ID override (dev mode only). */
-            tenant_id?: string | null;
-        };
-        LoginResponse: {
-            access_token: string;
-            /** Format: int64 */
-            expires_in: number;
-            tenant_id: string;
-            token_type: string;
-        };
         Usage: {
             /** Format: int64 */
             completion_tokens: number;
@@ -717,37 +678,6 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                 };
-            };
-        };
-    };
-    login: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LoginRequest"];
-            };
-        };
-        responses: {
-            /** @description Login successful */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LoginResponse"];
-                };
-            };
-            /** @description Invalid credentials */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };

@@ -4,8 +4,7 @@
 //! - `payload_b64` is URL-safe base64 (no padding) of a JSON `SessionUser`.
 //! - `sig_b64` is URL-safe base64 (no padding) of `HMAC-SHA256(UI_SESSION_KEY, payload_b64)`.
 //!
-//! The token is issued client-side (browser-shell or SvelteKit web app).
-//! Server never needs to know `JWT_SECRET` to issue these tokens.
+//! The token is issued client-side (browser-shell or SvelteKit web app) using `UI_SESSION_KEY`.
 
 use agent_core::{PlanTier, TenantContext};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};

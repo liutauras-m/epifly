@@ -1,5 +1,4 @@
 pub mod binding;
-pub mod legacy;
 pub mod zitadel;
 
 use crate::context::tenant::{PlanTier, SubscriptionStatus, TenantContext, UserRole};
@@ -116,4 +115,49 @@ pub trait TenantManager: Send + Sync + 'static {
         status: SubscriptionStatus,
     ) -> Result<(), AuthError>;
     async fn health(&self) -> Result<(), AuthError>;
+}
+
+// ── TestIdentityProvider ──────────────────────────────────────────────────────
+
+/// Stub identity provider for in-memory / `CONUSAI_TEST_MODE` configurations.
+///
+/// Every `verify_access_token` call returns `Unauthenticated`, which is harmless
+/// when `AppState::auth_required == false` (the middleware bypasses the provider).
+pub struct TestIdentityProvider;
+
+#[async_trait]
+impl IdentityProvider for TestIdentityProvider {
+    async fn verify_access_token(&self, _token: &str) -> Result<IdentityContext, AuthError> {
+        Err(AuthError::Unauthenticated)
+    }
+    async fn user_info(&self, _sub: &str) -> Result<IdentityContext, AuthError> {
+        Err(AuthError::Unauthenticated)
+    }
+    async fn health(&self) -> Result<(), AuthError> {
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl TenantManager for TestIdentityProvider {
+    async fn create_tenant(&self, _: &str, _: &str) -> Result<TenantCreated, AuthError> {
+        Err(AuthError::Config("test mode".into()))
+    }
+    async fn list_tenants(&self) -> Result<Vec<TenantSummary>, AuthError> {
+        Ok(vec![])
+    }
+    async fn invite_user(&self, _: &TenantId, _: &str, _: UserRole) -> Result<(), AuthError> {
+        Err(AuthError::Config("test mode".into()))
+    }
+    async fn update_plan_claim(
+        &self,
+        _: &TenantId,
+        _: PlanTier,
+        _: SubscriptionStatus,
+    ) -> Result<(), AuthError> {
+        Err(AuthError::Config("test mode".into()))
+    }
+    async fn health(&self) -> Result<(), AuthError> {
+        Ok(())
+    }
 }
