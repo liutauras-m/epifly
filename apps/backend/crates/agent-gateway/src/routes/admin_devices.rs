@@ -22,8 +22,8 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 #[allow(clippy::result_large_err)]
-pub(crate) fn require_shell_feature() -> Result<(), HttpError> {
-    if std::env::var("CONUSAI_FEATURE_BROWSER_SHELL").as_deref() == Ok("1") {
+pub(crate) fn require_shell_feature(enabled: bool) -> Result<(), HttpError> {
+    if enabled {
         Ok(())
     } else {
         Err(HttpError::not_found("browser shell feature not enabled"))
@@ -98,7 +98,7 @@ pub async fn issue_device(
     headers: HeaderMap,
     Json(req): Json<IssueDeviceRequest>,
 ) -> Result<impl IntoResponse, HttpError> {
-    require_shell_feature()?;
+    require_shell_feature(state.browser_shell_enabled)?;
     require_platform_admin(&headers)?;
 
     let raw: [u8; 32] = rand::random();
@@ -144,7 +144,7 @@ pub async fn list_devices(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<DeviceSummary>>, HttpError> {
-    require_shell_feature()?;
+    require_shell_feature(state.browser_shell_enabled)?;
     require_platform_admin(&headers)?;
 
     let mut result: Vec<DeviceSummary> = state
@@ -185,7 +185,7 @@ pub async fn revoke_device(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<StatusCode, HttpError> {
-    require_shell_feature()?;
+    require_shell_feature(state.browser_shell_enabled)?;
     require_platform_admin(&headers)?;
 
     for mut entry in state.device_tokens.iter_mut() {
@@ -217,25 +217,16 @@ pub async fn validate_device_token(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn feature_flag_off_returns_not_found() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        unsafe { std::env::remove_var("CONUSAI_FEATURE_BROWSER_SHELL") };
-        let err = require_shell_feature().unwrap_err();
+        let err = require_shell_feature(false).unwrap_err();
         assert_eq!(err.status.as_u16(), 404);
     }
 
     #[test]
     fn feature_flag_on_passes() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        unsafe { std::env::set_var("CONUSAI_FEATURE_BROWSER_SHELL", "1") };
-        let result = require_shell_feature();
-        unsafe { std::env::remove_var("CONUSAI_FEATURE_BROWSER_SHELL") };
-        assert!(result.is_ok());
+        assert!(require_shell_feature(true).is_ok());
     }
 
     #[test]

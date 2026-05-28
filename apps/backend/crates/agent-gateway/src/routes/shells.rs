@@ -45,7 +45,7 @@ pub async fn shell_control(
     Query(query): Query<ShellQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, HttpError> {
-    require_shell_feature()?;
+    require_shell_feature(state.browser_shell_enabled)?;
 
     let token = query.device_token.as_deref().unwrap_or("").to_owned();
 

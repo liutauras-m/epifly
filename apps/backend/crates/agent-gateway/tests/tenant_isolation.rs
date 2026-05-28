@@ -380,12 +380,10 @@ async fn case6_tenant_b_cannot_finalize_tenant_a_staged_upload() {
 /// conversation history to A).
 #[tokio::test]
 async fn case8_thread_id_from_other_tenant_returns_404() {
-    unsafe { std::env::set_var("ANTHROPIC_API_KEY", "test-key") };
-    unsafe { std::env::set_var("CONUSAI_TEST_MODE", "1") };
-
-    let state = Arc::new(
-        agent_gateway::state::AppState::with_in_memory_stores().expect("in-memory AppState"),
-    );
+    let mut state =
+        agent_gateway::state::AppState::with_in_memory_stores().expect("in-memory AppState");
+    state.anthropic_api_key = "test-key".into();
+    let state = Arc::new(state);
 
     // Create a thread under tenant-b.
     let thread_b = state
@@ -435,12 +433,10 @@ async fn case8_thread_id_from_other_tenant_returns_404() {
 /// request belongs to tenant B, the agent endpoint must return 403.
 #[tokio::test]
 async fn case9_workspace_node_id_from_other_tenant_returns_403() {
-    unsafe { std::env::set_var("ANTHROPIC_API_KEY", "test-key") };
-    unsafe { std::env::set_var("CONUSAI_TEST_MODE", "1") };
-
-    let state = Arc::new(
-        agent_gateway::state::AppState::with_in_memory_stores().expect("in-memory AppState"),
-    );
+    let mut state =
+        agent_gateway::state::AppState::with_in_memory_stores().expect("in-memory AppState");
+    state.anthropic_api_key = "test-key".into();
+    let state = Arc::new(state);
 
     // Create a workspace node under tenant-b.
     let node_b = state
@@ -490,12 +486,10 @@ async fn case9_workspace_node_id_from_other_tenant_returns_403() {
 /// capability must be rejected with 400.
 #[tokio::test]
 async fn case10_unknown_forced_capability_is_rejected() {
-    unsafe { std::env::set_var("ANTHROPIC_API_KEY", "test-key") };
-    unsafe { std::env::set_var("CONUSAI_TEST_MODE", "1") };
-
-    let state = Arc::new(
-        agent_gateway::state::AppState::with_in_memory_stores().expect("in-memory AppState"),
-    );
+    let mut state =
+        agent_gateway::state::AppState::with_in_memory_stores().expect("in-memory AppState");
+    state.anthropic_api_key = "test-key".into();
+    let state = Arc::new(state);
 
     let tenant = ResolvedTenant(TenantContext::new(
         "tenant-a",

@@ -47,6 +47,15 @@ pub struct AppState {
     /// API key entries parsed from `API_KEYS` at startup.
     /// Middleware reads this field instead of re-parsing the env var on every request.
     pub api_keys: Vec<crate::mw::api_key::ApiKeyEntry>,
+    /// Anthropic API key — read once at startup from `ANTHROPIC_API_KEY`.
+    /// `build_ctx` reads this field; tests set it directly without touching env.
+    pub anthropic_api_key: String,
+    /// Anthropic API base URL — read once at startup from `ANTHROPIC_API_BASE_URL`
+    /// (defaults to `https://api.anthropic.com`). Tests set this to a wiremock URI.
+    pub anthropic_base_url: String,
+    /// Whether the browser-shell feature flag is enabled (`CONUSAI_FEATURE_BROWSER_SHELL=1`).
+    /// Read once at startup; tests set this field directly instead of mutating the env.
+    pub browser_shell_enabled: bool,
     /// RustFS / S3-compatible file store (root credentials — admin path only)
     pub file_store: Option<Arc<dyn ObjectStore>>,
     /// RustFS admin client (root credentials — used for bootstrap and provisioning)
@@ -536,6 +545,11 @@ impl AppState {
             api_keys: crate::mw::api_key::parse_api_keys(
                 &std::env::var("API_KEYS").unwrap_or_default(),
             ),
+            anthropic_api_key: std::env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
+            anthropic_base_url: std::env::var("ANTHROPIC_API_BASE_URL")
+                .unwrap_or_else(|_| "https://api.anthropic.com".into()),
+            browser_shell_enabled: std::env::var("CONUSAI_FEATURE_BROWSER_SHELL").as_deref()
+                == Ok("1"),
             file_store,
             rustfs_admin,
             cred_store: Some(cred_store),
@@ -646,6 +660,9 @@ impl AppState {
             rate_limiter: RateLimiter::new(),
             llm,
             api_keys: vec![],
+            anthropic_api_key: String::new(),
+            anthropic_base_url: "https://api.anthropic.com".into(),
+            browser_shell_enabled: false,
             file_store: None,
             rustfs_admin: None,
             cred_store: None,

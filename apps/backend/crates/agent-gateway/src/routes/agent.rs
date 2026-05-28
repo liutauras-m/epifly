@@ -85,7 +85,11 @@ async fn blocking_agent(
     let ctx = build_ctx(&state, &tenant, limits, &req).await?;
 
     let http = state.http_upstream.clone();
-    let provider = Arc::new(NativeAnthropicProvider::new(http, ctx.api_key.clone()));
+    let provider = Arc::new(NativeAnthropicProvider::new_with_base_url(
+        http,
+        ctx.api_key.clone(),
+        state.anthropic_base_url.clone(),
+    ));
     let completion_id = format!("chatcmpl-{}", Uuid::new_v4());
     let mut sink = BlockingSink::new(completion_id, ctx.model_id.clone(), ctx.thread_id.clone());
     let cancel = CancellationToken::new();
@@ -147,9 +151,12 @@ pub async fn stream_agent(
         let model = ctx.model_id.clone();
         let completion_id = format!("chatcmpl-{}", Uuid::new_v4());
         let api_key = ctx.api_key.clone();
+        let base_url = state.anthropic_base_url.clone();
 
         let http = state.http_upstream.clone();
-        let provider = Arc::new(NativeAnthropicProvider::new(http, api_key));
+        let provider = Arc::new(NativeAnthropicProvider::new_with_base_url(
+            http, api_key, base_url,
+        ));
         let cancel = CancellationToken::new();
         let mut sink = SseSink::new(tx.clone(), completion_id, model.clone());
         let mut runner = AgentTurnRunner::new(Arc::clone(&state), tenant, ctx, provider);
@@ -274,29 +281,6 @@ mod sse_harness {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    struct EnvGuard {
-        key: &'static str,
-        previous: Option<String>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let previous = std::env::var(key).ok();
-            unsafe { std::env::set_var(key, value) };
-            Self { key, previous }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            if let Some(value) = &self.previous {
-                unsafe { std::env::set_var(self.key, value) };
-            } else {
-                unsafe { std::env::remove_var(self.key) };
-            }
-        }
-    }
-
     fn dev_tenant() -> ResolvedTenant {
         ResolvedTenant(TenantContext::new(
             "test-tenant",
@@ -330,8 +314,6 @@ mod sse_harness {
     /// `routing_meta` must be the first SSE delta, followed by content, then `[DONE]`.
     #[tokio::test]
     async fn routing_meta_is_first_delta_then_content_then_done() {
-        let _anthropic_key = EnvGuard::set("ANTHROPIC_API_KEY", "test-key");
-
         let mock_server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/v1/messages"))
@@ -342,9 +324,11 @@ mod sse_harness {
             )
             .mount(&mock_server)
             .await;
-        let _anthropic_base_url = EnvGuard::set("ANTHROPIC_API_BASE_URL", &mock_server.uri());
 
-        let state = crate::state::AppState::with_in_memory_stores().expect("in-memory AppState");
+        let mut state =
+            crate::state::AppState::with_in_memory_stores().expect("in-memory AppState");
+        state.anthropic_api_key = "test-key".into();
+        state.anthropic_base_url = mock_server.uri();
         let state = Arc::new(state);
 
         let tenant = dev_tenant();

@@ -55,7 +55,7 @@ pub async fn build_ctx(
     limits: PlanLimits,
     req: &crate::routes::chat::ChatRequest,
 ) -> Result<AgentCtx, HttpError> {
-    let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+    let api_key = state.anthropic_api_key.clone();
     if api_key.trim().is_empty() {
         return Err(map_rig_error(
             "ANTHROPIC_API_KEY is not configured; set it before starting agent-gateway",
