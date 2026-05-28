@@ -1,15 +1,15 @@
 <script lang="ts">
   import "../app.css";
   import { SdkProvider, createWebTokenProvider } from "@epifly/features";
-  import { PUBLIC_API_URL } from "$env/static/public";
   import type { Snippet } from "svelte";
 
   type Props = { children?: Snippet };
   let { children }: Props = $props();
 
+  // BFF proxy handles auth injection; token provider returns null
   const tokenProvider = createWebTokenProvider();
 </script>
 
-<SdkProvider baseUrl={PUBLIC_API_URL} {tokenProvider}>
+<SdkProvider baseUrl="/api" {tokenProvider}>
   {@render children?.()}
 </SdkProvider>
