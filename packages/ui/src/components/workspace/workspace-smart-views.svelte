@@ -13,6 +13,7 @@
 
   import ClockIcon from "@lucide/svelte/icons/clock";
   import FilterIcon from "@lucide/svelte/icons/filter";
+  import FlagIcon from "@lucide/svelte/icons/flag";
   import InboxIcon from "@lucide/svelte/icons/inbox";
   import PauseIcon from "@lucide/svelte/icons/pause";
   import XIcon from "@lucide/svelte/icons/x";
@@ -22,7 +23,7 @@
   import WorkspaceNodeRow from "./workspace-node-row.svelte";
   import type { WorkspaceNode } from "./workspace-tree.svelte";
 
-  export type SmartViewKind = "unsorted" | "recently-updated" | "paused";
+  export type SmartViewKind = "unsorted" | "recently-updated" | "paused" | "needs-review";
 
   export type SmartViewDef = {
     kind: SmartViewKind;
@@ -45,6 +46,11 @@
       kind: "paused",
       label: "Paused",
       description: "Conversations you paused — restore to continue",
+    },
+    {
+      kind: "needs-review",
+      label: "Needs review",
+      description: "Conversations you flagged for follow-up",
     },
   ];
 
@@ -117,6 +123,8 @@
                     <InboxIcon size={14} strokeWidth={1.75} aria-hidden="true" />
                   {:else if view.kind === "paused"}
                     <PauseIcon size={14} strokeWidth={1.75} aria-hidden="true" />
+                  {:else if view.kind === "needs-review"}
+                    <FlagIcon size={14} strokeWidth={1.75} aria-hidden="true" />
                   {:else}
                     <ClockIcon size={14} strokeWidth={1.75} aria-hidden="true" />
                   {/if}
@@ -147,6 +155,8 @@
             No unsorted conversations
           {:else if activeView === "paused"}
             No paused conversations
+          {:else if activeView === "needs-review"}
+            No conversations flagged for review
           {:else}
             Nothing here yet
           {/if}

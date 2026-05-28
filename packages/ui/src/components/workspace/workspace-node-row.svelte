@@ -37,6 +37,16 @@
      * Step 5.2: receives (threadId) — the source_id, not the node id.
      */
     onRestore?: (threadId: string) => void;
+    /**
+     * Phase 4.1 — "View as document" secondary action.
+     * Receives (nodeId, name, summary?); the consumer fetches and shows the peek panel.
+     */
+    onViewDoc?: (nodeId: string, name: string, summary?: string) => void;
+    /**
+     * Phase 8.3 — flag / unflag for review (sets metadata.status = "needs-review" | null).
+     * Receives (nodeId, status); null clears the flag.
+     */
+    onSetStatus?: (nodeId: string, status: string | null) => void;
     depth?: number;
     draft?: WorkspaceDraft | null;
     onDraftCommit?: (name: string) => void | Promise<void>;
@@ -52,6 +62,8 @@
     onRename,
     onDelete,
     onRestore,
+    onViewDoc,
+    onSetStatus,
     depth = 0,
     draft = null,
     onDraftCommit,
@@ -289,8 +301,15 @@
           {/if}
         </button>
 
+        <!-- Phase 4.3 — summary preview (one muted line, shown on active/hover) -->
+        {#if node.summary && !isRenaming}
+          <p class="hidden truncate px-1 pb-0.5 text-[0.63rem] text-sidebar-foreground/40 group-hover:block {isActive ? 'block' : ''}">
+            {node.summary}
+          </p>
+        {/if}
+
         <!-- Context menu (hover/focus-visible only) — keyboard + mouse accessible -->
-        {#if onMove || onRename}
+        {#if onMove || onRename || onViewDoc || onSetStatus || onDelete}
           <DropdownMenu.DropdownMenu>
             <DropdownMenu.DropdownMenuTrigger>
               {#snippet child({ props })}
@@ -308,6 +327,11 @@
               {/snippet}
             </DropdownMenu.DropdownMenuTrigger>
             <DropdownMenu.DropdownMenuContent align="start" class="w-40">
+              {#if onViewDoc && node.kind === "thread"}
+                <DropdownMenu.DropdownMenuItem onclick={() => onViewDoc!(node.id, node.name, node.summary)}>
+                  View as document
+                </DropdownMenu.DropdownMenuItem>
+              {/if}
               {#if onRename}
                 <DropdownMenu.DropdownMenuItem onclick={() => startRename()}>
                   Rename
@@ -317,6 +341,18 @@
                 <DropdownMenu.DropdownMenuItem onclick={() => onMove!(node.id, null)}>
                   Move to root
                 </DropdownMenu.DropdownMenuItem>
+              {/if}
+              {#if onSetStatus && node.kind === "thread"}
+                <DropdownMenu.DropdownMenuSeparator />
+                {#if node.status === "needs-review"}
+                  <DropdownMenu.DropdownMenuItem onclick={() => onSetStatus!(node.id, null)}>
+                    Clear review flag
+                  </DropdownMenu.DropdownMenuItem>
+                {:else}
+                  <DropdownMenu.DropdownMenuItem onclick={() => onSetStatus!(node.id, "needs-review")}>
+                    Flag for review
+                  </DropdownMenu.DropdownMenuItem>
+                {/if}
               {/if}
               {#if onDelete && node.kind !== "folder"}
                 <DropdownMenu.DropdownMenuSeparator />
@@ -348,7 +384,7 @@
           <WorkspaceNodeRow {draft} {activeId} onDraftCommit={onDraftCommit} onDraftCancel={onDraftCancel} depth={depth + 1} />
         {/if}
         {#each (node.children ?? []) as child (child.id)}
-          <WorkspaceNodeRow node={child} {activeId} onSelect={onSelect} {onOpenThread} {onMove} {onRename} {onDelete} {onRestore} {draft} onDraftCommit={onDraftCommit} onDraftCancel={onDraftCancel} depth={depth + 1} />
+          <WorkspaceNodeRow node={child} {activeId} onSelect={onSelect} {onOpenThread} {onMove} {onRename} {onDelete} {onRestore} {onViewDoc} {onSetStatus} {draft} onDraftCommit={onDraftCommit} onDraftCancel={onDraftCancel} depth={depth + 1} />
         {/each}
       </div>
     {/if}

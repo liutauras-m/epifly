@@ -19,7 +19,7 @@ import type { WorkspaceNode } from "@conusai/types";
 import { toSidebarWorkspaceNode } from "./workspace-adapters.js";
 import type { SidebarWorkspaceNode } from "./workspace-adapters.js";
 
-export type SmartViewKind = "unsorted" | "recently-updated" | "paused";
+export type SmartViewKind = "unsorted" | "recently-updated" | "paused" | "needs-review";
 
 /** Default projection folder path — threads land here until the user files them. */
 const DEFAULT_PROJECTION_FOLDER = "Conversations";
@@ -94,6 +94,20 @@ export function createSmartViewsStore(sdk: ConusSdk) {
         // same session (the UI tracks recently paused nodes in state).
         // For now return empty — the delete UX toast handles the Restore affordance.
         return res.data.filter(() => false); // populated by delete-session state (Phase 5.2+)
+      }
+
+      case "needs-review": {
+        // Phase 8.3 — threads explicitly flagged with metadata.status = "needs-review".
+        // This is a concrete trigger (explicit user flag), never a vague heuristic.
+        const res = await sdk.workspaces.filterNodes({ kind: "thread", limit: 100 });
+        if (res.error) {
+          error = res.error.message;
+          return null;
+        }
+        return res.data.filter((n) => {
+          const meta = (n.metadata ?? {}) as Record<string, unknown>;
+          return meta.status === "needs-review";
+        });
       }
     }
   }

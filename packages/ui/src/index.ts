@@ -43,6 +43,7 @@ export { default as WorkspaceFilingSuggestion } from "./components/workspace/wor
 export type { PaletteCommand } from "./components/workspace/workspace-command-palette.svelte";
 export { default as WorkspaceSwitcher } from "./components/workspace/workspace-switcher.svelte";
 export { default as WorkspaceNodeRow } from "./components/workspace/workspace-node-row.svelte";
+export { default as WorkspaceDocPeek } from "./components/workspace/workspace-doc-peek.svelte";
 
 export { default as AccountMenu } from "./components/account/account-menu.svelte";
 export { default as UserAvatar } from "./components/account/user-avatar.svelte";

@@ -13,6 +13,9 @@ export {
   getActiveThreadNodeContext,
 } from "./workspaces/workspace-context.svelte.js";
 export type { ActiveThreadNodeContext } from "./workspaces/workspace-context.svelte.js";
+// Workspace peek store — "View as document" (Phase 4.1)
+export { createPeekStore } from "./workspaces/workspace-peek.store.svelte.js";
+export type { PeekStore } from "./workspaces/workspace-peek.store.svelte.js";
 // Workspace actions context — chat pages notify tree of optimistic events (Step 7.1)
 export {
   setWorkspaceActionsContext,

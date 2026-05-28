@@ -98,3 +98,34 @@ describe("sortByLastModifiedDesc", () => {
     expect(sorted).toHaveLength(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 8.3 — "Needs review" filter (concrete trigger: explicit status flag)
+// ---------------------------------------------------------------------------
+
+function isNeedsReview(node: { metadata?: Record<string, unknown> | null }): boolean {
+  return (node.metadata?.status ?? null) === "needs-review";
+}
+
+describe("isNeedsReview (Phase 8.3)", () => {
+  it("matches a thread with metadata.status = 'needs-review'", () => {
+    expect(isNeedsReview({ metadata: { status: "needs-review" } })).toBe(true);
+  });
+
+  it("does not match a thread with no metadata", () => {
+    expect(isNeedsReview({})).toBe(false);
+  });
+
+  it("does not match a thread with a different status", () => {
+    expect(isNeedsReview({ metadata: { status: "active" } })).toBe(false);
+  });
+
+  it("does not match a thread with null metadata", () => {
+    expect(isNeedsReview({ metadata: null })).toBe(false);
+  });
+
+  it("once cleared (status = null / undefined) leaves the needs-review view", () => {
+    // Clearing: set metadata.status to undefined → isNeedsReview = false
+    expect(isNeedsReview({ metadata: { status: undefined } })).toBe(false);
+  });
+});

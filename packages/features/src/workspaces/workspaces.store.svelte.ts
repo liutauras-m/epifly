@@ -298,6 +298,22 @@ export function createWorkspacesStore(sdk: ConusSdk) {
     );
   }
 
+  /**
+   * Phase 8.3 — set metadata.status on a workspace node.
+   * Uses PATCH /v1/workspaces/{id} with { metadata: { status } }.
+   * Pass null to clear the status.
+   */
+  async function setStatus(nodeId: string, status: string | null) {
+    const result = await sdk.workspaces.patchMetadata(nodeId, {
+      status: status ?? undefined,
+    });
+    if (result.error) {
+      error = result.error.message;
+      return { error: result.error.message };
+    }
+    return { data: result.data };
+  }
+
   function connectRealtime() {
     if (realtimeSocket) return;
 
@@ -334,6 +350,7 @@ export function createWorkspacesStore(sdk: ConusSdk) {
     restoreThread,
     moveNode,
     renameNode,
+    setStatus,
     connectRealtime,
     disconnectRealtime
   };

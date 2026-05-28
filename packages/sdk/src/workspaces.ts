@@ -53,6 +53,15 @@ export function workspaces(client: InternalClient) {
       return client.call('POST', EP.THREAD_PROJECTION_RESTORE(threadId));
     },
 
+    /**
+     * Patch workspace node metadata (e.g. status, relatedNodeIds).
+     * Uses `PATCH /v1/workspaces/{id}` with a `{ metadata }` body.
+     * New fields land in metadata first; promote to columns only once proven stable.
+     */
+    patchMetadata(id: string, metadata: Record<string, unknown>): Promise<ApiResult<WorkspaceNode>> {
+      return client.call('PATCH', EP.WORKSPACE_NODE(id), { metadata });
+    },
+
     share(id: string, userId: string): Promise<ApiResult<WorkspaceNode>> {
       return client.call('POST', EP.WORKSPACE_SHARE(id), { user_id: userId });
     },

@@ -13,7 +13,7 @@
     /** Full virtual path, e.g. "Clients/Acme/Kickoff". */
     virtualPath?: string;
     /** Work-unit status sourced from metadata. */
-    status?: "active" | "paused" | "done" | "archived";
+    status?: "active" | "paused" | "done" | "archived" | "needs-review";
     summary?: string;
     lastActivityAt?: string;
     tags?: string[];
@@ -44,13 +44,17 @@
     onDelete?: (nodeId: string, isThread: boolean) => void;
     /** Called to restore a paused thread; receives (threadId = source_id). */
     onRestore?: (threadId: string) => void;
+    /** Phase 4.1 — "View as document" secondary action; receives (nodeId, name, summary?). */
+    onViewDoc?: (nodeId: string, name: string, summary?: string) => void;
+    /** Phase 8.3 — flag / clear status; receives (nodeId, status | null). */
+    onSetStatus?: (nodeId: string, status: string | null) => void;
     draft?: WorkspaceDraft | null;
     onDraftCommit?: (name: string) => void | Promise<void>;
     onDraftCancel?: () => void;
     class?: string;
   };
 
-  let { nodes, activeId, onSelect, onOpenThread, onMove, onRename, onDelete, onRestore, draft = null, onDraftCommit, onDraftCancel, class: className }: Props = $props();
+  let { nodes, activeId, onSelect, onOpenThread, onMove, onRename, onDelete, onRestore, onViewDoc, onSetStatus, draft = null, onDraftCommit, onDraftCancel, class: className }: Props = $props();
 </script>
 
 <nav class={cn("flex flex-col gap-0.5 py-2", className)} aria-label="Workspace">
@@ -58,6 +62,6 @@
     <WorkspaceNodeRow draft={draft} {activeId} onDraftCommit={onDraftCommit} onDraftCancel={onDraftCancel} depth={0} />
   {/if}
   {#each nodes as node (node.id)}
-    <WorkspaceNodeRow {node} {activeId} onSelect={onSelect} {onOpenThread} {onMove} {onRename} {onDelete} {onRestore} {draft} onDraftCommit={onDraftCommit} onDraftCancel={onDraftCancel} depth={0} />
+    <WorkspaceNodeRow {node} {activeId} onSelect={onSelect} {onOpenThread} {onMove} {onRename} {onDelete} {onRestore} {onViewDoc} {onSetStatus} {draft} onDraftCommit={onDraftCommit} onDraftCancel={onDraftCancel} depth={0} />
   {/each}
 </nav>

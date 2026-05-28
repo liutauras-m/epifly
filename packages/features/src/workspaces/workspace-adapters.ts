@@ -17,7 +17,7 @@ export type SidebarNodeKind = "folder" | "thread" | "document";
  * Work-unit status, sourced from `WorkspaceNode.metadata.status`.
  * Promoted to a typed field once stable enough.
  */
-export type WorkUnitStatus = "active" | "paused" | "done" | "archived";
+export type WorkUnitStatus = "active" | "paused" | "done" | "archived" | "needs-review";
 
 export type SidebarWorkspaceNode = {
   id: string;
@@ -109,7 +109,7 @@ function toSidebarNodeKind(semanticKind: string): SidebarNodeKind {
   }
 }
 
-const VALID_STATUSES = new Set(["active", "paused", "done", "archived"]);
+const VALID_STATUSES = new Set(["active", "paused", "done", "archived", "needs-review"]);
 function isWorkUnitStatus(value: unknown): value is WorkUnitStatus {
   return typeof value === "string" && VALID_STATUSES.has(value);
 }

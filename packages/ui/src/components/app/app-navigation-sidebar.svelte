@@ -54,6 +54,10 @@
     onDeleteWorkspaceNode?: (nodeId: string, isThread: boolean) => void;
     /** Called to restore a paused thread; receives (threadId = source_id). */
     onRestoreThread?: (threadId: string) => void;
+    /** Phase 4.1 — "View as document" peek; receives (nodeId, name, summary?). */
+    onViewDocRequest?: (nodeId: string, name: string, summary?: string) => void;
+    /** Phase 8.3 — flag / clear status; receives (nodeId, status | null). */
+    onSetWorkspaceNodeStatus?: (nodeId: string, status: string | null) => void;
     onWorkspaceNodeSelect?: (nodeId: string) => void;
     onWorkspaceNodeCreate?: (kind: "folder" | "document", name: string, parentId?: string | null) => unknown | Promise<unknown>;
     /** Backend search — if provided, results replace the local name filter. */
@@ -84,6 +88,8 @@
     onRenameWorkspaceNode,
     onDeleteWorkspaceNode,
     onRestoreThread,
+    onViewDocRequest,
+    onSetWorkspaceNodeStatus,
     onWorkspaceNodeSelect,
     onWorkspaceNodeCreate,
     onSearch,
@@ -357,6 +363,8 @@
                 onRename={onRenameWorkspaceNode}
                 onDelete={onDeleteWorkspaceNode}
                 onRestore={onRestoreThread}
+                onViewDoc={onViewDocRequest}
+                onSetStatus={onSetWorkspaceNodeStatus}
                 {draft}
                 onDraftCommit={commitDraft}
                 onDraftCancel={() => (draft = null)}

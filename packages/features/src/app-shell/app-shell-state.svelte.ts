@@ -6,6 +6,7 @@ import { createSmartViewsStore } from "../workspaces/smart-views.store.svelte.js
 import type { SmartViewKind } from "../workspaces/smart-views.store.svelte.js";
 import { toSidebarWorkspaceNode } from "../workspaces/workspace-adapters.js";
 import type { SidebarWorkspaceNode } from "../workspaces/workspace-adapters.js";
+import { createPeekStore } from "../workspaces/workspace-peek.store.svelte.js";
 
 type Navigate = (href: string) => void | Promise<void>;
 
@@ -40,6 +41,7 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
   const threadsStore = createThreadsStore(args.sdk);
   const workspacesStore = createWorkspacesStore(args.sdk);
   const smartViewsStore = createSmartViewsStore(args.sdk);
+  const peekStore = createPeekStore(args.sdk);
 
   // Route-derived — reactive because the getters are called inside $derived.
   const activePath = $derived(args.getPathname());
@@ -168,6 +170,14 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
     return workspacesStore.restoreThread(threadId);
   }
 
+  /**
+   * Phase 8.3 — flag or clear the status of a workspace node.
+   * status="needs-review" surfaces the node in the Needs Review smart view.
+   */
+  function setNodeStatus(nodeId: string, status: string | null) {
+    return workspacesStore.setStatus(nodeId, status);
+  }
+
   /** Semantic + name search against the backend, returning sidebar-shaped nodes. */
   async function searchWorkspace(query: string): Promise<SidebarWorkspaceNode[]> {
     const trimmed = query.trim();
@@ -205,7 +215,17 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
     restoreThread,
     searchWorkspace,
     insertOptimisticThread,
+    setNodeStatus,
     selectSmartView: (kind: SmartViewKind) => smartViewsStore.selectView(kind),
     clearSmartView: () => smartViewsStore.clearView(),
+    // Phase 4 — "View as document" peek
+    get peekOpen() { return peekStore.isOpen; },
+    get peekNodeName() { return peekStore.nodeName; },
+    get peekSummary() { return peekStore.summary; },
+    get peekContent() { return peekStore.content; },
+    get peekLoading() { return peekStore.isLoading; },
+    get peekError() { return peekStore.error; },
+    openPeek: (nodeId: string, name?: string, summary?: string) => peekStore.open(nodeId, name, summary),
+    closePeek: () => peekStore.close(),
   };
 }
