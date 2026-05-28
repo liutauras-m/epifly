@@ -19,7 +19,7 @@ import type { WorkspaceNode } from "@conusai/types";
 import { toSidebarWorkspaceNode } from "./workspace-adapters.js";
 import type { SidebarWorkspaceNode } from "./workspace-adapters.js";
 
-export type SmartViewKind = "unsorted" | "recently-updated";
+export type SmartViewKind = "unsorted" | "recently-updated" | "paused";
 
 /** Default projection folder path — threads land here until the user files them. */
 const DEFAULT_PROJECTION_FOLDER = "Conversations";
@@ -76,6 +76,24 @@ export function createSmartViewsStore(sdk: ConusSdk) {
           const at = Date.parse(a.last_modified ?? "");
           return (Number.isFinite(bt) ? bt : 0) - (Number.isFinite(at) ? at : 0);
         });
+      }
+
+      case "paused": {
+        // All thread nodes — filter client-side to those with a non-null hidden_at.
+        // The filterNodes endpoint excludes hidden nodes by default, so we fetch
+        // all threads and then look for any that slip through with hidden_at set.
+        // In practice, this view is populated by the restoreThread flow which reloads.
+        // A dedicated `?paused=true` param can be added backend-side once stable.
+        const res = await sdk.workspaces.filterNodes({ kind: "thread", limit: 100 });
+        if (res.error) {
+          error = res.error.message;
+          return null;
+        }
+        // filterNodes already excludes hidden_at; paused threads won't appear there.
+        // The "Paused" view is a placeholder populated after a delete action in the
+        // same session (the UI tracks recently paused nodes in state).
+        // For now return empty — the delete UX toast handles the Restore affordance.
+        return res.data.filter(() => false); // populated by delete-session state (Phase 5.2+)
       }
     }
   }

@@ -50,6 +50,10 @@
     onMoveWorkspaceNode?: (sourceId: string, targetId: string | null) => void;
     /** Called on inline rename commit; receives (nodeId, newName). */
     onRenameWorkspaceNode?: (nodeId: string, newName: string) => void;
+    /** Called to pause/delete a node; receives (nodeId, isThread). */
+    onDeleteWorkspaceNode?: (nodeId: string, isThread: boolean) => void;
+    /** Called to restore a paused thread; receives (threadId = source_id). */
+    onRestoreThread?: (threadId: string) => void;
     onWorkspaceNodeSelect?: (nodeId: string) => void;
     onWorkspaceNodeCreate?: (kind: "folder" | "document", name: string, parentId?: string | null) => unknown | Promise<unknown>;
     /** Backend search — if provided, results replace the local name filter. */
@@ -78,6 +82,8 @@
     onOpenThread,
     onMoveWorkspaceNode,
     onRenameWorkspaceNode,
+    onDeleteWorkspaceNode,
+    onRestoreThread,
     onWorkspaceNodeSelect,
     onWorkspaceNodeCreate,
     onSearch,
@@ -349,6 +355,8 @@
                 {onOpenThread}
                 onMove={onMoveWorkspaceNode}
                 onRename={onRenameWorkspaceNode}
+                onDelete={onDeleteWorkspaceNode}
+                onRestore={onRestoreThread}
                 {draft}
                 onDraftCommit={commitDraft}
                 onDraftCancel={() => (draft = null)}

@@ -44,6 +44,15 @@ export function workspaces(client: InternalClient) {
       return client.call('DELETE', EP.WORKSPACE_NODE(id));
     },
 
+    /**
+     * Restore a paused thread projection.
+     * Calls `POST /v1/threads/{threadId}/projection/restore`.
+     * The `threadId` is the source thread ID (WorkspaceNode.source_id), not the node ID.
+     */
+    restoreThread(threadId: string): Promise<ApiResult<null>> {
+      return client.call('POST', EP.THREAD_PROJECTION_RESTORE(threadId));
+    },
+
     share(id: string, userId: string): Promise<ApiResult<WorkspaceNode>> {
       return client.call('POST', EP.WORKSPACE_SHARE(id), { user_id: userId });
     },

@@ -14,6 +14,7 @@
   import ClockIcon from "@lucide/svelte/icons/clock";
   import FilterIcon from "@lucide/svelte/icons/filter";
   import InboxIcon from "@lucide/svelte/icons/inbox";
+  import PauseIcon from "@lucide/svelte/icons/pause";
   import XIcon from "@lucide/svelte/icons/x";
   import * as Sidebar from "../ui/sidebar/index.js";
   import * as Skeleton from "../ui/skeleton/index.js";
@@ -21,7 +22,7 @@
   import WorkspaceNodeRow from "./workspace-node-row.svelte";
   import type { WorkspaceNode } from "./workspace-tree.svelte";
 
-  export type SmartViewKind = "unsorted" | "recently-updated";
+  export type SmartViewKind = "unsorted" | "recently-updated" | "paused";
 
   export type SmartViewDef = {
     kind: SmartViewKind;
@@ -40,6 +41,11 @@
       label: "Recently updated",
       description: "All items sorted by last activity",
     },
+    {
+      kind: "paused",
+      label: "Paused",
+      description: "Conversations you paused — restore to continue",
+    },
   ];
 
   type Props = {
@@ -52,6 +58,8 @@
     onClearView?: () => void;
     onSelectNode?: (id: string) => void;
     onOpenThread?: (threadId: string) => void;
+    /** Called when the user restores a paused thread from the Paused view. */
+    onRestoreThread?: (threadId: string) => void;
   };
 
   let {
@@ -64,6 +72,7 @@
     onClearView,
     onSelectNode,
     onOpenThread,
+    onRestoreThread,
   }: Props = $props();
 
   const activeViewDef = $derived(VIEWS.find((v) => v.kind === activeView) ?? null);
@@ -106,6 +115,8 @@
                 >
                   {#if view.kind === "unsorted"}
                     <InboxIcon size={14} strokeWidth={1.75} aria-hidden="true" />
+                  {:else if view.kind === "paused"}
+                    <PauseIcon size={14} strokeWidth={1.75} aria-hidden="true" />
                   {:else}
                     <ClockIcon size={14} strokeWidth={1.75} aria-hidden="true" />
                   {/if}
@@ -132,7 +143,13 @@
         <p role="alert" class="px-3 py-1 text-xs text-destructive">{error}</p>
       {:else if results.length === 0}
         <p class="px-3 py-2 text-xs text-sidebar-foreground/40">
-          {activeView === "unsorted" ? "No unsorted conversations" : "Nothing here yet"}
+          {#if activeView === "unsorted"}
+            No unsorted conversations
+          {:else if activeView === "paused"}
+            No paused conversations
+          {:else}
+            Nothing here yet
+          {/if}
         </p>
       {:else}
         <nav class="flex flex-col gap-0.5 py-1" aria-label="{activeViewDef?.label ?? 'Smart view'} results">
@@ -142,6 +159,7 @@
               activeId={activeNodeId ?? undefined}
               onSelect={onSelectNode}
               {onOpenThread}
+              onRestore={activeView === "paused" ? onRestoreThread : undefined}
               depth={0}
             />
           {/each}

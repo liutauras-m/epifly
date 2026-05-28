@@ -91,6 +91,41 @@ export function createWorkspacesStore(sdk: ConusSdk) {
   }
 
   /**
+   * Pause (soft-delete) a node.
+   * For Thread-kind nodes: backend sets hidden_at (pause, not destroy).
+   * For other nodes: hard delete.
+   * Step 5.2 — optimistic remove from tree; UI should show "Restore" toast for threads.
+   */
+  async function deleteNode(nodeId: string, isThread = false) {
+    const snapshot = tree;
+    tree = removeNode(tree, nodeId);
+
+    const result = await sdk.workspaces.delete(nodeId);
+    if (result.error) {
+      tree = snapshot;
+      error = result.error.message;
+      return { error: result.error.message };
+    }
+    return { data: null, wasThread: isThread };
+  }
+
+  /**
+   * Restore a paused thread projection (clear hidden_at).
+   * Step 5.2 — triggers a tree reload after restore so the node reappears.
+   * `threadId` = WorkspaceNode.source_id (the originating thread, not the node ID).
+   */
+  async function restoreThread(threadId: string) {
+    const result = await sdk.workspaces.restoreThread(threadId);
+    if (result.error) {
+      error = result.error.message;
+      return { error: result.error.message };
+    }
+    // Reload tree so the restored node reappears.
+    await loadTree(null);
+    return { data: null };
+  }
+
+  /**
    * Move a node to a new parent (optimistic). Reverts on API error.
    * Never moves a folder into itself.
    * Step 3.1 — called by DnD drop + "Move to…" menu.
@@ -295,6 +330,8 @@ export function createWorkspacesStore(sdk: ConusSdk) {
     selectNode,
     selectAndLoadNode,
     createNode,
+    deleteNode,
+    restoreThread,
     moveNode,
     renameNode,
     connectRealtime,

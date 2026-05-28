@@ -16,6 +16,7 @@ export const EP = {
   WORKSPACE_RENAME: (id: string) => `/v1/workspaces/${id}/rename`,
   WORKSPACE_TAGS: (id: string) => `/v1/workspaces/${id}/tags`,
   WORKSPACES_FILTER: '/v1/workspaces/filter',
+  THREAD_PROJECTION_RESTORE: (threadId: string) => `/v1/threads/${threadId}/projection/restore`,
   CAPABILITIES: '/v1/capabilities',
   CAPABILITIES_SEARCH: '/v1/capabilities/search',
   UI_STREAM: '/ui/stream',

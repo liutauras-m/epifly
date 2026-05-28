@@ -26,6 +26,16 @@
      * Step 3.2: receives (nodeId, newName).
      */
     onRename?: (nodeId: string, newName: string) => void;
+    /**
+     * Called to pause (soft-delete) a thread node.
+     * Step 5.2: receives (nodeId, isThread). Backend sets hidden_at.
+     */
+    onDelete?: (nodeId: string, isThread: boolean) => void;
+    /**
+     * Called to restore a paused thread projection.
+     * Step 5.2: receives (threadId) — the source_id, not the node id.
+     */
+    onRestore?: (threadId: string) => void;
     depth?: number;
     draft?: WorkspaceDraft | null;
     onDraftCommit?: (name: string) => void | Promise<void>;
@@ -39,6 +49,8 @@
     onOpenThread,
     onMove,
     onRename,
+    onDelete,
+    onRestore,
     depth = 0,
     draft = null,
     onDraftCommit,
@@ -284,7 +296,7 @@
                 </Button.Button>
               {/snippet}
             </DropdownMenu.DropdownMenuTrigger>
-            <DropdownMenu.DropdownMenuContent align="start" class="w-36">
+            <DropdownMenu.DropdownMenuContent align="start" class="w-40">
               {#if onRename}
                 <DropdownMenu.DropdownMenuItem onclick={() => startRename()}>
                   Rename
@@ -294,6 +306,24 @@
                 <DropdownMenu.DropdownMenuItem onclick={() => onMove!(node.id, null)}>
                   Move to root
                 </DropdownMenu.DropdownMenuItem>
+              {/if}
+              {#if onDelete && node.kind !== "folder"}
+                <DropdownMenu.DropdownMenuSeparator />
+                {#if node.kind === "thread"}
+                  <DropdownMenu.DropdownMenuItem
+                    class="text-muted-foreground"
+                    onclick={() => onDelete!(node.id, true)}
+                  >
+                    Pause conversation
+                  </DropdownMenu.DropdownMenuItem>
+                {:else}
+                  <DropdownMenu.DropdownMenuItem
+                    class="text-destructive focus:text-destructive"
+                    onclick={() => onDelete!(node.id, false)}
+                  >
+                    Delete
+                  </DropdownMenu.DropdownMenuItem>
+                {/if}
               {/if}
             </DropdownMenu.DropdownMenuContent>
           </DropdownMenu.DropdownMenu>
@@ -307,7 +337,7 @@
           <WorkspaceNodeRow {draft} {activeId} onDraftCommit={onDraftCommit} onDraftCancel={onDraftCancel} depth={depth + 1} />
         {/if}
         {#each (node.children ?? []) as child (child.id)}
-          <WorkspaceNodeRow node={child} {activeId} onSelect={onSelect} {onOpenThread} {onMove} {onRename} {draft} onDraftCommit={onDraftCommit} onDraftCancel={onDraftCancel} depth={depth + 1} />
+          <WorkspaceNodeRow node={child} {activeId} onSelect={onSelect} {onOpenThread} {onMove} {onRename} {onDelete} {onRestore} {draft} onDraftCommit={onDraftCommit} onDraftCancel={onDraftCancel} depth={depth + 1} />
         {/each}
       </div>
     {/if}

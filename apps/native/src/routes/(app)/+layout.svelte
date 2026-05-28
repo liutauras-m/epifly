@@ -59,6 +59,8 @@
     onOpenThread={shell.goToThread}
     onMoveWorkspaceNode={(src, tgt) => { void shell.moveWorkspaceNode(src, tgt, null); }}
     onRenameWorkspaceNode={(id, name) => { void shell.renameWorkspaceNode(id, name); }}
+    onDeleteWorkspaceNode={(id, isThread) => { void shell.deleteWorkspaceNode(id, isThread); }}
+    onRestoreThread={(threadId) => { void shell.restoreThread(threadId); }}
     onWorkspaceNodeSelect={shell.selectWorkspaceNode}
     onWorkspaceNodeCreate={shell.createWorkspaceNode}
     onSearch={shell.searchWorkspace}

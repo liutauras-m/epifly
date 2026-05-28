@@ -99,6 +99,12 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
   function renameWorkspaceNode(nodeId: string, newName: string) {
     return workspacesStore.renameNode(nodeId, newName);
   }
+  function deleteWorkspaceNode(nodeId: string, isThread = false) {
+    return workspacesStore.deleteNode(nodeId, isThread);
+  }
+  function restoreThread(threadId: string) {
+    return workspacesStore.restoreThread(threadId);
+  }
 
   /** Semantic + name search against the backend, returning sidebar-shaped nodes. */
   async function searchWorkspace(query: string): Promise<SidebarWorkspaceNode[]> {
@@ -133,6 +139,8 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
     createWorkspaceNode,
     moveWorkspaceNode,
     renameWorkspaceNode,
+    deleteWorkspaceNode,
+    restoreThread,
     searchWorkspace,
     selectSmartView: (kind: SmartViewKind) => smartViewsStore.selectView(kind),
     clearSmartView: () => smartViewsStore.clearView(),
