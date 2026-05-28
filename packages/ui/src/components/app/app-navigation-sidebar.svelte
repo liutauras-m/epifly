@@ -46,6 +46,10 @@
     onThreadSelect?: (threadId: string) => void;
     /** Called when a thread node in the workspace tree is clicked. Navigates to the conversation. */
     onOpenThread?: (threadId: string) => void;
+    /** Called on DnD drop or "Move to"; receives (sourceId, targetFolderId | null). */
+    onMoveWorkspaceNode?: (sourceId: string, targetId: string | null) => void;
+    /** Called on inline rename commit; receives (nodeId, newName). */
+    onRenameWorkspaceNode?: (nodeId: string, newName: string) => void;
     onWorkspaceNodeSelect?: (nodeId: string) => void;
     onWorkspaceNodeCreate?: (kind: "folder" | "document", name: string, parentId?: string | null) => unknown | Promise<unknown>;
     /** Backend search — if provided, results replace the local name filter. */
@@ -72,6 +76,8 @@
     onNewChat,
     onThreadSelect,
     onOpenThread,
+    onMoveWorkspaceNode,
+    onRenameWorkspaceNode,
     onWorkspaceNodeSelect,
     onWorkspaceNodeCreate,
     onSearch,
@@ -341,6 +347,8 @@
                 activeId={selectedWorkspaceNodeId ?? undefined}
                 onSelect={onWorkspaceNodeSelect}
                 {onOpenThread}
+                onMove={onMoveWorkspaceNode}
+                onRename={onRenameWorkspaceNode}
                 {draft}
                 onDraftCommit={commitDraft}
                 onDraftCancel={() => (draft = null)}

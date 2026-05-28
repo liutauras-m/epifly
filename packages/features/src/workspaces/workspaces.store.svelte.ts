@@ -90,6 +90,81 @@ export function createWorkspacesStore(sdk: ConusSdk) {
     return node;
   }
 
+  /**
+   * Move a node to a new parent (optimistic). Reverts on API error.
+   * Never moves a folder into itself.
+   * Step 3.1 — called by DnD drop + "Move to…" menu.
+   */
+  async function moveNode(
+    nodeId: string,
+    newParentId: string | null,
+    newParentPath: string | null
+  ) {
+    const node = findNode(tree, nodeId);
+    if (!node) return { error: "Node not found" };
+    if (newParentId === nodeId) return { error: "Cannot move a folder into itself" };
+
+    // Snapshot for revert
+    const snapshot = tree;
+
+    // Optimistic: remove from old location, insert at new
+    tree = removeNode(tree, nodeId);
+    tree = insertNodeAtTop(tree, node, newParentId);
+
+    const result = await sdk.workspaces.move(nodeId, {
+      new_parent_id: newParentId,
+      new_parent_path: newParentPath,
+    });
+
+    if (result.error) {
+      tree = snapshot; // revert
+      error = result.error.message;
+      return { error: result.error.message };
+    }
+
+    // Refresh the parent to get the server-side virtual_path update
+    if (newParentId) await loadChildren(newParentId);
+    return { data: result.data };
+  }
+
+  /**
+   * Rename a node in place (optimistic). Reverts on error.
+   * Step 3.2 — called by double-click inline input and command palette.
+   */
+  async function renameNode(nodeId: string, newName: string) {
+    const trimmed = newName.trim();
+    if (!trimmed) return { error: "Name cannot be empty" };
+
+    const snapshot = tree;
+    tree = updateNodeName(tree, nodeId, trimmed);
+
+    const result = await sdk.workspaces.rename(nodeId, trimmed);
+    if (result.error) {
+      tree = snapshot; // revert
+      error = result.error.message;
+      return { error: result.error.message };
+    }
+    return { data: result.data };
+  }
+
+  /** Remove a node from the tree (any depth). */
+  function removeNode(nodes: WorkspaceTreeNode[], id: string): WorkspaceTreeNode[] {
+    return nodes
+      .filter((n) => n.id !== id)
+      .map((n) =>
+        n.children ? { ...n, children: removeNode(n.children, id) } : n
+      );
+  }
+
+  /** Update just the name of a node (any depth). */
+  function updateNodeName(nodes: WorkspaceTreeNode[], id: string, name: string): WorkspaceTreeNode[] {
+    return nodes.map((n) => {
+      if (n.id === id) return { ...n, name };
+      if (n.children) return { ...n, children: updateNodeName(n.children, id, name) };
+      return n;
+    });
+  }
+
   function findNode(nodes: WorkspaceTreeNode[], id: string): WorkspaceTreeNode | null {
     for (const node of nodes) {
       if (node.id === id) return node;
@@ -220,6 +295,8 @@ export function createWorkspacesStore(sdk: ConusSdk) {
     selectNode,
     selectAndLoadNode,
     createNode,
+    moveNode,
+    renameNode,
     connectRealtime,
     disconnectRealtime
   };

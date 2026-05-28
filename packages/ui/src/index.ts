@@ -38,6 +38,9 @@ export { default as RoutingMetaRow } from "./components/chat/routing-meta-row.sv
 
 export { default as WorkspaceTree } from "./components/workspace/workspace-tree.svelte";
 export { default as WorkspaceSmartViews } from "./components/workspace/workspace-smart-views.svelte";
+export { default as WorkspaceCommandPalette } from "./components/workspace/workspace-command-palette.svelte";
+export { default as WorkspaceFilingSuggestion } from "./components/workspace/workspace-filing-suggestion.svelte";
+export type { PaletteCommand } from "./components/workspace/workspace-command-palette.svelte";
 export { default as WorkspaceSwitcher } from "./components/workspace/workspace-switcher.svelte";
 export { default as WorkspaceNodeRow } from "./components/workspace/workspace-node-row.svelte";
 

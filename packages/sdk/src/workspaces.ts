@@ -36,6 +36,10 @@ export function workspaces(client: InternalClient) {
       return client.call('POST', EP.WORKSPACE_MOVE(id), body);
     },
 
+    rename(id: string, name: string): Promise<ApiResult<WorkspaceNode>> {
+      return client.call('POST', EP.WORKSPACE_RENAME(id), { name });
+    },
+
     delete(id: string): Promise<ApiResult<null>> {
       return client.call('DELETE', EP.WORKSPACE_NODE(id));
     },

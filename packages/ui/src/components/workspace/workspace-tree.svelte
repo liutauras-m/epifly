@@ -31,13 +31,17 @@
     onSelect?: (id: string) => void;
     /** Called when a thread row is clicked; receives the threadId. */
     onOpenThread?: (threadId: string) => void;
+    /** Called when a DnD drop or "Move to" action fires; receives (sourceId, targetFolderId). */
+    onMove?: (sourceId: string, targetId: string | null) => void;
+    /** Called when a rename is committed; receives (nodeId, newName). */
+    onRename?: (nodeId: string, newName: string) => void;
     draft?: WorkspaceDraft | null;
     onDraftCommit?: (name: string) => void | Promise<void>;
     onDraftCancel?: () => void;
     class?: string;
   };
 
-  let { nodes, activeId, onSelect, onOpenThread, draft = null, onDraftCommit, onDraftCancel, class: className }: Props = $props();
+  let { nodes, activeId, onSelect, onOpenThread, onMove, onRename, draft = null, onDraftCommit, onDraftCancel, class: className }: Props = $props();
 </script>
 
 <nav class={cn("flex flex-col gap-0.5 py-2", className)} aria-label="Workspace">
@@ -45,6 +49,6 @@
     <WorkspaceNodeRow draft={draft} {activeId} onDraftCommit={onDraftCommit} onDraftCancel={onDraftCancel} depth={0} />
   {/if}
   {#each nodes as node (node.id)}
-    <WorkspaceNodeRow {node} {activeId} onSelect={onSelect} {onOpenThread} {draft} onDraftCommit={onDraftCommit} onDraftCancel={onDraftCancel} depth={0} />
+    <WorkspaceNodeRow {node} {activeId} onSelect={onSelect} {onOpenThread} {onMove} {onRename} {draft} onDraftCommit={onDraftCommit} onDraftCancel={onDraftCancel} depth={0} />
   {/each}
 </nav>

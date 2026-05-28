@@ -3,7 +3,8 @@
   import { page } from "$app/state";
   import { onMount } from "svelte";
   import { getSdkContext, createAppShellState, setWorkspaceNodeContext, setActiveThreadNodeContext } from "@epifly/features";
-  import { AppJobsSidebar, AppMain, AppNavigationSidebar, AppShell } from "@epifly/ui";
+  import { AppJobsSidebar, AppMain, AppNavigationSidebar, AppShell, WorkspaceCommandPalette } from "@epifly/ui";
+  import type { PaletteCommand } from "@epifly/ui";
   import type { Snippet } from "svelte";
 
   type Props = { children?: Snippet };
@@ -24,6 +25,22 @@
   setActiveThreadNodeContext(() => shell.activeThreadNode);
 
   onMount(shell.load);
+
+  // Command palette (Step 3.5)
+  let paletteOpen = $state(false);
+
+  const paletteCommands: PaletteCommand[] = [
+    { id: "new-chat",   label: "New chat",          shortcut: "⌘N", group: "Navigation", onRun: () => shell.goToNewChat() },
+    { id: "search",     label: "Search workspace",  shortcut: "⌘F", group: "Navigation", onRun: () => paletteOpen = false },
+    { id: "new-folder", label: "New folder",                         group: "Organize",   onRun: () => paletteOpen = false },
+  ];
+
+  function handleGlobalKeydown(event: KeyboardEvent) {
+    if ((event.metaKey || event.ctrlKey) && event.key === "k") {
+      event.preventDefault();
+      paletteOpen = !paletteOpen;
+    }
+  }
 </script>
 
 {#snippet sidebar()}
@@ -40,6 +57,8 @@
     onNewChat={shell.goToNewChat}
     onThreadSelect={shell.goToThread}
     onOpenThread={shell.goToThread}
+    onMoveWorkspaceNode={(src, tgt) => { void shell.moveWorkspaceNode(src, tgt, null); }}
+    onRenameWorkspaceNode={(id, name) => { void shell.renameWorkspaceNode(id, name); }}
     onWorkspaceNodeSelect={shell.selectWorkspaceNode}
     onWorkspaceNodeCreate={shell.createWorkspaceNode}
     onSearch={shell.searchWorkspace}
@@ -56,8 +75,16 @@
   <AppJobsSidebar />
 {/snippet}
 
+<svelte:window onkeydown={handleGlobalKeydown} />
+
 <AppShell {sidebar} {rightSidebar}>
   <AppMain class="bg-background">
     {@render children?.()}
   </AppMain>
 </AppShell>
+
+<WorkspaceCommandPalette
+  open={paletteOpen}
+  commands={paletteCommands}
+  onClose={() => (paletteOpen = false)}
+/>
