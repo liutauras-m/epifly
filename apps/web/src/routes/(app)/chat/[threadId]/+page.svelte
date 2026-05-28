@@ -13,12 +13,25 @@
   let pendingAttachmentIds = $state<string[]>([]);
   let isUploading = $state(false);
 
+  /**
+   * Step 6.2 — user can detach the folder context so the next send goes
+   * without a workspaceNodeId. Reset whenever the thread changes.
+   */
+  let contextDetached = $state(false);
+
   const threadId = $derived(page.params.threadId);
+
+  // Step 6.1 — the folder that contains this thread (parent folder node_id).
+  // Falls back to the sidebar-selected node, then null (no context).
+  const activeContextNodeId = $derived(
+    contextDetached ? null : (threadNode.folderNodeId ?? wsNode.current)
+  );
 
   // Reload history whenever threadId changes (navigating between threads).
   $effect(() => {
     const id = threadId;
     isLoadingHistory = true;
+    contextDetached = false; // reset detach on navigation
     chat.reset();
     if (!id) {
       isLoadingHistory = false;
@@ -42,7 +55,8 @@
   async function handleSubmit(msg: string) {
     const ids = pendingAttachmentIds.length ? [...pendingAttachmentIds] : undefined;
     pendingAttachmentIds = [];
-    await chat.send(msg, wsNode.current, ids);
+    // Step 6.1 — pass ambient folder context to the agent.
+    await chat.send(msg, activeContextNodeId, ids);
   }
 
   function handleAttach() {
@@ -79,13 +93,35 @@
 />
 
 <AppSafeArea class="flex h-full min-h-0 flex-1 flex-col pt-[calc(var(--safe-top)+var(--sidebar-toggle-offset)+2.75rem)]">
-  <!-- Breadcrumb + context indicator (Steps 1.4 / 1.5) -->
+  <!-- Breadcrumb + context indicator (Steps 1.4 / 1.5 / 6.2) -->
   {#if threadNode.virtualPath}
     <div class="flex shrink-0 items-center gap-2 border-b border-border/40 px-6 py-1.5">
       <ChatBreadcrumb virtualPath={threadNode.virtualPath} />
-      <span class="ml-auto shrink-0 rounded-full bg-muted/60 px-2 py-0.5 text-[0.65rem] text-muted-foreground/70">
-        Context: {threadNode.placeName ?? "Workspace"}
-      </span>
+
+      <!-- Step 6.2 — live context disclosure chip with detach/re-attach -->
+      {#if !contextDetached && activeContextNodeId}
+        <button
+          type="button"
+          class="ml-auto flex shrink-0 items-center gap-1 rounded-full bg-muted/60 px-2 py-0.5 text-[0.65rem] text-muted-foreground/70 hover:bg-muted hover:text-muted-foreground"
+          title="Using context from {threadNode.placeName ?? 'workspace'} — click to detach"
+          onclick={() => (contextDetached = true)}
+          aria-label="Context: {threadNode.placeName ?? 'Workspace'} — click to detach"
+        >
+          <span>Using: {threadNode.placeName ?? "Workspace"}</span>
+          <span aria-hidden="true" class="opacity-60">×</span>
+        </button>
+      {:else}
+        <button
+          type="button"
+          class="ml-auto flex shrink-0 items-center gap-1 rounded-full bg-muted/30 px-2 py-0.5 text-[0.65rem] text-muted-foreground/40 hover:bg-muted/60 hover:text-muted-foreground/70"
+          title="No folder context — click to re-attach"
+          onclick={() => (contextDetached = false)}
+          aria-label="No context — click to re-attach"
+        >
+          <span>No context</span>
+          <span aria-hidden="true" class="opacity-60">+</span>
+        </button>
+      {/if}
     </div>
   {/if}
 

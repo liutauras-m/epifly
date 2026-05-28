@@ -155,3 +155,46 @@ describe("toSidebarWorkspaceNode — work-unit fields", () => {
     expect(result.lastActivityAt).toBe(ts);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Step 6.1 — parentId pass-through (enables folderNodeId derivation in context)
+// ---------------------------------------------------------------------------
+
+describe("toSidebarWorkspaceNode — parentId (Step 6.1)", () => {
+  it("carries parent_id as parentId for a foldered thread", () => {
+    const node = makeNode({
+      semantic_kind: "thread",
+      source_id: "t_abc",
+      virtual_path: "Work/Projects/Chat",
+      parent_id: "folder-xyz",
+    });
+    const result = toSidebarWorkspaceNode(node);
+    // The chat page reads result.parentId as the ambient workspaceNodeId.
+    expect(result.parentId).toBe("folder-xyz");
+  });
+
+  it("parentId is null for a root-level thread (no parent)", () => {
+    const node = makeNode({
+      semantic_kind: "thread",
+      source_id: "t_root",
+      virtual_path: "Chat",
+      parent_id: null,
+    });
+    const result = toSidebarWorkspaceNode(node);
+    expect(result.parentId).toBeNull();
+  });
+
+  it("parentId propagates to nested children", () => {
+    const parent = makeNode({ id: "folder-1", semantic_kind: "folder", kind: "folder", name: "Work" });
+    const child = makeNode({
+      id: "thread-1",
+      semantic_kind: "thread",
+      source_id: "t_child",
+      virtual_path: "Work/Chat",
+      parent_id: "folder-1",
+    });
+    const parentResult = toSidebarWorkspaceNode({ ...parent, children: [child] });
+    const childResult = parentResult.children?.[0];
+    expect(childResult?.parentId).toBe("folder-1");
+  });
+});
