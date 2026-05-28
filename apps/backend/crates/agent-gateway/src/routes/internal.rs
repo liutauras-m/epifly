@@ -137,7 +137,7 @@ pub async fn rustfs_events(
                 } else {
                     // Fetch, chunk, embed, upsert
                     let content = match workspace_content
-                        .read(&tenant_id_owned, &virtual_path_owned)
+                        .read(&tenant_id_owned, &virtual_path_owned, None)
                         .await
                     {
                         Ok(c) => c,

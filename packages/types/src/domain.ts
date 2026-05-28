@@ -32,15 +32,27 @@ export interface SessionTrace {
   urls: string[];
 }
 
+/** Semantic kind for UX branching. Branch on this, not on `mime_type`. */
+export type WorkspaceNodeKind = "folder" | "file" | "thread";
+
 export interface WorkspaceNode {
   id: string;
   parent_id: string | null;
+  /** Storage/mime hint. Retained for icon/preview use; do NOT use to distinguish threads. */
   kind: "folder" | "conversation" | "file" | "artifact";
+  /** Semantic kind — branch on this for UX logic (file browser vs. thread list). */
+  semantic_kind: WorkspaceNodeKind;
   name: string;
   virtual_path: string;
   last_modified: string;
   created_at?: string;
   updated_at?: string;
+  /** `"upload"` | `"generated"` | `"thread_projection"` */
+  source_type?: string | null;
+  /** For `thread_projection`: the originating thread_id. */
+  source_id?: string | null;
+  /** User-defined tags for polyhierarchy-lite filtering. Max 32, 64 chars each, lowercase. */
+  tags?: string[];
   metadata?: { thread_id?: string | null } & Record<string, unknown>;
 }
 

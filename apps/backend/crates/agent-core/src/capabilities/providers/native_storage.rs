@@ -13,12 +13,20 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use chrono::Utc;
 use common::memory::store::{WorkspaceContentStore, WorkspaceStore};
-use common::memory::workspace::NodeKind;
+use common::memory::workspace::{NodeKind, WorkspaceNode};
 use common::path_safety::safe_join;
 use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
 use tracing::warn;
+
+/// Extract `(primary_key, legacy_key)` from a node for content store calls (Step 3.4).
+fn node_content_keys(node: &WorkspaceNode) -> (&str, Option<&str>) {
+    match &node.object_key {
+        Some(ok) => (ok.as_str(), Some(node.virtual_path.as_str())),
+        None => (node.virtual_path.as_str(), None),
+    }
+}
 
 // ── ReadTextProvider ──────────────────────────────────────────────────────────
 
@@ -217,9 +225,10 @@ impl WorkspaceNativeProvider {
             .await
             .map_err(|e| anyhow::anyhow!("create document '{doc_name}': {e}"))?;
 
+        let (key, legacy) = node_content_keys(&node);
         if let Err(e) = self
             .workspace_content
-            .write(tenant_id, &node.virtual_path, content)
+            .write(tenant_id, key, legacy, content)
             .await
         {
             warn!(error = %e, path = node.virtual_path, "save_document: content write failed");
@@ -1351,9 +1360,10 @@ impl StorageWorkspaceProvider {
             .create_conversation(tenant_id, user_id, Some(folder.id), &doc_name)
             .await
             .map_err(|e| anyhow::anyhow!("create document '{doc_name}': {e}"))?;
+        let (key, legacy) = node_content_keys(&node);
         if let Err(e) = self
             .workspace_content
-            .write(tenant_id, &node.virtual_path, content)
+            .write(tenant_id, key, legacy, content)
             .await
         {
             warn!(error = %e, path = node.virtual_path, "save_document: content write failed");

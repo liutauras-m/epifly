@@ -59,7 +59,7 @@
   tabindex="-1"
 />
 
-<AppSafeArea class="flex h-full min-h-0 flex-1 flex-col pt-[calc(var(--sidebar-toggle-offset)+2.75rem)]">
+<AppSafeArea class="flex h-full min-h-0 flex-1 flex-col pt-[var(--toggle-bar-height)]">
   {#if chat.messages.length === 0}
     <section class="flex min-h-0 flex-1 items-start justify-center px-6 pb-16 pt-12 sm:pt-20" aria-label="Start a conversation">
       <ChatEmptyState

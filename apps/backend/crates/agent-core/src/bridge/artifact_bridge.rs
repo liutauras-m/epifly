@@ -156,7 +156,7 @@ impl ArtifactBridge {
                     };
                     let _ = self
                         .content_store
-                        .write(tenant_id, &virtual_path, text)
+                        .write(tenant_id, &virtual_path, None, text)
                         .await;
                     Some(virtual_path)
                 } else {

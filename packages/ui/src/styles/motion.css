@@ -110,7 +110,8 @@
 
 .app-sidebar-toggle {
   position: fixed;
-  top: var(--sidebar-toggle-offset);
+  /* Clear the device notch / status bar on mobile; safe-top is 0 on desktop. */
+  top: calc(var(--safe-top, 0px) + var(--sidebar-toggle-offset));
   z-index: 50;
   background: color-mix(in oklch, var(--background) 95%, transparent);
   box-shadow: 0 1px 2px oklch(0 0 0 / 8%);
@@ -119,12 +120,13 @@
 }
 
 .app-sidebar-toggle-left {
-  left: var(--sidebar-toggle-offset);
+  /* Respect the left safe-inset (landscape notch); 0 in portrait/desktop. */
+  left: calc(var(--safe-left, 0px) + var(--sidebar-toggle-offset));
   transition-property: left, background-color, box-shadow;
 }
 
 .app-sidebar-toggle-right {
-  right: var(--sidebar-toggle-offset);
+  right: calc(var(--safe-right, 0px) + var(--sidebar-toggle-offset));
   transition-property: right, background-color, box-shadow;
 }
 

@@ -17,8 +17,9 @@ use agent_core::{
     indexing::EmbeddingService,
 };
 use async_trait::async_trait;
+use parking_lot::RwLock;
 use serde_json::json;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -108,9 +109,9 @@ async fn remote_mcp_register_and_invoke_reaches_mock_server() {
         .mount(&mock_server)
         .await;
 
-    let registry = Arc::new(Mutex::new(CapabilityRegistry::new()));
+    let registry = Arc::new(RwLock::new(CapabilityRegistry::new()));
     {
-        let mut reg = registry.lock().unwrap();
+        let mut reg = registry.write();
         register_remote_mcp(
             &mut reg,
             "test-ping",
@@ -152,9 +153,9 @@ async fn remote_mcp_scoped_capability_blocked_for_wrong_tenant() {
         .mount(&mock_server)
         .await;
 
-    let registry = Arc::new(Mutex::new(CapabilityRegistry::new()));
+    let registry = Arc::new(RwLock::new(CapabilityRegistry::new()));
     {
-        let mut reg = registry.lock().unwrap();
+        let mut reg = registry.write();
         register_remote_mcp(
             &mut reg,
             "acme-only",
@@ -198,9 +199,9 @@ async fn remote_mcp_scoped_capability_allowed_for_member_tenant() {
         .mount(&mock_server)
         .await;
 
-    let registry = Arc::new(Mutex::new(CapabilityRegistry::new()));
+    let registry = Arc::new(RwLock::new(CapabilityRegistry::new()));
     {
-        let mut reg = registry.lock().unwrap();
+        let mut reg = registry.write();
         register_remote_mcp(
             &mut reg,
             "acme-only",
@@ -230,7 +231,7 @@ async fn remote_mcp_scoped_capability_allowed_for_member_tenant() {
 /// Hot-reload: after invalidate_all, second select() is a cache miss (no stale results).
 #[tokio::test]
 async fn invalidate_all_flushes_cache_after_reload() {
-    let registry = Arc::new(Mutex::new(CapabilityRegistry::new()));
+    let registry = Arc::new(RwLock::new(CapabilityRegistry::new()));
     let router = SemanticCapabilityRouter::new(
         Arc::clone(&registry),
         Arc::new(QdrantVectorStore::noop()),
@@ -275,9 +276,9 @@ async fn dotted_capability_name_resolves_via_sanitized_lookup() {
         .mount(&mock_server)
         .await;
 
-    let registry = Arc::new(Mutex::new(CapabilityRegistry::new()));
+    let registry = Arc::new(RwLock::new(CapabilityRegistry::new()));
     {
-        let mut reg = registry.lock().unwrap();
+        let mut reg = registry.write();
         register_remote_mcp(
             &mut reg,
             "media.time.get_current_time", // dotted name as produced by /admin/capabilities/register

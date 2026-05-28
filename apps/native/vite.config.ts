@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [tailwindcss(), sveltekit()],
   clearScreen: false,
   server: {
+    host: process.env.TAURI_DEV_HOST || "localhost",
     port: 1420,
     strictPort: true,
     watch: {

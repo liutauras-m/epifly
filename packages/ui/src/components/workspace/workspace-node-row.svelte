@@ -27,7 +27,7 @@
     onDraftCancel
   }: Props = $props();
 
-  let expanded = $state(true);
+  let expanded = $state(false);
   let draftInputEl = $state<HTMLInputElement | null>(null);
   let draftName = $state("");
 
@@ -112,8 +112,10 @@
           aria-label={expanded ? `Collapse ${node.name}` : `Expand ${node.name}`}
           onclick={(event) => {
             event.stopPropagation();
-            expanded = !expanded;
-            onSelect?.(node.id);
+            const next = !expanded;
+            expanded = next;
+            // Load children on first expand (children===undefined means not fetched yet)
+            if (next && node.children === undefined) onSelect?.(node.id);
           }}
         >
           <ChevronRightIcon class={cn("size-3.5 transition-transform duration-[var(--motion-fast)] ease-[var(--ease-standard)]", expanded && "rotate-90")} strokeWidth={1.75} aria-hidden="true" />
@@ -125,7 +127,15 @@
       <button
         type="button"
         class="flex min-w-0 flex-1 items-center gap-2 rounded-[6px] py-1 pr-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/40"
-        onclick={() => onSelect?.(node.id)}
+        onclick={() => {
+          if (node.kind === "folder") {
+            expanded = true;
+            // Only load children if not yet fetched
+            if (node.children === undefined) onSelect?.(node.id);
+          } else {
+            onSelect?.(node.id);
+          }
+        }}
         aria-current={isActive ? "true" : undefined}
       >
         {#if node.kind === "folder"}

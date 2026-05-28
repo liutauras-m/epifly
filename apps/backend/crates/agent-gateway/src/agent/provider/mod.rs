@@ -3,6 +3,7 @@
 //! Anthropic JSON encoding/decoding lives only in `provider/anthropic.rs`.
 //! Route handlers never reference `reqwest` or provider-specific types.
 
+use agent_core::AgentMessage;
 use async_trait::async_trait;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -16,8 +17,9 @@ pub mod anthropic;
 pub struct ProviderRequest {
     pub model: String,
     pub max_tokens: u64,
-    /// Full conversation history + new user turn, as JSON values.
-    pub messages: Vec<Value>,
+    /// Full conversation history + new user turn, typed.
+    /// Encoding to Anthropic JSON is done in `provider/anthropic.rs`.
+    pub messages: Vec<AgentMessage>,
     /// Tool definitions; empty for text-only turns.
     pub tools: Vec<Value>,
     pub system: Option<String>,
@@ -44,13 +46,20 @@ pub enum ProviderEvent {
     /// Text delta from the model.
     TextDelta(String),
     /// A new tool_use block has started at `index`.
-    ToolStart { index: usize, id: String, name: String },
+    ToolStart {
+        index: usize,
+        id: String,
+        name: String,
+    },
     /// Partial JSON for the tool_use input at `index`.
     ToolInputDelta { index: usize, partial_json: String },
     /// A content block has ended at `index`.
     ContentBlockStop(usize),
     /// Final usage and stop_reason for the message.
-    MessageDelta { output_tokens: u64, stop_reason: String },
+    MessageDelta {
+        output_tokens: u64,
+        stop_reason: String,
+    },
     /// End-of-stream sentinel.
     Done,
 }

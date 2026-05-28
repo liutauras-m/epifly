@@ -15,7 +15,7 @@
 </svelte:head>
 
 <AppSafeArea class="flex min-h-0 flex-1 flex-col overflow-y-auto">
-  <div class="px-6 py-8">
+  <div class="px-6 pb-8 pt-[calc(var(--sidebar-toggle-offset)+2.75rem)]">
     <div class="mb-6 flex items-baseline justify-between">
       <h1 class="text-2xl font-semibold tracking-tight">Workspace</h1>
       {#if workspaces.error}

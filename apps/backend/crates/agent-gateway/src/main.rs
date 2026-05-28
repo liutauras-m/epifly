@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
     state.rustfs_metrics = Some(Arc::clone(&rustfs_metrics));
     state.router_metrics = Some(Arc::clone(&router_metrics));
     let state = Arc::new(state);
-    let loaded = state.registry.lock().unwrap().len();
+    let loaded = state.registry.read().len();
     info!(capabilities = loaded, "capability registry loaded");
 
     // ── Set embedding_dims gauge at startup ──────────────────────────────

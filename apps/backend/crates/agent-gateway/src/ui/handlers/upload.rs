@@ -82,7 +82,7 @@ pub async fn ui_upload(
     // Clone the Arc under a short-lived lock, then invoke without holding the mutex.
     {
         let provider = {
-            let reg = state.registry.lock().unwrap();
+            let reg = state.registry.read();
             reg.get_provider("storage-workspace")
         };
         if let Some(prov) = provider {
@@ -108,7 +108,7 @@ pub async fn ui_upload(
     // resolve its plan steps and execute them in a background task.
     {
         let provider = {
-            let reg = state.registry.lock().unwrap();
+            let reg = state.registry.read();
             reg.get_provider("plan-on-upload")
         };
         if let Some(prov) = provider {

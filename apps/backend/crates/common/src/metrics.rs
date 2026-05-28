@@ -275,3 +275,65 @@ pub fn tool_result_truncated() -> Counter<u64> {
 pub fn record_tool_result_truncated(tool: &str) {
     tool_result_truncated().add(1, &[KeyValue::new("tool", tool.to_string())]);
 }
+
+// ── Step 3.4 — workspace content migration metrics ────────────────────────────
+
+/// workspace_content read fell back to legacy virtual_path key (stable key not found).
+pub fn workspace_content_read_fallback() {
+    opentelemetry::global::meter("conusai.workspace")
+        .u64_counter("workspace_content_read_fallback")
+        .with_description("workspace_content reads that fell back to the legacy virtual-path key")
+        .build()
+        .add(1, &[]);
+}
+
+/// workspace_content dual-write mirror to legacy key failed (primary write succeeded).
+pub fn workspace_content_legacy_write_failed() {
+    opentelemetry::global::meter("conusai.workspace")
+        .u64_counter("workspace_content_legacy_write_failed")
+        .with_description("workspace_content dual-writes where the legacy mirror write failed")
+        .build()
+        .add(1, &[]);
+}
+
+// ── Step 5.3 — thread projection metrics ─────────────────────────────────────
+
+/// A second enqueue was coalesced into the already-running job's dirty flag.
+pub fn thread_projection_coalesced() {
+    opentelemetry::global::meter("conusai.projection")
+        .u64_counter("thread_projection_coalesced_count")
+        .with_description("Projection jobs coalesced because a run was already active")
+        .build()
+        .add(1, &[]);
+}
+
+/// Projection skipped because the rendered content hash was unchanged.
+pub fn thread_projection_skipped_unchanged() {
+    opentelemetry::global::meter("conusai.projection")
+        .u64_counter("thread_projection_skipped_unchanged")
+        .with_description("Projection jobs skipped because thread content was unchanged")
+        .build()
+        .add(1, &[]);
+}
+
+/// Record one completed projection attempt (success or failure).
+pub fn thread_projection_duration_ms(duration_ms: f64, success: bool) {
+    opentelemetry::global::meter("conusai.projection")
+        .f64_histogram("thread_projection_duration_ms")
+        .with_description("Duration of thread projection runs in milliseconds")
+        .with_unit("ms")
+        .build()
+        .record(
+            duration_ms,
+            &[KeyValue::new("success", success.to_string())],
+        );
+}
+
+/// Record a projection failure (the job will retry).
+pub fn thread_projection_failure(tenant_id: &str) {
+    opentelemetry::global::meter("conusai.projection")
+        .u64_counter("thread_projection_failures")
+        .with_description("Thread projection job failures")
+        .build()
+        .add(1, &[KeyValue::new("tenant_id", tenant_id.to_string())]);
+}

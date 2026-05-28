@@ -56,12 +56,14 @@ dashmap.workspace     = true
 tokio-util.workspace  = true
 parking_lot.workspace = true
 thiserror.workspace   = true
+regex.workspace       = true
 
 [dev-dependencies]
 wiremock.workspace = true
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"
 toml.workspace = true
+proptest.workspace = true
 
 [features]
 default          = ["local-embeddings"]

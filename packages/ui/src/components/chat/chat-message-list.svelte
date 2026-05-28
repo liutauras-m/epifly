@@ -33,6 +33,9 @@
   let { messages, class: className }: Props = $props();
 
   let listEl = $state<HTMLDivElement | null>(null);
+  // Non-reactive — tracks the message count from the previous effect run so we
+  // can distinguish "new message added" from "existing message updated" (streaming).
+  let prevMsgLength = 0;
 
   const scrollSignature = $derived(
     messages
@@ -47,19 +50,28 @@
   );
 
   $effect(() => {
-    scrollSignature;
-    if (listEl && messages.length > 0) {
-      requestAnimationFrame(() => {
-        if (listEl) listEl.scrollTop = listEl.scrollHeight;
-      });
-    }
+    scrollSignature; // reactive dep: re-run on any add or streaming update
+    if (!listEl || messages.length === 0) return;
+    const len = messages.length;
+    requestAnimationFrame(() => {
+      if (!listEl) return;
+      // Always scroll when a new message appears; during streaming only scroll
+      // if the user is already near the bottom (so they can scroll up to read
+      // history without being forced back down on every token).
+      const isNewMessage = len > prevMsgLength;
+      const nearBottom = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 120;
+      if (isNewMessage || nearBottom) {
+        listEl.scrollTop = listEl.scrollHeight;
+      }
+      prevMsgLength = len;
+    });
   });
 </script>
 
 <div
   bind:this={listEl}
   class={cn(
-    "min-h-0 flex-1 basis-0 scroll-pb-32 overflow-y-auto overscroll-contain scroll-smooth px-4 pb-16 pt-2 sm:px-6",
+    "min-h-0 flex-1 basis-0 scroll-pb-32 overflow-y-auto overscroll-contain px-4 pb-16 pt-2 sm:px-6",
     className
   )}
 >

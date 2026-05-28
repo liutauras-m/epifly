@@ -26,11 +26,12 @@ use crate::context::tenant::TenantContext;
 use crate::indexing::EmbeddingService;
 use crate::store::qdrant_vector::QdrantVectorStore;
 use common::metrics;
+use parking_lot::RwLock;
 use rig::completion::ToolDefinition;
 use rig::tool::{ToolDyn, ToolError};
 use serde_json::Value;
 use std::collections::BTreeSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{Span, instrument};
 
@@ -176,7 +177,7 @@ struct CachedResult {
 }
 
 pub struct SemanticCapabilityRouter {
-    registry: Arc<Mutex<CapabilityRegistry>>,
+    registry: Arc<RwLock<CapabilityRegistry>>,
     vector_store: Arc<QdrantVectorStore>,
     embedder: Arc<dyn EmbeddingService>,
     cfg: SemanticRouterConfig,
@@ -187,7 +188,7 @@ pub struct SemanticCapabilityRouter {
 
 impl SemanticCapabilityRouter {
     pub fn new(
-        registry: Arc<Mutex<CapabilityRegistry>>,
+        registry: Arc<RwLock<CapabilityRegistry>>,
         vector_store: Arc<QdrantVectorStore>,
         embedder: Arc<dyn EmbeddingService>,
         cfg: SemanticRouterConfig,
@@ -273,7 +274,7 @@ impl SemanticCapabilityRouter {
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             metrics::semantic_router_cache_hits().add(1, &[]);
             metrics::semantic_router_top_k().record(result.cap_names.len() as u64, &[]);
-            let registry = self.registry.lock().unwrap();
+            let registry = self.registry.read();
             return Ok(self.providers_for_names(&registry, &result.cap_names));
         }
 
@@ -336,7 +337,7 @@ impl SemanticCapabilityRouter {
 
         // Post-filter by AttachmentHint (skip if hint is empty — no attachments).
         if !hint.is_empty() {
-            let registry = self.registry.lock().unwrap();
+            let registry = self.registry.read();
             cap_names.retain(|name| {
                 registry
                     .get(name)
@@ -347,7 +348,7 @@ impl SemanticCapabilityRouter {
 
         // Enforce tenant_scope — filter out capabilities not visible to this tenant.
         if let Some(t) = tenant {
-            let registry = self.registry.lock().unwrap();
+            let registry = self.registry.read();
             cap_names.retain(|name| {
                 registry
                     .get(name)
@@ -373,7 +374,7 @@ impl SemanticCapabilityRouter {
 
         // Build tool definitions for cache.
         let tool_defs = {
-            let registry = self.registry.lock().unwrap();
+            let registry = self.registry.read();
             self.build_tool_defs(&registry, &cap_names)
         };
 
@@ -384,7 +385,7 @@ impl SemanticCapabilityRouter {
         });
         self.cache.insert(key, result).await;
 
-        let registry = self.registry.lock().unwrap();
+        let registry = self.registry.read();
         Ok(self.providers_for_names(&registry, &cap_names))
     }
 
@@ -520,7 +521,7 @@ impl SemanticCapabilityRouter {
         // Expect format: cap_name__tool_name
         let (cap_name, tool_name) = parse_tool_name(full_tool_name)?;
         let provider = {
-            let registry = self.registry.lock().unwrap();
+            let registry = self.registry.read();
             // 1. Exact lookup (covers TOML capabilities like `runtime-echo`).
             // 2. Dot-restore fallback: Anthropic tool names cannot contain dots, so
             //    `tool_definitions_from_manifest` replaces `.` → `_` in the capability
@@ -650,7 +651,8 @@ mod tests {
     use crate::capabilities::registry::CapabilityRegistry;
     use crate::context::tenant::{PlanTier, TenantContext};
     use async_trait::async_trait;
-    use std::sync::{Arc, Mutex};
+    use parking_lot::RwLock;
+    use std::sync::Arc;
 
     // ── Mock EmbeddingService ─────────────────────────────────────────────
 
@@ -670,7 +672,7 @@ mod tests {
     }
 
     fn make_router(include_always: Vec<String>) -> Arc<SemanticCapabilityRouter> {
-        let registry = Arc::new(Mutex::new(CapabilityRegistry::new()));
+        let registry = Arc::new(RwLock::new(CapabilityRegistry::new()));
         let vector_store = Arc::new(QdrantVectorStore::noop());
         let embedder: Arc<dyn EmbeddingService> = Arc::new(ConstEmbedder(vec![0.1; 768]));
         let cfg = SemanticRouterConfig {
@@ -847,7 +849,7 @@ mod tests {
     #[tokio::test]
     async fn select_include_always_populated() {
         // Register a native provider so it can be resolved.
-        let registry = Arc::new(Mutex::new(CapabilityRegistry::new()));
+        let registry = Arc::new(RwLock::new(CapabilityRegistry::new()));
         {
             let manifest = ToolManifest {
                 name: "always_cap".into(),
@@ -880,7 +882,7 @@ mod tests {
                 manifest.clone(),
                 std::path::PathBuf::from("."),
             );
-            registry.lock().unwrap().register(card);
+            registry.write().register(card);
         }
 
         let vector_store = Arc::new(QdrantVectorStore::noop());

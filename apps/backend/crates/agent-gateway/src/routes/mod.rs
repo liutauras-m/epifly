@@ -3,7 +3,7 @@ use crate::state::AppState;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
 };
 use std::sync::Arc;
 use utoipa::Modify;
@@ -105,6 +105,8 @@ impl Modify for SecurityAddon {
         workspaces::rename_node,
         workspaces::share_node,
         workspaces::unshare_node,
+        workspaces::put_tags,
+        workspaces::filter_nodes,
         admin_devices::issue_device,
         admin_devices::list_devices,
         admin_devices::revoke_device,
@@ -393,6 +395,12 @@ pub const ROUTE_TABLE: &[RouteEntry] = &[
     RouteEntry {
         method: "GET",
         path: "/v1/threads/{id}/messages",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/threads/{id}/status",
         auth: "bearer",
         router: "protected",
     },
@@ -785,6 +793,12 @@ pub fn protected_router(
             "/v1/workspaces/{id}/unshare",
             post(workspaces::unshare_node),
         )
+        .route("/v1/workspaces/{id}/tags", put(workspaces::put_tags))
+        .route("/v1/workspaces/filter", get(workspaces::filter_nodes))
+        .route(
+            "/v1/threads/{thread_id}/projection/restore",
+            post(workspaces::restore_thread_projection),
+        )
         // ── Workspace presign endpoints ─────────────────────────────────────
         .route(
             "/v1/workspaces/{id}/presign-upload",
@@ -810,6 +824,7 @@ pub fn protected_router(
         // ── Threads ─────────────────────────────────────────────────────────
         .route("/v1/threads", get(threads::list))
         .route("/v1/threads/{id}/messages", get(threads::get_messages))
+        .route("/v1/threads/{id}/status", get(threads::thread_status))
         // ── Realtime ────────────────────────────────────────────────────────
         .route("/api/realtime/workspace", get(realtime::realtime_workspace))
         // ── Shell control ────────────────────────────────────────────────────

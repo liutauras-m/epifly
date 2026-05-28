@@ -23,7 +23,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_START="$ROOT_DIR/apps/backend/start.sh"
 LOCAL_GATEWAY_BIN="$ROOT_DIR/target/debug/agent-gateway"
-BROWSER_SHELL_DIR="$ROOT_DIR/apps/browser-shell"
+BROWSER_SHELL_DIR="$ROOT_DIR/apps/native"
 
 # PIDs of background processes started by this script, killed on exit.
 declare -a PIDS=()

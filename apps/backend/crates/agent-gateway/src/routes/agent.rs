@@ -1,12 +1,11 @@
+pub use crate::agent::merge_pinned;
 /// POST /v1/agent/completions — Anthropic tool-use agent loop with optional thread memory.
 ///
 /// Supports both blocking (default) and streaming (`"stream": true`) modes.
 /// Both paths share `AgentTurnRunner`; route handlers are pure HTTP wiring (~200 lines).
 use crate::agent::{
-    AgentError, AgentTurnRunner, BlockingSink, NativeAnthropicProvider, SseSink,
-    build_ctx,
+    AgentError, AgentTurnRunner, BlockingSink, NativeAnthropicProvider, SseSink, build_ctx,
 };
-pub use crate::agent::merge_pinned;
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
 use agent_core::{PlanLimits, map_rig_error};

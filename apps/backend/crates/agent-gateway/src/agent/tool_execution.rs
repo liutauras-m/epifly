@@ -53,7 +53,7 @@ pub async fn maybe_inject_current_content(
 
     let (_field, path) = {
         let cap_name_dot = safe_cap.replace('_', ".");
-        let registry = state.registry.lock().unwrap();
+        let registry = state.registry.read();
         let card = registry
             .get(safe_cap)
             .or_else(|| registry.get(&cap_name_dot))
@@ -68,7 +68,7 @@ pub async fn maybe_inject_current_content(
     };
 
     let mut patched = input.clone();
-    match state.workspace_content.read(tenant_id, &path).await {
+    match state.workspace_content.read(tenant_id, &path, None).await {
         Ok(content) => {
             patched["_current_content"] = serde_json::json!(content);
             patched["_is_new_file"] = serde_json::json!(false);
@@ -84,8 +84,7 @@ pub async fn maybe_inject_current_content(
             patched["_is_new_file"] = serde_json::json!(true);
             debug!(
                 tool = full_tool_name,
-                path,
-                "read_before_write: file not found, injecting _is_new_file=true"
+                path, "read_before_write: file not found, injecting _is_new_file=true"
             );
         }
     }

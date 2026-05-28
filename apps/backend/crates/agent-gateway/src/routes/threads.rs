@@ -1,5 +1,7 @@
+use crate::agent::StreamState;
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
+use agent_core::store::ProjectionStatus;
 use axum::{
     Extension, Json,
     extract::{Path, Query, State},
@@ -8,6 +10,53 @@ use axum::{
 use common::error::HttpError;
 use serde::Deserialize;
 use std::sync::Arc;
+
+/// `GET /v1/threads/{id}/status` — live stream + projection status for UI indicators.
+///
+/// Returns `{ running, run_id, projection_status }` where:
+/// - `running`: whether an agent turn is currently streaming for this thread
+/// - `run_id`: the active run identifier if running, null otherwise
+/// - `projection_status`: `"active"` | `"paused"` | `"error"` | `"none"`
+pub async fn thread_status(
+    State(state): State<Arc<AppState>>,
+    Extension(ResolvedTenant(tenant)): Extension<ResolvedTenant>,
+    Path(thread_id): Path<String>,
+) -> impl IntoResponse {
+    let rt = state
+        .thread_runtime_registry
+        .get(&tenant.tenant_id, &thread_id);
+
+    let (running, run_id) = match rt {
+        Some(ref r) => {
+            let state_guard = r.stream_state.read();
+            match &*state_guard {
+                StreamState::Running { run_id } => (true, Some(run_id.clone())),
+                _ => (false, None),
+            }
+        }
+        None => (false, None),
+    };
+
+    let projection_status = match state
+        .thread_projection_store
+        .get(&tenant.tenant_id, &thread_id)
+        .await
+    {
+        Ok(Some(proj)) => match proj.status {
+            ProjectionStatus::Active => "active",
+            ProjectionStatus::Paused => "paused",
+            ProjectionStatus::Error => "error",
+        },
+        Ok(None) => "none",
+        Err(e) => return Err(HttpError::agent(format!("projection store error: {e}"))),
+    };
+
+    Ok(Json(serde_json::json!({
+        "running": running,
+        "run_id": run_id,
+        "projection_status": projection_status,
+    })))
+}
 
 /// `GET /v1/threads/{id}/messages` — list messages for a thread.
 ///

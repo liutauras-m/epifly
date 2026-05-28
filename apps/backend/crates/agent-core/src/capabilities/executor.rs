@@ -6,10 +6,11 @@ use crate::llm::LlmRegistry;
 use crate::llm::types::LlmRequest;
 use crate::realtime::{RealtimeService, WorkspaceChangeEvent};
 use common::metrics;
+use parking_lot::RwLock;
 use rig::completion::Message;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{Span, info, instrument, warn};
 
@@ -152,7 +153,7 @@ const MAX_REDUCER_TOKENS: u32 = 2_048;
 #[instrument(skip(registry, llm, tenant, realtime, steps), fields(plan_len = steps.len()))]
 pub async fn run_plan(
     steps: Vec<PlanStep>,
-    registry: Arc<Mutex<CapabilityRegistry>>,
+    registry: Arc<RwLock<CapabilityRegistry>>,
     llm: Option<Arc<LlmRegistry>>,
     tenant: Option<TenantContext>,
     realtime: Option<Arc<RealtimeService>>,
@@ -183,7 +184,7 @@ pub async fn run_plan(
 
         // Validate and extract metadata while holding the lock briefly.
         let validation = {
-            let reg = registry.lock().unwrap();
+            let reg = registry.read();
             validate_step(&reg, &step.capability, &step.tool)
         };
 
@@ -230,7 +231,7 @@ pub async fn run_plan(
                     _ => {
                         // "single" — lock briefly to get the provider, then invoke without lock.
                         let provider = {
-                            let reg = registry.lock().unwrap();
+                            let reg = registry.read();
                             reg.get_provider(&step.capability)
                         };
                         match provider {
@@ -309,7 +310,7 @@ fn validate_step(
 }
 
 async fn run_parallel_consensus(
-    registry: Arc<Mutex<CapabilityRegistry>>,
+    registry: Arc<RwLock<CapabilityRegistry>>,
     cap: &str,
     tool: &str,
     input: &Value,
@@ -318,7 +319,7 @@ async fn run_parallel_consensus(
 ) -> Result<Value, String> {
     // Get the provider once — Arc<dyn CapabilityProvider> is Send + Sync.
     let provider = {
-        let reg = registry.lock().unwrap();
+        let reg = registry.read();
         reg.get_provider(cap)
             .ok_or_else(|| format!("no provider for '{cap}'"))?
     };
@@ -382,14 +383,14 @@ async fn llm_judge_consensus(
 }
 
 async fn run_fallback_cascade(
-    registry: Arc<Mutex<CapabilityRegistry>>,
+    registry: Arc<RwLock<CapabilityRegistry>>,
     cap: &str,
     tool: &str,
     input: &Value,
     tenant: Option<&TenantContext>,
 ) -> Result<Value, String> {
     let provider = {
-        let reg = registry.lock().unwrap();
+        let reg = registry.read();
         reg.get_provider(cap)
             .ok_or_else(|| format!("no provider for '{cap}'"))?
     };

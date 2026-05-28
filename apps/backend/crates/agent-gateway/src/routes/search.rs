@@ -44,7 +44,7 @@ pub async fn search(
     let limit = query.limit.unwrap_or(5).min(20) as usize;
 
     let cards: Vec<_> = {
-        let reg = state.registry.lock().unwrap();
+        let reg = state.registry.read();
         reg.enabled_for_tenant(&tenant.0.tenant_id)
             .cloned()
             .collect()

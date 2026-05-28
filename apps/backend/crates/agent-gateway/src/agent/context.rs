@@ -6,13 +6,14 @@
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
 use agent_core::{
-    ContextBuilder, ModelError, PlanLimits, ToolRoutingDecision,
-    estimate_input_tokens, map_rig_error, token_estimate_exceeds_limit,
+    AgentMessage, ContentBlock, ContextBuilder, MessageContent, MessageRole, ModelError,
+    PlanLimits, ToolRoutingDecision, estimate_input_tokens, map_rig_error,
+    token_estimate_exceeds_limit,
 };
+use chrono::Utc;
 use common::audit::AuditEvent;
 use common::error::HttpError;
 use common::memory::thread::Message;
-use chrono::Utc;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -28,12 +29,13 @@ pub struct AgentCtx {
     pub max_tokens: u64,
     /// Effective maximum tool-call rounds: min(request.max_turns, plan.max_turns).
     pub max_rounds: usize,
+
     pub thread_id: Option<String>,
     /// True when `thread_id` is Some and the loaded history was empty on this turn.
     pub thread_was_new: bool,
     pub tenant_id: String,
     pub tools: Vec<Value>,
-    pub messages: Vec<Value>,
+    pub messages: Vec<AgentMessage>,
     pub effective_system: Option<String>,
     /// Parsed workspace node ULID, used to index chat content for search.
     pub workspace_node_id: Option<_Ulid>,
@@ -62,10 +64,13 @@ pub async fn build_ctx(
         .model_catalog
         .resolve_allowed(&tenant.0.plan, req.model.as_deref())
         .map_err(|e| match e {
-            ModelError::NotFound(m) => HttpError::validation("model", format!("unknown model: {m}")),
-            ModelError::PlanGated(m, p) => {
-                HttpError::validation("model", format!("model '{m}' is not available on plan '{p}'"))
+            ModelError::NotFound(m) => {
+                HttpError::validation("model", format!("unknown model: {m}"))
             }
+            ModelError::PlanGated(m, p) => HttpError::validation(
+                "model",
+                format!("model '{m}' is not available on plan '{p}'"),
+            ),
             ModelError::StreamingNotSupported(m) => {
                 HttpError::validation("stream", format!("model '{m}' does not support streaming"))
             }
@@ -196,11 +201,7 @@ pub async fn build_ctx(
     if let Some(ref node_id_str) = req.workspace_node_id
         && let Ok(node_id) = node_id_str.parse::<_Ulid>()
     {
-        let user_id = tenant
-            .0
-            .user_id
-            .as_deref()
-            .unwrap_or(tenant_id.as_str());
+        let user_id = tenant.0.user_id.as_deref().unwrap_or(tenant_id.as_str());
         match state
             .workspace_store
             .get_accessible_node(&tenant_id, user_id, node_id)
@@ -216,11 +217,18 @@ pub async fn build_ctx(
     }
 
     // Load thread history.
-    let mut history: Vec<Value> = if let Some(ref tid) = thread_id {
+    let mut history: Vec<AgentMessage> = if let Some(ref tid) = thread_id {
         match thread_store.messages(&tenant_id, tid).await {
             Ok(msgs) => msgs
                 .iter()
-                .map(|m| json!({"role": m.role, "content": m.content}))
+                .map(|m| AgentMessage {
+                    role: if m.role == "user" {
+                        MessageRole::User
+                    } else {
+                        MessageRole::Assistant
+                    },
+                    content: MessageContent::Text(m.content.clone()),
+                })
                 .collect(),
             Err(e) => {
                 warn!(error = %e, "failed to load thread history");
@@ -269,7 +277,7 @@ pub async fn build_ctx(
     } else {
         let stage_start = Instant::now();
         let hits = {
-            let registry = state.registry.lock().unwrap();
+            let registry = state.registry.read();
             registry.lexical_hint_capabilities(user_query, &tenant_id)
         };
         let stage_ms = stage_start.elapsed().as_secs_f64() * 1000.0;
@@ -291,7 +299,7 @@ pub async fn build_ctx(
     for lex_cap in &lexical_hits {
         if !semantic_cap_names.contains(lex_cap.as_str()) {
             let cap_defs: Vec<Value> = {
-                let registry = state.registry.lock().unwrap();
+                let registry = state.registry.read();
                 registry
                     .tools_for_capability_exact_for_tenant(lex_cap, &tenant_id)
                     .unwrap_or_default()
@@ -321,7 +329,7 @@ pub async fn build_ctx(
     let forced_cap_outcome: &'static str = if let Some(ref cap_name) = req.forced_capability {
         let stage_start = Instant::now();
         let pinned_tools: Option<Vec<Value>> = {
-            let registry = state.registry.lock().unwrap();
+            let registry = state.registry.read();
             registry.tools_for_capability_exact_for_tenant(cap_name, &tenant_id)
         };
         let stage_ms = stage_start.elapsed().as_secs_f64() * 1000.0;
@@ -334,7 +342,10 @@ pub async fn build_ctx(
                 "pinned_kept"
             }
             Some(_) => {
-                warn!(cap = cap_name, "forced_capability resolved but has no tools — pin dropped");
+                warn!(
+                    cap = cap_name,
+                    "forced_capability resolved but has no tools — pin dropped"
+                );
                 if tools.len() > max_tools {
                     tools.truncate(max_tools);
                 }
@@ -366,7 +377,11 @@ pub async fn build_ctx(
         if let Some(rm) = state.router_metrics.as_ref() {
             rm.record_low_confidence_turn();
         }
-        warn!(max_score, threshold = state.router_quota.min_confidence, "router: low-confidence turn");
+        warn!(
+            max_score,
+            threshold = state.router_quota.min_confidence,
+            "router: low-confidence turn"
+        );
     }
 
     if let Some(rm) = state.router_metrics.as_ref() {
@@ -381,7 +396,11 @@ pub async fn build_ctx(
         let mut out: Vec<String> = Vec::new();
         for t in &tools {
             if let Some(name) = t.get("name").and_then(|v| v.as_str()) {
-                let cap = name.split_once("__").map(|(c, _)| c).unwrap_or(name).to_string();
+                let cap = name
+                    .split_once("__")
+                    .map(|(c, _)| c)
+                    .unwrap_or(name)
+                    .to_string();
                 if !out.contains(&cap) {
                     out.push(cap);
                 }
@@ -391,7 +410,7 @@ pub async fn build_ctx(
     };
     let pinned_tools: Vec<String> = if forced_cap_outcome == "pinned_kept" {
         if let Some(ref cap_name) = req.forced_capability {
-            let registry = state.registry.lock().unwrap();
+            let registry = state.registry.read();
             registry
                 .tools_for_capability_exact_for_tenant(cap_name, &tenant_id)
                 .unwrap_or_default()
@@ -425,18 +444,35 @@ pub async fn build_ctx(
     let non_system: Vec<_> = req.messages.iter().filter(|m| m.role != "system").collect();
     let last_user_pos = non_system.iter().rposition(|m| m.role == "user");
 
-    let new_messages: Vec<Value> = non_system
+    let new_messages: Vec<AgentMessage> = non_system
         .iter()
         .enumerate()
         .map(|(i, m)| {
-            if m.role == "user" && Some(i) == last_user_pos && !req.attachment_content.is_empty() {
-                let mut content: Vec<Value> = req.attachment_content.clone();
-                if !m.content.is_empty() {
-                    content.push(json!({"type": "text", "text": m.content}));
-                }
-                json!({"role": "user", "content": content})
+            let role = if m.role == "user" {
+                MessageRole::User
             } else {
-                json!({"role": m.role, "content": m.content})
+                MessageRole::Assistant
+            };
+            if m.role == "user" && Some(i) == last_user_pos && !req.attachment_content.is_empty() {
+                let mut blocks: Vec<ContentBlock> = req
+                    .attachment_content
+                    .iter()
+                    .map(|v| ContentBlock::Raw(v.clone()))
+                    .collect();
+                if !m.content.is_empty() {
+                    blocks.push(ContentBlock::Text {
+                        text: m.content.clone(),
+                    });
+                }
+                AgentMessage {
+                    role,
+                    content: MessageContent::Blocks(blocks),
+                }
+            } else {
+                AgentMessage {
+                    role,
+                    content: MessageContent::Text(m.content.clone()),
+                }
             }
         })
         .collect();
@@ -528,7 +564,7 @@ pub async fn build_ctx(
     });
 
     // Conservative input token estimation — reject early.
-    let msg_json_len = serde_json::to_string(&history).map(|s| s.len()).unwrap_or(0);
+    let msg_json_len: usize = history.iter().map(|m| m.estimated_bytes()).sum();
     let sys_len = effective_system.as_deref().map(|s| s.len()).unwrap_or(0);
     let tools_json_len = serde_json::to_string(&tools).map(|s| s.len()).unwrap_or(0);
     let token_estimate = estimate_input_tokens(msg_json_len, sys_len, tools_json_len);

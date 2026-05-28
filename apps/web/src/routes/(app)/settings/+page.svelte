@@ -7,7 +7,7 @@
 </svelte:head>
 
 <AppSafeArea class="flex min-h-0 flex-1 flex-col overflow-y-auto">
-  <div class="mx-auto w-full max-w-2xl px-6 py-8">
+  <div class="mx-auto w-full max-w-2xl px-6 pb-8 pt-[calc(var(--sidebar-toggle-offset)+2.75rem)]">
     <h1 class="mb-8 text-2xl font-semibold tracking-tight">Settings</h1>
 
     <div class="space-y-8">

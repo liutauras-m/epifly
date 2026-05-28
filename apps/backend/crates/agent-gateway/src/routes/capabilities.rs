@@ -27,7 +27,7 @@ pub async fn list_capabilities(
     {
         return HttpError::rate_limit(None).into_response();
     }
-    let registry = state.registry.lock().unwrap();
+    let registry = state.registry.read();
     let model = std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| "claude-opus-4-7".into());
     let plan_max_turns = limits.max_turns;
     let caps: Vec<Value> = registry

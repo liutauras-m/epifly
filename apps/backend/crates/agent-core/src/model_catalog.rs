@@ -277,10 +277,7 @@ impl ModelCatalog for StaticModelCatalog {
         }
 
         if !plan_allows(plan, spec) {
-            return Err(ModelError::PlanGated(
-                req.to_string(),
-                format!("{plan:?}"),
-            ));
+            return Err(ModelError::PlanGated(req.to_string(), format!("{plan:?}")));
         }
 
         Ok(spec)
@@ -441,7 +438,10 @@ mod tests {
     fn tool_routing_decision_attachments() {
         let d = ToolRoutingDecision::from_request(None, true);
         assert!(d.tool_required);
-        assert_eq!(d.reason, Some(ToolRequirementReason::AttachmentOrWorkspaceOp));
+        assert_eq!(
+            d.reason,
+            Some(ToolRequirementReason::AttachmentOrWorkspaceOp)
+        );
     }
 
     #[test]

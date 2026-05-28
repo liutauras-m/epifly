@@ -18,8 +18,10 @@ export function workspaces(client: InternalClient) {
       return client.call('POST', EP.WORKSPACES, body);
     },
 
-    search(q: string, limit = 20): Promise<ApiResult<WorkspaceNode[]>> {
-      return client.call('GET', `${EP.WORKSPACES_SEARCH}?q=${encodeURIComponent(q)}&limit=${limit}`);
+    search(q: string, limit = 20, mode?: 'semantic' | 'name'): Promise<ApiResult<WorkspaceNode[]>> {
+      const params = new URLSearchParams({ q, limit: String(limit) });
+      if (mode) params.set('mode', mode);
+      return client.call('GET', `${EP.WORKSPACES_SEARCH}?${params}`);
     },
 
     getContent(id: string): Promise<ApiResult<WorkspaceContent>> {
@@ -44,6 +46,27 @@ export function workspaces(client: InternalClient) {
 
     unshare(id: string, userId: string): Promise<ApiResult<WorkspaceNode>> {
       return client.call('POST', EP.WORKSPACE_UNSHARE(id), { user_id: userId });
+    },
+
+    putTags(id: string, tags: string[]): Promise<ApiResult<WorkspaceNode>> {
+      return client.call('PUT', EP.WORKSPACE_TAGS(id), { tags });
+    },
+
+    filterNodes(params: {
+      tag?: string;
+      kind?: 'folder' | 'file' | 'thread';
+      since?: string;
+      q?: string;
+      limit?: number;
+    }): Promise<ApiResult<WorkspaceNode[]>> {
+      const qs = new URLSearchParams();
+      if (params.tag) qs.set('tag', params.tag);
+      if (params.kind) qs.set('kind', params.kind);
+      if (params.since) qs.set('since', params.since);
+      if (params.q) qs.set('q', params.q);
+      if (params.limit != null) qs.set('limit', String(params.limit));
+      const url = qs.toString() ? `${EP.WORKSPACES_FILTER}?${qs}` : EP.WORKSPACES_FILTER;
+      return client.call('GET', url);
     },
 
     async upload(file: File): Promise<ApiResult<UploadResponse>> {

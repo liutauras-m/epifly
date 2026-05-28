@@ -39,6 +39,7 @@
     onThreadSelect={shell.goToThread}
     onWorkspaceNodeSelect={shell.selectWorkspaceNode}
     onWorkspaceNodeCreate={shell.createWorkspaceNode}
+    onSearch={shell.searchWorkspace}
   />
 {/snippet}
 

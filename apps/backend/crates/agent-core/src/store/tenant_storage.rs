@@ -402,6 +402,16 @@ impl TenantStorage {
         }
     }
 
+    /// Step 3.4: path for stable node-id-keyed content (e.g. `"nodes/{node_id}/content"`).
+    fn stable_content_path(&self, key: &str) -> ObjectPath {
+        match &self.layout {
+            StorageLayout::LegacyPrefix { tenant_id } => {
+                ObjectPath::from(format!("tenants/{tenant_id}/{key}"))
+            }
+            StorageLayout::Modern => ObjectPath::from(key.to_string()),
+        }
+    }
+
     fn upload_staging_path(&self, upload_id: &str, filename: &str) -> ObjectPath {
         let safe_filename: String = filename
             .chars()
@@ -623,6 +633,57 @@ impl TenantStorage {
             let _ = audit.append(event).await;
         });
     }
+
+    // --- Step 3.4: stable node-id-keyed content API -------------------------
+
+    /// Read stable content by node key (e.g. `"nodes/{node_id}/content"`).
+    pub async fn get_stable_content(&self, key: &str) -> Result<Bytes, StorageError> {
+        let path = self.stable_content_path(key);
+        match self.client.get(&path).await {
+            Ok(result) => Ok(result.bytes().await?),
+            Err(object_store::Error::NotFound { .. }) => Err(StorageError::NotFound),
+            Err(e) => Err(StorageError::Upstream(e)),
+        }
+    }
+
+    /// Write stable content by node key.
+    pub async fn put_stable_content(
+        &self,
+        key: &str,
+        body: Bytes,
+        content_type: &str,
+    ) -> Result<(), StorageError> {
+        let path = self.stable_content_path(key);
+        let mut opts = PutOptions::default();
+        opts.attributes.insert(
+            object_store::Attribute::ContentType,
+            content_type.to_owned().into(),
+        );
+        opts.attributes.insert(
+            object_store::Attribute::Metadata("tenant-id".into()),
+            self.tenant_id.clone().into(),
+        );
+        self.client
+            .put_opts(&path, PutPayload::from(body), opts)
+            .await?;
+        Ok(())
+    }
+
+    /// Delete stable content by node key.
+    pub async fn delete_stable_content(&self, key: &str) -> Result<(), StorageError> {
+        let path = self.stable_content_path(key);
+        match self.client.delete(&path).await {
+            Ok(()) | Err(object_store::Error::NotFound { .. }) => Ok(()),
+            Err(e) => Err(StorageError::Upstream(e)),
+        }
+    }
+
+    /// Return the full S3 key string for a stable content key — admin/versioning use.
+    pub fn stable_content_s3_key(&self, key: &str) -> String {
+        self.stable_content_path(key).to_string()
+    }
+
+    // --- meta / seeded marker -----------------------------------------------
 
     /// Write `_meta/seeded` marker object for optional external consistency.
     pub async fn write_seeded_marker(&self) -> Result<(), StorageError> {
@@ -1353,5 +1414,71 @@ mod proptest_tests {
                 prop_assert!(!vp.as_str().is_empty());
             }
         }
+
+        /// Reflexivity: every valid path `is_same_or_within` itself.
+        #[test]
+        fn is_same_or_within_reflexive(input in ".*") {
+            if let Ok(vp) = VirtualPath::parse(&input) {
+                prop_assert!(vp.is_same_or_within(&vp));
+            }
+        }
+
+        /// Irreflexivity: no valid path `is_strict_child_of` itself.
+        #[test]
+        fn is_strict_child_of_irreflexive(input in ".*") {
+            if let Ok(vp) = VirtualPath::parse(&input) {
+                prop_assert!(!vp.is_strict_child_of(&vp));
+            }
+        }
+
+        /// Child-implies-within: any strict child is also same-or-within.
+        #[test]
+        fn strict_child_implies_same_or_within(parent in "[a-z]{1,8}(/[a-z]{1,8}){0,3}",
+                                               extra in "/[a-z]{1,8}(/[a-z]{1,8}){0,2}") {
+            let child_str = format!("{parent}{extra}");
+            if let (Ok(p), Ok(c)) = (VirtualPath::parse(&parent), VirtualPath::parse(&child_str))
+                && c.is_strict_child_of(&p)
+            {
+                prop_assert!(c.is_same_or_within(&p));
+            }
+        }
+    }
+
+    // ── Deterministic containment tests ─────────────────────────────────────────
+
+    #[test]
+    fn sibling_prefix_is_not_contained() {
+        let parent = VirtualPath::parse("node/foo").unwrap();
+        let sibling = VirtualPath::parse("node/foobar").unwrap();
+        assert!(!sibling.is_same_or_within(&parent));
+        assert!(!sibling.is_strict_child_of(&parent));
+    }
+
+    #[test]
+    fn child_is_contained() {
+        let parent = VirtualPath::parse("node/foo").unwrap();
+        let child = VirtualPath::parse("node/foo/bar").unwrap();
+        assert!(child.is_same_or_within(&parent));
+        assert!(child.is_strict_child_of(&parent));
+    }
+
+    #[test]
+    fn same_path_is_within_but_not_strict_child() {
+        let p = VirtualPath::parse("node/foo").unwrap();
+        assert!(p.is_same_or_within(&p));
+        assert!(!p.is_strict_child_of(&p));
+    }
+
+    #[test]
+    fn traversal_sequences_rejected_at_parse() {
+        assert!(VirtualPath::parse("node/foo/../secret").is_err());
+        assert!(VirtualPath::parse("node/foo%2f..%2fsecret").is_err());
+        assert!(VirtualPath::parse("node/foo/..").is_err());
+        assert!(VirtualPath::parse("../escape").is_err());
+    }
+
+    #[test]
+    fn absolute_paths_rejected_at_parse() {
+        assert!(VirtualPath::parse("/absolute/path").is_err());
     }
 }

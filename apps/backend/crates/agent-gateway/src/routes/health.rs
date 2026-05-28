@@ -17,7 +17,7 @@ use std::sync::Arc;
     tag = "health",
 )]
 pub async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let cap_count = state.registry.lock().unwrap().len();
+    let cap_count = state.registry.read().len();
     let embeddings_ok = state.embedding_service.embed_query("ok").await.is_ok();
     let router_ok = embeddings_ok && cap_count > 0;
     let overall_ok = embeddings_ok && router_ok;

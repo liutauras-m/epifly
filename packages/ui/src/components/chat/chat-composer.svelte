@@ -63,7 +63,7 @@
 <form
   onsubmit={handleSubmit}
   class={cn(
-    "sticky bottom-0 z-30 space-y-2 bg-gradient-to-t from-background via-background/95 to-background/0 px-3 pb-[calc(0.75rem+var(--safe-bottom))] pt-6 backdrop-blur-xl sm:px-6",
+    "sticky bottom-0 z-30 space-y-2 bg-gradient-to-t from-background via-background/95 to-background/0 px-3 pb-[calc(0.75rem+var(--safe-bottom))] pt-6 sm:px-6",
     className
   )}
 >

@@ -1,3 +1,4 @@
+use crate::agent::ThreadRuntimeRegistry;
 use crate::capabilities::job_backed::transcribe_video_provider;
 use crate::metrics::{RouterMetrics, RustFsMetrics};
 use crate::mw::{RateLimiter, RouterQuotaConfig};
@@ -22,24 +23,25 @@ use common::memory::{
     InMemoryAuditStore, InMemoryThreadStore, InMemoryWorkspaceContent, InMemoryWorkspaceStore,
     ThreadStore, WorkspaceContentStore, WorkspaceStore,
 };
+use dashmap::DashMap;
 use jobs::jobs::{
     AuditLogCleanupJob, CapabilityHealthCheckJob, LagoReconcileJob, RustFsKeyRotationJob,
-    TenantBucketMigrationJob, VideoTranscriptionJob,
+    TenantBucketMigrationJob, ThreadProjectionJob, VideoTranscriptionJob, WorkspaceIndexJob,
 };
-use jobs::{JobAdmin, JobContext, JobExecutor, JobRegistry};
+use jobs::{JobAdmin, JobContext, JobExecutor, JobRegistry, ProjectionCoalescer};
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
+use parking_lot::RwLock;
 use rustfs_admin::RustFsAdminClient;
-use dashmap::DashMap;
 use std::sync::Arc as StdArc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 #[cfg(not(feature = "local-embeddings"))]
 use tracing::error;
 use tracing::{info, warn};
 
 pub struct AppState {
-    pub registry: Arc<Mutex<CapabilityRegistry>>,
+    pub registry: Arc<RwLock<CapabilityRegistry>>,
     pub rate_limiter: RateLimiter,
     pub llm: Arc<LlmRegistry>,
     /// RustFS / S3-compatible file store (root credentials — admin path only)
@@ -71,6 +73,9 @@ pub struct AppState {
     pub job_registry: Arc<JobRegistry>,
     pub job_executor: Arc<JobExecutor>,
     pub job_admin: Arc<JobAdmin>,
+    pub thread_projection_store: Arc<dyn agent_core::ThreadProjectionStore>,
+    pub projection_coalescer: Arc<ProjectionCoalescer>,
+    pub thread_runtime_registry: Arc<ThreadRuntimeRegistry>,
     pub embedding_service: Arc<dyn EmbeddingService>,
     pub vector_store: Arc<QdrantVectorStore>,
     pub realtime_service: Arc<RealtimeService>,
@@ -273,6 +278,12 @@ impl AppState {
             CredentialStore::new(metadata_store.db())
                 .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?,
         );
+        let thread_projection_store: Arc<dyn agent_core::ThreadProjectionStore> =
+            agent_core::build_thread_projection_store(
+                agent_core::ProjectionStoreBackend::Redb(metadata_store.db()),
+            )
+            .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?;
+        let projection_coalescer = ProjectionCoalescer::new();
 
         // ── Embedding service (must be before Qdrant so dims are known) ─────
         let embedding_service: Arc<dyn EmbeddingService> = match std::env::var("EMBEDDING_BACKEND")
@@ -381,7 +392,7 @@ impl AppState {
             Err(e) => warn!(error = %e, "capability-spec bulk load failed; continuing startup"),
         }
 
-        let registry = Arc::new(Mutex::new(registry_raw));
+        let registry = Arc::new(RwLock::new(registry_raw));
 
         let router_cfg = SemanticRouterConfig {
             top_k: std::env::var("SEMANTIC_ROUTER_TOP_K")
@@ -467,6 +478,16 @@ impl AppState {
             job_ctx = job_ctx.with_rustfs(Arc::clone(ra), Arc::clone(cs));
         }
         job_ctx = job_ctx.with_storage(Arc::clone(&tenant_storage), Arc::clone(&workspace_store));
+        job_ctx = job_ctx.with_indexing(
+            Arc::clone(&workspace_content),
+            Arc::clone(&embedding_service),
+            Arc::clone(&vector_store),
+        );
+        job_ctx = job_ctx.with_thread_projection(
+            Arc::clone(&thread_store),
+            Arc::clone(&thread_projection_store),
+            Arc::clone(&projection_coalescer),
+        );
         let job_ctx = Arc::new(job_ctx);
         let job_registry = build_job_registry(job_ctx, billing.clone());
         let job_executor = JobExecutor::new(Arc::clone(&job_registry));
@@ -486,7 +507,7 @@ impl AppState {
             use agent_core::capabilities::provider::CapabilityProvider;
             let provider: Arc<dyn CapabilityProvider> =
                 Arc::new(transcribe_video_provider(&job_executor));
-            registry.lock().unwrap().register_provider(provider);
+            registry.write().register_provider(provider);
             info!("transcribe-video capability registered");
         }
 
@@ -528,6 +549,9 @@ impl AppState {
             job_registry,
             job_executor,
             job_admin,
+            thread_projection_store,
+            projection_coalescer,
+            thread_runtime_registry: ThreadRuntimeRegistry::new(),
             embedding_service,
             vector_store,
             realtime_service,
@@ -574,7 +598,7 @@ impl AppState {
 
         let audit_store: Arc<dyn AuditStore> = Arc::new(InMemoryAuditStore::new());
 
-        let registry = Arc::new(Mutex::new(registry));
+        let registry = Arc::new(RwLock::new(registry));
         let tool_admin = Arc::new(build_admin(Arc::clone(&registry), Arc::clone(&audit_store)));
 
         let embedding_service: Arc<dyn EmbeddingService> = Arc::new(NoopEmbeddingService);
@@ -589,7 +613,17 @@ impl AppState {
             },
         );
 
-        let job_ctx = Arc::new(JobContext::new(Arc::clone(&audit_store), None, None));
+        let thread_projection_store: Arc<dyn agent_core::ThreadProjectionStore> =
+            agent_core::build_thread_projection_store(agent_core::ProjectionStoreBackend::InMemory)
+                .expect("in-memory thread projection store");
+        let projection_coalescer = ProjectionCoalescer::new();
+        let job_ctx = Arc::new(
+            JobContext::new(Arc::clone(&audit_store), None, None).with_thread_projection(
+                Arc::clone(&thread_store),
+                Arc::clone(&thread_projection_store),
+                Arc::clone(&projection_coalescer),
+            ),
+        );
         let job_registry = build_job_registry(job_ctx, None);
         let job_executor = JobExecutor::new(Arc::clone(&job_registry));
         let job_admin = Arc::new(JobAdmin::new(
@@ -624,6 +658,9 @@ impl AppState {
             job_registry,
             job_executor,
             job_admin,
+            thread_projection_store,
+            projection_coalescer,
+            thread_runtime_registry: ThreadRuntimeRegistry::new(),
             embedding_service,
             vector_store,
             realtime_service: RealtimeService::new(),
@@ -783,6 +820,8 @@ fn build_job_registry(
     registry.register_scheduled(RustFsKeyRotationJob);
     registry.register_scheduled(TenantBucketMigrationJob);
     registry.register_background(VideoTranscriptionJob);
+    registry.register_background(WorkspaceIndexJob);
+    registry.register_background(ThreadProjectionJob);
     Arc::new(registry)
 }
 

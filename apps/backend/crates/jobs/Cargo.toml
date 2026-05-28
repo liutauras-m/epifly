@@ -13,6 +13,10 @@ billing-core  = { path = "../billing-core" }
 agent-core    = { path = "../agent-core" }
 rustfs-admin  = { path = "../rustfs-admin" }
 
+ulid         = { workspace = true }
+dashmap.workspace    = true
+blake3.workspace     = true
+hex.workspace        = true
 tokio                = { workspace = true }
 tokio-cron-scheduler = { workspace = true }
 async-trait          = { workspace = true }

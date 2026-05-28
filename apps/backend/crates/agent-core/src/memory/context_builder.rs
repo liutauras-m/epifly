@@ -86,7 +86,8 @@ impl ContextBuilder {
 
         // Load selected conversation body
         if selected.kind == NodeKind::Conversation {
-            match self.content.read(tenant_id, &selected.virtual_path).await {
+            let (key, legacy) = node_content_keys_ref(&selected);
+            match self.content.read(tenant_id, key, legacy).await {
                 Ok(body) if !body.is_empty() => {
                     sections.push((selected.virtual_path.clone(), body));
                 }
@@ -110,13 +111,26 @@ impl ContextBuilder {
     }
 
     /// Try reading each path in order; return the first non-empty body.
+    /// Used for folder CONTEXT.md / README.md — these are virtual paths with no object_key.
     async fn load_first(&self, tenant_id: &str, paths: &[String]) -> String {
         for path in paths {
-            let body = self.content.read(tenant_id, path).await.unwrap_or_default();
+            let body = self
+                .content
+                .read(tenant_id, path, None)
+                .await
+                .unwrap_or_default();
             if !body.is_empty() {
                 return body;
             }
         }
         String::new()
+    }
+}
+
+/// Extract `(primary_key, legacy_key)` from a `WorkspaceNode` for content store calls.
+fn node_content_keys_ref(node: &common::memory::workspace::WorkspaceNode) -> (&str, Option<&str>) {
+    match &node.object_key {
+        Some(ok) => (ok.as_str(), Some(node.virtual_path.as_str())),
+        None => (node.virtual_path.as_str(), None),
     }
 }

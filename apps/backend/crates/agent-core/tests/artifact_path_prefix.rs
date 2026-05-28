@@ -75,7 +75,7 @@ async fn explicit_prefix_routes_to_correct_path() {
 
     // Verify the content store has the artifact at the expected virtual path.
     let stored = content
-        .read(TENANT, "projects/foo/README.md")
+        .read(TENANT, "projects/foo/README.md", None)
         .await
         .expect("should be readable at projects/foo/README.md");
     assert_eq!(stored, "# Hello");
@@ -97,7 +97,7 @@ async fn empty_prefix_routes_to_raw_path() {
     assert!(result.is_ok(), "process_if_artifacts failed: {:?}", result);
 
     let stored = content
-        .read(TENANT, "/projects/my-app/src/main.ts")
+        .read(TENANT, "/projects/my-app/src/main.ts", None)
         .await
         .expect("should be readable at /projects/my-app/src/main.ts");
     assert_eq!(stored, "export {};\n");
@@ -120,7 +120,7 @@ async fn absent_prefix_uses_legacy_outputs_path() {
 
     let expected_path = format!("/outputs/{TOOL}/result.txt");
     let stored = content
-        .read(TENANT, &expected_path)
+        .read(TENANT, &expected_path, None)
         .await
         .unwrap_or_else(|_| panic!("should be readable at {expected_path}"));
     assert_eq!(stored, "some output");
@@ -145,14 +145,14 @@ async fn multiple_artifacts_all_use_prefix() {
 
     assert_eq!(
         content
-            .read(TENANT, "projects/demo/src/index.ts")
+            .read(TENANT, "projects/demo/src/index.ts", None)
             .await
             .unwrap(),
         "const x = 1;"
     );
     assert_eq!(
         content
-            .read(TENANT, "projects/demo/package.json")
+            .read(TENANT, "projects/demo/package.json", None)
             .await
             .unwrap(),
         r#"{"name":"demo"}"#
@@ -182,7 +182,7 @@ async fn binary_artifact_does_not_write_to_content_store() {
     // (only text/* and application/json are indexed).  InMemoryWorkspaceContent
     // returns Ok("") for absent keys, so we check for the empty sentinel.
     let stored = content
-        .read(TENANT, "assets/logo.png")
+        .read(TENANT, "assets/logo.png", None)
         .await
         .unwrap_or_default();
     assert!(

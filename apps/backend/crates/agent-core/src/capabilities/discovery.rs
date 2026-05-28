@@ -1,8 +1,9 @@
 use super::registry::CapabilityRegistry;
 use crate::realtime::{RealtimeService, WorkspaceChangeEvent};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use parking_lot::RwLock;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
 
@@ -11,8 +12,8 @@ pub struct CapabilityDiscovery {
 }
 
 pub fn capability_dirs_from_env() -> Vec<PathBuf> {
-    let raw = std::env::var("CONUSAI_CAPABILITIES_DIR")
-        .unwrap_or_else(|_| "./capabilities".to_string());
+    let raw =
+        std::env::var("CONUSAI_CAPABILITIES_DIR").unwrap_or_else(|_| "./capabilities".to_string());
 
     raw.split(',')
         .map(str::trim)
@@ -67,7 +68,7 @@ impl ManifestWatcher {
     /// When `realtime` is provided, a `capability.reloaded` event is broadcast on the
     /// `__system__` channel after each successful reload.
     pub fn start(
-        registry: Arc<Mutex<CapabilityRegistry>>,
+        registry: Arc<RwLock<CapabilityRegistry>>,
         realtime: Option<Arc<RealtimeService>>,
     ) -> anyhow::Result<Self> {
         let discovery = CapabilityDiscovery::from_env();
@@ -75,7 +76,7 @@ impl ManifestWatcher {
     }
 
     pub fn start_for_dirs(
-        registry: Arc<Mutex<CapabilityRegistry>>,
+        registry: Arc<RwLock<CapabilityRegistry>>,
         dirs: Vec<PathBuf>,
         realtime: Option<Arc<RealtimeService>>,
     ) -> anyhow::Result<Self> {
@@ -122,16 +123,10 @@ impl ManifestWatcher {
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "unknown".into());
 
-                let reloaded = match registry.lock() {
-                    Ok(mut reg) => match reg.reload_capability(&cap_dir) {
-                        Ok(()) => true,
-                        Err(e) => {
-                            warn!(dir = ?cap_dir, error = %e, "hot-reload failed");
-                            false
-                        }
-                    },
+                let reloaded = match registry.write().reload_capability(&cap_dir) {
+                    Ok(()) => true,
                     Err(e) => {
-                        warn!(error = %e, "registry lock poisoned during hot-reload");
+                        warn!(dir = ?cap_dir, error = %e, "hot-reload failed");
                         false
                     }
                 };

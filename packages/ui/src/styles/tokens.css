@@ -2,8 +2,18 @@
   --app-header-height: 3rem;
   --composer-height: 3.5rem;
 
+  /* Device safe-area insets. --safe-left/right are also defaulted so that
+     landscape-notch calculations never fall through to a hard-coded 0. */
   --safe-top: env(safe-area-inset-top);
   --safe-bottom: env(safe-area-inset-bottom);
+  --safe-left: env(safe-area-inset-left);
+  --safe-right: env(safe-area-inset-right);
+
+  /* Height of the floating-toggle zone at the very top of the screen on mobile.
+     = device safe-top  +  toggle offset (12 px)  +  touch-target (44 px)  +  breathing gap (8 px).
+     Use this as the top-padding for every chat page so the token is the single
+     source of truth — change the button size here, not in every route file. */
+  --toggle-bar-height: calc(var(--safe-top) + var(--sidebar-toggle-offset) + 2.75rem + 0.5rem);
 
   --radius-app: 1rem;
 

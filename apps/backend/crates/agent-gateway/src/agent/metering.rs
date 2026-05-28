@@ -51,7 +51,9 @@ pub async fn record_agent_usage(
             if let Err(e) = billing.report_usage(tok_event).await {
                 warn!(error = %e, "metering: report_usage(token) failed");
             }
-            quota.record(tenant_id, &ActionType::Token, total_tokens).await;
+            quota
+                .record(tenant_id, &ActionType::Token, total_tokens)
+                .await;
         }
     }
 }

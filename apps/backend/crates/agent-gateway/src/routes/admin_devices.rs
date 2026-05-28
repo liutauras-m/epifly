@@ -147,7 +147,8 @@ pub async fn list_devices(
     require_shell_feature()?;
     require_platform_admin(&headers)?;
 
-    let mut result: Vec<DeviceSummary> = state.device_tokens
+    let mut result: Vec<DeviceSummary> = state
+        .device_tokens
         .iter()
         .filter(|e| !e.value().revoked)
         .map(|e| {

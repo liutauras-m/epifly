@@ -61,7 +61,10 @@
 		"data-slot": "sidebar-menu-button",
 		"data-sidebar": "menu-button",
 		"data-size": size,
-		"data-active": isActive,
+		// The compiled variant uses a presence selector (`&[data-active]`), so the
+		// attribute must be ABSENT when inactive — a boolean `false` still renders
+		// `data-active="false"` and would match, highlighting every row.
+		"data-active": isActive ? "true" : undefined,
 		...restProps,
 	});
 </script>

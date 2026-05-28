@@ -6,9 +6,10 @@ use crate::capabilities::executor::{PlanStep, StepResult, run_plan};
 use crate::capabilities::registry::CapabilityRegistry;
 use crate::context::tenant::TenantContext;
 use crate::llm::LlmRegistry;
+use parking_lot::{Mutex, RwLock};
 use rig::agent::{HookAction, PromptHook, ToolCallHookAction};
 use rig::completion::CompletionModel;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tracing::{info, warn};
 
 /// Emits OpenTelemetry-compatible tracing events for every agent turn and tool call.
@@ -196,7 +197,7 @@ impl<M: CompletionModel> PromptHook<M> for PermissionHook {
 /// completion call.
 #[derive(Clone)]
 pub struct OrchestrationHook {
-    registry: Arc<Mutex<CapabilityRegistry>>,
+    registry: Arc<RwLock<CapabilityRegistry>>,
     llm: Arc<LlmRegistry>,
     tenant: Option<TenantContext>,
     /// Accumulated plan results from all intercepted `plan_steps` in this turn.
@@ -205,7 +206,7 @@ pub struct OrchestrationHook {
 
 impl OrchestrationHook {
     pub fn new(
-        registry: Arc<Mutex<CapabilityRegistry>>,
+        registry: Arc<RwLock<CapabilityRegistry>>,
         llm: Arc<LlmRegistry>,
         tenant: Option<TenantContext>,
     ) -> Self {
@@ -219,8 +220,7 @@ impl OrchestrationHook {
 
     /// Drain and return any plan results accumulated since the last call.
     pub fn take_results(&self) -> Vec<StepResult> {
-        let mut lock = self.plan_results.lock().unwrap();
-        std::mem::take(&mut *lock)
+        std::mem::take(&mut *self.plan_results.lock())
     }
 }
 
@@ -265,7 +265,7 @@ impl<M: CompletionModel> PromptHook<M> for OrchestrationHook {
             // planner can see the failure and re-plan on the next turn, rather than
             // crashing run_plan mid-execution.
             let (valid_steps, mut pre_errors): (Vec<PlanStep>, Vec<StepResult>) = {
-                let reg = registry.lock().unwrap();
+                let reg = registry.read();
                 let mut valid = Vec::new();
                 let mut errs = Vec::new();
                 for step in steps {
@@ -315,7 +315,7 @@ impl<M: CompletionModel> PromptHook<M> for OrchestrationHook {
             .await;
 
             // Store pre-validation errors first, then execution results.
-            let mut buf = results_buf.lock().unwrap();
+            let mut buf = results_buf.lock();
             buf.append(&mut pre_errors);
             buf.extend(step_results);
 

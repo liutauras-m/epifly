@@ -53,7 +53,7 @@ pub enum OnboardingError {
     #[error("IAM provisioning failed: {0}")]
     Iam(#[source] anyhow::Error),
     #[error("workspace store error: {0}")]
-    Store(#[source] anyhow::Error),
+    Store(#[source] common::memory::store::WorkspaceStoreError),
     #[error("storage factory error: {0}")]
     Storage(#[from] crate::store::tenant_storage::StorageError),
     #[error("credential store error: {0}")]

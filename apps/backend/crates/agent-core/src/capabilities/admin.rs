@@ -14,8 +14,9 @@ use super::validator::RegisteredToolValidator;
 use crate::context::tenant::TenantContext;
 use chrono::Utc;
 use common::audit::{AuditEvent, AuditStore};
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 // ── Limits ────────────────────────────────────────────────────────────────────
 
@@ -120,7 +121,7 @@ pub struct TestInvokeResponse {
 
 pub struct CapabilityAdmin {
     store: Arc<dyn RegisteredToolStore>,
-    registry: Arc<Mutex<CapabilityRegistry>>,
+    registry: Arc<RwLock<CapabilityRegistry>>,
     audit: Arc<dyn AuditStore>,
     limits: AdminLimits,
 }
@@ -128,7 +129,7 @@ pub struct CapabilityAdmin {
 impl CapabilityAdmin {
     pub fn new(
         store: Arc<dyn RegisteredToolStore>,
-        registry: Arc<Mutex<CapabilityRegistry>>,
+        registry: Arc<RwLock<CapabilityRegistry>>,
         audit: Arc<dyn AuditStore>,
     ) -> Self {
         Self {
@@ -147,12 +148,12 @@ impl CapabilityAdmin {
     // ── Queries ───────────────────────────────────────────────────────────────
 
     pub fn list(&self) -> Vec<CapabilitySummary> {
-        let reg = self.registry.lock().unwrap();
+        let reg = self.registry.read();
         reg.all().map(CapabilitySummary::from).collect()
     }
 
     pub fn get(&self, name: &str) -> Option<CapabilitySummary> {
-        let reg = self.registry.lock().unwrap();
+        let reg = self.registry.read();
         reg.get(name).map(CapabilitySummary::from)
     }
 
@@ -168,7 +169,7 @@ impl CapabilityAdmin {
         actor: &TenantContext,
     ) -> anyhow::Result<CapabilitySummary> {
         // Check capacity limit.
-        let current_count = self.registry.lock().unwrap().len();
+        let current_count = self.registry.read().len();
         if current_count >= self.limits.max_capabilities {
             anyhow::bail!(
                 "max_capabilities limit ({}) reached",
@@ -218,7 +219,7 @@ impl CapabilityAdmin {
 
         // Hot-load into registry.
         let cap_dir = self.store.capability_dir(&name);
-        self.registry.lock().unwrap().reload_capability(&cap_dir)?;
+        self.registry.write().reload_capability(&cap_dir)?;
 
         let summary = self.get(&name).expect("just registered");
 
@@ -275,7 +276,7 @@ impl CapabilityAdmin {
         )?;
 
         let cap_dir = self.store.capability_dir(name);
-        self.registry.lock().unwrap().reload_capability(&cap_dir)?;
+        self.registry.write().reload_capability(&cap_dir)?;
 
         let summary = self.get(name).expect("just reloaded");
         self.emit_audit(actor, "capability.update", name, "ok");
@@ -289,7 +290,7 @@ impl CapabilityAdmin {
         actor: &TenantContext,
     ) -> anyhow::Result<CapabilitySummary> {
         {
-            let mut reg = self.registry.lock().unwrap();
+            let mut reg = self.registry.write();
             if !reg.set_enabled(name, enabled) {
                 anyhow::bail!("capability not found: {name}");
             }
@@ -323,7 +324,7 @@ impl CapabilityAdmin {
     }
 
     pub fn delete(&self, name: &str, actor: &TenantContext) -> anyhow::Result<()> {
-        self.registry.lock().unwrap().unregister(name);
+        self.registry.write().unregister(name);
         self.store.delete(name)?;
         self.emit_audit(actor, "capability.delete", name, "ok");
         Ok(())
@@ -331,7 +332,7 @@ impl CapabilityAdmin {
 
     pub fn reload(&self, name: &str, actor: &TenantContext) -> anyhow::Result<CapabilitySummary> {
         let cap_dir = self.store.capability_dir(name);
-        self.registry.lock().unwrap().reload_capability(&cap_dir)?;
+        self.registry.write().reload_capability(&cap_dir)?;
         let summary = self.get(name).expect("just reloaded");
         self.emit_audit(actor, "capability.reload", name, "ok");
         Ok(summary)
@@ -342,7 +343,7 @@ impl CapabilityAdmin {
         let mut count = 0;
         for name in &names {
             let cap_dir = self.store.capability_dir(name);
-            match self.registry.lock().unwrap().reload_capability(&cap_dir) {
+            match self.registry.write().reload_capability(&cap_dir) {
                 Ok(()) => count += 1,
                 Err(e) => tracing::warn!(name=%name, error=%e, "reload_all: reload failed"),
             }
@@ -357,7 +358,7 @@ impl CapabilityAdmin {
         tenant: TenantContext,
     ) -> anyhow::Result<TestInvokeResponse> {
         let provider = {
-            let reg = self.registry.lock().unwrap();
+            let reg = self.registry.read();
             reg.get_provider(&req.tool_name).ok_or_else(|| {
                 anyhow::anyhow!("capability '{}' not found or no provider", req.tool_name)
             })?
@@ -390,7 +391,7 @@ impl CapabilityAdmin {
 
 /// Build a `CapabilityAdmin` from `AppState`-like components.
 pub fn build_admin(
-    registry: Arc<Mutex<CapabilityRegistry>>,
+    registry: Arc<RwLock<CapabilityRegistry>>,
     audit: Arc<dyn AuditStore>,
 ) -> CapabilityAdmin {
     let store = Arc::new(FilesystemStore::from_env());

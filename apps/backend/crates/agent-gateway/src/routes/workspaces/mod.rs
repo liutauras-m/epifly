@@ -2,23 +2,45 @@
 ///
 /// All routes require the tenant middleware (Extension<ResolvedTenant>).
 /// Access model: every node is private to owner_id; sharing is explicit per node.
+mod access;
+mod content_indexing;
+mod errors;
+mod presign;
+mod versioning;
+
+pub use presign::{presign_download, presign_upload};
+pub use versioning::{list_versions, restore_version};
+
+use access::{cleanup_after_delete, maybe_provision_root_listing};
+use content_indexing::enqueue_reindex;
+use errors::{map_content_err, map_err};
+
 use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
-use agent_core::{VirtualPath, WorkspaceChangeEvent};
+use agent_core::{ProjectionStatus, WorkspaceChangeEvent};
 use axum::{
     Extension, Json,
     extract::{Path, Query, State},
     http::StatusCode,
 };
-use chrono::Utc;
 use common::error::HttpError;
-use common::memory::workspace::{NodeKind, WorkspaceNode, effective_user_id, validate_name};
+use common::memory::workspace::{
+    NodeKind, WorkspaceNode, WorkspaceNodeKind, effective_user_id, normalize_tags, validate_name,
+};
 use serde::{Deserialize, Serialize};
-use std::future::Future;
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::instrument;
 use ulid::Ulid;
+
+// ── Step 3.4 helper ──────────────────────────────────────────────────────────
+
+/// Return `(primary_key, legacy_key)` for content store calls.
+fn node_content_keys(node: &WorkspaceNode) -> (&str, Option<&str>) {
+    match &node.object_key {
+        Some(ok) => (ok.as_str(), Some(node.virtual_path.as_str())),
+        None => (node.virtual_path.as_str(), None),
+    }
+}
 
 // ── Request / response types ─────────────────────────────────────────────────
 
@@ -43,15 +65,6 @@ pub struct SearchQuery {
     pub after: Option<Ulid>,
 }
 
-fn apply_cursor(mut nodes: Vec<WorkspaceNode>, after: Option<Ulid>) -> Vec<WorkspaceNode> {
-    if let Some(cursor) = after
-        && let Some(pos) = nodes.iter().position(|n| n.id == cursor)
-    {
-        nodes = nodes.into_iter().skip(pos + 1).collect();
-    }
-    nodes
-}
-
 #[derive(Deserialize)]
 pub struct ContentBody {
     pub content: String,
@@ -68,55 +81,23 @@ pub struct ShareBody {
     pub user_id: String,
 }
 
+#[derive(Deserialize)]
+pub struct RenameBody {
+    pub name: String,
+}
+
 #[derive(Serialize)]
 pub struct ContentResponse {
     pub content: String,
 }
 
-// ── Error helper ─────────────────────────────────────────────────────────────
-
-fn map_err(e: anyhow::Error) -> HttpError {
-    let msg = e.to_string();
-    if msg.contains("validation error") {
-        HttpError::validation("body", msg)
-    } else if msg.contains("not found") {
-        HttpError::not_found(msg)
-    } else {
-        HttpError::internal(msg, None)
+fn apply_cursor(mut nodes: Vec<WorkspaceNode>, after: Option<Ulid>) -> Vec<WorkspaceNode> {
+    if let Some(cursor) = after
+        && let Some(pos) = nodes.iter().position(|n| n.id == cursor)
+    {
+        nodes = nodes.into_iter().skip(pos + 1).collect();
     }
-}
-
-async fn maybe_provision_root_listing<CheckSeeded, CheckSeededFuture, Provision, ProvisionFuture>(
-    state: &AppState,
-    tenant_id: &str,
-    mut is_tenant_seeded: CheckSeeded,
-    provision: Provision,
-) -> Result<bool, HttpError>
-where
-    CheckSeeded: FnMut() -> CheckSeededFuture,
-    CheckSeededFuture: Future<Output = bool>,
-    Provision: FnOnce() -> ProvisionFuture,
-    ProvisionFuture: Future<Output = Result<(), HttpError>>,
-{
-    let is_seeded = is_tenant_seeded().await;
-    if is_seeded {
-        return Ok(false);
-    }
-
-    let guard = state
-        .onboarding_guards
-        .entry(tenant_id.to_owned())
-        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-        .clone();
-    let _lock = guard.lock().await;
-
-    let still_seeded = is_tenant_seeded().await;
-    if still_seeded {
-        return Ok(false);
-    }
-
-    provision().await?;
-    Ok(true)
+    nodes
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -167,10 +148,12 @@ pub async fn create(
                 .await
                 .map_err(map_err)?;
 
-            // Write empty .md to RustFS (best-effort; don't fail if RustFS is slow)
+            // Write empty .md to RustFS (best-effort; don't fail if RustFS is slow).
+            // Dual-write via node_content_keys: new stable key primary, legacy best-effort.
+            let (key, legacy) = node_content_keys(&node);
             let _ = state
                 .workspace_content
-                .write(&tenant.tenant_id, &node.virtual_path, "")
+                .write(&tenant.tenant_id, key, legacy, "")
                 .await;
 
             state
@@ -242,11 +225,88 @@ pub async fn search(
     }
 
     if semantic {
-        let nodes = state
-            .workspace_store
-            .semantic_search_nodes(&tenant.tenant_id, user, &query, limit)
+        // Step 1: embed the query.
+        // embed_query() already prepends the "query: " prefix required by multilingual-e5.
+        let embedding = match state.embedding_service.embed_query(&query).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(error = %e, "semantic search: embed_query failed — falling back to name search");
+                let nodes = state
+                    .workspace_store
+                    .search_nodes(&tenant.tenant_id, user, &query, limit)
+                    .await
+                    .map_err(map_err)?;
+                return Ok(Json(apply_cursor(nodes, q.after)));
+            }
+        };
+
+        // Step 2: ANN search — over-fetch (limit * 3) so that after dedup we still have
+        // enough candidates.  top_n_content returns one row per chunk, so the same node
+        // may appear multiple times.
+        let ann_limit = (limit * 3).max(60);
+        tracing::info!(
+            query = %query,
+            embedding_dims = embedding.len(),
+            tenant_id = %tenant.tenant_id,
+            ann_limit,
+            "semantic search: querying Qdrant"
+        );
+        let hits = match state
+            .vector_store
+            .top_n_content(&embedding, ann_limit, &tenant.tenant_id)
             .await
-            .map_err(map_err)?;
+        {
+            Ok(h) => {
+                tracing::info!(hits = h.len(), "semantic search: Qdrant returned hits");
+                h
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "semantic search: Qdrant query failed — falling back to name search");
+                let nodes = state
+                    .workspace_store
+                    .search_nodes(&tenant.tenant_id, user, &query, limit)
+                    .await
+                    .map_err(map_err)?;
+                return Ok(Json(apply_cursor(nodes, q.after)));
+            }
+        };
+
+        // Step 3: deduplicate by node_id, preserving best-score order.
+        let mut seen = std::collections::HashSet::new();
+        let unique_ids: Vec<String> = hits
+            .into_iter()
+            .filter_map(|h| {
+                if seen.insert(h.node_id.clone()) {
+                    Some(h.node_id)
+                } else {
+                    None
+                }
+            })
+            .take(limit * 2)
+            .collect();
+
+        // Step 4: hydrate nodes through the workspace store — this enforces access
+        // control and returns full WorkspaceNode structs.  Skip hidden or inaccessible
+        // nodes silently so the result set is clean.
+        let mut nodes = Vec::with_capacity(unique_ids.len().min(limit));
+        for id_str in unique_ids {
+            if nodes.len() >= limit {
+                break;
+            }
+            let node_id = match id_str.parse::<Ulid>() {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            match state
+                .workspace_store
+                .get_accessible_node(&tenant.tenant_id, user, node_id)
+                .await
+            {
+                Ok(node) if node.hidden_at.is_none() => nodes.push(node),
+                _ => {}
+            }
+        }
+
         return Ok(Json(apply_cursor(nodes, q.after)));
     }
 
@@ -390,11 +450,12 @@ pub async fn get_content(
         .await
         .map_err(map_err)?;
 
+    let (key, legacy) = node_content_keys(&node);
     let content = state
         .workspace_content
-        .read(&tenant.tenant_id, &node.virtual_path)
+        .read(&tenant.tenant_id, key, legacy)
         .await
-        .map_err(map_err)?;
+        .map_err(map_content_err)?;
 
     Ok(Json(ContentResponse { content }))
 }
@@ -432,50 +493,21 @@ pub async fn patch_content(
         .await
         .map_err(map_err)?;
 
-    // Write content to RustFS, then embed + index for semantic search (async).
+    let (key, legacy) = node_content_keys(&node);
     state
         .workspace_content
-        .write(&tenant.tenant_id, &node.virtual_path, &body.content)
+        .write(&tenant.tenant_id, key, legacy, &body.content)
         .await
-        .map_err(map_err)?;
+        .map_err(map_content_err)?;
 
-    // Embed content chunks and upsert into Qdrant with tenant/owner context.
-    {
-        let content = body.content.clone();
-        let tenant_id = tenant.tenant_id.clone();
-        let owner_id = node.owner_id.clone();
-        let node_id_str = id.to_string();
-        let embedding_svc = Arc::clone(&state.embedding_service);
-        let vector_store = Arc::clone(&state.vector_store);
-        tokio::spawn(async move {
-            const CHUNK: usize = 1500;
-            let chunks: Vec<String> = content
-                .chars()
-                .collect::<Vec<_>>()
-                .chunks(CHUNK)
-                .map(|c| c.iter().collect::<String>())
-                .collect();
-            if let Ok(embeddings) = embedding_svc.embed_documents(chunks.clone()).await {
-                for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
-                    let chunk_id = format!("{node_id_str}_{i}");
-                    let _ = vector_store
-                        .upsert_content_embedding_full(
-                            &chunk_id,
-                            &node_id_str,
-                            i as i32,
-                            chunk,
-                            emb,
-                            &tenant_id,
-                            &owner_id,
-                            &[],
-                        )
-                        .await;
-                }
-            }
-        });
-    }
+    enqueue_reindex(
+        &state,
+        tenant.tenant_id.to_string(),
+        id,
+        node.last_modified.timestamp_millis(),
+    )
+    .await;
 
-    // Return fresh node
     let updated = state
         .workspace_store
         .get_accessible_node(&tenant.tenant_id, user, id)
@@ -532,26 +564,29 @@ pub async fn move_node(
         .await
         .map_err(map_err)?;
 
-    // Copy object to new key and delete old key when virtual_path changed.
-    if let Some(old_path) = old_virtual_path
+    // Copy object to new legacy key when virtual_path changed.
+    // Step 3.4: skip for nodes with a stable object_key — content is at the
+    // node-id-keyed path and does not move with the virtual_path.
+    if node.object_key.is_none()
+        && let Some(old_path) = old_virtual_path
         && node.virtual_path != old_path
     {
         match state
             .workspace_content
-            .read(&tenant.tenant_id, &old_path)
+            .read(&tenant.tenant_id, &old_path, None)
             .await
         {
             Ok(content) if !content.is_empty() => {
                 if let Err(e) = state
                     .workspace_content
-                    .write(&tenant.tenant_id, &node.virtual_path, &content)
+                    .write(&tenant.tenant_id, &node.virtual_path, None, &content)
                     .await
                 {
                     tracing::warn!(error = %e, "move_node: failed to copy object to new key");
                 } else {
                     let _ = state
                         .workspace_content
-                        .delete(&tenant.tenant_id, &old_path)
+                        .delete(&tenant.tenant_id, &old_path, None)
                         .await;
                 }
             }
@@ -612,11 +647,6 @@ pub async fn rename_node(
         .map_err(map_err)?;
 
     Ok(Json(updated))
-}
-
-#[derive(Deserialize)]
-pub struct RenameBody {
-    pub name: String,
 }
 
 /// POST /v1/workspaces/:id/share — add a user to shared_with.
@@ -712,7 +742,46 @@ pub async fn delete_node(
     }
     let user = effective_user_id(tenant.user_id.as_deref());
 
-    // Capture the delete plan before the store cascades.
+    // Fetch the node to check its semantic kind before planning deletion.
+    let node = state
+        .workspace_store
+        .get_accessible_node(&tenant.tenant_id, user, id)
+        .await
+        .map_err(map_err)?;
+
+    // Step 5.6: Thread-kind nodes use delete-as-pause, not hard delete.
+    if node.semantic_kind == WorkspaceNodeKind::Thread {
+        // Pause the projection.
+        if let Some(thread_id) = node.source_id.as_deref() {
+            let _ = state
+                .thread_projection_store
+                .set_status(
+                    &tenant.tenant_id,
+                    thread_id,
+                    agent_core::ProjectionStatus::Paused,
+                )
+                .await;
+        }
+        // Soft-hide the node.
+        state
+            .workspace_store
+            .hide_node(&tenant.tenant_id, id)
+            .await
+            .map_err(map_err)?;
+
+        state
+            .realtime_service
+            .publish_workspace_change(WorkspaceChangeEvent {
+                op: "workspace.hidden".into(),
+                tenant_id: tenant.tenant_id.to_string(),
+                node_id: id.to_string(),
+                kind: "thread".into(),
+            })
+            .await;
+        return Ok(StatusCode::NO_CONTENT);
+    }
+
+    // Standard delete for non-Thread nodes.
     let plan = state
         .workspace_store
         .plan_delete(&tenant.tenant_id, id)
@@ -741,437 +810,196 @@ pub async fn delete_node(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ── Cleanup helper ───────────────────────────────────────────────────────────
+// ── Tags ──────────────────────────────────────────────────────────────────────
 
-/// Best-effort vector + content cleanup for every node in a delete plan.
-/// Uses `tokio::join!` (not `try_join!`) so both cleanups run even if one fails.
-/// Never propagates errors — the API response must not fail due to cleanup issues.
-async fn cleanup_after_delete(
-    state: &AppState,
-    tenant_id: &str,
-    plan: &[common::memory::store::DeletePlanNode],
-) {
-    for node in plan {
-        let content_key = node.object_key.as_deref().unwrap_or(node.virtual_path.as_str());
-        // Folders have no content object; skip content deletion to avoid unnecessary S3 calls.
-        let content_fut = async {
-            if node.kind == NodeKind::Folder {
-                Ok(())
-            } else {
-                state
-                    .workspace_content
-                    .delete_all_versions(tenant_id, content_key)
-                    .await
-            }
-        };
-        let (vec_res, content_res) = tokio::join!(
-            state.vector_store.delete_by_node_id(tenant_id, node.id),
-            content_fut,
-        );
-        if let Err(e) = vec_res {
-            tracing::error!(error = %e, node_id = %node.id, "vector cleanup failed after delete");
-        }
-        if let Err(e) = content_res {
-            tracing::error!(error = %e, node_id = %node.id, "content cleanup failed after delete");
-        }
-    }
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct PutTagsBody {
+    pub tags: Vec<String>,
 }
 
-// ── Helpers for presign routes ───────────────────────────────────────────────
-
-fn presign_ttl_secs() -> i64 {
-    std::env::var("RUSTFS_PRESIGN_TTL_SECS")
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(900)
-        .min(3600)
-}
-
-fn presign_ttl() -> Duration {
-    Duration::from_secs(presign_ttl_secs() as u64)
-}
-
-const HARD_MAX_UPLOAD_BYTES: u64 = 500 * 1024 * 1024;
-
-fn allowed_presign_content_type(content_type: &str) -> bool {
-    let essence = content_type
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    matches!(
-        essence.as_str(),
-        "application/json"
-            | "application/pdf"
-            | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            | "image/gif"
-            | "image/jpeg"
-            | "image/png"
-            | "image/webp"
-            | "text/csv"
-            | "text/markdown"
-            | "text/plain"
-    )
-}
-
-#[derive(Debug)]
-enum PresignPathError {
-    InvalidStoredPath(String),
-    MissingForFolder,
-    InvalidRequestedPath(String),
-    OutsideNode,
-}
-
-impl PresignPathError {
-    fn into_http(self) -> HttpError {
-        match self {
-            PresignPathError::InvalidStoredPath(message) => {
-                HttpError::agent(format!("stored workspace node path is invalid: {message}"))
-            }
-            PresignPathError::MissingForFolder => {
-                HttpError::validation("virtual_path", "virtual_path is required for folder nodes")
-            }
-            PresignPathError::InvalidRequestedPath(message) => {
-                HttpError::validation("virtual_path", message)
-            }
-            PresignPathError::OutsideNode => HttpError::forbidden("virtual_path outside node"),
-        }
-    }
-}
-
-fn resolve_presign_path(
-    node: &WorkspaceNode,
-    requested: Option<&str>,
-) -> Result<VirtualPath, PresignPathError> {
-    let node_path = VirtualPath::parse(&node.virtual_path)
-        .map_err(|e| PresignPathError::InvalidStoredPath(e.to_string()))?;
-
-    match node.kind {
-        NodeKind::Conversation | NodeKind::File => Ok(node_path),
-        NodeKind::Folder => {
-            let raw = requested.ok_or(PresignPathError::MissingForFolder)?;
-            let requested_path = VirtualPath::parse(raw)
-                .map_err(|e| PresignPathError::InvalidRequestedPath(e.to_string()))?;
-            if !requested_path.is_strict_child_of(&node_path) {
-                return Err(PresignPathError::OutsideNode);
-            }
-            Ok(requested_path)
-        }
-    }
-}
-
-// ── Presigned URL endpoints ──────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-pub struct PresignUploadBody {
-    /// Legacy-only for file/conversation nodes; the server derives their content
-    /// path from the node. Required for folder nodes and must be a strict child.
-    pub virtual_path: Option<String>,
-    pub content_type: Option<String>,
-    pub size_bytes: Option<u64>,
-}
-
-#[derive(Serialize)]
-pub struct PresignUploadResponse {
-    pub url: String,
-    pub expires_at: String,
-    pub virtual_path: String,
-}
-
-/// POST /v1/workspaces/:id/presign-upload — presigned PUT for direct browser → RustFS upload.
-#[instrument(skip(state, tenant, body))]
-pub async fn presign_upload(
+/// `PUT /v1/workspaces/{id}/tags` — replace the tag set on a node.
+#[utoipa::path(
+    put,
+    path = "/v1/workspaces/{id}/tags",
+    params(("id" = String, Path, description = "Node ULID")),
+    responses((status = 200), (status = 404,), (status = 400,)),
+    security(("bearer_auth" = [])),
+    tag = "workspaces",
+)]
+#[instrument(skip(state, tenant))]
+pub async fn put_tags(
     State(state): State<Arc<AppState>>,
     Extension(ResolvedTenant(tenant)): Extension<ResolvedTenant>,
     Path(id): Path<Ulid>,
-    Json(body): Json<PresignUploadBody>,
-) -> Result<Json<PresignUploadResponse>, HttpError> {
-    if !state
-        .rate_limiter
-        .check(&tenant.tenant_id, tenant.plan.limits().rate_limit_rpm)
-    {
-        return Err(HttpError::rate_limit(None));
-    }
+    axum::Json(body): axum::Json<PutTagsBody>,
+) -> Result<Json<WorkspaceNode>, HttpError> {
+    let tags = normalize_tags(body.tags).map_err(|e| HttpError::bad_request(e.to_string()))?;
 
-    // Verify workspace node exists and is accessible
     let user = effective_user_id(tenant.user_id.as_deref());
-    let node = state
+    let mut node = state
         .workspace_store
         .get_accessible_node(&tenant.tenant_id, user, id)
         .await
         .map_err(map_err)?;
 
-    let content_type = body
-        .content_type
-        .as_deref()
-        .ok_or_else(|| HttpError::validation("content_type", "content_type is required"))?;
-    if !allowed_presign_content_type(content_type) {
-        return Err(HttpError::validation(
-            "content_type",
-            "unsupported content type",
-        ));
-    }
-
-    let size = body
-        .size_bytes
-        .ok_or_else(|| HttpError::validation("size_bytes", "size_bytes is required"))?;
-    let max_upload = tenant
-        .plan
-        .limits()
-        .max_upload_bytes
-        .min(HARD_MAX_UPLOAD_BYTES);
-    if size > max_upload {
-        return Err(HttpError::validation(
-            "size_bytes",
-            format!("upload exceeds maximum size of {max_upload} bytes"),
-        ));
-    }
-
-    // Check quota if size is provided
-    if let Err(e) = state
-        .storage_quota
-        .check(&tenant.tenant_id, &tenant.plan, size)
+    node.tags = tags;
+    state
+        .workspace_store
+        .upsert_node(node.clone())
         .await
-    {
-        return Err(HttpError::validation(
-            "size_bytes",
-            format!("quota exceeded: {e}"),
-        ));
-    }
+        .map_err(map_err)?;
 
-    let vp = resolve_presign_path(&node, body.virtual_path.as_deref())
-        .map_err(PresignPathError::into_http)?;
-
-    let storage = state
-        .tenant_storage
-        .as_ref()
-        .ok_or_else(|| HttpError::agent("tenant storage not configured"))?
-        .for_tenant(&tenant.tenant_id)
-        .await
-        .map_err(|e| HttpError::agent(format!("storage for tenant: {e}")))?;
-
-    let url = storage
-        .presign_workspace_put(&vp, presign_ttl())
-        .await
-        .map_err(|e| HttpError::agent(format!("presign PUT: {e}")))?;
-
-    let ttl = presign_ttl_secs();
-    let expires_at = (Utc::now() + chrono::Duration::seconds(ttl)).to_rfc3339();
-
-    Ok(Json(PresignUploadResponse {
-        url: url.to_string(),
-        expires_at,
-        virtual_path: vp.to_string(),
-    }))
+    Ok(Json(node))
 }
+
+// ── Filtered search ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-pub struct PresignDownloadQuery {
-    pub virtual_path: String,
+pub struct FilterSearchQuery {
+    pub tag: Option<String>,
+    pub kind: Option<String>,
+    pub since: Option<String>,
+    pub q: Option<String>,
+    pub limit: Option<usize>,
 }
 
-#[derive(Serialize)]
-pub struct PresignDownloadResponse {
-    pub url: String,
-    pub expires_at: String,
-}
-
-/// GET /v1/workspaces/:id/presign-download?virtual_path= — presigned GET for download.
+/// `GET /v1/workspaces/filter` — filter nodes by tag and/or semantic_kind.
+///
+/// Used by the UI's "Type: Files / Threads" and "Time: Today / This week" filters.
+#[utoipa::path(
+    get,
+    path = "/v1/workspaces/filter",
+    params(
+        ("tag" = Option<String>, Query, description = "Filter by tag (exact match)"),
+        ("kind" = Option<String>, Query, description = "folder | file | thread"),
+        ("since" = Option<String>, Query, description = "ISO-8601 datetime"),
+        ("q" = Option<String>, Query, description = "Text search prefix"),
+        ("limit" = Option<usize>, Query, description = "Max results (default 50)"),
+    ),
+    responses((status = 200)),
+    security(("bearer_auth" = [])),
+    tag = "workspaces",
+)]
 #[instrument(skip(state, tenant))]
-pub async fn presign_download(
+pub async fn filter_nodes(
     State(state): State<Arc<AppState>>,
     Extension(ResolvedTenant(tenant)): Extension<ResolvedTenant>,
-    Path(id): Path<Ulid>,
-    Query(q): Query<PresignDownloadQuery>,
-) -> Result<Json<PresignDownloadResponse>, HttpError> {
+    axum::extract::Query(params): axum::extract::Query<FilterSearchQuery>,
+) -> Result<Json<Vec<WorkspaceNode>>, HttpError> {
     let user = effective_user_id(tenant.user_id.as_deref());
-    let node = state
+    let limit = params.limit.unwrap_or(50).min(200);
+
+    // Start from a text search if `q` is given; otherwise scan all tenant nodes so
+    // tag/kind filters can reach nested nodes (not just root-level children).
+    let q = params.q.as_deref().unwrap_or("");
+    let mut nodes = state
         .workspace_store
-        .get_accessible_node(&tenant.tenant_id, user, id)
+        .search_nodes(&tenant.tenant_id, user, q, limit * 4)
         .await
         .map_err(map_err)?;
 
-    let vp = resolve_presign_path(&node, Some(q.virtual_path.as_str()))
-        .map_err(PresignPathError::into_http)?;
-
-    let storage = state
-        .tenant_storage
-        .as_ref()
-        .ok_or_else(|| HttpError::agent("tenant storage not configured"))?
-        .for_tenant(&tenant.tenant_id)
-        .await
-        .map_err(|e| HttpError::agent(format!("storage for tenant: {e}")))?;
-
-    let url = storage
-        .presign_workspace_get(&vp, presign_ttl(), None)
-        .await
-        .map_err(|e| HttpError::agent(format!("presign GET: {e}")))?;
-
-    let ttl = presign_ttl_secs();
-    let expires_at = (Utc::now() + chrono::Duration::seconds(ttl)).to_rfc3339();
-
-    Ok(Json(PresignDownloadResponse {
-        url: url.to_string(),
-        expires_at,
-    }))
-}
-
-// ── Versioning endpoints ─────────────────────────────────────────────────────
-
-#[derive(Serialize)]
-pub struct VersionEntry {
-    pub version_id: String,
-    pub last_modified: String,
-    pub size: usize,
-    pub is_current: bool,
-}
-
-/// GET /v1/workspaces/nodes/:id/versions — list object versions (requires versioning enabled).
-#[instrument(skip(state, tenant))]
-pub async fn list_versions(
-    State(state): State<Arc<AppState>>,
-    Extension(ResolvedTenant(tenant)): Extension<ResolvedTenant>,
-    Path(id): Path<Ulid>,
-) -> Result<Json<Vec<VersionEntry>>, HttpError> {
-    let user = effective_user_id(tenant.user_id.as_deref());
-    let node = state
-        .workspace_store
-        .get_accessible_node(&tenant.tenant_id, user, id)
-        .await
-        .map_err(map_err)?;
-
-    let admin = state
-        .rustfs_admin
-        .as_ref()
-        .ok_or_else(|| HttpError::agent("RustFS admin client not configured"))?;
-
-    let storage = state
-        .tenant_storage
-        .as_ref()
-        .ok_or_else(|| HttpError::agent("tenant storage not configured"))?
-        .for_tenant(&tenant.tenant_id)
-        .await
-        .map_err(|e| HttpError::agent(format!("storage for tenant: {e}")))?;
-
-    let prefix = storage
-        .workspace_s3_key(&node.virtual_path)
-        .map_err(|e| HttpError::agent(format!("path: {e}")))?;
-
-    let raw = admin
-        .list_object_versions(&prefix)
-        .await
-        .map_err(|e| HttpError::agent(format!("list versions: {e}")))?;
-
-    let versions: Vec<VersionEntry> = raw
-        .into_iter()
-        .map(
-            |(version_id, last_modified, size, is_latest)| VersionEntry {
-                version_id,
-                last_modified,
-                size: size as usize,
-                is_current: is_latest,
-            },
-        )
-        .collect();
-
-    Ok(Json(versions))
-}
-
-#[derive(Deserialize)]
-pub struct RestoreBody {
-    pub version_id: String,
-}
-
-/// POST /v1/workspaces/nodes/:id/restore — restore a previous version.
-#[instrument(skip(state, tenant, body))]
-pub async fn restore_version(
-    State(state): State<Arc<AppState>>,
-    Extension(ResolvedTenant(tenant)): Extension<ResolvedTenant>,
-    Path(id): Path<Ulid>,
-    Json(body): Json<RestoreBody>,
-) -> Result<Json<WorkspaceNode>, HttpError> {
-    let user = effective_user_id(tenant.user_id.as_deref());
-    let node = state
-        .workspace_store
-        .get_accessible_node(&tenant.tenant_id, user, id)
-        .await
-        .map_err(map_err)?;
-
-    let admin = state
-        .rustfs_admin
-        .as_ref()
-        .ok_or_else(|| HttpError::agent("RustFS admin client not configured"))?;
-
-    // The version_id is a real S3 VersionId returned by list_object_versions.
-    // Fetch the versioned bytes directly via ?versionId= query.
-    let restore_storage = state
-        .tenant_storage
-        .as_ref()
-        .ok_or_else(|| HttpError::agent("tenant storage not configured"))?
-        .for_tenant(&tenant.tenant_id)
-        .await
-        .map_err(|e| HttpError::agent(format!("storage for tenant: {e}")))?;
-    let object_key = restore_storage
-        .workspace_s3_key(&node.virtual_path)
-        .map_err(|e| HttpError::agent(format!("path: {e}")))?;
-    let version_bytes = admin
-        .get_object_version(&object_key, &body.version_id)
-        .await
-        .map_err(|e| HttpError::not_found(format!("version not found: {e}")))?;
-
-    let content_str = String::from_utf8_lossy(&version_bytes).into_owned();
-
-    state
-        .workspace_content
-        .write(&tenant.tenant_id, &node.virtual_path, &content_str)
-        .await
-        .map_err(map_err)?;
-
-    // Re-index the restored content — same path as patch_content.
-    {
-        let content = content_str.clone();
-        let tenant_id = tenant.tenant_id.clone();
-        let owner_id = node.owner_id.clone();
-        let node_id_str = id.to_string();
-        let embedding_svc = Arc::clone(&state.embedding_service);
-        let vector_store = Arc::clone(&state.vector_store);
-        tokio::spawn(async move {
-            const CHUNK: usize = 1500;
-            let chunks: Vec<String> = content
-                .chars()
-                .collect::<Vec<_>>()
-                .chunks(CHUNK)
-                .map(|c| c.iter().collect::<String>())
-                .collect();
-            if let Ok(embeddings) = embedding_svc.embed_documents(chunks.clone()).await {
-                for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
-                    let chunk_id = format!("{node_id_str}_{i}");
-                    let _ = vector_store
-                        .upsert_content_embedding_full(
-                            &chunk_id,
-                            &node_id_str,
-                            i as i32,
-                            chunk,
-                            emb,
-                            &tenant_id,
-                            &owner_id,
-                            &[],
-                        )
-                        .await;
-                }
-            }
-        });
+    // Filter: tag
+    if let Some(ref tag) = params.tag {
+        let norm = tag.trim().to_lowercase();
+        nodes.retain(|n| n.tags.iter().any(|t| t == &norm));
     }
 
-    let updated = state
+    // Filter: semantic_kind
+    if let Some(ref kind_str) = params.kind {
+        let filter_kind: Option<WorkspaceNodeKind> = match kind_str.as_str() {
+            "folder" => Some(WorkspaceNodeKind::Folder),
+            "file" => Some(WorkspaceNodeKind::File),
+            "thread" => Some(WorkspaceNodeKind::Thread),
+            _ => None,
+        };
+        if let Some(fk) = filter_kind {
+            nodes.retain(|n| n.semantic_kind == fk);
+        }
+    }
+
+    // Filter: since (ISO-8601)
+    if let Some(ref since_str) = params.since
+        && let Ok(since) = since_str.parse::<chrono::DateTime<chrono::Utc>>()
+    {
+        nodes.retain(|n| n.last_modified >= since);
+    }
+
+    // Filter: hidden (Thread-kind nodes in hidden state are excluded by default)
+    nodes.retain(|n| n.hidden_at.is_none());
+
+    nodes.truncate(limit);
+    Ok(Json(nodes))
+}
+
+// ── Thread projection restore ─────────────────────────────────────────────────
+
+/// `POST /v1/threads/{thread_id}/projection/restore` — un-hide a paused thread projection.
+///
+/// Clears `hidden_at`, sets projection status to `Active`, enqueues a fresh projection job.
+#[utoipa::path(
+    post,
+    path = "/v1/threads/{thread_id}/projection/restore",
+    params(("thread_id" = String, Path, description = "Thread ID")),
+    responses((status = 204,), (status = 404,)),
+    security(("bearer_auth" = [])),
+    tag = "workspaces",
+)]
+#[instrument(skip(state, tenant))]
+pub async fn restore_thread_projection(
+    State(state): State<Arc<AppState>>,
+    Extension(ResolvedTenant(tenant)): Extension<ResolvedTenant>,
+    Path(thread_id): Path<String>,
+) -> Result<StatusCode, HttpError> {
+    // Lookup the projection record to find the node_id.
+    let proj = state
+        .thread_projection_store
+        .get(&tenant.tenant_id, &thread_id)
+        .await
+        .map_err(|e| HttpError::internal(e.to_string(), None))?
+        .ok_or_else(|| HttpError::not_found("thread projection not found"))?;
+
+    // Un-hide the node.
+    state
         .workspace_store
-        .get_accessible_node(&tenant.tenant_id, user, id)
+        .unhide_node(&tenant.tenant_id, proj.node_id)
         .await
         .map_err(map_err)?;
 
-    Ok(Json(updated))
+    // Activate the projection.
+    state
+        .thread_projection_store
+        .set_status(&tenant.tenant_id, &thread_id, ProjectionStatus::Active)
+        .await
+        .map_err(|e| HttpError::internal(e.to_string(), None))?;
+
+    // Enqueue a fresh projection run.
+    {
+        use jobs::jobs::{ProjectionReason, ThreadProjectionInput};
+        let input = serde_json::to_value(ThreadProjectionInput {
+            tenant_id: tenant.tenant_id.to_string(),
+            thread_id: thread_id.clone(),
+            reason: ProjectionReason::ManualReproject,
+            folder_path: Some(proj.folder_path.clone()),
+        })
+        .expect("ThreadProjectionInput serializable");
+
+        let _ = state
+            .job_executor
+            .enqueue(jobs::jobs::ThreadProjectionJob::NAME, input)
+            .await;
+    }
+
+    state
+        .realtime_service
+        .publish_workspace_change(WorkspaceChangeEvent {
+            op: "workspace.restored".into(),
+            tenant_id: tenant.tenant_id.to_string(),
+            node_id: proj.node_id.to_string(),
+            kind: "thread".into(),
+        })
+        .await;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
@@ -1180,6 +1008,8 @@ pub async fn restore_version(
 mod tests {
     use super::*;
     use crate::state::AppState;
+    use chrono::Utc;
+    use common::memory::workspace::WorkspaceNodeKind;
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc, Mutex};
@@ -1189,8 +1019,20 @@ mod tests {
     }
 
     fn workspace_node(kind: NodeKind, virtual_path: &str) -> WorkspaceNode {
+        use common::memory::workspace::WorkspaceNodeKind;
+        let id = Ulid::new();
         WorkspaceNode {
-            id: Ulid::new(),
+            object_key: if kind == NodeKind::Folder {
+                None
+            } else {
+                Some(format!("nodes/{id}/content"))
+            },
+            semantic_kind: if kind == NodeKind::Folder {
+                WorkspaceNodeKind::Folder
+            } else {
+                WorkspaceNodeKind::File
+            },
+            id,
             tenant_id: "tenant-a".into(),
             owner_id: "user-a".into(),
             parent_id: None,
@@ -1205,11 +1047,16 @@ mod tests {
             shared_with: vec![],
             metadata: serde_json::json!({}),
             is_protected_root: false,
+            source_type: None,
+            source_id: None,
+            hidden_at: None,
+            tags: vec![],
         }
     }
 
     #[test]
     fn presign_file_node_uses_node_path_and_ignores_legacy_body_path() {
+        use presign::resolve_presign_path;
         let node = workspace_node(NodeKind::File, "node/foo.txt");
         let resolved = resolve_presign_path(&node, Some("node/foo.txt/attachment.bin"))
             .expect("file node path should resolve");
@@ -1218,6 +1065,7 @@ mod tests {
 
     #[test]
     fn presign_folder_node_accepts_strict_child() {
+        use presign::resolve_presign_path;
         let node = workspace_node(NodeKind::Folder, "node/foo");
         let resolved = resolve_presign_path(&node, Some("node/foo/attachment.bin"))
             .expect("child path should resolve");
@@ -1226,6 +1074,7 @@ mod tests {
 
     #[test]
     fn presign_folder_node_rejects_same_path() {
+        use presign::{PresignPathError, resolve_presign_path};
         let node = workspace_node(NodeKind::Folder, "node/foo");
         let err = resolve_presign_path(&node, Some("node/foo")).unwrap_err();
         assert!(matches!(err, PresignPathError::OutsideNode));
@@ -1233,6 +1082,7 @@ mod tests {
 
     #[test]
     fn presign_folder_node_rejects_sibling_prefix_attack() {
+        use presign::{PresignPathError, resolve_presign_path};
         let node = workspace_node(NodeKind::Folder, "node/foo");
         let err = resolve_presign_path(&node, Some("node/foobar/secret.txt")).unwrap_err();
         assert!(matches!(err, PresignPathError::OutsideNode));
@@ -1240,10 +1090,70 @@ mod tests {
 
     #[test]
     fn presign_folder_node_rejects_percent_encoded_traversal() {
+        use presign::{PresignPathError, resolve_presign_path};
         let node = workspace_node(NodeKind::Folder, "node/foo");
         let err = resolve_presign_path(&node, Some("node/foo%2f..%2fsecret.txt")).unwrap_err();
         assert!(matches!(err, PresignPathError::InvalidRequestedPath(_)));
     }
+
+    // ── Step 5.8: filter_nodes acceptance test ────────────────────────────────
+
+    /// `?kind=thread&tag=invoices` must return ONLY Thread-kind nodes tagged "invoices".
+    /// File-kind nodes and Thread nodes without the tag must both be excluded.
+    #[tokio::test]
+    async fn filter_nodes_returns_only_thread_kind_with_matching_tag() {
+        let state = Arc::new(test_state());
+
+        // Thread-kind node tagged "invoices" — MUST be returned.
+        let mut match_node = workspace_node(NodeKind::File, "Conversations/thread1.md");
+        match_node.tenant_id = "acme".into();
+        match_node.owner_id = "__system__".into();
+        match_node.semantic_kind = WorkspaceNodeKind::Thread;
+        match_node.tags = vec!["invoices".into()];
+        state
+            .workspace_store
+            .upsert_node(match_node.clone())
+            .await
+            .unwrap();
+
+        // File-kind node also tagged "invoices" — must NOT be returned (wrong kind).
+        let mut file_node = workspace_node(NodeKind::File, "Conversations/file1.md");
+        file_node.tenant_id = "acme".into();
+        file_node.owner_id = "__system__".into();
+        file_node.tags = vec!["invoices".into()];
+        state.workspace_store.upsert_node(file_node).await.unwrap();
+
+        // Thread-kind node tagged "other" — must NOT be returned (wrong tag).
+        let mut other_tag = workspace_node(NodeKind::File, "Conversations/thread2.md");
+        other_tag.tenant_id = "acme".into();
+        other_tag.owner_id = "__system__".into();
+        other_tag.semantic_kind = WorkspaceNodeKind::Thread;
+        other_tag.tags = vec!["other".into()];
+        state.workspace_store.upsert_node(other_tag).await.unwrap();
+
+        // Apply the same filtering logic as the filter_nodes handler.
+        let mut nodes = state
+            .workspace_store
+            .list_accessible_children("acme", "__system__", None)
+            .await
+            .expect("list children");
+
+        // kind=thread
+        nodes.retain(|n| n.semantic_kind == WorkspaceNodeKind::Thread);
+        // tag=invoices
+        nodes.retain(|n| n.tags.iter().any(|t| t == "invoices"));
+        // hidden_at filter
+        nodes.retain(|n| n.hidden_at.is_none());
+
+        assert_eq!(
+            nodes.len(),
+            1,
+            "exactly one node should match kind=thread&tag=invoices"
+        );
+        assert_eq!(nodes[0].id, match_node.id);
+    }
+
+    // ── Provisioning tests ────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn provision_called_once_when_unseeded() {

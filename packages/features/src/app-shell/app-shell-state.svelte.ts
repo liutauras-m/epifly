@@ -69,6 +69,15 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
     return workspacesStore.createNode(kind, name, parentId);
   }
 
+  /** Semantic + name search against the backend, returning sidebar-shaped nodes. */
+  async function searchWorkspace(query: string): Promise<SidebarWorkspaceNode[]> {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    const result = await args.sdk.workspaces.search(trimmed, 30, 'semantic');
+    if (result.error || !result.data) return [];
+    return result.data.map(toSidebarWorkspaceNode);
+  }
+
   return {
     get activePath() { return activePath; },
     get activeThreadId() { return activeThreadId; },
@@ -83,6 +92,7 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
     goToNewChat,
     goToThread,
     selectWorkspaceNode,
-    createWorkspaceNode
+    createWorkspaceNode,
+    searchWorkspace
   };
 }

@@ -456,46 +456,58 @@ impl WorkspaceStore for RedbMetadataStore {
         &self,
         tenant_id: &str,
         node_id: Ulid,
-    ) -> Result<Vec<common::memory::store::DeletePlanNode>, common::memory::store::WorkspaceStoreError> {
+    ) -> Result<
+        Vec<common::memory::store::DeletePlanNode>,
+        common::memory::store::WorkspaceStoreError,
+    > {
         let tenant = tenant_id.to_string();
         let root_id = node_id;
         let db = Arc::clone(&self.db);
-        task::spawn_blocking(move || -> anyhow::Result<Vec<common::memory::store::DeletePlanNode>> {
-            let txn = db.begin_read()?;
-            let tbl = txn.open_table(NODES)?;
+        task::spawn_blocking(
+            move || -> anyhow::Result<Vec<common::memory::store::DeletePlanNode>> {
+                let txn = db.begin_read()?;
+                let tbl = txn.open_table(NODES)?;
 
-            // Collect all nodes for this tenant once into (id, parent_id, kind, virtual_path).
-            let mut all_nodes: Vec<(Ulid, Option<Ulid>, common::memory::workspace::NodeKind, String)> = Vec::new();
-            let prefix = tenant.as_str();
-            let range = tbl.range((prefix, "")..(prefix, "\x7f"))?;
-            for item in range {
-                let (_, v) = item?;
-                let node = de_node(v.value())?;
-                all_nodes.push((node.id, node.parent_id, node.kind, node.virtual_path));
-            }
+                // Collect all nodes for this tenant once into (id, parent_id, kind, virtual_path).
+                let mut all_nodes: Vec<(
+                    Ulid,
+                    Option<Ulid>,
+                    common::memory::workspace::NodeKind,
+                    String,
+                )> = Vec::new();
+                let prefix = tenant.as_str();
+                let range = tbl.range((prefix, "")..(prefix, "\x7f"))?;
+                for item in range {
+                    let (_, v) = item?;
+                    let node = de_node(v.value())?;
+                    all_nodes.push((node.id, node.parent_id, node.kind, node.virtual_path));
+                }
 
-            // BFS from root_id.
-            let mut result = Vec::new();
-            let mut worklist = vec![root_id];
-            while let Some(current) = worklist.pop() {
-                // Collect children.
-                for (nid, parent, _, _) in &all_nodes {
-                    if *parent == Some(current) {
-                        worklist.push(*nid);
+                // BFS from root_id.
+                let mut result = Vec::new();
+                let mut worklist = vec![root_id];
+                while let Some(current) = worklist.pop() {
+                    // Collect children.
+                    for (nid, parent, _, _) in &all_nodes {
+                        if *parent == Some(current) {
+                            worklist.push(*nid);
+                        }
+                    }
+                    // Add this node to the plan.
+                    if let Some((_, _, kind, vp)) =
+                        all_nodes.iter().find(|(nid, _, _, _)| *nid == current)
+                    {
+                        result.push(common::memory::store::DeletePlanNode {
+                            id: current,
+                            kind: *kind,
+                            virtual_path: vp.clone(),
+                            object_key: None,
+                        });
                     }
                 }
-                // Add this node to the plan.
-                if let Some((_, _, kind, vp)) = all_nodes.iter().find(|(nid, _, _, _)| *nid == current) {
-                    result.push(common::memory::store::DeletePlanNode {
-                        id: current,
-                        kind: *kind,
-                        virtual_path: vp.clone(),
-                        object_key: None,
-                    });
-                }
-            }
-            Ok(result)
-        })
+                Ok(result)
+            },
+        )
         .await
         .unwrap_or_else(|e| Err(anyhow::anyhow!(e)))
         .map_err(Into::into)
@@ -613,7 +625,8 @@ impl WorkspaceStore for RedbMetadataStore {
             txn.commit()?;
             Ok(updated)
         })
-        .await.unwrap_or_else(|e| Err(anyhow::anyhow!(e)))?;
+        .await
+        .unwrap_or_else(|e| Err(anyhow::anyhow!(e)))?;
         Ok(updated)
     }
 
@@ -649,7 +662,11 @@ impl WorkspaceStore for RedbMetadataStore {
         .map_err(Into::into)
     }
 
-    async fn bump_last_modified(&self, tenant_id: &str, node_id: Ulid) -> Result<(), common::memory::store::WorkspaceStoreError> {
+    async fn bump_last_modified(
+        &self,
+        tenant_id: &str,
+        node_id: Ulid,
+    ) -> Result<(), common::memory::store::WorkspaceStoreError> {
         self.modify_node(tenant_id, node_id, |n| n.last_modified = Utc::now())
             .await
             .map_err(Into::into)
@@ -735,7 +752,10 @@ impl WorkspaceStore for RedbMetadataStore {
         .map_err(Into::into)
     }
 
-    async fn is_tenant_seeded(&self, tenant_id: &str) -> Result<bool, common::memory::store::WorkspaceStoreError> {
+    async fn is_tenant_seeded(
+        &self,
+        tenant_id: &str,
+    ) -> Result<bool, common::memory::store::WorkspaceStoreError> {
         let key = tenant_id.to_string();
         let db = Arc::clone(&self.db);
         task::spawn_blocking(move || -> anyhow::Result<bool> {
@@ -752,7 +772,10 @@ impl WorkspaceStore for RedbMetadataStore {
         .map_err(Into::into)
     }
 
-    async fn mark_tenant_seeded(&self, tenant_id: &str) -> Result<(), common::memory::store::WorkspaceStoreError> {
+    async fn mark_tenant_seeded(
+        &self,
+        tenant_id: &str,
+    ) -> Result<(), common::memory::store::WorkspaceStoreError> {
         let key = tenant_id.to_string();
         let db = Arc::clone(&self.db);
         task::spawn_blocking(move || -> anyhow::Result<()> {
@@ -783,7 +806,10 @@ impl WorkspaceStore for RedbMetadataStore {
         Ok(node)
     }
 
-    async fn purge_tenant_data(&self, tenant_id: &str) -> Result<(), common::memory::store::WorkspaceStoreError> {
+    async fn purge_tenant_data(
+        &self,
+        tenant_id: &str,
+    ) -> Result<(), common::memory::store::WorkspaceStoreError> {
         let tenant = tenant_id.to_string();
         let db = Arc::clone(&self.db);
         task::spawn_blocking(move || -> anyhow::Result<()> {
@@ -850,7 +876,10 @@ impl WorkspaceStore for RedbMetadataStore {
         .map_err(Into::into)
     }
 
-    async fn upsert_node(&self, node: WorkspaceNode) -> Result<(), common::memory::store::WorkspaceStoreError> {
+    async fn upsert_node(
+        &self,
+        node: WorkspaceNode,
+    ) -> Result<(), common::memory::store::WorkspaceStoreError> {
         self.insert_node(node).await.map_err(Into::into)
     }
 
@@ -858,7 +887,8 @@ impl WorkspaceStore for RedbMetadataStore {
         &self,
         tenant_id: &str,
         node_id: Ulid,
-    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, common::memory::store::WorkspaceStoreError> {
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, common::memory::store::WorkspaceStoreError>
+    {
         let tenant = tenant_id.to_string();
         let nid = node_id.to_string();
         let db = Arc::clone(&self.db);

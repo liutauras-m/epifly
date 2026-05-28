@@ -250,7 +250,7 @@ pub async fn list_namespaces(
     Query(q): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     let prefix = q.get("prefix").map(|s| s.as_str()).unwrap_or("");
-    let registry = state.registry.lock().unwrap();
+    let registry = state.registry.read();
     let children = registry.namespace_children(prefix);
     Json(serde_json::json!({ "prefix": prefix, "children": children }))
 }
@@ -407,8 +407,7 @@ pub async fn register_capability(
         let provider = RemoteMcpCapability::new(manifest, endpoint.to_string());
         state
             .registry
-            .lock()
-            .unwrap()
+            .write()
             .register(card.with_provider(provider));
     }
 

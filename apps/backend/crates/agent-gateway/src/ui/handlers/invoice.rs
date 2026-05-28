@@ -71,7 +71,7 @@ pub async fn ui_extract_invoice(
     info!(bytes = object_bytes.len(), "invoking invoice-processing capability");
 
     let input = json!({ "image_path": tmp_path.to_string_lossy() });
-    let registry = state.registry.lock().unwrap();
+    let registry = state.registry.read();
     let result: Result<Value, _> =
         ToolExecutor::invoke(&registry, "invoice-processing", "extract_invoice", &input, Some(&tenant))
             .await;

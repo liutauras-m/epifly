@@ -267,3 +267,51 @@ The web preview server is configured in `.claude/launch.json` as `web` (port 517
 Rust/Axum at `apps/backend`. Workspace `Cargo.toml` at repo root. The native crate is at `apps/native/src-tauri` (member `apps/native/src-tauri` in workspace). Do not reference `apps/browser-shell` — that path was renamed to `apps/native`.
 
 Rust toolchain: 1.95 (pinned via `rust-toolchain.toml`). iOS target: `aarch64-apple-ios-sim`. Android targets: `aarch64-linux-android`, `armv7-linux-androideabi`.
+
+## Backend refactor — agent gateway & workspaces (plan v3.4)
+
+The authoritative roadmap is [docs/plan.md](docs/plan.md). It is six phases (0 → 5), step-numbered, and each step is independently executable. Treat it as the single source of truth — do not duplicate its contents in commit messages or other docs.
+
+### How to execute the plan
+
+**One step at a time. One concern per phase.** If a step requires touching code outside its declared phase scope, stop and write a short "unplanned scope" note before continuing (the plan's Stop condition, plan.md line 667).
+
+**Per-step rhythm:**
+1. Pick the next unchecked step from the plan's Execution checklist.
+2. State the contract in one paragraph (files, behavior delta, the test that proves it) before coding.
+3. Write the failing test first when the step is test-verifiable (0.3, 0.4, 1.1, 1.5, 2.3, 3.6, 4.4, 5.8). Pure renames skip — the compiler is the test.
+4. Implement directly with Write/Edit. Do not delegate code writing to sub-agents (use them only for read-only exploration).
+5. Run the fast gate: `cargo fmt && cargo clippy -p <touched> --all-targets -- -D warnings && cargo test -p <touched>`. Cross-crate → `--workspace`. Storage/migration → testcontainers.
+6. Commit with a 3-line evaluation note in the body: *what changed*, *what's verified*, *what's deferred*.
+7. Tick the plan's checklist line. One step = one commit, except where the plan calls out sub-commits (3.2a/b/c, 3.4, 3.5).
+
+**Per-phase gate (mandatory before next phase):**
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace`
+- `pnpm test:e2e:web` — never per-step, only at phase boundaries
+- Phase-specific extras: Phase 1 → manual presign smoke; Phase 3 → testcontainer integration tests (RustFS + Postgres + Qdrant); Phase 4 → load test report; Phase 5 → rename/pause/restore smoke + secret-leak grep.
+- Write a 5–10 line phase eval in the PR description: items closed, metrics now emitted, followups deferred.
+
+**Pre-flight audit before resuming:** the tree already contains partial Phase 0/1/2 work (`agent-gateway/src/agent/` skeleton, `agent-core/src/model_catalog.rs`, Phase 0 test files). Before implementing anything, audit each phase's checklist against the actual code and tick the boxes that are already done. Do not re-implement them.
+
+### Non-negotiable invariants (mirrored from plan.md "Notes for the executing agent")
+
+These are load-bearing — violating them is the failure mode the plan was written to prevent:
+
+1. **Onboarding is a misnaming bug, not a logic bug.** Step 0.1 renames; never invert the condition.
+2. **Never use `str::starts_with` for path containment.** Use `VirtualPath::is_strict_child_of` for child uploads, `is_same_or_within` for content routes. `VirtualPath` constructors must be private — the security boundary is `parse`.
+3. **Never retry an LLM call after the first response byte.** Carry `request_id` across retries (Step 1.3).
+4. **Non-tool models:** for normal chat, force `tools = []`. Reject only when tools are actually required (`forced_capability` or `decision.tool_required == true` with an explicit `ToolRequirementReason`).
+5. **Cancellation is a feature.** The async sink (Step 2.5) must propagate client-disconnect into the tool loop before the next tool call fires.
+6. **`AgentEvent` stays typed end-to-end.** SSE/JSON encoding happens only at the sink boundary. Never push `Bytes` into the runner.
+7. **Module direction:** `agent::* → routes::*` reverse import is allowed only transitionally in Step 2.1. By Step 2.7 the direction is inverted; CI must enforce.
+8. **Best-effort cleanup uses `tokio::join!`, not `try_join!`.** `try_join!` short-circuits and defeats the purpose.
+9. **Storage migration is dual-read / dual-write / backfill / cutover.** Never "copy keys and switch." New key is primary; legacy is best-effort.
+10. **Indexing jobs check `content_version` before upserting.** Stale-write races are the default failure mode.
+11. **Thread projection is durable, not `tokio::spawn`.** Use `ThreadProjectionJob` with coalescing per `(tenant, thread)` and boot-time reclaim of stuck `running` jobs.
+12. **Files and threads share infrastructure, not identity.** Distinguish via `WorkspaceNodeKind::Thread`, never via `mime_type == "text/markdown"`. The UI branches on `kind`.
+13. **Delete of a thread node = pause projection, not redb delete.** Never silently resurrect a deleted projection node on the next turn. UI shows `[Restore]` instead.
+14. **`RedactPiiHook` ≠ `ProjectionRedactor`.** Hook is logs/audit (opt-in for prompts, prohibited for tool args). Redactor is mandatory for the MD body and search payload; bypass only via test-only `unsafe_unredacted()`.
+15. **`ThreadRuntime` is a performance layer, never the source of truth.** Every `AgentEvent::Done` must be preceded by a successful synchronous `append_message` — assert this with a property test (Step 5.7).
+16. **`agent-core` over `agent-gateway`** when placement is ambiguous — `agent-core` is testable without HTTP.
+17. Preserve existing routing audit fields when refactoring; observability is already good. Do not regress it.

@@ -13,6 +13,8 @@ export const EP = {
   WORKSPACE_SHARE: (id: string) => `/v1/workspaces/${id}/share`,
   WORKSPACE_UNSHARE: (id: string) => `/v1/workspaces/${id}/unshare`,
   WORKSPACE_MOVE: (id: string) => `/v1/workspaces/${id}/move`,
+  WORKSPACE_TAGS: (id: string) => `/v1/workspaces/${id}/tags`,
+  WORKSPACES_FILTER: '/v1/workspaces/filter',
   CAPABILITIES: '/v1/capabilities',
   CAPABILITIES_SEARCH: '/v1/capabilities/search',
   UI_STREAM: '/ui/stream',

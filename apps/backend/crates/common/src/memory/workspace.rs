@@ -11,6 +11,17 @@ pub enum NodeKind {
     File,
 }
 
+/// Semantic kind used for workspace UX branching. Distinct from `NodeKind` (which is a
+/// storage/mime hint). The UI must branch on this field, not on `mime_type`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceNodeKind {
+    Folder,
+    #[default]
+    File,
+    Thread,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkspaceNode {
     pub id: Ulid,
@@ -32,6 +43,28 @@ pub struct WorkspaceNode {
     /// Protected root folders cannot be deleted or moved. Only tenant admin deletion cascades through.
     #[serde(default)]
     pub is_protected_root: bool,
+    /// Stable S3 content key (Step 3.4 migration). Format: `"nodes/{node_id}/content"`.
+    /// `None` for pre-migration nodes and folder nodes (folders have no content body).
+    #[serde(default)]
+    pub object_key: Option<String>,
+    /// Semantic kind for UX branching. Defaults to `File` on old rows; backfilled to `Folder`
+    /// on deserialization when `kind == NodeKind::Folder`. See `WorkspaceNodeKind`.
+    #[serde(default)]
+    pub semantic_kind: WorkspaceNodeKind,
+    /// Who produced this node: `"upload"` | `"generated"` | `"thread_projection"`.
+    #[serde(default)]
+    pub source_type: Option<String>,
+    /// For `thread_projection` nodes, the originating thread_id. For `upload`, the upload_id.
+    #[serde(default)]
+    pub source_id: Option<String>,
+    /// Soft-delete timestamp for `Thread`-kind nodes (delete-as-pause, Step 5.6).
+    /// `None` = visible; `Some(t)` = hidden since `t`. List endpoints filter `hidden_at IS NULL`.
+    #[serde(default)]
+    pub hidden_at: Option<DateTime<Utc>>,
+    /// User-defined tags for polyhierarchy-lite filtering (Step 5.5).
+    /// Normalised: lowercase, trimmed, deduped; max 32 tags, 64 chars each.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 impl WorkspaceNode {
@@ -55,6 +88,12 @@ impl WorkspaceNode {
             shared_with: vec![],
             metadata: serde_json::Value::Null,
             is_protected_root: false,
+            object_key: None,
+            semantic_kind: WorkspaceNodeKind::Folder,
+            source_type: None,
+            source_id: None,
+            hidden_at: None,
+            tags: vec![],
         }
     }
 
@@ -66,8 +105,10 @@ impl WorkspaceNode {
         virtual_path: impl Into<String>,
     ) -> Self {
         let now = Utc::now();
+        let id = Ulid::new();
         Self {
-            id: Ulid::new(),
+            object_key: Some(format!("nodes/{id}/content")),
+            id,
             tenant_id: tenant_id.into(),
             owner_id: owner_id.into(),
             parent_id,
@@ -78,6 +119,11 @@ impl WorkspaceNode {
             shared_with: vec![],
             metadata: serde_json::Value::Null,
             is_protected_root: false,
+            semantic_kind: WorkspaceNodeKind::File,
+            source_type: None,
+            source_id: None,
+            hidden_at: None,
+            tags: vec![],
         }
     }
 }
@@ -115,6 +161,34 @@ pub fn validate_name(name: &str, kind: NodeKind) -> Result<()> {
     Ok(())
 }
 
+/// Normalise a list of tags: lowercase, trim, dedupe; enforce max 32 tags, 64 chars each.
+/// Returns `Err(Validation)` if any individual tag violates constraints.
+pub fn normalize_tags(tags: Vec<String>) -> Result<Vec<String>> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::with_capacity(tags.len().min(32));
+    for raw in tags {
+        let t = raw.trim().to_lowercase();
+        if t.is_empty() {
+            continue;
+        }
+        if t.len() > 64 {
+            return Err(ConusAiError::Validation(format!(
+                "tag '{}' exceeds 64 characters",
+                &t[..20]
+            )));
+        }
+        if seen.insert(t.clone()) {
+            if out.len() >= 32 {
+                return Err(ConusAiError::Validation(
+                    "too many tags (max 32)".into(),
+                ));
+            }
+            out.push(t);
+        }
+    }
+    Ok(out)
+}
+
 /// Build a virtual path by joining an optional parent path with a leaf name.
 pub fn join_virtual_path(parent_path: Option<&str>, name: &str) -> String {
     match parent_path {
@@ -146,6 +220,12 @@ mod tests {
             shared_with: vec!["user-2".into()],
             metadata: serde_json::json!({"color": "blue"}),
             is_protected_root: false,
+            object_key: None,
+            semantic_kind: WorkspaceNodeKind::Folder,
+            source_type: None,
+            source_id: None,
+            hidden_at: None,
+            tags: vec![],
         };
         let json = serde_json::to_string(&node).unwrap();
         let back: WorkspaceNode = serde_json::from_str(&json).unwrap();

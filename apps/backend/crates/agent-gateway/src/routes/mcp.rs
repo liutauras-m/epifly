@@ -85,7 +85,7 @@ fn handle_initialize() -> Value {
 }
 
 fn handle_tools_list(state: &Arc<AppState>) -> Value {
-    let registry = state.registry.lock().unwrap();
+    let registry = state.registry.read();
     let tools: Vec<Value> = registry
         .all_enabled()
         .flat_map(ToolExecutor::tool_definitions)
@@ -127,7 +127,7 @@ async fn handle_tools_call(
     // Get provider Arc under a short-lived lock; resolve sanitised name to
     // the original by scanning the registry when the exact lookup misses.
     let provider = {
-        let registry = state.registry.lock().unwrap();
+        let registry = state.registry.read();
         let resolved_name = registry
             .get(cap_name)
             .map(|c| c.manifest.name.clone())

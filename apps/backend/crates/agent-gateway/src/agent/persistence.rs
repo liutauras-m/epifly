@@ -3,8 +3,8 @@
 //! Moved from `routes/agent.rs`.
 
 use crate::state::AppState;
-use common::memory::thread::Message;
 use chrono::Utc;
+use common::memory::thread::Message;
 use std::sync::Arc;
 
 // ── maybe_set_title ───────────────────────────────────────────────────────────
@@ -58,59 +58,65 @@ pub async fn persist_assistant_message(
         .await;
 }
 
-// ── spawn_index_job ───────────────────────────────────────────────────────────
+// ── enqueue_projection_job ────────────────────────────────────────────────────
 
-/// Spawn a background task that indexes the 30 most recent thread messages
-/// into the workspace node's vector store so conversation history is searchable.
+/// Enqueue a durable `ThreadProjectionJob` for `thread_id`.
+///
+/// Replaces the old fire-and-forget `spawn_index_job`. If a job is already
+/// running for this `(tenant_id, thread_id)`, the coalescer bumps a dirty flag
+/// instead of spawning a second job.
+pub fn enqueue_projection_job(
+    state: &Arc<AppState>,
+    tenant_id: String,
+    thread_id: String,
+    node_id: ulid::Ulid,
+) {
+    use jobs::jobs::{ProjectionReason, ThreadProjectionInput};
+
+    // Try to claim a slot. If None, a job is already running (dirty bumped).
+    let Some(_dirty) = state.projection_coalescer.try_claim(&tenant_id, &thread_id) else {
+        return;
+    };
+
+    let folder = format!("Conversations/{node_id}");
+    let input = serde_json::to_value(ThreadProjectionInput {
+        tenant_id: tenant_id.clone(),
+        thread_id: thread_id.clone(),
+        reason: ProjectionReason::AssistantDone,
+        folder_path: Some(folder),
+    })
+    .expect("ThreadProjectionInput is serializable");
+
+    let executor = Arc::clone(&state.job_executor);
+    let coalescer = Arc::clone(&state.projection_coalescer);
+    let tenant = tenant_id.clone();
+    let thread = thread_id.clone();
+
+    tokio::spawn(async move {
+        if let Err(e) = executor
+            .enqueue(jobs::jobs::ThreadProjectionJob::NAME, input)
+            .await
+        {
+            tracing::warn!(
+                tenant_id = %tenant,
+                thread_id = %thread,
+                error = %e,
+                "failed to enqueue ThreadProjectionJob"
+            );
+            // Release the coalescer slot so future turns can try again.
+            coalescer.release(&tenant, &thread);
+        }
+        // On success, the job itself calls coalescer.release() when it finishes.
+    });
+}
+
+/// Retained for backward compatibility — callers outside the projection path.
+#[deprecated(note = "use enqueue_projection_job for new code")]
 pub fn spawn_index_job(
     state: &Arc<AppState>,
     tenant_id: String,
     node_id: ulid::Ulid,
     thread_id: String,
 ) {
-    let thread_store = Arc::clone(&state.thread_store);
-    let emb_svc = Arc::clone(&state.embedding_service);
-    let vs = Arc::clone(&state.vector_store);
-
-    tokio::spawn(async move {
-        let recent = thread_store
-            .messages(&tenant_id, &thread_id)
-            .await
-            .unwrap_or_default();
-        let snippet: String = recent
-            .iter()
-            .rev()
-            .take(30)
-            .rev()
-            .map(|m| format!("{}: {}", m.role, m.content))
-            .collect::<Vec<_>>()
-            .join("\n\n");
-
-        let node_id_str = node_id.to_string();
-        const CHUNK: usize = 1500;
-        let chunks: Vec<String> = snippet
-            .chars()
-            .collect::<Vec<_>>()
-            .chunks(CHUNK)
-            .map(|c| c.iter().collect::<String>())
-            .collect();
-
-        if let Ok(embeddings) = emb_svc.embed_documents(chunks.clone()).await {
-            for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
-                let chunk_id = format!("{node_id_str}_t{i}");
-                let _ = vs
-                    .upsert_content_embedding_full(
-                        &chunk_id,
-                        &node_id_str,
-                        i as i32,
-                        chunk,
-                        emb,
-                        &tenant_id,
-                        "",
-                        &[],
-                    )
-                    .await;
-            }
-        }
-    });
+    enqueue_projection_job(state, tenant_id, thread_id, node_id);
 }

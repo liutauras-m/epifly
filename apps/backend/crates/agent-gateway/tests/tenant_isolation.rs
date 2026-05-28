@@ -14,8 +14,8 @@
 //!   cargo test -p agent-gateway --test tenant_isolation -- --include-ignored
 
 use agent_core::VirtualPath;
-use std::sync::Arc;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 // ── Imports for Phase 2 agent isolation tests ─────────────────────────────────
 use agent_core::{PlanTier, TenantContext};
@@ -384,8 +384,7 @@ async fn case8_thread_id_from_other_tenant_returns_404() {
     unsafe { std::env::set_var("CONUSAI_TEST_MODE", "1") };
 
     let state = Arc::new(
-        agent_gateway::state::AppState::with_in_memory_stores()
-            .expect("in-memory AppState"),
+        agent_gateway::state::AppState::with_in_memory_stores().expect("in-memory AppState"),
     );
 
     // Create a thread under tenant-b.
@@ -439,8 +438,7 @@ async fn case9_workspace_node_id_from_other_tenant_returns_403() {
     unsafe { std::env::set_var("CONUSAI_TEST_MODE", "1") };
 
     let state = Arc::new(
-        agent_gateway::state::AppState::with_in_memory_stores()
-            .expect("in-memory AppState"),
+        agent_gateway::state::AppState::with_in_memory_stores().expect("in-memory AppState"),
     );
 
     // Create a workspace node under tenant-b.
@@ -494,8 +492,7 @@ async fn case10_unknown_forced_capability_is_rejected() {
     unsafe { std::env::set_var("CONUSAI_TEST_MODE", "1") };
 
     let state = Arc::new(
-        agent_gateway::state::AppState::with_in_memory_stores()
-            .expect("in-memory AppState"),
+        agent_gateway::state::AppState::with_in_memory_stores().expect("in-memory AppState"),
     );
 
     let tenant = ResolvedTenant(TenantContext::new(

@@ -37,7 +37,9 @@ bytes.workspace        = true
 url                    = { version = "2" }
 moka.workspace         = true
 blake3.workspace       = true
+regex.workspace        = true
 notify.workspace       = true
+parking_lot.workspace  = true
 
 [dev-dependencies]
 proptest.workspace = true

@@ -118,7 +118,15 @@ pub async fn ui_stream(
 
 fn session_user_from_headers(headers: &HeaderMap) -> Option<SessionUser> {
     crate::auth::extract_from_headers(headers).or_else(|| {
-        (std::env::var("CONUSAI_TEST_MODE").as_deref() == Ok("1")).then(|| SessionUser {
+        // Dev fallback: mirror the tenant middleware (mw/tenant.rs), which resolves the
+        // default `dev` tenant whenever auth is in dev mode. Auth is dev mode when either
+        // CONUSAI_TEST_MODE=1 (in-memory stores) OR JWT_SECRET is unset/empty (no signing
+        // key configured). In production (JWT_SECRET set) this fallback never fires.
+        let dev_mode = std::env::var("CONUSAI_TEST_MODE").as_deref() == Ok("1")
+            || std::env::var("JWT_SECRET")
+                .map(|s| s.trim().is_empty())
+                .unwrap_or(true);
+        dev_mode.then(|| SessionUser {
             name: "__dev__".into(),
             plan: "enterprise".into(),
             role: "user".into(),

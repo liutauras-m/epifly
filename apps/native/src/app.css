@@ -3,6 +3,28 @@
 @import "@epifly/ui/styles/tokens.css";
 @import "@epifly/ui/styles/motion.css";
 
+/* Initialize safe-area insets from the device's CSS environment variables.
+   applySafeAreaInsets() can override these at runtime once native values are known. */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+}
+
+/* Native-app hardening for WKWebView: stop iOS from auto-zooming on input
+   focus and from auto-adjusting text size on rotation. The viewport meta
+   (user-scalable=no) blocks pinch/focus zoom; this blocks the text-size pass. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Disable the 300ms double-tap-to-zoom gesture so taps feel native-instant. */
+body {
+  touch-action: manipulation;
+}
+
 @source "../../../packages/ui/src/**/*.{svelte,ts}";
 
 @theme inline {

@@ -8,6 +8,7 @@ pub mod indexing;
 pub mod llm;
 pub mod memory;
 pub mod model_catalog;
+pub mod projection;
 pub mod prompt;
 pub mod realtime;
 pub mod store;
@@ -16,6 +17,7 @@ pub mod workspace_ops;
 
 pub use agent::builder::{Agent, AgentBuilder};
 pub use agent::hooks::{OrchestrationHook, PermissionHook, TracingHook};
+pub use agent::message::{AgentMessage, ContentBlock, MessageContent, MessageRole};
 pub use agent::runtime::map_rig_error;
 pub use bridge::ArtifactBridge;
 pub use capabilities::admin::{
@@ -58,11 +60,13 @@ pub use realtime::{RealtimeService, WorkspaceChangeEvent};
 pub use store::onboarding::TenantOnboardingService;
 pub use store::{
     CompletedPart, CredentialStore, DEFAULT_TENANT_ROOT_NAME, FinalizeResult, HttpMarkerClient,
-    MarkerClient, NoopMarkerClient, OnboardingError, OnboardingOptions, QdrantVectorStore,
-    RedbMetadataStore, RustFsContentStore, StorageCreds, StorageError, StorageLayout,
-    StorageQuotaService, TenantKind, TenantStorage, TenantStorageFactory, TenantStorageMode,
-    VirtualPath, WorkspaceStorage, build_root_store, extract_tenant_from_legacy_key,
-    extract_virtual_path_from_key,
+    InMemoryThreadProjectionStore, MarkerClient, NoopMarkerClient, OnboardingError,
+    OnboardingOptions, ProjectionStatus, ProjectionStoreBackend, QdrantVectorStore,
+    RedbMetadataStore, RedbThreadProjectionStore, RustFsContentStore, StorageCreds, StorageError,
+    StorageLayout, StorageQuotaService, TenantKind, TenantStorage, TenantStorageFactory,
+    TenantStorageMode, ThreadProjection, ThreadProjectionStore, VirtualPath, WorkspaceStorage,
+    build_root_store, build_thread_projection_store, derive_node_id,
+    extract_tenant_from_legacy_key, extract_virtual_path_from_key,
 };
 
 pub use llm::{
@@ -72,7 +76,11 @@ pub use llm::{
 
 pub use model_catalog::{
     ModelCatalog, ModelError, ModelId, ModelSpec, ProviderKind, StaticModelCatalog,
-    ToolRequirementReason, ToolRoutingDecision, estimate_input_tokens, token_estimate_exceeds_limit,
+    ToolRequirementReason, ToolRoutingDecision, estimate_input_tokens,
+    token_estimate_exceeds_limit,
 };
 
+pub use projection::{
+    DefaultProjectionRedactor, MessageKind, ProjectionRedactor, RedactedBody, RenderedMessage,
+};
 pub use workspace_ops::DeletePlanNode;

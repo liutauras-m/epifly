@@ -44,6 +44,8 @@
     onThreadSelect?: (threadId: string) => void;
     onWorkspaceNodeSelect?: (nodeId: string) => void;
     onWorkspaceNodeCreate?: (kind: "folder" | "document", name: string, parentId?: string | null) => unknown | Promise<unknown>;
+    /** Backend search — if provided, results replace the local name filter. */
+    onSearch?: (query: string) => Promise<WorkspaceNode[]>;
   };
 
   let {
@@ -59,13 +61,19 @@
     onNewChat,
     onThreadSelect,
     onWorkspaceNodeSelect,
-    onWorkspaceNodeCreate
+    onWorkspaceNodeCreate,
+    onSearch
   }: Props = $props();
 
   let searchOpen = $state(false);
   let searchQuery = $state("");
   let searchInputEl = $state<HTMLInputElement | null>(null);
   let draft = $state<WorkspaceDraft | null>(null);
+
+  // Async search state — null means "not yet searched / use local filter".
+  let backendSearchResults = $state<WorkspaceNode[] | null>(null);
+  let isSearching = $state(false);
+  let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Flatten workspace tree for search. */
   function flattenNodes(nodes: WorkspaceNode[]): WorkspaceNode[] {
@@ -87,11 +95,36 @@
       : selectedWorkspaceNode?.parentId ?? null
   );
 
+  // When backend search is available and has results, prefer those.
+  // Otherwise fall back to client-side name filter over the local tree.
   const filteredSearchItems = $derived(
-    flatNodes.filter((n) =>
-      n.name.toLowerCase().includes(searchQuery.trim().toLowerCase())
-    )
+    backendSearchResults !== null
+      ? backendSearchResults
+      : flatNodes.filter((n) =>
+          n.name.toLowerCase().includes(searchQuery.trim().toLowerCase())
+        )
   );
+
+  // Trigger backend search when the query changes (debounced 300 ms).
+  // This is an async side effect — not pure derivation — so $effect is correct.
+  $effect(() => {
+    const query = searchQuery;
+    if (searchDebounceTimer !== null) clearTimeout(searchDebounceTimer);
+    if (!query.trim() || !onSearch) {
+      backendSearchResults = null;
+      isSearching = false;
+      return;
+    }
+    isSearching = true;
+    searchDebounceTimer = setTimeout(async () => {
+      const results = await onSearch(query);
+      backendSearchResults = results;
+      isSearching = false;
+    }, 300);
+    return () => {
+      if (searchDebounceTimer !== null) clearTimeout(searchDebounceTimer);
+    };
+  });
 
   $effect(() => {
     if (searchOpen && searchInputEl) {
@@ -106,6 +139,8 @@
   function closeSearch() {
     searchOpen = false;
     searchQuery = "";
+    backendSearchResults = null;
+    isSearching = false;
   }
 
   function startDraft(kind: WorkspaceDraft["kind"]) {
@@ -226,7 +261,15 @@
                 <Sidebar.MenuItem>
                   <Sidebar.MenuButton class="pointer-events-none h-8 text-sidebar-foreground/45">
                     <FileSearchIcon size={15} strokeWidth={1.75} aria-hidden="true" />
-                    <span>{searchQuery ? "No files found" : "Start typing to search"}</span>
+                    <span>
+                      {#if isSearching}
+                        Searching…
+                      {:else if searchQuery}
+                        No files found
+                      {:else}
+                        Start typing to search
+                      {/if}
+                    </span>
                   </Sidebar.MenuButton>
                 </Sidebar.MenuItem>
               {/if}

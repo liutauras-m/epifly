@@ -14,5 +14,6 @@ pub use admin::{JobAdmin, JobKind, JobSummary};
 pub use context::JobContext;
 pub use executor::{JobExecutor, TaskEvent};
 pub use job::{BackgroundJob, ScheduledJob, TaskState, TaskStatus};
+pub use jobs::thread_projection::ProjectionCoalescer;
 pub use registry::JobRegistry;
 pub use scheduler::JobSchedulerService;

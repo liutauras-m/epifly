@@ -29,12 +29,14 @@ export function createWorkspacesStore(sdk: ConusSdk) {
     }
   }
 
+  // Track which parent IDs are currently being loaded to prevent duplicate fetches.
+  const loadingChildren = new Set<string>();
+
   async function loadChildren(parentId: string) {
-    if (isLoading) return;
-    isLoading = true;
-    error = null;
+    if (loadingChildren.has(parentId)) return;
+    loadingChildren.add(parentId);
     const result = await sdk.workspaces.tree(parentId);
-    isLoading = false;
+    loadingChildren.delete(parentId);
     if (result.error) {
       error = result.error.message;
       return;
