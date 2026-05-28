@@ -1,5 +1,20 @@
 import type { TokenProvider } from "@conusai/sdk";
 
+const WEB_ACCESS_TOKEN_KEY = "epifly.web.access_token";
+
+function getSessionStorage() {
+  if (typeof globalThis.sessionStorage === "undefined") return null;
+  return globalThis.sessionStorage;
+}
+
+export function setWebAccessToken(token: string) {
+  getSessionStorage()?.setItem(WEB_ACCESS_TOKEN_KEY, token);
+}
+
+export function clearWebAccessToken() {
+  getSessionStorage()?.removeItem(WEB_ACCESS_TOKEN_KEY);
+}
+
 /**
  * Web token provider.
  * For web, prefer server-managed auth/cookies where possible.
@@ -9,8 +24,7 @@ import type { TokenProvider } from "@conusai/sdk";
 export function createWebTokenProvider(): TokenProvider {
   return {
     async get() {
-      // TODO: fetch from session cookie or secure server endpoint.
-      return null;
+      return getSessionStorage()?.getItem(WEB_ACCESS_TOKEN_KEY) ?? null;
     }
   };
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AiToolProgress, { type AiToolProgressState } from "../app/ai-tool-progress.svelte";
   import { cn } from "../../utils/cn.js";
 
   type EventKind = "tool_start" | "tool_result" | "routing_meta" | "resource_invalidated";
@@ -16,6 +17,13 @@
     resource_invalidated: "Resource updated"
   };
 
+  const kindState: Record<EventKind, AiToolProgressState> = {
+    tool_start: "working",
+    tool_result: "stopped",
+    routing_meta: "thinking",
+    resource_invalidated: "stopped"
+  };
+
   let { kind, label, class: className }: Props = $props();
 </script>
 
@@ -25,9 +33,6 @@
     className
   )}
 >
-  <span
-    class="h-1.5 w-1.5 rounded-full bg-muted-foreground/50"
-    aria-hidden="true"
-  ></span>
+  <AiToolProgress state={kindState[kind]} size="sm" showLabel={false} />
   <span>{label ?? kindLabel[kind]}</span>
 </div>

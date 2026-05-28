@@ -17,6 +17,7 @@
 <div
   class={cn(
     "app-chat-message flex gap-3",
+    role === "assistant" && pending && !content && "message ai thinking",
     role === "user" ? "flex-row-reverse" : "flex-row",
     className
   )}
@@ -46,16 +47,6 @@
     {#if content}
       <!-- Render content; in a real app, pass through a markdown renderer here -->
       <p class="whitespace-pre-wrap break-words">{content}</p>
-    {/if}
-    {#if pending}
-      <span class="inline-flex gap-1" aria-label="Generating response">
-        {#each [0, 1, 2] as i}
-          <span
-            class="app-typing-dot h-1.5 w-1.5 rounded-full bg-current"
-            style="animation-delay: {i * 150}ms"
-          ></span>
-        {/each}
-      </span>
     {/if}
   </div>
 </div>

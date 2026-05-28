@@ -109,6 +109,12 @@ pub struct AppState {
     pub manifest_watcher: Option<ManifestWatcher>,
     /// Token cache counters when Zitadel is the active provider; None for legacy.
     pub zitadel_cache_stats: Option<StdArc<ZitadelCacheStats>>,
+    /// True when auth is required for every request (JWT_SECRET set or Zitadel configured).
+    /// When false, dev-mode X-Tenant-ID / default "dev" tenant fallback is active.
+    pub auth_required: bool,
+    /// Workspace root directory for tenant data — read once at startup from
+    /// `CONUSAI_WORKSPACE_ROOT`; middleware reads this field instead of the env.
+    pub workspace_root: String,
     /// Billing provider (Lago). None when LAGO_API_KEY not configured.
     pub billing: Option<StdArc<dyn BillingProvider>>,
     /// In-process quota checker.
@@ -588,6 +594,10 @@ impl AppState {
             plan_catalog,
             http_upstream: build_upstream_http_client(),
             model_catalog: StdArc::new(StaticModelCatalog::new().with_alias_env()),
+            auth_required: !std::env::var("JWT_SECRET").unwrap_or_default().is_empty()
+                || std::env::var("ZITADEL_DOMAIN").is_ok(),
+            workspace_root: std::env::var("CONUSAI_WORKSPACE_ROOT")
+                .unwrap_or_else(|_| "/tmp/conusai/workspaces".into()),
         })
     }
 
@@ -701,6 +711,8 @@ impl AppState {
             plan_catalog,
             http_upstream: build_upstream_http_client(),
             model_catalog: StdArc::new(StaticModelCatalog::new().with_alias_env()),
+            auth_required: false,
+            workspace_root: "/tmp/conusai/workspaces".into(),
         })
     }
 }

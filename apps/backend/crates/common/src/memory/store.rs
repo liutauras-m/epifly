@@ -285,18 +285,10 @@ pub trait WorkspaceStore: Send + Sync + 'static {
     ) -> Result<Option<chrono::DateTime<chrono::Utc>>, WorkspaceStoreError>;
 
     /// Soft-hide a node (set `hidden_at = now`). Used for delete-as-pause on Thread nodes.
-    async fn hide_node(
-        &self,
-        tenant_id: &str,
-        node_id: Ulid,
-    ) -> Result<(), WorkspaceStoreError>;
+    async fn hide_node(&self, tenant_id: &str, node_id: Ulid) -> Result<(), WorkspaceStoreError>;
 
     /// Un-hide a node (clear `hidden_at`). Used by the projection restore endpoint.
-    async fn unhide_node(
-        &self,
-        tenant_id: &str,
-        node_id: Ulid,
-    ) -> Result<(), WorkspaceStoreError>;
+    async fn unhide_node(&self, tenant_id: &str, node_id: Ulid) -> Result<(), WorkspaceStoreError>;
 
     /// Return all `File`/`Conversation` nodes whose `object_key` is `None` — i.e. nodes
     /// that were created before the Step 3.4 stable-key migration and still use the legacy
@@ -309,9 +301,7 @@ pub trait WorkspaceStore: Send + Sync + 'static {
     ///
     /// Default implementation returns `Ok(vec![])` — safe for stores that do not need the
     /// backfill (e.g., pure in-memory test stores that never persist).
-    async fn scan_nodes_needing_backfill(
-        &self,
-    ) -> Result<Vec<WorkspaceNode>, WorkspaceStoreError> {
+    async fn scan_nodes_needing_backfill(&self) -> Result<Vec<WorkspaceNode>, WorkspaceStoreError> {
         Ok(vec![])
     }
 }

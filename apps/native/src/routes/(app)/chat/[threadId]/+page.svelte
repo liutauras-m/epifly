@@ -1,7 +1,7 @@
 <script lang="ts">
   import { page } from "$app/state";
   import { getSdkContext, createChatStore, loadThreadMessages, getWorkspaceNodeContext, getActiveThreadNodeContext, getWorkspaceActionsContext, uploadUiAttachment } from "@epifly/features";
-  import { AppSafeArea, ChatBreadcrumb, ChatComposer, ChatMessageList, ChatEmptyState, WorkspaceFilingSuggestion } from "@epifly/ui";
+  import { AppSafeArea, ChatBreadcrumb, ChatComposer, ChatMessageList, ChatEmptyState, ChatStreamStatus, WorkspaceFilingSuggestion } from "@epifly/ui";
 
   const sdk = getSdkContext();
   const chat = createChatStore(sdk);
@@ -168,6 +168,8 @@
       {pendingAttachmentIds.length} file{pendingAttachmentIds.length > 1 ? "s" : ""} attached
     </p>
   {/if}
+
+  <ChatStreamStatus status={isUploading ? "waiting" : chat.activityStatus} />
 
   <ChatComposer
     isStreaming={chat.isStreaming || isUploading}

@@ -179,9 +179,7 @@ pub fn normalize_tags(tags: Vec<String>) -> Result<Vec<String>> {
         }
         if seen.insert(t.clone()) {
             if out.len() >= 32 {
-                return Err(ConusAiError::Validation(
-                    "too many tags (max 32)".into(),
-                ));
+                return Err(ConusAiError::Validation("too many tags (max 32)".into()));
             }
             out.push(t);
         }

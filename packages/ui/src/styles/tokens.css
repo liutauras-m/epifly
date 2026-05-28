@@ -17,6 +17,15 @@
 
   --radius-app: 1rem;
 
+   /* Epifly brand mark and AI tool progress */
+   --epifly-logo-black: #0a0a0a;
+   --epifly-logo-orange: #ff7a1a;
+   --epifly-logo-orange-hot: #ff6200;
+   --epifly-tool-cyan: #00d4ff;
+   --epifly-tool-surface: color-mix(in oklch, var(--background) 86%, transparent);
+   --epifly-tool-border: color-mix(in oklch, var(--epifly-logo-orange) 22%, var(--border));
+   --epifly-tool-shadow: 0 14px 34px color-mix(in oklch, var(--epifly-logo-orange) 18%, transparent);
+
   /* sidebar spacing */
   --sidebar-width: 16rem;
   --sidebar-width-icon: 3.5rem;

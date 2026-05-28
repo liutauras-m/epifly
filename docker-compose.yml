@@ -354,6 +354,7 @@ services:
     command: node apps/web/build
     environment:
       CONUSAI_BACKEND_URL: "http://conusai-gateway:8080"
+      PUBLIC_API_URL: "${PUBLIC_API_URL:-http://localhost:8080}"
       UI_SESSION_KEY: "${UI_SESSION_KEY:-conusai-foundry-dev-secret-change-me-32b}"
     volumes:
       - .:/app:ro

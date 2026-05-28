@@ -1,6 +1,17 @@
 import type { ConusSdk, ChatStreamDelta } from "@conusai/sdk";
 import type { UiMessage, UiTextMessage, UiStreamEvent } from "./chat.types.js";
 
+export type ChatActivityStatus =
+  | "idle"
+  | "starting"
+  | "thinking"
+  | "writing"
+  | "using_tool"
+  | "waiting"
+  | "finished"
+  | "stopped"
+  | "error";
+
 export type ChatStoreOptions = {
   /**
    * Phase 7.1 — Fired the first time a `thread_id` delta arrives in a stream,
@@ -13,9 +24,11 @@ export type ChatStoreOptions = {
 export function createChatStore(sdk: ConusSdk, options?: ChatStoreOptions) {
   let messages = $state<UiMessage[]>([]);
   let isStreaming = $state(false);
+  let activityStatus = $state<ChatActivityStatus>("idle");
   let threadId = $state<string | null>(null);
   let error = $state<string | null>(null);
   let abortController = $state<AbortController | null>(null);
+  let settleTimer: ReturnType<typeof setTimeout> | null = null;
 
   async function send(
     message: string,
@@ -27,6 +40,7 @@ export function createChatStore(sdk: ConusSdk, options?: ChatStoreOptions) {
 
     error = null;
     isStreaming = true;
+    setActivityStatus("starting");
 
     const controller = new AbortController();
     abortController = controller;
@@ -58,12 +72,34 @@ export function createChatStore(sdk: ConusSdk, options?: ChatStoreOptions) {
     } catch (e) {
       if (!isAbortError(e, controller.signal)) {
         error = e instanceof Error ? e.message : String(e);
+        setActivityStatus("error");
+      } else {
+        setActivityStatus("stopped", true);
       }
       setAssistantPending(assistantMessageId, false);
     } finally {
       isStreaming = false;
       abortController = null;
       setAssistantPending(assistantMessageId, false);
+      if (!error && activityStatus !== "stopped") {
+        setActivityStatus("finished", true);
+      }
+    }
+  }
+
+  function setActivityStatus(status: ChatActivityStatus, settleToIdle = false) {
+    if (settleTimer) {
+      clearTimeout(settleTimer);
+      settleTimer = null;
+    }
+
+    activityStatus = status;
+
+    if (settleToIdle) {
+      settleTimer = setTimeout(() => {
+        activityStatus = "idle";
+        settleTimer = null;
+      }, 1400);
     }
   }
 
@@ -90,6 +126,7 @@ export function createChatStore(sdk: ConusSdk, options?: ChatStoreOptions) {
   function applyDelta(delta: ChatStreamDelta, assistantMessageId: string) {
     switch (delta.kind) {
       case "text": {
+        setActivityStatus("writing");
         const assistantMessage = findAssistantMessage(assistantMessageId);
         if (assistantMessage) assistantMessage.content += delta.content;
         break;
@@ -104,6 +141,7 @@ export function createChatStore(sdk: ConusSdk, options?: ChatStoreOptions) {
         break;
 
       case "tool_start": {
+        setActivityStatus("using_tool");
         const event: UiStreamEvent = {
           id: crypto.randomUUID(),
           role: "event",
@@ -116,6 +154,7 @@ export function createChatStore(sdk: ConusSdk, options?: ChatStoreOptions) {
       }
 
       case "tool_result": {
+        setActivityStatus(delta.error ? "error" : "waiting");
         // Find the matching tool_start event and update it in-place.
         const existing = messages.find(
           (m): m is UiStreamEvent =>
@@ -142,6 +181,7 @@ export function createChatStore(sdk: ConusSdk, options?: ChatStoreOptions) {
       }
 
       case "routing_meta": {
+        setActivityStatus("thinking");
         const event: UiStreamEvent = {
           id: crypto.randomUUID(),
           role: "event",
@@ -153,6 +193,7 @@ export function createChatStore(sdk: ConusSdk, options?: ChatStoreOptions) {
       }
 
       case "resource_invalidated": {
+        setActivityStatus("waiting");
         const event: UiStreamEvent = {
           id: crypto.randomUUID(),
           role: "event",
@@ -165,12 +206,14 @@ export function createChatStore(sdk: ConusSdk, options?: ChatStoreOptions) {
 
       case "done":
         setAssistantPending(assistantMessageId, false);
+        setActivityStatus("finished", true);
         break;
     }
   }
 
   function stop() {
     abortController?.abort();
+    setActivityStatus("stopped", true);
   }
 
   function isAbortError(errorValue: unknown, signal: AbortSignal) {
@@ -188,6 +231,7 @@ export function createChatStore(sdk: ConusSdk, options?: ChatStoreOptions) {
     error = null;
     isStreaming = false;
     abortController = null;
+    setActivityStatus("idle");
   }
 
   /** Populate the store with previously loaded messages (e.g. when opening an existing thread). */
@@ -197,11 +241,13 @@ export function createChatStore(sdk: ConusSdk, options?: ChatStoreOptions) {
     error = null;
     isStreaming = false;
     abortController = null;
+    setActivityStatus("idle");
   }
 
   return {
     get messages() { return messages; },
     get isStreaming() { return isStreaming; },
+    get activityStatus() { return activityStatus; },
     get threadId() { return threadId; },
     get error() { return error; },
     send,

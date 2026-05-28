@@ -1,5 +1,5 @@
 use crate::state::AppState;
-use agent_core::{PlanTier, TenantClaims, TenantContext};
+use agent_core::{PlanTier, TenantContext};
 use axum::{
     extract::{Request, State},
     http::header,
@@ -7,7 +7,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use common::error::HttpError;
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use std::sync::Arc;
 use tracing::warn;
 
@@ -19,19 +18,14 @@ pub struct ResolvedTenant(pub TenantContext);
 ///
 /// Auth vectors in priority order:
 ///
-/// **Production mode (`JWT_SECRET` set)**
-///   1. `Authorization: Bearer <HS256-JWT>` — external API / machine-to-machine.
-///   2. `conusai_session` cookie — web app, same-origin.
-///   3. `X-Session-Token` header — Tauri WKWebView (cannot attach Secure cookies
-///      to cross-origin HTTP; browser-shell injects the HMAC token as a header).
-///   4. Anything else → 401.
-///
-/// **Dev mode (`JWT_SECRET` unset)**
-///   1. `X-Tenant-ID` header — bare tenant override, no auth check.
-///   2. Session cookie or `X-Session-Token` header (via [`crate::auth`]).
-///   3. Default `dev` tenant (no auth required).
+/// 1. **API key** (`X-API-Key` header) — already resolved by `api_key` middleware; skip.
+/// 2. **Bearer JWT** (`Authorization: Bearer <token>`) — verified by `state.identity`.
+///    Works for both Zitadel RS256 tokens and legacy HS256 JWTs.
+/// 3. **Cookie / `X-Session-Token`** — legacy web + Tauri WKWebView HMAC path.
+/// 4. **Dev fallback** (only when `!state.auth_required`) — `X-Tenant-ID` header or
+///    default `dev` / `Enterprise` tenant.  Never active in production.
 pub async fn extract_tenant(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     mut req: Request,
     next: Next,
 ) -> Response {
@@ -40,50 +34,52 @@ pub async fn extract_tenant(
         return next.run(req).await;
     }
 
-    let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_default();
-    let workspace_root = std::env::var("CONUSAI_WORKSPACE_ROOT")
-        .unwrap_or_else(|_| "/tmp/conusai/workspaces".into());
+    let request_id = req
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("-");
 
-    if !jwt_secret.is_empty() {
-        // ── Production mode ───────────────────────────────────────────────
-
-        // 1. Bearer JWT (external API clients / machine-to-machine).
-        if let Some(token) = bearer_token(&req) {
-            return match decode::<TenantClaims>(
-                token,
-                &DecodingKey::from_secret(jwt_secret.as_bytes()),
-                &Validation::new(Algorithm::HS256),
-            ) {
-                Ok(data) => {
-                    let claims = data.claims;
-                    let mut tenant = TenantContext::new(
-                        claims.tenant_id.as_str(),
-                        Some(claims.sub),
-                        claims.plan,
-                        workspace_root,
+    // 1. Bearer token → unified identity verification (Zitadel RS256 or Legacy HS256).
+    if let Some(token) = bearer_token(&req) {
+        match state.identity.verify_access_token(token).await {
+            Ok(identity_ctx) => {
+                let tenant = identity_ctx.into_tenant_context(&state.workspace_root);
+                req.extensions_mut().insert(ResolvedTenant(tenant));
+                return next.run(req).await;
+            }
+            Err(e) => {
+                if state.auth_required {
+                    // Production / Zitadel mode: invalid token → 401.
+                    warn!(
+                        request_id,
+                        error = %e,
+                        auth.outcome = "invalid_token",
+                        "bearer token rejected"
                     );
-                    tenant.role = claims.role;
-                    req.extensions_mut().insert(ResolvedTenant(tenant));
-                    next.run(req).await
+                    return HttpError::auth("invalid token").into_response();
                 }
-                Err(e) => {
-                    warn!(error = %e, "JWT decode failed");
-                    HttpError::auth("invalid token").into_response()
-                }
-            };
+                // Dev mode: log and fall through to X-Tenant-ID / cookie / default.
+                warn!(
+                    request_id,
+                    error = %e,
+                    auth.outcome = "dev_token_fallthrough",
+                    "dev mode: bearer token invalid, continuing without bearer auth"
+                );
+            }
         }
+    }
 
-        // 2 & 3. Cookie or X-Session-Token header (web + Tauri WKWebView).
-        if let Some(user) = crate::auth::extract_from_headers(req.headers()) {
-            req.extensions_mut()
-                .insert(ResolvedTenant(user.tenant_context()));
-            return next.run(req).await;
-        }
+    // 2. Cookie / X-Session-Token (web + Tauri WKWebView legacy HMAC path).
+    if let Some(user) = crate::auth::extract_from_headers(req.headers()) {
+        req.extensions_mut()
+            .insert(ResolvedTenant(user.tenant_context()));
+        return next.run(req).await;
+    }
 
-        HttpError::auth("authentication required").into_response()
-    } else {
-        // ── Dev mode ─────────────────────────────────────────────────────
-
+    // 3. Dev-mode fallback: X-Tenant-ID header or default "dev" tenant.
+    //    Only active when neither JWT_SECRET nor ZITADEL_DOMAIN is configured.
+    if !state.auth_required {
         let header_tid = req
             .headers()
             .get("X-Tenant-ID")
@@ -91,16 +87,25 @@ pub async fn extract_tenant(
             .map(String::from);
 
         let tenant = if let Some(tid) = header_tid {
-            TenantContext::new(tid, None::<&str>, PlanTier::Free, workspace_root)
-        } else if let Some(user) = crate::auth::extract_from_headers(req.headers()) {
-            user.tenant_context()
+            TenantContext::new(tid, None::<&str>, PlanTier::Free, &state.workspace_root)
         } else {
-            TenantContext::new("dev", None::<&str>, PlanTier::Enterprise, workspace_root)
+            TenantContext::new(
+                "dev",
+                None::<&str>,
+                PlanTier::Enterprise,
+                &state.workspace_root,
+            )
         };
-
         req.extensions_mut().insert(ResolvedTenant(tenant));
-        next.run(req).await
+        return next.run(req).await;
     }
+
+    warn!(
+        request_id,
+        auth.outcome = "unauthenticated",
+        "no credentials presented"
+    );
+    HttpError::auth("authentication required").into_response()
 }
 
 fn bearer_token(req: &Request) -> Option<&str> {

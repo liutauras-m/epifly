@@ -25,6 +25,12 @@ export { default as AppJobsSidebar } from "./components/app/app-jobs-sidebar.sve
 export { default as AppMobileHeader } from "./components/app/app-mobile-header.svelte";
 export { default as AppMain } from "./components/app/app-main.svelte";
 export { default as AppSafeArea } from "./components/app/app-safe-area.svelte";
+export { default as AiToolProgress } from "./components/app/ai-tool-progress.svelte";
+export type {
+  AiToolProgressSize,
+  AiToolProgressState,
+  AiToolProgressVariant
+} from "./components/app/ai-tool-progress.svelte";
 
 export { default as ChatBreadcrumb } from "./components/chat/chat-breadcrumb.svelte";
 export { default as ChatComposer } from "./components/chat/chat-composer.svelte";
@@ -47,3 +53,4 @@ export { default as WorkspaceDocPeek } from "./components/workspace/workspace-do
 
 export { default as AccountMenu } from "./components/account/account-menu.svelte";
 export { default as UserAvatar } from "./components/account/user-avatar.svelte";
+export { default as AuthOnboardingPanel } from "./components/account/auth-onboarding-panel.svelte";

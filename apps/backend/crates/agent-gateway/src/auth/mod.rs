@@ -8,9 +8,9 @@
 //! - [`extractor`] — multi-vector header extraction + Axum `FromRequestParts` impl.
 //!
 //! # Usage
-//! ```rust
+//! ```text
 //! // In a handler (via FromRequestParts):
-//! async fn my_handler(user: SessionUser, ...) { ... }
+//! async fn my_handler(user: SessionUser, _: ...) { ... }
 //!
 //! // In middleware (no extractor overhead):
 //! if let Some(user) = crate::auth::extract_from_headers(req.headers()) { ... }

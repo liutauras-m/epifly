@@ -319,7 +319,8 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         &self,
         tenant_id: &str,
         node_id: Ulid,
-    ) -> Result<Vec<crate::memory::store::DeletePlanNode>, crate::memory::store::WorkspaceStoreError> {
+    ) -> Result<Vec<crate::memory::store::DeletePlanNode>, crate::memory::store::WorkspaceStoreError>
+    {
         let mut result = Vec::new();
         let mut worklist = vec![node_id];
         while let Some(current) = worklist.pop() {
@@ -330,14 +331,15 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
                     .filter(|n| n.tenant_id == tenant_id && n.parent_id == Some(current))
                     .map(|n| n.id)
                     .collect();
-                let plan_node = nodes.get(&current).filter(|n| n.tenant_id == tenant_id).map(
-                    |n| crate::memory::store::DeletePlanNode {
+                let plan_node = nodes
+                    .get(&current)
+                    .filter(|n| n.tenant_id == tenant_id)
+                    .map(|n| crate::memory::store::DeletePlanNode {
                         id: n.id,
                         kind: n.kind,
                         virtual_path: n.virtual_path.clone(),
                         object_key: None,
-                    },
-                );
+                    });
                 (children, plan_node)
             };
             worklist.extend(children);
@@ -460,7 +462,11 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         Ok(node.clone())
     }
 
-    async fn bump_last_modified(&self, _tenant_id: &str, node_id: Ulid) -> Result<(), crate::memory::store::WorkspaceStoreError> {
+    async fn bump_last_modified(
+        &self,
+        _tenant_id: &str,
+        node_id: Ulid,
+    ) -> Result<(), crate::memory::store::WorkspaceStoreError> {
         if let Some(node) = self.nodes.lock().unwrap().get_mut(&node_id) {
             node.last_modified = Utc::now();
         }
@@ -546,11 +552,17 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         Ok(node.clone())
     }
 
-    async fn is_tenant_seeded(&self, tenant_id: &str) -> Result<bool, crate::memory::store::WorkspaceStoreError> {
+    async fn is_tenant_seeded(
+        &self,
+        tenant_id: &str,
+    ) -> Result<bool, crate::memory::store::WorkspaceStoreError> {
         Ok(self.seeded.lock().unwrap().contains(tenant_id))
     }
 
-    async fn mark_tenant_seeded(&self, tenant_id: &str) -> Result<(), crate::memory::store::WorkspaceStoreError> {
+    async fn mark_tenant_seeded(
+        &self,
+        tenant_id: &str,
+    ) -> Result<(), crate::memory::store::WorkspaceStoreError> {
         self.seeded.lock().unwrap().insert(tenant_id.to_owned());
         Ok(())
     }
@@ -569,7 +581,10 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         Ok(node)
     }
 
-    async fn purge_tenant_data(&self, tenant_id: &str) -> Result<(), crate::memory::store::WorkspaceStoreError> {
+    async fn purge_tenant_data(
+        &self,
+        tenant_id: &str,
+    ) -> Result<(), crate::memory::store::WorkspaceStoreError> {
         self.nodes
             .lock()
             .unwrap()
@@ -578,7 +593,10 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         Ok(())
     }
 
-    async fn upsert_node(&self, node: WorkspaceNode) -> Result<(), crate::memory::store::WorkspaceStoreError> {
+    async fn upsert_node(
+        &self,
+        node: WorkspaceNode,
+    ) -> Result<(), crate::memory::store::WorkspaceStoreError> {
         self.nodes.lock().unwrap().insert(node.id, node);
         Ok(())
     }
@@ -587,7 +605,8 @@ impl WorkspaceStore for InMemoryWorkspaceStore {
         &self,
         tenant_id: &str,
         node_id: Ulid,
-    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, crate::memory::store::WorkspaceStoreError> {
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, crate::memory::store::WorkspaceStoreError>
+    {
         Ok(self
             .nodes
             .lock()
@@ -679,10 +698,10 @@ impl WorkspaceContentStore for InMemoryWorkspaceContent {
         _legacy_key: Option<&str>,
         body: &str,
     ) -> anyhow::Result<()> {
-        self.store.lock().unwrap().insert(
-            (tenant_id.to_owned(), key.to_owned()),
-            body.to_owned(),
-        );
+        self.store
+            .lock()
+            .unwrap()
+            .insert((tenant_id.to_owned(), key.to_owned()), body.to_owned());
         Ok(())
     }
 
