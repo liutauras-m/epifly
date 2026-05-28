@@ -30,7 +30,7 @@ packages/shared   Runtime-neutral constants, types, utilities
 9. Do not enable broad Tauri permissions. Add to `src-tauri/capabilities/` only what an implemented feature actually uses.
 10. Do not create a second SDK client in components. Call `getSdkContext()` from `@epifly/features`.
 11. Do not use one SvelteKit config for both apps. `apps/web` uses `adapter-auto`; `apps/native` uses `adapter-static` with SPA fallback.
-12. Do not store tokens in `localStorage` as the final native auth strategy.
+12. Auth is OIDC via Zitadel (Plan v5.1). **Web:** the browser holds only an opaque httpOnly session cookie (`__Host-epifly_sid`); the SvelteKit BFF holds the encrypted token set in Postgres and injects `Authorization` server-side — the browser never sees a token. **Native:** tokens live in the OS keychain behind a Rust token manager; JS never holds the refresh token. Never put tokens in `localStorage` / `sessionStorage` / IndexedDB / `UserDefaults` or in a cookie payload; never ship a client secret in any bundle; never open IdP pages in an in-app WebView.
 13. Do not build custom sidebar primitives before using the shadcn-svelte Sidebar component.
 14. Do not create folders for features that have no implemented code yet.
 15. Do not branch UI or SDK adapters on storage `kind`/`mime_type` to tell files from conversations. Branch on `semantic_kind`.
@@ -251,11 +251,15 @@ Motion constraints:
   plus a shared contract-test suite (InMemory + redb-in-memory backend)
 
 ### Open gaps / active work
-1. **Token providers** — `createWebTokenProvider()` and `createNativeTokenProvider()` still return
-   `null`. Real auth is unbuilt (see architecture rule 12; auth flow design is TBD).
-2. **Workspace ⇄ Chat unification (active roadmap)** — chat conversations are not yet first-class
-   nodes in the workspace tree. See `docs/plan.md` (Plan v4.1). The load-bearing fix is the SDK
-   adapter branching on storage `kind` instead of `semantic_kind` (Step 0.1).
+1. **Real auth (active roadmap — Plan v5.1).** Replace the dev HS256 `/v1/auth/login` with a real
+   Zitadel/OIDC flow on web (SvelteKit BFF) and native (Tauri 2 / iOS). See `docs/plan.md`. Interim
+   state today: `createWebTokenProvider()` reads a `sessionStorage` stub (with `setWebAccessToken` /
+   `clearWebAccessToken` exports) and `createNativeTokenProvider()` returns `null`. The plan deletes
+   the web `sessionStorage` path (Phase 2 → BFF cookie) and gives native its own keychain-backed
+   provider (Phase 5).
+2. **Workspace ⇄ Chat unification (Plan v4.1) — shipped.** Chat conversations are first-class nodes
+   in the workspace tree; the load-bearing fix (SDK adapter branching on `semantic_kind`) is in place.
+   The v4.1 UX invariants below now describe shipped behavior, not pending work.
 
 ## Running the apps
 
@@ -281,49 +285,60 @@ Rust/Axum at `apps/backend`. Workspace `Cargo.toml` at repo root. The native cra
 
 Rust toolchain: 1.95 (pinned via `rust-toolchain.toml`). iOS target: `aarch64-apple-ios-sim`. Android targets: `aarch64-linux-android`, `armv7-linux-androideabi`.
 
-## Active plan — docs/plan.md (Plan v4.1: Workspace as Spatial Memory)
+## Active plan — docs/plan.md (Plan v5.1: Zitadel/OIDC end-to-end auth)
 
-The authoritative roadmap is [docs/plan.md](docs/plan.md). The backend agent-gateway/workspaces
-refactor (the former v3.x plan, Phases 0–5) is **complete**; `docs/plan.md` now holds **Plan v4.1**,
-a frontend-led plan to make chat conversations first-class nodes in the workspace tree (9 phases,
-0 → 8, step-numbered, each independently executable). Treat it as the single source of truth — do
-not duplicate its contents in commit messages or other docs.
+The authoritative roadmap is [docs/plan.md](docs/plan.md). The frontend Workspace-as-Spatial-Memory
+plan (v4.1) and the backend agent-gateway/workspaces refactor (v3.x) are **complete and shipped** —
+their invariants below remain load-bearing. `docs/plan.md` now holds **Plan v5.1**: replace the dev
+HS256 `/v1/auth/login` with a real Zitadel/OIDC flow on the SvelteKit web app (BFF) and the Tauri 2
+native app (iOS, plus macOS/Windows/Android for free) — register → email verify → sign-in →
+JWKS-verified gateway access → silent refresh → sign-out everywhere. Standards-only (RFC 9700 BCP,
+PKCE-S256, BFF for web, system browser for native). Treat it as the single source of truth — do not
+duplicate its contents in commit messages or other docs.
+
+The plan ships in linear phases (Z → 9) across five parallel tracks that converge at Phase 8:
+**A** — IdP/Zitadel setup, **B** — backend JWKS verifier + tenant context + legacy removal,
+**C** — web BFF (login/callback/logout, session store, reverse proxy, route guards),
+**D** — native (system browser + deep-link, Rust token manager, keychain, refresh rotation),
+**E** — security acceptance (token-storage / CSRF / cross-tenant / no-secret-in-bundle proofs, scans).
+**Phase Z (Zitadel bootstrap, Z.1–Z.10) is a hard gate: do not start Phase 0 until all of Z is green.**
 
 ### How to execute the plan
 
-**One step at a time. One concern per phase.** If a step requires touching code outside its declared
-phase scope, stop and write a short "unplanned scope" note before continuing (the plan's Stop
-condition, in "Notes for the executing agent").
+**One step at a time. One concern per phase.** Pick the next unchecked step from the plan's Execution
+checklist and state the contract in one paragraph (files, behavior delta, the test that proves it)
+before coding. The plan's "Iteration protocol for the implementing agent" is authoritative; the
+essentials:
 
-**Per-step rhythm:**
-1. Pick the next unchecked step from the plan's Execution checklist.
-2. State the contract in one paragraph (files, behavior delta, the test that proves it) before coding.
-3. Write the failing test first when the step is test-verifiable (most v4.1 steps are — e.g. 0.1
-   adapter mapping, 1.1 open-as-chat, 3.1 move, 5.1 restore). Pure renames skip — the compiler is the test.
-4. Implement directly with Write/Edit. Do not delegate code writing to sub-agents (use them only for
-   read-only exploration).
-5. Run the fast gate. Frontend: `pnpm --filter @epifly/ui exec svelte-check` (+ touched apps) and
-   `pnpm --filter @epifly/features test`. Backend: `cargo fmt && cargo clippy -p <touched>
-   --all-targets -- -D warnings && cargo test -p <touched>` (cross-crate → `--workspace`;
-   storage/routes → testcontainers).
-6. Commit with a 3-line evaluation note in the body: *what changed*, *what's verified*, *what's deferred*.
-7. Tick the plan's checklist line. One step = one commit unless a step explicitly calls out sub-commits.
+1. If the step is testable, **write the failing test first** (Phase 0 JWKS verify + alg/iss/aud
+   negatives, Phase 1 single-flight refresh + callback replay, Phase 5 reuse-detection, etc.).
+2. Implement directly with Write/Edit. Read-only exploration may be delegated to sub-agents; **code
+   writes must not.**
+3. Fast gate by surface:
+   - Backend → `cargo fmt && cargo clippy -p <crate> --all-targets -- -D warnings && cargo test -p <crate>`.
+   - Frontend → `pnpm --filter @epifly/ui exec svelte-check`, `pnpm --filter web check-types`,
+     `pnpm --filter native check-types`, `pnpm --filter @epifly/features test`.
+   - Compose/env changed → `docker compose config --quiet`.
+4. Run the phase's **Verify** steps (web and/or iOS — skip a track only when the phase says N/A).
+   Capture URL, status, console, network entries, SQL probe output. A finding == a fix, same phase.
+5. Commit with the plan's body format (subject; `Phase <n>.<m> — <what changed>`; `Verified:`;
+   `Deferred:`). Tick the checklist line. One step = one commit.
 
-**Per-phase gate (mandatory before next phase):**
-- `svelte-check` on touched packages (`@epifly/ui`, `native`, `web`) → 0 errors.
-- `pnpm --filter @epifly/features test` for store/adapter changes.
-- Backend-touching steps (e.g. 0.2 tree route, 5.1 restore, 6.3 retrieval, 8.x memory):
-  `cargo clippy --workspace --all-targets -- -D warnings` + `cargo test --workspace`; routes/storage
-  use testcontainers; secret-leak grep on any new route.
-- `pnpm test:e2e:web` — never per-step, only at phase boundaries.
-- Write a 5–10 line phase eval in the PR description; confirm the surface still answers the plan's
-  five user questions.
+**Per-phase gate (mandatory before next phase):** all checklist items for the phase ticked; web + iOS
+verification both green; `pnpm test:e2e:web` for any web-touching phase; the phase's reviewer checklist
+re-checked for the slice it changed.
+
+**Stop / scope triggers:** Zitadel unreachable or misconfigured → pause until Z.1–Z.9 fixed; any
+verification step failing twice with the same root cause → escalate; any token-handling code without a
+test → block; any new log call in `apps/backend/crates/agent-gateway/src/{routes,mw}/auth*` without an
+explicit redaction review → block; a step needing 3+ unrelated files → split; a step needing changes
+outside its declared phase scope → STOP and write an "unplanned scope" note before continuing.
 
 **Pre-flight audit before resuming:** read the plan's "Current-state audit" table and tick what's
-already done before writing anything — much plumbing already exists (backend
-`WorkspaceNodeKind`/`source_id`/`hidden_at`, SDK `move`/`filterNodes`, the UI tree row's thread
-rendering). **Phase 0 is load-bearing:** until the SDK adapter reads `semantic_kind` (Step 0.1),
-every later phase is invisible. Verify backend route/param shapes before assuming they exist.
+already real before writing anything — e.g. `ZitadelProvider` already does introspection with a `moka`
+cache (Phase 0 adds JWKS as the *default* and reuses both); `legacy.rs` HS256 verifier and the
+`/v1/auth/login` route still exist (deleted in Phase 9); `token-provider.ts` still has the
+`sessionStorage` path (deleted in Phase 2). Verify route/param/env shapes before assuming they exist.
 
 ### Backend architecture invariants (from the completed v3.x refactor — still load-bearing)
 
@@ -347,7 +362,7 @@ These describe the shipped backend. They remain true and must not be regressed:
 16. **`agent-core` over `agent-gateway`** when placement is ambiguous — `agent-core` is testable without HTTP.
 17. Preserve existing routing audit fields when refactoring; observability is already good. Do not regress it.
 
-### Frontend / workspace-UX invariants (Plan v4.1)
+### Frontend / workspace-UX invariants (Plan v4.1 — shipped; still load-bearing)
 
 Product model: **a workspace is spatial memory, not a folder tree.** A conversation is a living
 document you talk to — one `node_id`, openable as chat, readable as a document, living in one place.
@@ -372,3 +387,37 @@ the assistant know here, where will this save, how do I find it later.*
     + Cmd+K; drag-and-drop is never the only path.
 28. **No graph UI.** The relationship/memory layer is backend intelligence for search, related-items,
     and suggestions — never a visual graph canvas.
+
+### Auth invariants (Plan v5.1 — load-bearing; violating any invalidates the security model)
+
+29. **No token reaches browser-readable storage or a cookie payload.** Web tokens live only in
+    `auth_sessions.*_ct` (AEAD-encrypted in Postgres), decrypted per-request inside the BFF. The
+    `__Host-epifly_sid` cookie carries an opaque session id and nothing else (no `sub`, no `email`).
+30. **Native tokens live only in the OS keychain, managed in Rust.** The WebView never touches the
+    refresh token; access tokens are handed out per-request via a Tauri command; no JS module caches them.
+31. **JWKS local validation is the default verifier; introspection is opt-in.** Gated by
+    `ZITADEL_TOKEN_VERIFY_MODE` (`jwks` default | `introspection`) or a `RequireIntrospection`
+    extractor for revocation-sensitive routes. The two paths never silently mix.
+32. **`alg` comes from a server-side allowlist (`{ RS256 }`), never the token header.** Reject `none`
+    and HS256-confusion. `iss` is exact-string equality; also verify `aud`, `exp` (60s skew), `nbf`,
+    `iat` skew, and non-empty `sub`. Unknown `kid` triggers exactly one single-flight JWKS refresh.
+33. **PKCE-S256 only.** No implicit / hybrid / password grants. No client secret in any web bundle or
+    native binary. Discovery is validated against the configured issuer and fails closed on mismatch.
+34. **`state` is stored server-side and consumed exactly once** (replay → 400); `nonce` validated on
+    the ID token. `returnTo` is allowlisted server-side. The session id is rotated after callback
+    (fixation prevention).
+35. **Refresh is single-flight.** Web: per `auth_sessions.id` via `SELECT … FOR UPDATE`, re-checking
+    `access_expires_at` after the lock. Native: mutex + notify, proactive (60s before expiry) plus one
+    401-triggered retry. Rotation is atomic; `invalid_grant` clears session/keychain and forces
+    re-login (reuse-detection), best-effort revocation never blocks cleanup.
+36. **Native uses the system browser only** (`opener`, never `inAppBrowser`). Universal/App Links are
+    the production redirect; custom scheme is fallback. The deep-link handler validates scheme + host +
+    path + state + exact `redirect_uri` + transaction age, and subscribes via **both** `get_current()`
+    (cold start) and `on_open_url()` (runtime) — missing one drops callbacks silently.
+37. **Tenancy is derived from the JWT only** — `org_id` → tenant, `(iss, sub)` → user; never `email`.
+    Inbound `X-Tenant-ID` is rejected at the edge in production (`400 tenant_header_forbidden`) and the
+    BFF strips it. Silent tenant auto-creation is forbidden in prod (`AUTH_AUTO_PROVISION_TENANTS=false`,
+    CI-enforced).
+38. **Auth logs redact `code`, all tokens, cookies, `email`, and raw claims** — no token/code/claims
+    body in any log call. Dev-auth (`dev-auth` feature / dev profile) cannot start in a production
+    build (CI gate).

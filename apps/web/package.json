@@ -14,7 +14,10 @@
     "@conusai/sdk": "workspace:*",
     "@epifly/features": "workspace:*",
     "@epifly/shared": "workspace:*",
-    "@epifly/ui": "workspace:*"
+    "@epifly/ui": "workspace:*",
+    "jose": "^6.2.3",
+    "openid-client": "^6.8.4",
+    "postgres": "^3.4.9"
   },
   "devDependencies": {
     "@internationalized/date": "^3.12.1",
