@@ -112,6 +112,9 @@ pub struct AppState {
     /// True when auth is required for every request (JWT_SECRET set or Zitadel configured).
     /// When false, dev-mode X-Tenant-ID / default "dev" tenant fallback is active.
     pub auth_required: bool,
+    /// Postgres connection pool for tenant_identity_bindings lookup (Phase 6).
+    /// None when DATABASE_URL is not configured (dev/test without Postgres).
+    pub db: Option<sqlx::PgPool>,
     /// Workspace root directory for tenant data — read once at startup from
     /// `CONUSAI_WORKSPACE_ROOT`; middleware reads this field instead of the env.
     pub workspace_root: String,
@@ -619,6 +622,7 @@ impl AppState {
                 || std::env::var("ZITADEL_DOMAIN").is_ok(),
             workspace_root: std::env::var("CONUSAI_WORKSPACE_ROOT")
                 .unwrap_or_else(|_| "/tmp/conusai/workspaces".into()),
+            db: build_db_pool().await,
         })
     }
 
@@ -734,7 +738,24 @@ impl AppState {
             model_catalog: StdArc::new(StaticModelCatalog::new().with_alias_env()),
             auth_required: false,
             workspace_root: "/tmp/conusai/workspaces".into(),
+            db: None,
         })
+    }
+}
+
+/// Build a Postgres connection pool if DATABASE_URL is set.
+/// Returns None silently when the env var is absent (dev without Postgres).
+async fn build_db_pool() -> Option<sqlx::PgPool> {
+    let url = std::env::var("DATABASE_URL").ok()?;
+    match sqlx::PgPool::connect(&url).await {
+        Ok(pool) => {
+            info!("Postgres pool connected (tenant binding lookups enabled)");
+            Some(pool)
+        }
+        Err(e) => {
+            warn!(error = %e, "DATABASE_URL set but Postgres connection failed; binding lookups disabled");
+            None
+        }
     }
 }
 

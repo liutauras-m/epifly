@@ -67,6 +67,9 @@ tracing-opentelemetry      = { version = "0.28" }
 wasmtime     = { version = "44", features = ["component-model"] }
 wasmtime-wasi = { version = "44" }
 
+# Database (Postgres for session store, tenant bindings)
+sqlx         = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }
+
 # Auth / Crypto
 jsonwebtoken = { version = "9" }
 sha2         = { version = "0.10" }

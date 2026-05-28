@@ -57,6 +57,7 @@ tokio-util.workspace  = true
 parking_lot.workspace = true
 thiserror.workspace   = true
 regex.workspace       = true
+sqlx.workspace        = true
 
 [dev-dependencies]
 wiremock.workspace = true

@@ -1,3 +1,4 @@
+pub mod binding;
 pub mod legacy;
 pub mod zitadel;
 

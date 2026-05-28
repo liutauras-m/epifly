@@ -1,4 +1,5 @@
 use crate::state::AppState;
+use agent_core::identity::binding;
 use agent_core::{PlanTier, TenantContext};
 use axum::{
     extract::{Request, State},
@@ -52,14 +53,37 @@ pub async fn extract_tenant(
     // 1. Bearer token → unified identity verification (Zitadel RS256 or Legacy HS256).
     if let Some(token) = bearer_token(&req) {
         match state.identity.verify_access_token(token).await {
-            Ok(identity_ctx) => {
+            Ok(mut identity_ctx) => {
+                // Phase 6: resolve tenant via binding table when Postgres is configured.
+                if let Some(db) = &state.db {
+                    let issuer = std::env::var("ZITADEL_ISSUER").unwrap_or_default();
+                    let org_id = identity_ctx.tenant_id.as_ref().to_string();
+                    let sub = &identity_ctx.user_id;
+                    match binding::resolve_tenant(db, &issuer, &org_id, sub).await {
+                        Ok(b) => {
+                            // Replace org_id with application tenant_id from binding
+                            identity_ctx.tenant_id = b.tenant_id.into();
+                        }
+                        Err(binding::BindingError::NotProvisioned(org)) => {
+                            warn!(request_id, org_id = %org, "tenant not provisioned");
+                            return HttpError::forbidden("tenant_not_provisioned").into_response();
+                        }
+                        Err(binding::BindingError::Suspended(tid)) => {
+                            warn!(request_id, tenant_id = %tid, "tenant suspended");
+                            return HttpError::forbidden("tenant_suspended").into_response();
+                        }
+                        Err(e) => {
+                            warn!(request_id, error = %e, "binding lookup error");
+                            return HttpError::internal("binding_error", None).into_response();
+                        }
+                    }
+                }
                 let tenant = identity_ctx.into_tenant_context(&state.workspace_root);
                 req.extensions_mut().insert(ResolvedTenant(tenant));
                 return next.run(req).await;
             }
             Err(e) => {
                 if state.auth_required {
-                    // Production / Zitadel mode: invalid token → 401.
                     warn!(
                         request_id,
                         error = %e,
@@ -68,7 +92,6 @@ pub async fn extract_tenant(
                     );
                     return HttpError::auth("invalid token").into_response();
                 }
-                // Dev mode: log and fall through to X-Tenant-ID / cookie / default.
                 warn!(
                     request_id,
                     error = %e,
