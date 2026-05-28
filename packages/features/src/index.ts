@@ -21,7 +21,7 @@ export {
   setWorkspaceActionsContext,
   getWorkspaceActionsContext,
 } from "./workspaces/workspace-context.svelte.js";
-export type { WorkspaceActionsContext } from "./workspaces/workspace-context.svelte.js";
+export type { WorkspaceActionsContext, FilingHint } from "./workspaces/workspace-context.svelte.js";
 
 // SDK provider
 export { default as SdkProvider } from "./sdk/sdk-provider.svelte";

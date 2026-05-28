@@ -1,12 +1,16 @@
 <script lang="ts">
   import { page } from "$app/state";
-  import { getSdkContext, createChatStore, loadThreadMessages, getWorkspaceNodeContext, getActiveThreadNodeContext, uploadUiAttachment } from "@epifly/features";
-  import { AppSafeArea, ChatBreadcrumb, ChatComposer, ChatMessageList, ChatEmptyState } from "@epifly/ui";
+  import { getSdkContext, createChatStore, loadThreadMessages, getWorkspaceNodeContext, getActiveThreadNodeContext, getWorkspaceActionsContext, uploadUiAttachment } from "@epifly/features";
+  import { AppSafeArea, ChatBreadcrumb, ChatComposer, ChatMessageList, ChatEmptyState, WorkspaceFilingSuggestion } from "@epifly/ui";
 
   const sdk = getSdkContext();
   const chat = createChatStore(sdk);
   const wsNode = getWorkspaceNodeContext();
   const threadNode = getActiveThreadNodeContext();
+  const wsActions = getWorkspaceActionsContext();
+
+  /** Step 3.4 — reactive filing hint from the shell (null = no suggestion). */
+  const filingHint = $derived(wsActions?.getFilingHint() ?? null);
 
   let isLoadingHistory = $state(true);
   let fileInputEl = $state<HTMLInputElement | null>(null);
@@ -96,7 +100,10 @@
   <!-- Breadcrumb + context indicator (Steps 1.4 / 1.5 / 6.2) -->
   {#if threadNode.virtualPath}
     <div class="flex shrink-0 items-center gap-2 border-b border-border/40 px-4 py-1.5">
-      <ChatBreadcrumb virtualPath={threadNode.virtualPath} />
+      <ChatBreadcrumb
+        virtualPath={threadNode.virtualPath}
+        onCrumbClick={(path) => wsActions?.selectNodeByPath(path)}
+      />
 
       <!-- Step 6.2 — live context disclosure chip with detach/re-attach -->
       {#if !contextDetached && activeContextNodeId}
@@ -122,6 +129,18 @@
           <span aria-hidden="true" class="opacity-60">+</span>
         </button>
       {/if}
+    </div>
+  {/if}
+
+  <!-- Step 3.4 — filing suggestion chip (only for unsorted threads) -->
+  {#if filingHint}
+    <div class="mx-auto w-full max-w-3xl shrink-0 px-6 py-2">
+      <WorkspaceFilingSuggestion
+        suggestedPath={filingHint.virtualPath}
+        targetNodeId={filingHint.id}
+        onConfirm={(nodeId, path) => wsActions?.confirmFiling(nodeId, path)}
+        onIgnore={() => wsActions?.dismissFilingHint()}
+      />
     </div>
   {/if}
 

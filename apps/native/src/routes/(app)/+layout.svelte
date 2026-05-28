@@ -24,7 +24,18 @@
   // Expose the active thread's workspace location (breadcrumb + context indicator).
   setActiveThreadNodeContext(() => shell.activeThreadNode);
   // Expose workspace write actions so chat pages can insert optimistic nodes (Step 7.1).
-  setWorkspaceActionsContext({ insertOptimisticThread: shell.insertOptimisticThread });
+  setWorkspaceActionsContext({
+    insertOptimisticThread: shell.insertOptimisticThread,
+    selectNodeByPath: shell.selectWorkspaceNodeByPath,
+    // Step 3.4 — filing hint (getter maps SidebarWorkspaceNode → FilingHint shape)
+    getFilingHint: () => {
+      const hint = shell.filingHint;
+      if (!hint) return null;
+      return { id: hint.id, virtualPath: hint.virtualPath ?? hint.name, name: hint.name };
+    },
+    dismissFilingHint: shell.dismissFilingHint,
+    confirmFiling: shell.confirmFiling,
+  });
 
   onMount(shell.load);
 

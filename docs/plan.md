@@ -483,7 +483,7 @@ Smart Views.
 - [ ] 1.1 Open-as-chat on thread nodes
 - [ ] 1.2 Recents fast-lane (≤8)
 - [ ] 1.3 Spatial stability (tree never auto-sorts)
-- [ ] 1.4 Breadcrumb in chat header
+- [x] 1.4 Breadcrumb in chat header
 - [ ] 1.5 Active context indicator (static)
 - [ ] 2.1 Smart Views lane framework
 - [ ] 2.2 Unsorted view
@@ -491,14 +491,14 @@ Smart Views.
 - [ ] 3.1 Drag-and-drop move (+ accessible "Move to…")
 - [ ] 3.2 Rename in place
 - [ ] 3.3 Unsorted as default home
-- [ ] 3.4 Suggested filing (suggest→confirm, heuristic v1)
+- [x] 3.4 Suggested filing (suggest→confirm, heuristic v1)
 - [ ] 3.5 Command palette (Cmd+K)
 - [ ] 4.1 View-as-document peek
 - [ ] 4.2 Progressive-disclosure guardrail
 - [ ] 4.3 Generated summary preview
 - [ ] 5.1 Restore endpoint + SDK + delete=soft-delete
 - [ ] 5.2 Restore UX
-- [ ] 5.3 Paused smart view
+- [x] 5.3 Paused smart view
 - [ ] 6.1 Thread folder → chat `workspaceNodeId`
 - [ ] 6.2 Visible context disclosure (live)
 - [ ] 6.3 Ambient retrieval bias (flagged, default off)

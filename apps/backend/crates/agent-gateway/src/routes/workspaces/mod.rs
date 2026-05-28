@@ -866,6 +866,9 @@ pub struct FilterSearchQuery {
     pub since: Option<String>,
     pub q: Option<String>,
     pub limit: Option<usize>,
+    /// When `true`, return ONLY thread nodes where `hidden_at IS NOT NULL` (paused).
+    /// Mutually exclusive with the default behaviour (exclude hidden nodes).
+    pub paused: Option<bool>,
 }
 
 /// `GET /v1/workspaces/filter` — filter nodes by tag and/or semantic_kind.
@@ -880,6 +883,7 @@ pub struct FilterSearchQuery {
         ("since" = Option<String>, Query, description = "ISO-8601 datetime"),
         ("q" = Option<String>, Query, description = "Text search prefix"),
         ("limit" = Option<usize>, Query, description = "Max results (default 50)"),
+        ("paused" = Option<bool>, Query, description = "true = return only paused (hidden) thread nodes"),
     ),
     responses((status = 200)),
     security(("bearer_auth" = [])),
@@ -929,8 +933,14 @@ pub async fn filter_nodes(
         nodes.retain(|n| n.last_modified >= since);
     }
 
-    // Filter: hidden (Thread-kind nodes in hidden state are excluded by default)
-    nodes.retain(|n| n.hidden_at.is_none());
+    // Filter: hidden / paused
+    // `?paused=true` → return ONLY paused (hidden_at IS NOT NULL) threads.
+    // Default → exclude all paused nodes (hidden_at IS NULL).
+    if params.paused.unwrap_or(false) {
+        nodes.retain(|n| n.hidden_at.is_some());
+    } else {
+        nodes.retain(|n| n.hidden_at.is_none());
+    }
 
     nodes.truncate(limit);
     Ok(Json(nodes))
@@ -1156,6 +1166,60 @@ mod tests {
             "exactly one node should match kind=thread&tag=invoices"
         );
         assert_eq!(nodes[0].id, match_node.id);
+    }
+
+    // ── Step 5.3: paused=true filter ─────────────────────────────────────────
+
+    /// `?kind=thread&paused=true` must return ONLY Thread nodes where `hidden_at IS NOT NULL`.
+    /// Active threads must be excluded; the default filter must not affect the paused path.
+    #[tokio::test]
+    async fn filter_nodes_paused_returns_only_hidden_threads() {
+        let state = Arc::new(test_state());
+
+        // Active thread — must NOT appear in paused view.
+        let mut active = workspace_node(NodeKind::File, "Conversations/active.md");
+        active.tenant_id = "acme".into();
+        active.owner_id = "__system__".into();
+        active.semantic_kind = WorkspaceNodeKind::Thread;
+        active.hidden_at = None;
+        state.workspace_store.upsert_node(active.clone()).await.unwrap();
+
+        // Paused thread — MUST appear in paused view.
+        let mut paused = workspace_node(NodeKind::File, "Conversations/paused.md");
+        paused.tenant_id = "acme".into();
+        paused.owner_id = "__system__".into();
+        paused.semantic_kind = WorkspaceNodeKind::Thread;
+        paused.hidden_at = Some(chrono::Utc::now());
+        state.workspace_store.upsert_node(paused.clone()).await.unwrap();
+
+        // Replicate filter_nodes handler logic with paused=true.
+        let mut nodes = state
+            .workspace_store
+            .list_accessible_children("acme", "__system__", None)
+            .await
+            .expect("list children");
+
+        // kind=thread
+        nodes.retain(|n| n.semantic_kind == WorkspaceNodeKind::Thread);
+        // paused=true: include ONLY hidden nodes.
+        nodes.retain(|n| n.hidden_at.is_some());
+
+        assert_eq!(nodes.len(), 1, "only the paused thread should appear");
+        assert_eq!(nodes[0].id, paused.id);
+
+        // Verify default (paused omitted): paused thread must NOT appear.
+        let mut nodes_default = state
+            .workspace_store
+            .list_accessible_children("acme", "__system__", None)
+            .await
+            .expect("list children");
+        nodes_default.retain(|n| n.semantic_kind == WorkspaceNodeKind::Thread);
+        nodes_default.retain(|n| n.hidden_at.is_none());
+
+        assert!(
+            nodes_default.iter().all(|n| n.id != paused.id),
+            "paused thread must be excluded from default view"
+        );
     }
 
     // ── Provisioning tests ────────────────────────────────────────────────────

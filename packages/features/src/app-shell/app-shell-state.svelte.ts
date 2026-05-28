@@ -171,11 +171,88 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
   }
 
   /**
+   * Step 1.4 — Select the workspace folder that matches the given virtual path
+   * so that clicking a breadcrumb crumb opens the folder in the sidebar tree.
+   * Matches `kind: "folder"` nodes whose virtualPath equals the crumb's partial path.
+   */
+  function selectWorkspaceNodeByPath(virtualPath: string): void {
+    const node = flatWorkspaceNodes.find(
+      (n) => n.kind === "folder" && n.virtualPath === virtualPath
+    );
+    if (node) selectWorkspaceNode(node.id);
+  }
+
+  /**
    * Phase 8.3 — flag or clear the status of a workspace node.
    * status="needs-review" surfaces the node in the Needs Review smart view.
    */
   function setNodeStatus(nodeId: string, status: string | null) {
     return workspacesStore.setStatus(nodeId, status);
+  }
+
+  // ── Step 3.4 — Suggested filing (heuristic v1) ─────────────────────────────
+  //
+  // Suggest a filing destination when the active thread is unsorted (still in
+  // the default Conversations folder) and the user has a folder open/selected
+  // in the sidebar tree. INVARIANT: the system NEVER moves without confirmation.
+  //
+  // Heuristic v1: current selected workspace node (or its nearest folder ancestor).
+  // Upgraded later with embeddings / title match once this pattern proves stable.
+
+  /** Whether the user dismissed the hint for the current thread. Reset on navigation. */
+  let filingHintDismissed = $state(false);
+
+  // Reset the dismissed flag whenever the active thread changes.
+  $effect(() => {
+    const _tid = activeThreadId; // reactive dependency
+    filingHintDismissed = false;
+  });
+
+  /**
+   * The suggested folder node for the active thread, or null when there is no
+   * useful suggestion (thread is already filed, no folder selected, or dismissed).
+   */
+  const filingHint = $derived(
+    (() => {
+      if (filingHintDismissed) return null;
+      if (!activeThreadNode) return null;
+
+      // Only suggest when the thread is unsorted.
+      const path = activeThreadNode.virtualPath ?? "";
+      const isUnsorted =
+        path === "Conversations" ||
+        path.startsWith("Conversations/") ||
+        !path.includes("/");
+      if (!isUnsorted) return null;
+
+      // Suggest: the currently selected workspace node (or its nearest folder ancestor).
+      const selId = workspacesStore.selectedNodeId;
+      if (!selId) return null;
+      const selNode = flatWorkspaceNodes.find((n) => n.id === selId);
+      if (!selNode) return null;
+      if (selNode.kind === "folder") return selNode;
+      // Non-folder selection: look up its parent folder.
+      if (selNode.parentId) {
+        return (
+          flatWorkspaceNodes.find(
+            (n) => n.id === selNode.parentId && n.kind === "folder"
+          ) ?? null
+        );
+      }
+      return null;
+    })()
+  );
+
+  /** Step 3.4 — Dismiss the filing hint for this thread (user chose Ignore). */
+  function dismissFilingHint(): void {
+    filingHintDismissed = true;
+  }
+
+  /** Step 3.4 — Confirm the suggestion: move the thread and dismiss. */
+  async function confirmFiling(targetNodeId: string, targetVirtualPath: string): Promise<void> {
+    if (!activeThreadNode) return;
+    await moveWorkspaceNode(activeThreadNode.id, targetNodeId, targetVirtualPath);
+    filingHintDismissed = true;
   }
 
   /** Semantic + name search against the backend, returning sidebar-shaped nodes. */
@@ -213,11 +290,16 @@ export function createAppShellState(args: CreateAppShellStateArgs) {
     renameWorkspaceNode,
     deleteWorkspaceNode,
     restoreThread,
+    selectWorkspaceNodeByPath,
     searchWorkspace,
     insertOptimisticThread,
     setNodeStatus,
     selectSmartView: (kind: SmartViewKind) => smartViewsStore.selectView(kind),
     clearSmartView: () => smartViewsStore.clearView(),
+    // Step 3.4 — suggested filing
+    get filingHint() { return filingHint; },
+    dismissFilingHint,
+    confirmFiling,
     // Phase 4 — "View as document" peek
     get peekOpen() { return peekStore.isOpen; },
     get peekNodeName() { return peekStore.nodeName; },

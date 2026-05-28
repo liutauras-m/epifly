@@ -80,6 +80,8 @@ export function workspaces(client: InternalClient) {
       since?: string;
       q?: string;
       limit?: number;
+      /** When true, return only paused (hidden) thread nodes. */
+      paused?: boolean;
     }): Promise<ApiResult<WorkspaceNode[]>> {
       const qs = new URLSearchParams();
       if (params.tag) qs.set('tag', params.tag);
@@ -87,6 +89,7 @@ export function workspaces(client: InternalClient) {
       if (params.since) qs.set('since', params.since);
       if (params.q) qs.set('q', params.q);
       if (params.limit != null) qs.set('limit', String(params.limit));
+      if (params.paused != null) qs.set('paused', String(params.paused));
       const url = qs.toString() ? `${EP.WORKSPACES_FILTER}?${qs}` : EP.WORKSPACES_FILTER;
       return client.call('GET', url);
     },

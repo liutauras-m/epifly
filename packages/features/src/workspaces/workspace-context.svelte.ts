@@ -93,12 +93,36 @@ const WS_ACTIONS_CTX = Symbol("workspace-actions-ctx");
  * Lets new-chat and thread pages notify the workspace tree of optimistic events
  * without prop-drilling through SvelteKit's layout/page boundary.
  */
+/** A filing suggestion produced by the heuristic (Step 3.4). */
+export type FilingHint = {
+  /** The target folder node id to move the thread into. */
+  readonly id: string;
+  /** Human-readable path for display, e.g. "Clients / Acme". */
+  readonly virtualPath: string;
+  /** Display name (last path segment or full path). */
+  readonly name: string;
+};
+
 export type WorkspaceActionsContext = {
   /**
    * Insert a syncing placeholder node for a brand-new thread while its
    * backend projection is in progress. Idempotent — safe to call more than once.
    */
   readonly insertOptimisticThread: (threadId: string, name: string) => void;
+  /**
+   * Step 1.4 — Select the sidebar tree node whose virtualPath matches the given
+   * partial path. Used by ChatBreadcrumb crumb-click to open a folder.
+   */
+  readonly selectNodeByPath: (virtualPath: string) => void;
+  /**
+   * Step 3.4 — Reactive getter for the current filing hint (null = no suggestion).
+   * Returns a folder to suggest moving the active unsorted thread into.
+   */
+  readonly getFilingHint: () => FilingHint | null;
+  /** Step 3.4 — Dismiss the current hint (user chose Ignore). */
+  readonly dismissFilingHint: () => void;
+  /** Step 3.4 — Confirm: move the active thread to targetNodeId and dismiss. */
+  readonly confirmFiling: (targetNodeId: string, targetVirtualPath: string) => Promise<void>;
 };
 
 export function setWorkspaceActionsContext(actions: WorkspaceActionsContext): void {
