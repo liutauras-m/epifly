@@ -81,9 +81,16 @@ const security: Handle = async ({ event, resolve }) => {
   const zitadelOrigin = getZitadelOrigin();
   const connectSrc = zitadelOrigin ? `'self' ${zitadelOrigin}` : `'self'`;
 
+  // In development, SvelteKit/Vite inject inline scripts and styles for HMR and
+  // SSR hydration. Allow 'unsafe-inline' only in dev; production uses 'self' only.
+  const isDev = env.APP_ENV === "dev" || env.NODE_ENV === "development";
+  const scriptSrc = isDev ? `'self' 'unsafe-inline'` : `'self'`;
+  const styleSrc = isDev ? `'self' 'unsafe-inline'` : `'self'`;
+
   const csp = [
-    "default-src 'self'",
-    "script-src 'self'",
+    `default-src 'self'`,
+    `script-src ${scriptSrc}`,
+    `style-src ${styleSrc}`,
     `connect-src ${connectSrc}`,
     "frame-ancestors 'none'",
     "object-src 'none'",

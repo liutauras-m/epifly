@@ -14,8 +14,8 @@ use agent_core::{
     RedbMetadataStore, RustFsContentStore, SemanticCapabilityRouter, SemanticRouterConfig,
     StorageQuotaService, TenantOnboardingService, TenantStorageFactory, build_admin,
 };
-use agent_core::{TestIdentityProvider, ZitadelCacheStats, ZitadelProvider};
 use agent_core::{ModelCatalog, StaticModelCatalog};
+use agent_core::{TestIdentityProvider, ZitadelCacheStats, ZitadelProvider};
 use base64::Engine as _;
 use billing_core::{BillingProvider, LagoProvider, PlanCatalog, QuotaChecker};
 use common::audit::AuditStore;
@@ -536,6 +536,7 @@ impl AppState {
             }
         };
 
+        let (anthropic_api_key, anthropic_base_url) = anthropic_runtime_config();
         Ok(Self {
             registry,
             rate_limiter: RateLimiter::new(),
@@ -543,9 +544,8 @@ impl AppState {
             api_keys: crate::mw::api_key::parse_api_keys(
                 &std::env::var("API_KEYS").unwrap_or_default(),
             ),
-            anthropic_api_key: std::env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
-            anthropic_base_url: std::env::var("ANTHROPIC_API_BASE_URL")
-                .unwrap_or_else(|_| "https://api.anthropic.com".into()),
+            anthropic_api_key,
+            anthropic_base_url,
             browser_shell_enabled: std::env::var("CONUSAI_FEATURE_BROWSER_SHELL").as_deref()
                 == Ok("1"),
             file_store,
@@ -658,13 +658,17 @@ impl AppState {
         let identity: StdArc<dyn IdentityManager> =
             StdArc::new(TestIdentityProvider) as StdArc<dyn IdentityManager>;
 
+        // Read the same env-derived Anthropic config as the production path so
+        // chat works under CONUSAI_TEST_MODE=1 (local dev) when ANTHROPIC_API_KEY
+        // is set. In CI (key unset) this is empty, preserving hermetic behavior.
+        let (anthropic_api_key, anthropic_base_url) = anthropic_runtime_config();
         Ok(Self {
             registry,
             rate_limiter: RateLimiter::new(),
             llm,
             api_keys: vec![],
-            anthropic_api_key: String::new(),
-            anthropic_base_url: "https://api.anthropic.com".into(),
+            anthropic_api_key,
+            anthropic_base_url,
             browser_shell_enabled: false,
             file_store: None,
             rustfs_admin: None,
@@ -735,6 +739,23 @@ fn build_upstream_http_client() -> reqwest::Client {
         .tcp_keepalive(Duration::from_secs(60))
         .build()
         .expect("build upstream HTTP client")
+}
+
+/// Anthropic runtime config (API key + base URL) read from the environment.
+///
+/// Shared by **both** `AppState::from_env` and `AppState::with_in_memory_stores`
+/// so the two constructors cannot drift. The in-memory constructor previously
+/// hardcoded an empty key, which silently broke chat under `CONUSAI_TEST_MODE=1`
+/// (the local-dev profile) even when `ANTHROPIC_API_KEY` was set — while the LLM
+/// registry, built from the same env, verified successfully and masked the gap.
+/// In CI (no key exported) this still yields an empty key, preserving hermetic
+/// test behavior; tests that need a deterministic key set `anthropic_api_key`
+/// explicitly after construction.
+fn anthropic_runtime_config() -> (String, String) {
+    let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+    let base_url = std::env::var("ANTHROPIC_API_BASE_URL")
+        .unwrap_or_else(|_| "https://api.anthropic.com".into());
+    (api_key, base_url)
 }
 
 fn is_production_env() -> bool {
@@ -927,6 +948,57 @@ mod tests {
         assert!(result.is_ok(), "{result:?}");
     }
 
+    /// Regression: under `CONUSAI_TEST_MODE=1` (the local-dev profile),
+    /// `with_in_memory_stores` must carry `ANTHROPIC_API_KEY` from the
+    /// environment into `anthropic_api_key`. Previously it hardcoded an empty
+    /// string, so chat failed with "ANTHROPIC_API_KEY is not configured" even
+    /// when the key was set — while the LLM registry (same env) verified fine.
+    #[tokio::test]
+    async fn in_memory_stores_carry_anthropic_key_from_env() {
+        let _guard = env_lock().lock().expect("env lock");
+        let saved_key = std::env::var("ANTHROPIC_API_KEY").ok();
+        let saved_url = std::env::var("ANTHROPIC_API_BASE_URL").ok();
+
+        // Safety: tests mutate process env under env_lock to avoid races.
+        unsafe {
+            std::env::set_var("ANTHROPIC_API_KEY", "sk-inmem-regression");
+            std::env::set_var("ANTHROPIC_API_BASE_URL", "http://127.0.0.1:9999");
+        }
+        let state = AppState::with_in_memory_stores().expect("in-memory AppState");
+        assert_eq!(
+            state.anthropic_api_key, "sk-inmem-regression",
+            "in-memory state must read ANTHROPIC_API_KEY from env"
+        );
+        assert_eq!(
+            state.anthropic_base_url, "http://127.0.0.1:9999",
+            "in-memory state must read ANTHROPIC_API_BASE_URL from env"
+        );
+
+        // Absent key → empty + default URL (preserves hermetic CI behavior).
+        unsafe {
+            std::env::remove_var("ANTHROPIC_API_KEY");
+            std::env::remove_var("ANTHROPIC_API_BASE_URL");
+        }
+        let state = AppState::with_in_memory_stores().expect("in-memory AppState");
+        assert!(
+            state.anthropic_api_key.is_empty(),
+            "key should be empty when env unset"
+        );
+        assert_eq!(state.anthropic_base_url, "https://api.anthropic.com");
+
+        // Restore.
+        unsafe {
+            match saved_key {
+                Some(v) => std::env::set_var("ANTHROPIC_API_KEY", v),
+                None => std::env::remove_var("ANTHROPIC_API_KEY"),
+            }
+            match saved_url {
+                Some(v) => std::env::set_var("ANTHROPIC_API_BASE_URL", v),
+                None => std::env::remove_var("ANTHROPIC_API_BASE_URL"),
+            }
+        }
+    }
+
     #[test]
     fn validate_env_contracts_rejects_unknown_embedding_backend_and_model() {
         let _guard = env_lock().lock().expect("env lock");
@@ -995,8 +1067,8 @@ mod tests {
             std::env::remove_var("ZITADEL_TOKEN_VERIFY_MODE");
         }
 
-        let err = AppState::validate_env_contracts()
-            .expect_err("should reject ambiguous verify_mode");
+        let err =
+            AppState::validate_env_contracts().expect_err("should reject ambiguous verify_mode");
         let msg = err.to_string();
         assert!(
             msg.contains("ZITADEL_TOKEN_VERIFY_MODE"),

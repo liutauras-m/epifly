@@ -25,6 +25,7 @@ fn make_provider(server: &MockServer) -> ZitadelProvider {
         introspection_client_secret: "secret".into(),
         mgmt_pat: "pat".into(),
         is_dev: true,
+        internal_base_url: None,
     })
 }
 

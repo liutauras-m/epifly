@@ -79,6 +79,12 @@ pub struct ZitadelConfig {
     pub mgmt_pat: String,
     /// Skip HTTPS enforcement on endpoints (true in dev/test mode only).
     pub is_dev: bool,
+    /// Optional internal base URL for Zitadel HTTP calls (discovery, JWKS, introspection).
+    /// Used in Docker environments where `issuer` (`localhost`) is unreachable from the
+    /// container. When set, HTTP calls use this base URL but send `Host: <issuer-host>`
+    /// so Zitadel routes to the correct instance.
+    /// Example: `ZITADEL_INTERNAL_BASE_URL=http://conusai-zitadel:8080`
+    pub internal_base_url: Option<String>,
 }
 
 impl ZitadelConfig {
@@ -111,6 +117,10 @@ impl ZitadelConfig {
             .unwrap_or(false)
             || cfg!(debug_assertions);
 
+        let internal_base_url = std::env::var("ZITADEL_INTERNAL_BASE_URL")
+            .ok()
+            .map(|u| u.trim_end_matches('/').to_string());
+
         Ok(Self {
             domain: issuer.clone(),
             issuer,
@@ -124,6 +134,7 @@ impl ZitadelConfig {
                 .unwrap_or_default(),
             mgmt_pat: std::env::var("ZITADEL_MGMT_PAT").unwrap_or_default(),
             is_dev,
+            internal_base_url,
         })
     }
 }
@@ -149,10 +160,35 @@ async fn fetch_discovery(
     client: &reqwest::Client,
     issuer: &str,
     is_dev: bool,
+    internal_base_url: Option<&str>,
 ) -> Result<OidcDiscovery, AuthError> {
-    let url = format!("{issuer}/.well-known/openid-configuration");
-    let resp = client
-        .get(&url)
+    // Build the fetch URL: use internal_base_url if set (Docker networking), else issuer.
+    // When using an internal URL we must override the Host header so Zitadel can route
+    // to the correct instance (it checks Host against ExternalDomain:ExternalPort).
+    let (fetch_url, host_override) = match internal_base_url {
+        Some(internal) => {
+            let url = format!("{internal}/.well-known/openid-configuration");
+            // Extract host:port from the public issuer URL for the Host header.
+            let host = reqwest::Url::parse(issuer)
+                .ok()
+                .and_then(|u| {
+                    let host = u.host_str()?.to_string();
+                    Some(match u.port() {
+                        Some(p) => format!("{host}:{p}"),
+                        None => host,
+                    })
+                })
+                .unwrap_or_else(|| issuer.to_string());
+            (url, Some(host))
+        }
+        None => (format!("{issuer}/.well-known/openid-configuration"), None),
+    };
+
+    let mut req = client.get(&fetch_url);
+    if let Some(host) = host_override {
+        req = req.header(reqwest::header::HOST, host);
+    }
+    let resp = req
         .send()
         .await
         .map_err(|e| AuthError::Provider(format!("discovery fetch failed: {e}")))?;
@@ -332,8 +368,11 @@ impl ZitadelProvider {
         let client = self.client.clone();
         let issuer = self.config.issuer.clone();
         let is_dev = self.config.is_dev;
+        let internal = self.config.internal_base_url.clone();
         self.discovery
-            .get_or_try_init(|| async move { fetch_discovery(&client, &issuer, is_dev).await })
+            .get_or_try_init(|| async move {
+                fetch_discovery(&client, &issuer, is_dev, internal.as_deref()).await
+            })
             .await
     }
 
@@ -352,9 +391,44 @@ impl ZitadelProvider {
         }
 
         let discovery = self.get_discovery().await?;
-        let resp = self
-            .client
-            .get(&discovery.jwks_uri)
+
+        // When an internal base URL is configured, rewrite the JWKS URI path onto it
+        // (Zitadel returns the public issuer URL in discovery; we need the internal one).
+        let (jwks_fetch_url, host_override) = match self.config.internal_base_url.as_deref() {
+            Some(internal) => {
+                // Extract just the path+query from the discovery jwks_uri.
+                let path = reqwest::Url::parse(&discovery.jwks_uri)
+                    .ok()
+                    .map(|u| {
+                        let mut s = u.path().to_string();
+                        if let Some(q) = u.query() {
+                            s.push('?');
+                            s.push_str(q);
+                        }
+                        s
+                    })
+                    .unwrap_or_else(|| "/oauth/v2/keys".to_string());
+                let url = format!("{internal}{path}");
+                let host = reqwest::Url::parse(&self.config.issuer)
+                    .ok()
+                    .and_then(|u| {
+                        let h = u.host_str()?.to_string();
+                        Some(match u.port() {
+                            Some(p) => format!("{h}:{p}"),
+                            None => h,
+                        })
+                    })
+                    .unwrap_or_else(|| self.config.issuer.clone());
+                (url, Some(host))
+            }
+            None => (discovery.jwks_uri.clone(), None),
+        };
+
+        let mut jwks_req = self.client.get(&jwks_fetch_url);
+        if let Some(host) = host_override {
+            jwks_req = jwks_req.header(reqwest::header::HOST, host);
+        }
+        let resp = jwks_req
             .send()
             .await
             .map_err(|e| AuthError::Provider(format!("JWKS fetch failed: {e}")))?;
@@ -463,15 +537,31 @@ impl ZitadelProvider {
         }
         self.stats.miss();
 
-        let url = format!("{}/oauth/v2/introspect", self.config.issuer);
-        let resp = self
+        let base = self
+            .config
+            .internal_base_url
+            .as_deref()
+            .unwrap_or(&self.config.issuer);
+        let url = format!("{base}/oauth/v2/introspect");
+        let mut req = self
             .client
             .post(&url)
             .basic_auth(
                 &self.config.introspection_client_id,
                 Some(&self.config.introspection_client_secret),
             )
-            .form(&[("token", token)])
+            .form(&[("token", token)]);
+        if self.config.internal_base_url.is_some()
+            && let Ok(issuer_url) = reqwest::Url::parse(&self.config.issuer)
+            && let Some(host) = issuer_url.host_str()
+        {
+            let host_hdr = match issuer_url.port() {
+                Some(p) => format!("{host}:{p}"),
+                None => host.to_string(),
+            };
+            req = req.header(reqwest::header::HOST, host_hdr);
+        }
+        let resp = req
             .send()
             .await
             .map_err(|e| AuthError::Provider(e.to_string()))?;
@@ -904,6 +994,7 @@ IsEvCkbG04tNoj1MJEM=
             introspection_client_secret: String::new(),
             mgmt_pat: String::new(),
             is_dev: true,
+            internal_base_url: None,
         }
     }
 
@@ -1127,8 +1218,8 @@ IsEvCkbG04tNoj1MJEM=
 
     #[tokio::test]
     async fn unknown_kid_triggers_single_refresh() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
         use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
 
         let server = MockServer::start().await;
@@ -1183,18 +1274,16 @@ IsEvCkbG04tNoj1MJEM=
             revocation_endpoint: None,
             end_session_endpoint: None,
         };
-        provider.discovery.set(discovery).expect("discovery not yet set");
+        provider
+            .discovery
+            .set(discovery)
+            .expect("discovery not yet set");
 
         // Also mount /keys to count fetches (using the already-mounted GET mock above which
         // matches all GET paths)
 
         // Build a JWT signed with a DIFFERENT kid ("unknown-kid-999") not in the keyset.
-        let claims = make_test_claims(
-            &server.uri(),
-            "user|123",
-            "test-gateway",
-            "org-abc",
-        );
+        let claims = make_test_claims(&server.uri(), "user|123", "test-gateway", "org-abc");
         let key = EncodingKey::from_rsa_pem(TEST_RSA_PRIVATE_KEY.as_bytes()).unwrap();
         let mut header = Header::new(Algorithm::RS256);
         header.kid = Some("unknown-kid-999".into());

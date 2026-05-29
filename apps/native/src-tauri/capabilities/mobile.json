@@ -3,9 +3,21 @@
   "identifier": "mobile",
   "description": "Mobile-specific Epifly permissions",
   "windows": ["main"],
+  "local": true,
+  "remote": {
+    "urls": [
+      "http://localhost:1420",
+      "http://localhost:1420/**",
+      "http://tauri.localhost",
+      "http://tauri.localhost/**"
+    ]
+  },
   "permissions": [
     "core:default",
     "deep-link:default",
-    "opener:allow-open-url"
+    "opener:allow-open-url",
+    "allow-auth-start",
+    "allow-auth-get-access-token",
+    "allow-auth-sign-out"
   ]
 }

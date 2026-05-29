@@ -20,7 +20,21 @@ export function realtime(client: InternalClient) {
       }
 
       function connect() {
-        const url = client.baseUrl.replace(/^http/, 'ws') + '/api/realtime/workspace';
+        // Resolve to an absolute WebSocket URL.
+        // When baseUrl is already absolute (http(s)://) we just swap the scheme.
+        // When baseUrl is relative (e.g. "/api") we build the WS URL from the
+        // page origin — the path `/api/realtime/workspace` is appended to the
+        // origin so that a Vite / reverse-proxy can forward it as a WS upgrade.
+        let url: string;
+        if (/^https?:\/\//.test(client.baseUrl)) {
+          url = client.baseUrl.replace(/^http/, 'ws') + '/api/realtime/workspace';
+        } else {
+          const origin =
+            typeof globalThis.location !== 'undefined'
+              ? globalThis.location.origin
+              : 'ws://localhost';
+          url = origin.replace(/^http/, 'ws') + '/api/realtime/workspace';
+        }
         ws = new WebSocket(url);
         attachListeners(ws);
         ws.addEventListener('open', () => { delay = BASE_DELAY_MS; });

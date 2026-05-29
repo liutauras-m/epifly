@@ -47,8 +47,20 @@ export async function getOidcConfig(): Promise<OidcConfig> {
   const redirectUri = `${protocol}://${webHost}/auth/callback`;
   const postLogoutRedirectUri = `${protocol}://${webHost}/`;
 
-  // openid-client v6 discovery — validates issuer exact-match internally
-  const serverConfig = await client.discovery(new URL(issuer), webClientId);
+  // openid-client v6 discovery — validates issuer exact-match internally.
+  // allowInsecureRequests is required for local HTTP Zitadel in dev mode.
+  // discovery(server, clientId, metadata, clientAuthentication, options) — 5 args.
+  const discoveryOptions: Parameters<typeof client.discovery>[4] = {};
+  if (!isProd()) {
+    discoveryOptions.execute = [client.allowInsecureRequests];
+  }
+  const serverConfig = await client.discovery(
+    new URL(issuer),
+    webClientId,
+    {},
+    client.None(),
+    discoveryOptions
+  );
 
   // Assert RS256 is in the supported alg list
   const supportedAlgs = serverConfig.serverMetadata().id_token_signing_alg_values_supported ?? [];

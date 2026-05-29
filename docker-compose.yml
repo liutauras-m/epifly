@@ -1,6 +1,6 @@
 # Conusai local-dev stack. Mirrors dokploy/infra/docker-compose.yml as
 # closely as possible so behaviour you see locally matches production:
-#   - Lago v1.46 with LAGO_-prefixed env vars + dedicated migrate/clock
+#   - Lago v1.47 with LAGO_-prefixed env vars + dedicated migrate/clock
 #   - Zitadel with TLS off (--tlsMode disabled) for plain HTTP on :8085
 #   - In-container DNS only (no host.docker.internal references)
 #
@@ -42,7 +42,8 @@ x-lago-backend-env: &lago-backend-env
 services:
   # ── Postgres (shared: Zitadel + Lago) ────────────────────────────────────
   postgres:
-    image: postgres:17-alpine
+    build: ./docker/postgres
+    image: conusai-postgres-partman:17
     container_name: conusai-postgres
     hostname: conusai-postgres
     profiles: ["infra", "full"]
@@ -123,7 +124,7 @@ services:
   # Without it, lago-api boots against an empty `lago` DB and never reaches
   # `/health`.
   lago-migrate:
-    image: getlago/api:v1.46.0
+    image: getlago/api:v1.47.0
     container_name: conusai-lago-migrate
     profiles: ["infra", "full"]
     restart: "no"
@@ -136,7 +137,7 @@ services:
 
   # ── Lago API (billing) ───────────────────────────────────────────────────
   lago-api:
-    image: getlago/api:v1.46.0
+    image: getlago/api:v1.47.0
     container_name: conusai-lago-api
     hostname: conusai-lago-api
     profiles: ["infra", "full"]
@@ -166,7 +167,7 @@ services:
 
   # ── Lago Worker (Sidekiq) ────────────────────────────────────────────────
   lago-worker:
-    image: getlago/api:v1.46.0
+    image: getlago/api:v1.47.0
     container_name: conusai-lago-worker
     hostname: conusai-lago-worker
     profiles: ["infra", "full"]
@@ -192,7 +193,7 @@ services:
   # Drives the billing/anniversary/subscription cron. Without it,
   # subscription renewals never invoice customers.
   lago-clock:
-    image: getlago/api:v1.46.0
+    image: getlago/api:v1.47.0
     container_name: conusai-lago-clock
     hostname: conusai-lago-clock
     profiles: ["infra", "full"]
@@ -245,6 +246,9 @@ services:
       RUSTFS_SECRET_KEY: "${AWS_SECRET_ACCESS_KEY:-rustfsadmin}"
       RUSTFS_ADDRESS: ":9000"
       RUSTFS_CONSOLE_ENABLE: "true"
+      # RustFS ≥ v0.x now rejects default credentials on non-loopback listeners.
+      # This flag is safe for local dev only; production uses real credentials.
+      RUSTFS_ALLOW_INSECURE_DEFAULT_CREDENTIALS: "true"
     command: ["--console-enable", "/data"]
     ports:
       - "9000:9000"   # S3 API
@@ -318,6 +322,10 @@ services:
       # Billing — talk to Lago in-cluster, not via the host port
       LAGO_API_URL: "${LAGO_API_URL_INTERNAL:-http://conusai-lago-api:3000}"
       LAGO_API_KEY: "${LAGO_API_KEY:-}"
+      # Zitadel internal URL for JWKS/discovery fetches inside Docker.
+      # The public ZITADEL_ISSUER (http://localhost:8085) is unreachable from inside
+      # the container; we use the Docker-internal hostname + correct Host header instead.
+      ZITADEL_INTERNAL_BASE_URL: "http://conusai-zitadel:8080"
     ports:
       - "8080:8080"
     volumes:

@@ -37,6 +37,9 @@ x-lago-backend-env: &lago-backend-env
 
 services:
   # ── Postgres (shared by Zitadel, Lago, future apps) ──────────────────────
+  # NOTE: Lago v1.46+ requires pg_partman. Use an image that bundles it.
+  # The local dev stack builds docker/postgres/Dockerfile (postgres:17 + postgresql-17-partman).
+  # For production, push that image to your registry and reference it here.
   postgres:
     image: postgres:17-alpine
     hostname: conusai-postgres
@@ -217,7 +220,7 @@ services:
   # migrations + extra setup). Without it, lago-api boots against an empty
   # `lago` database, `/health` 5xx's, and the container is marked unhealthy.
   lago-migrate:
-    image: getlago/api:v1.46.0
+    image: getlago/api:v1.47.0
     restart: "no"
     depends_on:
       postgres:
@@ -231,7 +234,7 @@ services:
 
   # ── Lago API (billing) ───────────────────────────────────────────────────
   lago-api:
-    image: getlago/api:v1.46.0
+    image: getlago/api:v1.47.0
     hostname: conusai-lago-api
     restart: unless-stopped
     depends_on:
@@ -267,7 +270,7 @@ services:
 
   # ── Lago Worker (Sidekiq) ────────────────────────────────────────────────
   lago-worker:
-    image: getlago/api:v1.46.0
+    image: getlago/api:v1.47.0
     hostname: conusai-lago-worker
     restart: unless-stopped
     command: ["./scripts/start.worker.sh"]
@@ -296,7 +299,7 @@ services:
   # silently breaks subscription renewals — billing customers will not be
   # invoiced. Upstream's compose ships this as a first-class service.
   lago-clock:
-    image: getlago/api:v1.46.0
+    image: getlago/api:v1.47.0
     hostname: conusai-lago-clock
     restart: unless-stopped
     command: ["./scripts/start.clock.sh"]

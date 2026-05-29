@@ -34,12 +34,12 @@
     "deep-link": {
       "mobile": [
         {
-          "scheme": "epifly",
-          "host": "auth"
+          "host": "auth.epifly.app",
+          "pathPrefix": ["/native"]
         }
       ],
       "desktop": {
-        "scheme": "epifly"
+        "schemes": ["epifly"]
       }
     }
   }

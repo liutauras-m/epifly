@@ -27,8 +27,7 @@ pub fn save_tokens(
     access_token: &str,
     refresh_token: &str,
 ) -> Result<(), keyring::Error> {
-    Entry::new(SERVICE, KEY_META)?
-        .set_password(&serde_json::to_string(meta).unwrap())?;
+    Entry::new(SERVICE, KEY_META)?.set_password(&serde_json::to_string(meta).unwrap())?;
     Entry::new(SERVICE, KEY_ACCESS)?.set_password(access_token)?;
     Entry::new(SERVICE, KEY_REFRESH)?.set_password(refresh_token)?;
     Ok(())
@@ -55,8 +54,7 @@ pub fn update_tokens(
     // Update meta expires_at atomically with the new tokens
     if let Some(mut meta) = load_meta() {
         meta.expires_at = expires_at;
-        Entry::new(SERVICE, KEY_META)?
-            .set_password(&serde_json::to_string(&meta).unwrap())?;
+        Entry::new(SERVICE, KEY_META)?.set_password(&serde_json::to_string(&meta).unwrap())?;
     }
     Entry::new(SERVICE, KEY_ACCESS)?.set_password(access_token)?;
     Entry::new(SERVICE, KEY_REFRESH)?.set_password(refresh_token)?;

@@ -20,8 +20,8 @@ use tokio::sync::OnceCell;
 
 const REDIRECT_PRIORITY: [&str; 3] = [
     "https://auth.epifly.app/native/callback", // Universal Link (production)
-    "epifly://auth/callback",                   // custom scheme fallback
-    "http://127.0.0.1:53682/callback",          // desktop loopback
+    "epifly://auth/callback",                  // custom scheme fallback
+    "http://127.0.0.1:53682/callback",         // desktop loopback
 ];
 
 /// In-progress PKCE transaction. Keyed by state token.
@@ -71,7 +71,10 @@ impl AuthState {
             .get_or_try_init(|| async {
                 let issuer = std::env::var("ZITADEL_ISSUER")
                     .map_err(|_| "ZITADEL_ISSUER not set".to_string())?;
-                let url = format!("{}/.well-known/openid-configuration", issuer.trim_end_matches('/'));
+                let url = format!(
+                    "{}/.well-known/openid-configuration",
+                    issuer.trim_end_matches('/')
+                );
                 let doc: OidcDiscovery = self
                     .http
                     .get(&url)
@@ -108,10 +111,7 @@ impl AuthState {
 // ── Tauri commands ─────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn auth_start(
-    app: AppHandle,
-    prompt: Option<String>,
-) -> Result<(), String> {
+pub async fn auth_start(app: AppHandle, prompt: Option<String>) -> Result<(), String> {
     let state = app.state::<AuthState>();
     state.purge_stale_transactions();
 
@@ -129,13 +129,23 @@ pub async fn auth_start(
 
     let redirect_uri = AuthState::choose_redirect_uri();
 
-    let mut auth_url = url::Url::parse(&discovery.authorization_endpoint)
-        .map_err(|e| e.to_string())?;
+    // Build scope string once — include offline_access (refresh token) and
+    // the org scope so Zitadel includes resourceowner:id in the access token
+    // (required by decode_jwt_claims to derive tenant_id, per auth invariant 37).
+    let org_id = std::env::var("ZITADEL_DEFAULT_ORG_ID").unwrap_or_default();
+    let scope = if org_id.is_empty() {
+        "openid profile email offline_access".to_string()
+    } else {
+        format!("openid profile email offline_access urn:zitadel:iam:org:id:{org_id}")
+    };
+
+    let mut auth_url =
+        url::Url::parse(&discovery.authorization_endpoint).map_err(|e| e.to_string())?;
     {
         let mut q = auth_url.query_pairs_mut();
         q.append_pair("client_id", &client_id);
         q.append_pair("response_type", "code");
-        q.append_pair("scope", "openid profile email");
+        q.append_pair("scope", &scope);
         q.append_pair("redirect_uri", redirect_uri);
         q.append_pair("state", state_token.secret());
         q.append_pair("nonce", &nonce);
@@ -144,12 +154,6 @@ pub async fn auth_start(
         if let Some(p) = prompt.as_deref() {
             q.append_pair("prompt", p);
         }
-        // Request audience for the gateway
-        let aud_scope = format!(
-            "urn:zitadel:iam:org:project:id:{}:aud",
-            std::env::var("ZITADEL_GATEWAY_CLIENT_ID").unwrap_or_default()
-        );
-        q.append_pair("scope", &format!("openid profile email {}", aud_scope));
     }
 
     state.transactions.insert(
@@ -162,8 +166,16 @@ pub async fn auth_start(
         },
     );
 
-    // Open in system browser — never WKWebView
-    tauri_plugin_opener::open_url(auth_url.as_str(), None::<&str>)
+    // Open in system browser — never WKWebView.
+    //
+    // Use the OpenerExt trait method (`app.opener().open_url`), NOT the
+    // free function `tauri_plugin_opener::open_url`. The free function always
+    // uses the `open` crate, which shells out to a CLI binary
+    // (`xdg-open`/`open`) that does not exist on iOS → `os error 2`. The trait
+    // method routes through the mobile plugin to `UIApplication.open` on iOS.
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(auth_url.as_str(), None::<String>)
         .map_err(|e| e.to_string())?;
 
     Ok(())
@@ -235,8 +247,7 @@ async fn do_refresh(state: &AuthState, _iss: &str) -> Result<String, String> {
     let expires_in = resp["expires_in"].as_i64().unwrap_or(3600);
     let expires_at = chrono::Utc::now().timestamp() + expires_in;
 
-    store::update_tokens(&access, &new_refresh, expires_at)
-        .map_err(|e| e.to_string())?;
+    store::update_tokens(&access, &new_refresh, expires_at).map_err(|e| e.to_string())?;
 
     Ok(access)
 }
@@ -246,10 +257,10 @@ pub async fn auth_sign_out(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AuthState>();
 
     // Best-effort: revoke the refresh token
-    if let (Some(refresh_token), Ok(discovery)) = (
-        store::load_refresh_token(),
-        state.discovery().await,
-    ) && let Some(rev_endpoint) = &discovery.revocation_endpoint {
+    if let (Some(refresh_token), Ok(discovery)) =
+        (store::load_refresh_token(), state.discovery().await)
+        && let Some(rev_endpoint) = &discovery.revocation_endpoint
+    {
         let client_id = std::env::var("ZITADEL_NATIVE_CLIENT_ID").unwrap_or_default();
         let _ = state
             .http
@@ -301,7 +312,9 @@ pub async fn handle_callback_url(app: &AppHandle, callback_url: tauri::Url) {
     // Validate redirect_uri: callback must start with the registered URI or one of the priority URIs
     let callback_path = callback_url.to_string();
     let path_matches = callback_path.starts_with(&tx.redirect_uri)
-        || REDIRECT_PRIORITY.iter().any(|uri| callback_path.starts_with(uri));
+        || REDIRECT_PRIORITY
+            .iter()
+            .any(|uri| callback_path.starts_with(uri));
     if !path_matches {
         tracing::warn!("deep-link: redirect_uri mismatch");
         return;
@@ -311,7 +324,10 @@ pub async fn handle_callback_url(app: &AppHandle, callback_url: tauri::Url) {
         Some(c) => c.clone(),
         None => {
             tracing::warn!("deep-link: missing code");
-            let _ = app.emit("auth:error", params.get("error").cloned().unwrap_or_default());
+            let _ = app.emit(
+                "auth:error",
+                params.get("error").cloned().unwrap_or_default(),
+            );
             return;
         }
     };
@@ -359,7 +375,9 @@ async fn exchange_code(
     let access = resp["access_token"]
         .as_str()
         .ok_or("missing_access_token")?;
-    let refresh = resp["refresh_token"].as_str().ok_or("missing_refresh_token")?;
+    let refresh = resp["refresh_token"]
+        .as_str()
+        .ok_or("missing_refresh_token")?;
     let expires_in = resp["expires_in"].as_i64().unwrap_or(3600);
     let expires_at = chrono::Utc::now().timestamp() + expires_in;
 
@@ -375,7 +393,10 @@ async fn exchange_code(
 
     store::save_tokens(&meta, access, refresh).map_err(|e| e.to_string())?;
 
-    let _ = app.emit("auth:signed_in", serde_json::json!({ "org_id": meta.org_id }));
+    let _ = app.emit(
+        "auth:signed_in",
+        serde_json::json!({ "org_id": meta.org_id }),
+    );
     Ok(())
 }
 
@@ -388,15 +409,15 @@ fn decode_jwt_claims(token: &str) -> Result<(String, String, String), String> {
     }
     let pad = |s: &str| -> String {
         let r = s.len() % 4;
-        if r == 0 { s.to_string() } else { format!("{}{}", s, "=".repeat(4 - r)) }
+        if r == 0 {
+            s.to_string()
+        } else {
+            format!("{}{}", s, "=".repeat(4 - r))
+        }
     };
-    let payload = base64::Engine::decode(
-        &base64::engine::general_purpose::URL_SAFE,
-        pad(parts[1]),
-    )
-    .map_err(|e| e.to_string())?;
-    let claims: serde_json::Value =
-        serde_json::from_slice(&payload).map_err(|e| e.to_string())?;
+    let payload = base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE, pad(parts[1]))
+        .map_err(|e| e.to_string())?;
+    let claims: serde_json::Value = serde_json::from_slice(&payload).map_err(|e| e.to_string())?;
 
     let iss = claims["iss"].as_str().unwrap_or("").to_string();
     let sub = claims["sub"].as_str().unwrap_or("").to_string();

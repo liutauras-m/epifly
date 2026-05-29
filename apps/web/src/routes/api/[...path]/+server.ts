@@ -20,7 +20,7 @@ const TIMEOUT_DEFAULT_MS = 60_000;
 const TIMEOUT_SSE_MS = 5 * 60_000;
 
 // Upstream prefixes that are allowed
-const ALLOWED_PREFIXES = ["/v1/", "/healthz"];
+const ALLOWED_PREFIXES = ["/v1/", "/healthz", "/ui/"];
 
 // HTTP methods the proxy accepts
 const ALLOWED_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);

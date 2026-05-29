@@ -69,11 +69,32 @@ export const GET: RequestHandler = async ({ url, cookies, request }) => {
     throw redirect(302, `/auth/error?reason=missing_tokens`);
   }
 
-  const claims: IDToken | undefined = tokenSet.claims();
-  if (!claims) {
+  const idTokenClaims: IDToken | undefined = tokenSet.claims();
+  if (!idTokenClaims) {
     auditLoginFailure({ reason: "missing_claims", rawIp, rawUa });
     throw redirect(302, `/auth/error?reason=missing_claims`);
   }
+
+  // Zitadel puts resourceowner:id in the access token JWT, not in the userinfo endpoint.
+  // Decode the access token payload (trusted: it was just issued by Zitadel via PKCE exchange).
+  let accessTokenClaims: Record<string, unknown> = {};
+  try {
+    const [, payloadB64] = access_token.split(".");
+    if (payloadB64) {
+      accessTokenClaims = JSON.parse(
+        Buffer.from(payloadB64, "base64url").toString("utf8")
+      ) as Record<string, unknown>;
+    }
+  } catch {
+    // Non-JWT access token (opaque) — no Zitadel-specific claims available
+  }
+
+  // Merge: ID token claims are authoritative for identity (sub, iss); access token
+  // claims supply Zitadel-specific extras (resourceowner:id, org roles, etc.).
+  const claims = {
+    ...accessTokenClaims,
+    ...idTokenClaims,
+  } as IDToken & Record<string, unknown>;
 
   const tenantOrgId = (claims[ORG_CLAIM] as string | undefined) ?? "";
   if (!tenantOrgId) {
@@ -102,7 +123,7 @@ export const GET: RequestHandler = async ({ url, cookies, request }) => {
 
   auditLoginSuccess({ iss: userIss, sub: userSub, orgId: tenantOrgId, rawIp, rawUa });
 
-  cookies.delete("__Host-epifly_oidc_tx", { path: "/auth/callback" });
+  cookies.delete("__Host-epifly_oidc_tx", { path: "/" });
   cookies.set("__Host-epifly_sid", sessionId, {
     httpOnly: true,
     secure: true,

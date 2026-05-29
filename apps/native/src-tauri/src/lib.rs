@@ -1,6 +1,6 @@
 mod auth;
 
-use auth::{auth_get_access_token, auth_sign_out, auth_start, AuthState};
+use auth::{AuthState, auth_get_access_token, auth_sign_out, auth_start};
 use tauri_plugin_deep_link::DeepLinkExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

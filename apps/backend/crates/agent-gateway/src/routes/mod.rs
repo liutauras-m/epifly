@@ -629,7 +629,6 @@ pub fn public_router() -> Router<Arc<AppState>> {
         .layer(DefaultBodyLimit::max(DEFAULT_JSON_BODY_LIMIT))
 }
 
-
 /// Super-admin only routes (JWT-protected with role=super_admin).
 pub fn admin_router() -> Router<Arc<AppState>> {
     use crate::mw::admin::require_super_admin_jwt;
@@ -835,6 +834,7 @@ pub fn protected_router(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mw::tenant::ResolvedTenant;
     use agent_core::{PlanTier, TenantContext, UserRole};
     use axum::{
         Router,
@@ -842,7 +842,6 @@ mod tests {
         http::{Request, StatusCode},
         middleware,
     };
-    use crate::mw::tenant::ResolvedTenant;
     use tower::ServiceExt;
 
     /// Build an admin app that injects a `ResolvedTenant` with `role` directly,

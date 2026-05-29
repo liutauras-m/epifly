@@ -41,17 +41,26 @@ export const GET: RequestHandler = async ({ url, cookies, request }) => {
 
   await createOidcTransaction({ state, codeVerifier, nonce, returnTo });
 
+  // __Host- prefix requires Path=/ (RFC 6265bis §4.1.3).
+  // The cookie contains only an opaque state ref, so Path=/ is safe.
   cookies.set("__Host-epifly_oidc_tx", state, {
     httpOnly: true,
     secure: true,
     sameSite: "lax",
-    path: "/auth/callback",
+    path: "/",
     maxAge: 600,
   });
 
+  // Include the Zitadel org scope so the issued access token carries
+  // urn:zitadel:iam:user:resourceowner:id — required for tenant derivation (auth invariant 37).
+  const orgId = env.ZITADEL_DEFAULT_ORG_ID;
+  const scope = ["openid profile email offline_access", orgId ? `urn:zitadel:iam:org:id:${orgId}` : ""]
+    .filter(Boolean)
+    .join(" ");
+
   const authUrl = client.buildAuthorizationUrl(cfg.serverConfig, {
     redirect_uri: cfg.redirectUri,
-    scope: "openid profile email",
+    scope,
     state,
     nonce,
     code_challenge: codeChallenge,

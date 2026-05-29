@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "Default Epifly app permissions",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "allow-auth-start",
+    "allow-auth-get-access-token",
+    "allow-auth-sign-out"
+  ]
 }
