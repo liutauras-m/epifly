@@ -94,4 +94,7 @@ apps/browser-shell/src-tauri/target/
 apps/browser-shell/src-tauri/gen/
 # WKWebView data persisted by Tauri between dev runs
 apps/browser-shell/src-tauri/tmp/
+apps/native/src-tauri/target/
+apps/native/src-tauri/gen/
+apps/native/src-tauri/tmp/
 .epifly.json
