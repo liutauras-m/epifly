@@ -206,7 +206,7 @@ only.
 - [x] **Phase 4** — Native: system browser + Universal/App Link first, custom scheme fallback, **direct** code-for-token exchange in Rust
 - [x] **Phase 5** — Native OS-keychain storage + proactive single-flight refresh + reuse-detection logout
 - [x] **Phase 6** — Tenant binding policy (`issuer + sub` → user; `org_id` → tenant); explicit provisioning policy
-- [ ] **Phase 7** — Hardening: CSP, audit log, secret/dep scan, no-token-in-logs
+- [x] **Phase 7** — Hardening: CSP, audit log, secret/dep scan, no-token-in-logs
 - [ ] **Phase 8** — Acceptance: web (Playwright) + iOS (keychain-injected WDIO + manual smoke)
 - [x] **Phase 9** — Delete legacy `/v1/auth/login`, remove dev-auth, regenerate OpenAPI types, doc updates
 
@@ -628,9 +628,9 @@ node scripts/assert-aasa-and-assetlinks.mjs        # AASA + assetlinks served co
 **Reviewer checklist.**
 - [x] All headers present in prod build.
 - [x] Audit log schema matches list above; nothing extra.
-- [ ] Threat model checked in and reviewed.
-- [ ] CI gates: `cargo audit`, `osv-scanner`, `gitleaks`, "no dev-auth in release", "no auto-provision in prod profile".
-- [ ] `tenant_header_rejected_in_prod` integration test green; manual `curl -H 'X-Tenant-ID: tenant-b'` against prod profile → `400 tenant_header_forbidden`.
+- [x] Threat model checked in and reviewed.
+- [x] CI gates: `cargo audit`, `osv-scanner`, `gitleaks`, "no dev-auth in release", "no auto-provision in prod profile".
+- [x] `tenant_header_rejected_in_prod` integration test green; manual `curl -H 'X-Tenant-ID: tenant-b'` against prod profile → `400 tenant_header_forbidden`.
 
 ---
 
