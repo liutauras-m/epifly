@@ -44,6 +44,8 @@ sqlx.workspace         = true
 
 [dev-dependencies]
 proptest.workspace = true
+wiremock.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [features]
 default          = []

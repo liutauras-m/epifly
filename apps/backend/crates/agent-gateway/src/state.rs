@@ -982,4 +982,25 @@ mod tests {
             "{msg}"
         );
     }
+
+    #[test]
+    fn verify_mode_ambiguity_fails_startup() {
+        // When introspection credentials are present but ZITADEL_TOKEN_VERIFY_MODE is NOT set,
+        // the startup must fail with an explicit ambiguity error rather than silently defaulting.
+        let _guard = env_lock().lock().expect("env lock");
+        set_min_prod_env();
+        unsafe {
+            std::env::set_var("ZITADEL_INTROSPECTION_CLIENT_ID", "some-client-id");
+            std::env::set_var("ZITADEL_INTROSPECTION_CLIENT_SECRET", "some-secret");
+            std::env::remove_var("ZITADEL_TOKEN_VERIFY_MODE");
+        }
+
+        let err = AppState::validate_env_contracts()
+            .expect_err("should reject ambiguous verify_mode");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("ZITADEL_TOKEN_VERIFY_MODE"),
+            "error must mention ZITADEL_TOKEN_VERIFY_MODE: {msg}"
+        );
+    }
 }

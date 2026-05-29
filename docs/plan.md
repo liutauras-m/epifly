@@ -199,7 +199,7 @@ only.
 ## Execution checklist
 
 - [ ] **Z** — Zitadel bootstrap script + per-env `.env` + token-shape assertion fixture
-- [ ] **Phase 0** — Backend JWT verification via JWKS (default) + introspection opt-in
+- [x] **Phase 0** — Backend JWT verification via JWKS (default) + introspection opt-in
 - [ ] **Phase 1** — Web BFF: login + callback + logout, **opaque cookie + server-side session store**
 - [ ] **Phase 2** — Web `/api/[...path]` reverse proxy with header **allowlist** + SSE
 - [ ] **Phase 3** — Web account UI wired to real OIDC; route guards; error pages
@@ -252,12 +252,12 @@ only.
 **Verify (iOS).** N/A. Sanity: existing iOS app still boots.
 
 **Reviewer checklist.**
-- [ ] One default verification strategy (JWKS); introspection only via explicit opt-in.
-- [ ] `alg` allowlisted (no `none`, no HS256 confusion).
-- [ ] `iss` exact-string equality.
-- [ ] JWKS cache single-flight on miss + negative cache.
-- [ ] No token, code, or claims body in any log call in this phase.
-- [ ] `cargo clippy -p agent-gateway -p agent-core --all-targets -- -D warnings` clean.
+- [x] One default verification strategy (JWKS); introspection only via explicit opt-in.
+- [x] `alg` allowlisted (no `none`, no HS256 confusion).
+- [x] `iss` exact-string equality.
+- [x] JWKS cache single-flight on miss + negative cache.
+- [x] No token, code, or claims body in any log call in this phase.
+- [x] `cargo clippy -p agent-gateway -p agent-core --all-targets -- -D warnings` clean.
 
 ---
 

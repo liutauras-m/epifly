@@ -782,7 +782,8 @@ impl TenantManager for ZitadelProvider {
         _email: &str,
         _role: UserRole,
     ) -> Result<(), AuthError> {
-        tracing::info!(tenant_id = %_tenant_id, email = %_email, role = %_role,
+        // email is PII; never log it (auth invariant 38)
+        tracing::info!(tenant_id = %_tenant_id, role = %_role,
             "ZitadelProvider::invite_user — stub (implement Zitadel user creation)");
         Ok(())
     }
@@ -1084,6 +1085,139 @@ IsEvCkbG04tNoj1MJEM=
         if let Err(AuthError::InvalidToken(msg)) = &result {
             assert!(msg.contains("alg"), "error must mention alg: {msg}");
         }
+    }
+
+    // ── alg=none attack ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn rejects_alg_none() {
+        let provider = ZitadelProvider::new(test_config(VerifyMode::Jwks));
+        // Manually construct a JWT with alg=none header.
+        // Header: {"alg":"none","typ":"JWT"}
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"none","typ":"JWT"}"#);
+        let claims = make_test_claims(
+            "https://auth.test.epifly",
+            "user|123",
+            "test-gateway",
+            "org-abc",
+        );
+        let payload_json = serde_json::to_string(&claims).unwrap();
+        let payload = URL_SAFE_NO_PAD.encode(&payload_json);
+        // alg=none token has an empty signature part
+        let none_token = format!("{header}.{payload}.");
+
+        let result = provider.verify_jwt(&none_token).await;
+        assert!(
+            result.is_err(),
+            "alg=none token must be rejected, got: {result:?}"
+        );
+        // Error should mention alg or be a token decode error
+        match &result {
+            Err(AuthError::InvalidToken(msg)) => {
+                // Either our allowlist check fired, or jsonwebtoken rejected it
+                let _ = msg; // any rejection is fine
+            }
+            Err(other) => panic!("unexpected error variant: {other:?}"),
+            Ok(_) => panic!("alg=none must not be accepted"),
+        }
+    }
+
+    // ── unknown_kid triggers exactly one JWKS refresh ─────────────────────────
+
+    #[tokio::test]
+    async fn unknown_kid_triggers_single_refresh() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+        let server = MockServer::start().await;
+        let fetch_count = Arc::new(AtomicUsize::new(0));
+
+        // The JWKS response contains "test-kid-1" only.
+        let jwks_body = serde_json::json!({
+            "keys": [{
+                "kty": "RSA",
+                "kid": "test-kid-1",
+                "n": TEST_RSA_PUBLIC_N,
+                "e": TEST_RSA_PUBLIC_E
+            }]
+        });
+
+        let fetch_count_clone = Arc::clone(&fetch_count);
+        Mock::given(method("GET"))
+            .respond_with(move |_req: &wiremock::Request| {
+                fetch_count_clone.fetch_add(1, Ordering::SeqCst);
+                ResponseTemplate::new(200).set_body_json(&jwks_body)
+            })
+            .mount(&server)
+            .await;
+
+        // Construct a config pointing at the mock server
+        let mut config = test_config(VerifyMode::Jwks);
+        config.issuer = server.uri();
+        config.domain = server.uri();
+
+        // Pre-populate the discovery cache so the provider doesn't need a real discovery endpoint.
+        // We inject a JwkState with the test-kid-1 key already populated.
+        // But we use a kid that IS NOT in the keyset to force a refresh.
+        let provider = Arc::new(ZitadelProvider::new(config));
+
+        // Seed the JWKS cache with a stale/empty state (unknown-kid not present).
+        {
+            let mut jwks = provider.jwks.write().await;
+            *jwks = JwkState {
+                keys: HashMap::new(),
+                negatives: HashSet::new(),
+                fetched_at: None, // stale → triggers refresh on next miss
+            };
+        }
+
+        // Seed discovery so the provider knows the jwks_uri (points to mock server).
+        let discovery = OidcDiscovery {
+            issuer: server.uri(),
+            jwks_uri: format!("{}/keys", server.uri()),
+            authorization_endpoint: format!("{}/auth", server.uri()),
+            token_endpoint: format!("{}/token", server.uri()),
+            id_token_signing_alg_values_supported: vec!["RS256".into()],
+            revocation_endpoint: None,
+            end_session_endpoint: None,
+        };
+        provider.discovery.set(discovery).expect("discovery not yet set");
+
+        // Also mount /keys to count fetches (using the already-mounted GET mock above which
+        // matches all GET paths)
+
+        // Build a JWT signed with a DIFFERENT kid ("unknown-kid-999") not in the keyset.
+        let claims = make_test_claims(
+            &server.uri(),
+            "user|123",
+            "test-gateway",
+            "org-abc",
+        );
+        let key = EncodingKey::from_rsa_pem(TEST_RSA_PRIVATE_KEY.as_bytes()).unwrap();
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some("unknown-kid-999".into());
+        let token = encode(&header, &claims, &key).unwrap();
+
+        // Fire N concurrent verification requests with the unknown kid.
+        // All should fail (kid not in keyset even after refresh), but exactly 1 JWKS fetch.
+        let n = 5;
+        let mut handles = Vec::with_capacity(n);
+        for _ in 0..n {
+            let p = Arc::clone(&provider);
+            let t = token.clone();
+            handles.push(tokio::spawn(async move { p.verify_jwt(&t).await }));
+        }
+        for h in handles {
+            let r = h.await.expect("task panicked");
+            // All must fail — kid not found even after refresh.
+            assert!(r.is_err(), "unknown kid must be rejected");
+        }
+
+        // Exactly one JWKS fetch should have occurred (the single-flight guarantee).
+        let fetches = fetch_count.load(Ordering::SeqCst);
+        assert_eq!(fetches, 1, "expected exactly 1 JWKS refresh, got {fetches}");
     }
 
     // ── verify_mode::Jwks dispatches to verify_jwt ────────────────────────────
