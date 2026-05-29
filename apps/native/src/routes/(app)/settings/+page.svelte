@@ -1,5 +1,14 @@
 <script lang="ts">
   import { AppSafeArea } from "@epifly/ui";
+  import { auth } from "$lib/stores/auth.svelte.js";
+
+  let signingOut = $state(false);
+
+  async function handleSignOut() {
+    signingOut = true;
+    await auth.logout();
+    signingOut = false;
+  }
 </script>
 
 <svelte:head>
@@ -29,24 +38,35 @@
             <span class="text-sm font-medium">Plan</span>
             <span class="text-sm text-muted-foreground">—</span>
           </div>
+          <div class="flex items-center justify-between px-4 py-3.5">
+            <span class="text-sm font-medium text-destructive">Sign out</span>
+            <button
+              onclick={handleSignOut}
+              disabled={signingOut}
+              class="rounded-lg bg-destructive/10 px-3 py-1.5 text-sm font-medium text-destructive transition-colors active:bg-destructive/20 disabled:opacity-50"
+              aria-label="Sign out of Epifly"
+            >
+              {signingOut ? "Signing out…" : "Sign out"}
+            </button>
+          </div>
         </div>
       </section>
 
-      <!-- API / Auth -->
-      <section aria-labelledby="settings-api">
-        <h2 id="settings-api" class="mb-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-          API
+      <!-- Auth status -->
+      <section aria-labelledby="settings-auth">
+        <h2 id="settings-auth" class="mb-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+          Authentication
         </h2>
         <div class="divide-y divide-border rounded-xl border bg-card">
           <div class="flex items-center justify-between px-4 py-3.5">
             <div>
-              <p class="text-sm font-medium">Authentication</p>
+              <p class="text-sm font-medium">Session</p>
               <p class="mt-0.5 text-xs text-muted-foreground">
-                Token provider not yet configured.
+                Secured via OS keychain. Tokens never stored in JS.
               </p>
             </div>
-            <span class="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
-              Pending
+            <span class="rounded-full bg-green-500/15 px-2.5 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
+              Active
             </span>
           </div>
         </div>
