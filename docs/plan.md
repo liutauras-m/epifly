@@ -200,12 +200,12 @@ only.
 
 - [ ] **Z** — Zitadel bootstrap script + per-env `.env` + token-shape assertion fixture
 - [x] **Phase 0** — Backend JWT verification via JWKS (default) + introspection opt-in
-- [ ] **Phase 1** — Web BFF: login + callback + logout, **opaque cookie + server-side session store**
-- [ ] **Phase 2** — Web `/api/[...path]` reverse proxy with header **allowlist** + SSE
-- [ ] **Phase 3** — Web account UI wired to real OIDC; route guards; error pages
-- [ ] **Phase 4** — Native: system browser + Universal/App Link first, custom scheme fallback, **direct** code-for-token exchange in Rust
-- [ ] **Phase 5** — Native OS-keychain storage + proactive single-flight refresh + reuse-detection logout
-- [ ] **Phase 6** — Tenant binding policy (`issuer + sub` → user; `org_id` → tenant); explicit provisioning policy
+- [x] **Phase 1** — Web BFF: login + callback + logout, **opaque cookie + server-side session store**
+- [x] **Phase 2** — Web `/api/[...path]` reverse proxy with header **allowlist** + SSE
+- [x] **Phase 3** — Web account UI wired to real OIDC; route guards; error pages
+- [x] **Phase 4** — Native: system browser + Universal/App Link first, custom scheme fallback, **direct** code-for-token exchange in Rust
+- [x] **Phase 5** — Native OS-keychain storage + proactive single-flight refresh + reuse-detection logout
+- [x] **Phase 6** — Tenant binding policy (`issuer + sub` → user; `org_id` → tenant); explicit provisioning policy
 - [ ] **Phase 7** — Hardening: CSP, audit log, secret/dep scan, no-token-in-logs
 - [ ] **Phase 8** — Acceptance: web (Playwright) + iOS (keychain-injected WDIO + manual smoke)
 - [x] **Phase 9** — Delete legacy `/v1/auth/login`, remove dev-auth, regenerate OpenAPI types, doc updates
@@ -341,13 +341,13 @@ All cleanups are batched (`LIMIT 1000`) and logged with row counts only.
 **Verify (iOS).** N/A.
 
 **Reviewer checklist.**
-- [ ] Cookie payload is opaque only; tokens never reach the browser.
-- [ ] Tokens encrypted at rest with authenticated encryption (AEAD).
-- [ ] `state` stored server-side; one-time use enforced by `consumed_at`.
-- [ ] `returnTo` allowlisted server-side.
-- [ ] Session id rotated after callback (fixation prevention).
-- [ ] PKCE S256 only; no implicit / hybrid / password grants.
-- [ ] Discovery validated and cached; fails closed on mismatch.
+- [x] Cookie payload is opaque only; tokens never reach the browser.
+- [x] Tokens encrypted at rest with authenticated encryption (AEAD).
+- [x] `state` stored server-side; one-time use enforced by `consumed_at`.
+- [x] `returnTo` allowlisted server-side.
+- [x] Session id rotated after callback (fixation prevention).
+- [x] PKCE S256 only; no implicit / hybrid / password grants.
+- [x] Discovery validated and cached; fails closed on mismatch.
 
 ---
 
@@ -375,11 +375,11 @@ All cleanups are batched (`LIMIT 1000`) and logged with row counts only.
 6. Body limit: `POST /api/v1/files` with 100 MiB → `413`.
 
 **Reviewer checklist.**
-- [ ] Allowlist, not blocklist.
-- [ ] Proxy never reads client `authorization` header.
-- [ ] SSE preserves `text/event-stream` and disables buffering.
-- [ ] Cancellation propagates; verified by integration test.
-- [ ] `setWebAccessToken` and the sessionStorage key are gone from the codebase.
+- [x] Allowlist, not blocklist.
+- [x] Proxy never reads client `authorization` header.
+- [x] SSE preserves `text/event-stream` and disables buffering.
+- [x] Cancellation propagates; verified by integration test.
+- [x] `setWebAccessToken` and the sessionStorage key are gone from the codebase.
 
 ---
 
@@ -403,10 +403,10 @@ All cleanups are batched (`LIMIT 1000`) and logged with row counts only.
 6. Trigger each error path; the error page renders correct copy.
 
 **Reviewer checklist.**
-- [ ] No email/password field rendered anywhere.
-- [ ] Route guard runs server-side (`+layout.server.ts`), not in a client `$effect`.
-- [ ] IdP buttons reflect actual backend config.
-- [ ] Error page covers the listed OIDC failure modes.
+- [x] No email/password field rendered anywhere.
+- [x] Route guard runs server-side (`+layout.server.ts`), not in a client `$effect`.
+- [x] IdP buttons reflect actual backend config.
+- [x] Error page covers the listed OIDC failure modes.
 
 ---
 
@@ -478,13 +478,13 @@ likely to be silently dropped if forgotten.
 **Verify (web).** N/A. Sanity: web flow still green; `assetlinks.json` and AASA served with correct MIME.
 
 **Reviewer checklist.**
-- [ ] System browser only; never `inAppBrowser` for IdP pages.
-- [ ] Universal/App Links preferred; custom scheme is fallback only.
-- [ ] Deep-link handler validates scheme + host + path + state + `redirect_uri` exact match + transaction age.
-- [ ] State consumed exactly once.
-- [ ] No client secret in native binary (`strings <binary> | rg -i secret` → no hits).
-- [ ] Token exchange runs in Rust; JS never has the refresh token.
-- [ ] `redirect_uri` exactly matches one of the registered URIs (byte-for-byte).
+- [x] System browser only; never `inAppBrowser` for IdP pages.
+- [x] Universal/App Links preferred; custom scheme is fallback only.
+- [x] Deep-link handler validates scheme + host + path + state + `redirect_uri` exact match + transaction age.
+- [x] State consumed exactly once.
+- [x] No client secret in native binary (`strings <binary> | rg -i secret` → no hits).
+- [x] Token exchange runs in Rust; JS never has the refresh token.
+- [x] `redirect_uri` exactly matches one of the registered URIs (byte-for-byte).
 
 ---
 
@@ -513,11 +513,11 @@ likely to be silently dropped if forgotten.
 7. Sign out → `xcrun simctl spawn booted security find-generic-password -s 'app.epifly.client' 2>&1 | rg 'item could not be found'`.
 
 **Reviewer checklist.**
-- [ ] Refresh is proactive + 401-fallback (one retry).
-- [ ] Single-flight by construction (mutex + notify), not best-effort.
-- [ ] Reuse detection wipes and signs out.
-- [ ] Keychain write is atomic.
-- [ ] Token never written to `UserDefaults`, log, or disk file.
+- [x] Refresh is proactive + 401-fallback (one retry).
+- [x] Single-flight by construction (mutex + notify), not best-effort.
+- [x] Reuse detection wipes and signs out.
+- [x] Keychain write is atomic.
+- [x] Token never written to `UserDefaults`, log, or disk file.
 
 ---
 
@@ -574,9 +574,9 @@ likely to be silently dropped if forgotten.
 7. Acceptance SQL probes everywhere use `WHERE issuer = $1 AND subject = $2`, not `email`.
 
 **Reviewer checklist.**
-- [ ] `email` never appears in `tenant_identity_bindings`.
-- [ ] Auto-provision gated by an env flag that cannot be true in prod (CI enforced).
-- [ ] Frontend never sends `x-tenant-id`; backend derives it from the JWT.
+- [x] `email` never appears in `tenant_identity_bindings`.
+- [x] Auto-provision gated by an env flag that cannot be true in prod (CI enforced).
+- [x] Frontend never sends `x-tenant-id`; backend derives it from the JWT.
 - [ ] Cross-tenant probe is in `e2e/web/auth-zitadel.spec.ts`.
 
 ---
@@ -626,8 +626,8 @@ node scripts/assert-aasa-and-assetlinks.mjs        # AASA + assetlinks served co
 **Verify (iOS).** Charles trace: Zitadel pages never load inside the Tauri WKWebView.
 
 **Reviewer checklist.**
-- [ ] All headers present in prod build.
-- [ ] Audit log schema matches list above; nothing extra.
+- [x] All headers present in prod build.
+- [x] Audit log schema matches list above; nothing extra.
 - [ ] Threat model checked in and reviewed.
 - [ ] CI gates: `cargo audit`, `osv-scanner`, `gitleaks`, "no dev-auth in release", "no auto-provision in prod profile".
 - [ ] `tenant_header_rejected_in_prod` integration test green; manual `curl -H 'X-Tenant-ID: tenant-b'` against prod profile → `400 tenant_header_forbidden`.
