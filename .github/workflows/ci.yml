@@ -62,6 +62,9 @@ jobs:
 
       - run: cargo test --workspace --lib
 
+      - name: Tenant header rejected in prod (Phase 7 gate)
+        run: cargo test -p agent-gateway tenant_header_rejected_in_prod tenant_header_lowercase_rejected_in_prod tenant_header_honored_in_dev
+
       - name: Routing-quality regression (PR 4.2)
         run: cargo test -p agent-gateway --test routing_quality --release
 
@@ -149,6 +152,8 @@ jobs:
     needs: [check, frontend]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # gitleaks needs full history
 
       - name: Install system dependencies
         run: |
@@ -164,8 +169,8 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
 
-      - name: Rust audit
-        run: cargo audit
+      - name: Rust audit (fail on high+)
+        run: cargo audit --deny warnings
 
       - uses: pnpm/action-setup@v4
         with:
@@ -181,6 +186,49 @@ jobs:
 
       - name: pnpm audit (prod)
         run: pnpm audit --prod
+
+      - name: OSV Scanner (JS)
+        uses: google/osv-scanner-action@v1
+        with:
+          scan-args: |-
+            --lockfile=pnpm-lock.yaml
+            --format=table
+          results-file: osv-results.json
+        continue-on-error: false
+
+      - name: Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+      - name: No dev-auth in production release
+        run: |
+          # The 'dev-auth' Cargo feature must not appear in [features] default
+          # of agent-gateway. A grep for 'default.*dev-auth' in the Cargo.toml is
+          # sufficient; the feature may exist but must never be in the default list.
+          if grep -E '^\s*default\s*=.*dev-auth' \
+              apps/backend/crates/agent-gateway/Cargo.toml; then
+            echo "ERROR: dev-auth is in default features — must not ship to production"
+            exit 1
+          fi
+          echo "OK: dev-auth is not in default features"
+
+      - name: Assert no auto-provision in prod configs
+        run: node scripts/assert-no-auto-provision-in-prod.mjs
+
+      - name: Assert no client_secret in web bundle (build required)
+        run: |
+          if [ -d "apps/web/.svelte-kit/output/client" ]; then
+            if grep -rqiE "ZITADEL.*SECRET|client_secret|MGMT_PAT|BOOTSTRAP_PAT" \
+                apps/web/.svelte-kit/output/client 2>/dev/null; then
+              echo "ERROR: secret found in web client bundle"
+              exit 1
+            fi
+            echo "OK: no secrets in web client bundle"
+          else
+            echo "SKIP: web bundle not built in this job"
+          fi
 
   types-drift:
     name: OpenAPI types not stale

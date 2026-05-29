@@ -151,3 +151,124 @@ fn bearer_token(req: &Request) -> Option<&str> {
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::Router;
+    use axum::body::Body;
+    use axum::http::StatusCode;
+    use axum::middleware::from_fn_with_state;
+    use axum::routing::get;
+    use tower::ServiceExt;
+
+    fn prod_state() -> Arc<AppState> {
+        let mut state = AppState::with_in_memory_stores().expect("in-memory AppState for test");
+        state.auth_required = true;
+        Arc::new(state)
+    }
+
+    fn dev_state() -> Arc<AppState> {
+        let mut state = AppState::with_in_memory_stores().expect("in-memory AppState for test");
+        state.auth_required = false;
+        Arc::new(state)
+    }
+
+    async fn ok_handler() -> StatusCode {
+        StatusCode::OK
+    }
+
+    /// Sending `X-Tenant-ID` header in prod mode (auth_required=true) must return
+    /// `400 tenant_header_forbidden` — regardless of whether the token is valid.
+    /// This is the `tenant_header_rejected_in_prod` CI gate.
+    #[tokio::test]
+    async fn tenant_header_rejected_in_prod() {
+        let state = prod_state();
+        let app = Router::new()
+            .route("/", get(ok_handler))
+            .layer(from_fn_with_state(Arc::clone(&state), extract_tenant))
+            .with_state(state);
+
+        let req = axum::http::Request::builder()
+            .uri("/")
+            .header("X-Tenant-ID", "tenant-b")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "X-Tenant-ID must be rejected with 400 in prod mode"
+        );
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = std::str::from_utf8(&body).unwrap();
+        assert!(
+            body_str.contains("tenant_header_forbidden"),
+            "error_code must be tenant_header_forbidden, got: {body_str}"
+        );
+    }
+
+    /// Lowercase `x-tenant-id` is equally forbidden in prod mode (HTTP headers are
+    /// case-insensitive; Axum normalises them to lowercase by default).
+    #[tokio::test]
+    async fn tenant_header_lowercase_rejected_in_prod() {
+        let state = prod_state();
+        let app = Router::new()
+            .route("/", get(ok_handler))
+            .layer(from_fn_with_state(Arc::clone(&state), extract_tenant))
+            .with_state(state);
+
+        let req = axum::http::Request::builder()
+            .uri("/")
+            .header("x-tenant-id", "tenant-b")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "lowercase x-tenant-id must be rejected with 400 in prod mode"
+        );
+    }
+
+    /// In dev mode (auth_required=false) the `X-Tenant-ID` header is honoured and
+    /// the resolved tenant id is forwarded via the `ResolvedTenant` extension.
+    #[tokio::test]
+    async fn tenant_header_honored_in_dev() {
+        let state = dev_state();
+
+        async fn tenant_echo(req: axum::extract::Request) -> (StatusCode, String) {
+            match req.extensions().get::<ResolvedTenant>().cloned() {
+                Some(ResolvedTenant(ctx)) => (StatusCode::OK, ctx.tenant_id.to_string()),
+                None => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "missing tenant ext".into(),
+                ),
+            }
+        }
+
+        let app = Router::new()
+            .route("/", get(tenant_echo))
+            .layer(from_fn_with_state(Arc::clone(&state), extract_tenant))
+            .with_state(state);
+
+        let req = axum::http::Request::builder()
+            .uri("/")
+            .header("X-Tenant-ID", "dev-tenant-xyz")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(std::str::from_utf8(&body).unwrap(), "dev-tenant-xyz");
+    }
+}
