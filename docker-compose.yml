@@ -153,6 +153,10 @@ services:
     environment: &lago-env
       RAILS_ENV: production
       RAILS_LOG_TO_STDOUT: "true"
+      # A schema file that does not exist: on an empty database Rails would load db/structure.sql,
+      # which creates pg_partman unconditionally; the platform's Postgres has no pg_partman, and
+      # the migrations themselves skip partman when it is absent (conusai-cloud MIB-D18).
+      SCHEMA: /app/db/no-structure.sql
       DATABASE_URL: "${POSTGRES_URL}"
       REDIS_URL: "${REDIS_URL}"
       LAGO_REDIS_CACHE_URL: "${REDIS_URL}"
