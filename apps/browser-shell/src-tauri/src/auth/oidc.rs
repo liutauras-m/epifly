@@ -15,7 +15,10 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-pub const SCOPE: &str = "openid profile email offline_access";
+/// The resource-owner scope puts the org id (the gateway's tenant) into the tokens; the
+/// projects:roles scope adds the project roles the gateway maps to admin and super_admin.
+pub const SCOPE: &str =
+    "openid profile email offline_access urn:zitadel:iam:user:resourceowner urn:zitadel:iam:org:projects:roles";
 const CLOCK_SKEW_S: u64 = 60;
 
 #[derive(Debug, Clone, Deserialize)]

@@ -73,7 +73,8 @@ fn require_secure_url(raw: &str) -> Result<(), String> {
 
 fn is_loopback(url: &url::Url) -> bool {
     match url.host() {
-        Some(url::Host::Domain(d)) => d == "localhost",
+        // RFC 6761: `localhost` and every `*.localhost` name resolve to loopback.
+        Some(url::Host::Domain(d)) => d == "localhost" || d.ends_with(".localhost"),
         Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
         Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
         None => false,

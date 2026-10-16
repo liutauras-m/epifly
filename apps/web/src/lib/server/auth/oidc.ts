@@ -32,6 +32,9 @@ export function oidc(): Promise<client.Configuration> {
  * session lives on. The Zitadel app must issue JWT access tokens (the gateway
  * verifies them against the issuer's JWKS).
  */
-export const LOGIN_SCOPE = 'openid profile email offline_access';
+// The resource-owner scope puts the org id (the gateway's tenant) into the tokens; the
+// projects:roles scope adds the project roles the gateway maps to admin and super_admin.
+export const LOGIN_SCOPE =
+	'openid profile email offline_access urn:zitadel:iam:user:resourceowner urn:zitadel:iam:org:projects:roles';
 
 export { client };

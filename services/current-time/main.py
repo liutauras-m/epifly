@@ -108,9 +108,7 @@ async def mcp_handler(request: Request):
 
 MANIFEST = {
     "capability_id": "media.time.current-time",
-    "name": "current-time",
     "namespace": "media.time",
-    "description": "Get the current time, clock, or date. Returns current server time with optional IANA timezone support. Use for: what time is it, current time, now, today's date.",
     "version": "1.0.0",
     "kind": "remote_mcp",
     "endpoint": os.environ["SERVICE_URL"] + "/mcp",
@@ -129,11 +127,8 @@ MANIFEST = {
             },
         }
     ],
-    "tenant_scope": (
-        [t for t in os.getenv("CONUSAI_TENANT_SCOPE", "").split(",") if t]
-        if os.getenv("CONUSAI_TENANT_SCOPE")
-        else []
-    ),
+    # A platform utility, visible to every tenant (the gateway requires the explicit opt-in).
+    "global": True,
     "enabled": True,
     "tags": ["time", "utility"],
 }

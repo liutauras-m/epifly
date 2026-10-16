@@ -1,5 +1,5 @@
 # Local development: the managed services ConusAI Cloud links in production, run here
-# as containers, plus host ports and plain-HTTP Zitadel on localhost.
+# as containers, plus host ports and plain-HTTP Zitadel on zitadel.localhost.
 #   cp .env.example .env   # fill in the blanks
 #   docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
 # Never deployed: ConusAI Cloud reads docker-compose.yml only.
@@ -48,7 +48,7 @@ services:
   gateway:
     environment:
       WEB_ORIGIN: http://localhost:3000
-      ZITADEL_ISSUER: http://localhost:8085
+      ZITADEL_ISSUER: http://zitadel.localhost:8085
       OTEL_EXPORTER_OTLP_ENDPOINT: ""
     depends_on:
       qdrant:
@@ -60,18 +60,24 @@ services:
   web:
     environment:
       ORIGIN: http://localhost:3000
-      ZITADEL_ISSUER: http://localhost:8085
+      ZITADEL_ISSUER: http://zitadel.localhost:8085
     ports: ["127.0.0.1:3000:3000"]
 
+  # One issuer for the browser and the containers: zitadel.localhost:8085. Browsers resolve
+  # *.localhost to this machine (RFC 6761); inside the stack the network alias resolves it.
   zitadel:
     environment:
-      ZITADEL_EXTERNALDOMAIN: localhost
+      ZITADEL_PORT: "8085"
+      ZITADEL_EXTERNALDOMAIN: zitadel.localhost
       ZITADEL_EXTERNALPORT: "8085"
       ZITADEL_EXTERNALSECURE: "false"
     depends_on:
       postgres:
         condition: service_healthy
-    ports: ["127.0.0.1:8085:8080"]
+    networks:
+      default:
+        aliases: [zitadel.localhost]
+    ports: ["127.0.0.1:8085:8085"]
 
   lago-migrate:
     depends_on:

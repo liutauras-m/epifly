@@ -12,7 +12,7 @@ hex() { openssl rand -hex "$1"; }
 pg_password=$(hex 24)
 declare -A v=(
   [WEB_HOST]=localhost:3000
-  [AUTH_HOST]=localhost:8085
+  [AUTH_HOST]=zitadel.localhost:8085
   [BILLING_HOST]=localhost:3001
   [PLATFORM_ADMIN_TOKEN]=$(b64 32)
   [RUSTFS_IAM_ENC_KEY]=$(b64 32)
@@ -26,7 +26,6 @@ declare -A v=(
   [LAGO_ENCRYPTION_DETERMINISTIC_KEY]=$(hex 16)
   [LAGO_ENCRYPTION_KEY_DERIVATION_SALT]=$(hex 16)
   [LAGO_RSA_PRIVATE_KEY]=$(openssl genrsa 2048 2>/dev/null | base64 -w0)
-  [LAGO_WEBHOOK_SECRET]=$(b64 32)
   [POSTGRES_PASSWORD]=$pg_password
   [POSTGRES_URL]="postgresql://epifly:${pg_password}@postgres:5432/epifly"
   [QDRANT_API_KEY]=$(hex 24)

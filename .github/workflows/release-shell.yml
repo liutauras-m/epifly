@@ -8,6 +8,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Public build-time settings of the shell (repository variables, not secrets).
+env:
+  VITE_GATEWAY_URL: ${{ vars.VITE_GATEWAY_URL }}
+  VITE_ZITADEL_ISSUER: ${{ vars.VITE_ZITADEL_ISSUER }}
+  VITE_ZITADEL_NATIVE_CLIENT_ID: ${{ vars.VITE_ZITADEL_NATIVE_CLIENT_ID }}
+
 jobs:
   build-macos:
     name: macOS universal + iOS
