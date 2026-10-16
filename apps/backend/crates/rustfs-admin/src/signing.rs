@@ -27,6 +27,14 @@ fn signing_key(secret_key: &str, date: &str, region: &str, service: &str) -> Vec
     hmac_sha256(&k_service, b"aws4_request")
 }
 
+/// Who signs, and for which region/service.
+pub struct SigningScope<'a> {
+    pub access_key: &'a str,
+    pub secret_key: &'a str,
+    pub region: &'a str,
+    pub service: &'a str,
+}
+
 /// Attach an `Authorization` header (SigV4) to a mutable header map.
 ///
 /// `method` must be uppercase (e.g. "PUT").
@@ -39,13 +47,16 @@ pub fn sign_request(
     uri_path: &str,
     query: &str,
     host: &str,
-    access_key: &str,
-    secret_key: &str,
-    region: &str,
-    service: &str,
+    signer: &SigningScope<'_>,
     extra_headers: &BTreeMap<String, String>,
     payload: &[u8],
 ) -> BTreeMap<String, String> {
+    let SigningScope {
+        access_key,
+        secret_key,
+        region,
+        service,
+    } = *signer;
     let now = Utc::now();
     let datetime = now.format("%Y%m%dT%H%M%SZ").to_string();
     let date = now.format("%Y%m%d").to_string();

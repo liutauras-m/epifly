@@ -8,8 +8,7 @@ use aes_gcm::{
     Aes256Gcm, Key, Nonce,
     aead::{Aead, AeadCore, KeyInit, OsRng},
 };
-use anyhow::{Context, Result, bail};
-use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+use anyhow::{Result, bail};
 use moka::future::Cache;
 use redb::{Database, TableDefinition};
 use serde::{Deserialize, Serialize};
@@ -38,22 +37,9 @@ pub struct CredentialStore {
 }
 
 impl CredentialStore {
-    pub fn new(db: Arc<Database>) -> Result<Self> {
-        let key_b64 = std::env::var("RUSTFS_IAM_ENC_KEY")
-            .unwrap_or_else(|_| {
-                // Dev-only fallback (32 zero bytes). Warn loudly in non-debug.
-                if cfg!(not(debug_assertions)) {
-                    tracing::error!(
-                        "RUSTFS_IAM_ENC_KEY not set — per-tenant credentials will use an insecure dev key"
-                    );
-                }
-                B64.encode([0u8; 32])
-            });
-        let raw = B64.decode(&key_b64).context("decode RUSTFS_IAM_ENC_KEY")?;
-        if raw.len() != 32 {
-            bail!("RUSTFS_IAM_ENC_KEY must decode to exactly 32 bytes");
-        }
-        let key = Key::<Aes256Gcm>::from_slice(&raw);
+    /// `enc_key` is the 32-byte AES-256-GCM key (`RUSTFS_IAM_ENC_KEY`, base64).
+    pub fn new(db: Arc<Database>, enc_key: &[u8; 32]) -> Result<Self> {
+        let key = Key::<Aes256Gcm>::from_slice(enc_key);
         let cipher = Aes256Gcm::new(key);
 
         Ok(Self {

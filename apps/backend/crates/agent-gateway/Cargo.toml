@@ -28,14 +28,11 @@ serde_json.workspace  = true
 thiserror.workspace   = true
 anyhow.workspace      = true
 tracing.workspace              = true
-tracing-subscriber.workspace   = true
 opentelemetry.workspace          = true
 opentelemetry_sdk.workspace      = true
-opentelemetry-prometheus.workspace = true
 prometheus.workspace             = true
 tracing-opentelemetry.workspace  = true
 ulid.workspace                 = true
-jsonwebtoken.workspace = true
 uuid.workspace        = true
 futures.workspace     = true
 tokio-stream.workspace = true
@@ -47,12 +44,8 @@ base64.workspace      = true
 blake3.workspace      = true
 object_store.workspace = true
 chrono.workspace      = true
-axum-extra            = { version = "0.10", features = ["cookie", "multipart"] }
 async-trait.workspace = true
-time                  = "0.3"
 utoipa.workspace      = true
-utoipa-swagger-ui.workspace = true
-rand                  = { version = "0.8" }
 hex                   = { version = "0.4" }
 bytes.workspace       = true
 moka.workspace        = true
@@ -62,6 +55,10 @@ wiremock.workspace = true
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"
 toml.workspace = true
+tower = { workspace = true, features = ["util"] }
+rsa      = { version = "0.9" }
+jsonwebtoken.workspace = true
+rand     = { version = "0.8" }
 
 [features]
 default          = ["local-embeddings"]

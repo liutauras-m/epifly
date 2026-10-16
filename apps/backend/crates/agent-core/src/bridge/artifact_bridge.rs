@@ -17,8 +17,8 @@ const INDEXABLE_MIME_PREFIXES: &[&str] = &["text/", "application/pdf", "applicat
 pub struct ArtifactBridge {
     object_store: Arc<dyn ObjectStore>,
     content_store: Arc<dyn WorkspaceContentStore>,
-    /// Optional base URL for publicly reachable artifacts (e.g. `http://localhost:9000/conusai`).
-    /// Read from `RUSTFS_PUBLIC_BASE_URL` at startup. Required for static hosting.
+    /// Base URL under which statically hosted artifacts are publicly reachable
+    /// (`RUSTFS_PUBLIC_BASE_URL`). Without it, static hosting returns no URL.
     pub_base_url: Option<String>,
 }
 
@@ -26,9 +26,13 @@ impl ArtifactBridge {
     pub fn new(
         object_store: Arc<dyn ObjectStore>,
         content_store: Arc<dyn WorkspaceContentStore>,
+        pub_base_url: Option<String>,
     ) -> Arc<Self> {
-        let pub_base_url = std::env::var("RUSTFS_PUBLIC_BASE_URL").ok();
-        Arc::new(Self { object_store, content_store, pub_base_url })
+        Arc::new(Self {
+            object_store,
+            content_store,
+            pub_base_url,
+        })
     }
 
     /// Materialise all artifacts in `output`. Failures are logged, not propagated.
@@ -62,7 +66,7 @@ impl ArtifactBridge {
 
         for artifact in &output.artifacts {
             match self
-                .materialise(tenant_id, user_id, tool_name, parent_node_id, artifact, path_prefix, hosting)
+                .materialise(tenant_id, tool_name, artifact, path_prefix, hosting)
                 .await
             {
                 Ok(Some(vpath)) => changed_paths.push(vpath),
@@ -77,10 +81,14 @@ impl ArtifactBridge {
         let public_url = if hosting {
             if let Some(ref base) = self.pub_base_url {
                 let root_path = output.metadata["root_path"].as_str().unwrap_or("");
-                let index = output.metadata["index_file"].as_str().unwrap_or("index.html");
+                let index = output.metadata["index_file"]
+                    .as_str()
+                    .unwrap_or("index.html");
                 Some(format!("{base}/{tenant_id}/static/{root_path}/{index}"))
             } else {
-                warn!("hosting_type=static but RUSTFS_PUBLIC_BASE_URL is not set — no public_url returned");
+                warn!(
+                    "hosting_type=static but RUSTFS_PUBLIC_BASE_URL is not set — no public_url returned"
+                );
                 None
             }
         } else {
@@ -96,9 +104,7 @@ impl ArtifactBridge {
     async fn materialise(
         &self,
         tenant_id: &str,
-        _user_id: Option<&str>,
         tool_name: &str,
-        _parent_node_id: Option<&str>,
         artifact: &Artifact,
         path_prefix: Option<&str>,
         hosting: bool,

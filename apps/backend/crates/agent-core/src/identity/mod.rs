@@ -1,118 +1,75 @@
-pub mod legacy;
+//! Caller identity.
+//!
+//! Production identity is Zitadel only: an access token is verified by a
+//! [`TokenVerifier`] and yields an [`Identity`]. The tenant is the Zitadel
+//! organization that owns the user; the plan tier is never taken from a token
+//! (the gateway resolves it server-side from billing).
+
 pub mod zitadel;
 
-use crate::context::tenant::{PlanTier, SubscriptionStatus, TenantContext, UserRole};
+use crate::context::tenant::UserRole;
 use async_trait::async_trait;
 use common::types::TenantId;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-// ── AuthError ─────────────────────────────────────────────────────────────────
+pub use zitadel::{ZitadelConfig, ZitadelVerifier};
 
 #[derive(Debug, Error)]
 pub enum AuthError {
+    /// The credential is malformed, expired, revoked or not meant for us.
     #[error("invalid token: {0}")]
     InvalidToken(String),
 
-    #[error("token expired")]
-    TokenExpired,
-
-    #[error("authentication required")]
-    Unauthenticated,
-
-    #[error("tenant not found: {0}")]
-    TenantNotFound(String),
-
-    #[error("provider error: {0}")]
-    Provider(String),
-
-    #[error("configuration error: {0}")]
-    Config(String),
+    /// The identity provider could not be reached or answered unexpectedly.
+    #[error("identity provider unavailable: {0}")]
+    Unavailable(String),
 }
 
-// ── IdentityContext ───────────────────────────────────────────────────────────
-
-/// Resolved identity from any auth provider.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IdentityContext {
+/// A verified caller.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Identity {
+    /// Zitadel user id (`sub`).
     pub user_id: String,
+    /// Zitadel organization id (`urn:zitadel:iam:user:resourceowner:id`).
     pub tenant_id: TenantId,
+    /// Verified email, display only — never used for authorization.
     pub email: Option<String>,
-    pub roles: Vec<UserRole>,
-    pub plan_tier: PlanTier,
-    pub subscription_status: SubscriptionStatus,
+    /// Highest platform role granted through the project roles claim.
+    pub role: UserRole,
 }
 
-impl IdentityContext {
-    /// Convert to a `TenantContext` for back-compat with existing middleware.
-    pub fn into_tenant_context(
-        self,
-        workspace_root: impl Into<std::path::PathBuf>,
-    ) -> TenantContext {
-        let role = self.roles.first().cloned().unwrap_or(UserRole::User);
-        let mut ctx = TenantContext::new(
-            self.tenant_id,
-            Some(self.user_id),
-            self.plan_tier,
-            workspace_root,
-        );
-        ctx.role = role;
-        ctx
+/// Verifies a bearer access token.
+#[async_trait]
+pub trait TokenVerifier: Send + Sync + 'static {
+    async fn verify(&self, token: &str) -> Result<Identity, AuthError>;
+}
+
+/// Map Zitadel project role keys to the platform role.
+/// `super_admin` → [`UserRole::SuperAdmin`], `admin` → [`UserRole::Admin`].
+pub fn role_from_project_roles<'a>(keys: impl IntoIterator<Item = &'a str>) -> UserRole {
+    let mut role = UserRole::User;
+    for k in keys {
+        match k {
+            "super_admin" => return UserRole::SuperAdmin,
+            "admin" => role = UserRole::Admin,
+            _ => {}
+        }
     }
+    role
 }
 
-// ── Tenant admin types ────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TenantCreated {
-    pub tenant_id: TenantId,
-    pub name: String,
-    pub owner_email: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TenantSummary {
-    pub tenant_id: TenantId,
-    pub name: String,
-    pub owner_email: Option<String>,
-    pub plan_tier: PlanTier,
-    pub subscription_status: SubscriptionStatus,
-}
-
-// ── IdentityProvider ──────────────────────────────────────────────────────────
-
-#[async_trait]
-pub trait IdentityProvider: Send + Sync + 'static {
-    async fn verify_access_token(&self, token: &str) -> Result<IdentityContext, AuthError>;
-    async fn user_info(&self, sub: &str) -> Result<IdentityContext, AuthError>;
-    async fn health(&self) -> Result<(), AuthError>;
-}
-
-/// Combined supertrait — every identity manager can also verify tokens.
-pub trait IdentityManager: IdentityProvider + TenantManager {}
-impl<T: IdentityProvider + TenantManager> IdentityManager for T {}
-
-// ── TenantManager ─────────────────────────────────────────────────────────────
-
-#[async_trait]
-pub trait TenantManager: Send + Sync + 'static {
-    async fn create_tenant(
-        &self,
-        name: &str,
-        owner_email: &str,
-    ) -> Result<TenantCreated, AuthError>;
-    async fn list_tenants(&self) -> Result<Vec<TenantSummary>, AuthError>;
-    async fn invite_user(
-        &self,
-        tenant_id: &TenantId,
-        email: &str,
-        role: UserRole,
-    ) -> Result<(), AuthError>;
-    async fn update_plan_claim(
-        &self,
-        tenant_id: &TenantId,
-        tier: PlanTier,
-        status: SubscriptionStatus,
-    ) -> Result<(), AuthError>;
-    async fn health(&self) -> Result<(), AuthError>;
+    #[test]
+    fn role_mapping() {
+        assert_eq!(role_from_project_roles([]), UserRole::User);
+        assert_eq!(role_from_project_roles(["member"]), UserRole::User);
+        assert_eq!(role_from_project_roles(["admin"]), UserRole::Admin);
+        assert_eq!(
+            role_from_project_roles(["admin", "super_admin"]),
+            UserRole::SuperAdmin
+        );
+    }
 }

@@ -108,49 +108,50 @@ pub struct ApiErrorBody {
 #[derive(Debug)]
 pub struct HttpError {
     pub status: StatusCode,
-    pub body: ApiErrorBody,
+    /// Boxed so `Result<_, HttpError>` stays small on the happy path.
+    pub body: Box<ApiErrorBody>,
 }
 
 impl HttpError {
     pub fn auth(msg: impl Into<String>) -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
-            body: ApiErrorBody {
+            body: Box::new(ApiErrorBody {
                 r#type: "authentication",
                 message: msg.into(),
                 field: None,
                 resource: None,
                 retry_after: None,
                 request_id: None,
-            },
+            }),
         }
     }
 
     pub fn rate_limit(retry_after: Option<u64>) -> Self {
         Self {
             status: StatusCode::TOO_MANY_REQUESTS,
-            body: ApiErrorBody {
+            body: Box::new(ApiErrorBody {
                 r#type: "rate_limit",
                 message: "rate limit exceeded".into(),
                 field: None,
                 resource: None,
                 retry_after,
                 request_id: None,
-            },
+            }),
         }
     }
 
     pub fn not_found(resource: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
-            body: ApiErrorBody {
+            body: Box::new(ApiErrorBody {
                 r#type: "not_found",
                 message: format!("not found: {}", resource.into()),
                 field: None,
                 resource: None,
                 retry_after: None,
                 request_id: None,
-            },
+            }),
         }
     }
 
@@ -159,70 +160,98 @@ impl HttpError {
         let m = message.into();
         Self {
             status: StatusCode::UNPROCESSABLE_ENTITY,
-            body: ApiErrorBody {
+            body: Box::new(ApiErrorBody {
                 r#type: "validation",
                 message: m,
                 field: Some(f),
                 resource: None,
                 retry_after: None,
                 request_id: None,
-            },
+            }),
         }
     }
 
     pub fn agent(msg: impl Into<String>) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            body: ApiErrorBody {
+            body: Box::new(ApiErrorBody {
                 r#type: "agent",
                 message: msg.into(),
                 field: None,
                 resource: None,
                 retry_after: None,
                 request_id: None,
-            },
+            }),
         }
     }
 
     pub fn forbidden(msg: impl Into<String>) -> Self {
         Self {
             status: StatusCode::FORBIDDEN,
-            body: ApiErrorBody {
+            body: Box::new(ApiErrorBody {
                 r#type: "forbidden",
                 message: msg.into(),
                 field: None,
                 resource: None,
                 retry_after: None,
                 request_id: None,
-            },
+            }),
+        }
+    }
+
+    pub fn conflict(msg: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            body: Box::new(ApiErrorBody {
+                r#type: "conflict",
+                message: msg.into(),
+                field: None,
+                resource: None,
+                retry_after: None,
+                request_id: None,
+            }),
+        }
+    }
+
+    pub fn unavailable(msg: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            body: Box::new(ApiErrorBody {
+                r#type: "unavailable",
+                message: msg.into(),
+                field: None,
+                resource: None,
+                retry_after: None,
+                request_id: None,
+            }),
         }
     }
 
     pub fn bad_request(msg: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
-            body: ApiErrorBody {
+            body: Box::new(ApiErrorBody {
                 r#type: "bad_request",
                 message: msg.into(),
                 field: None,
                 resource: None,
                 retry_after: None,
                 request_id: None,
-            },
+            }),
         }
     }
 
     pub fn internal(msg: impl Into<String>, request_id: Option<String>) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            body: ApiErrorBody {
+            body: Box::new(ApiErrorBody {
                 r#type: "internal",
                 message: msg.into(),
                 field: None,
                 resource: None,
                 retry_after: None,
                 request_id,
-            },
+            }),
         }
     }
 
@@ -235,6 +264,6 @@ impl HttpError {
 impl IntoResponse for HttpError {
     fn into_response(self) -> Response {
         let status = self.status;
-        (status, Json(ErrorEnvelope { error: self.body })).into_response()
+        (status, Json(ErrorEnvelope { error: *self.body })).into_response()
     }
 }

@@ -4,6 +4,7 @@
 //! this provider instead of a bespoke Rust implementation.
 
 use crate::capabilities::manifest::{LlmChainConfig, ToolManifest};
+use crate::capabilities::object_source::TenantObjectSource;
 use crate::capabilities::provider::CapabilityProvider;
 use crate::chains::executor;
 use crate::context::tenant::TenantContext;
@@ -17,17 +18,27 @@ pub struct PromptChainCapability {
     manifest: ToolManifest,
     cfg: LlmChainConfig,
     llm: Arc<LlmRegistry>,
+    objects: Arc<dyn TenantObjectSource>,
 }
 
 impl PromptChainCapability {
-    pub fn new(manifest: ToolManifest, llm: Arc<LlmRegistry>) -> anyhow::Result<Self> {
+    pub fn new(
+        manifest: ToolManifest,
+        llm: Arc<LlmRegistry>,
+        objects: Arc<dyn TenantObjectSource>,
+    ) -> anyhow::Result<Self> {
         let cfg = manifest.chain.clone().ok_or_else(|| {
             anyhow::anyhow!(
                 "PromptChainCapability: manifest '{}' has no [chain] section",
                 manifest.name
             )
         })?;
-        Ok(Self { manifest, cfg, llm })
+        Ok(Self {
+            manifest,
+            cfg,
+            llm,
+            objects,
+        })
     }
 }
 
@@ -53,6 +64,6 @@ impl CapabilityProvider for PromptChainCapability {
             })
             .unwrap_or(Value::Null);
         let ctx = serde_json::json!({ "input": input, "tenant": tenant_view });
-        executor::run_chain(&self.cfg, &ctx, &self.llm, tenant).await
+        executor::run_chain(&self.cfg, &ctx, &self.llm, &self.objects, tenant).await
     }
 }

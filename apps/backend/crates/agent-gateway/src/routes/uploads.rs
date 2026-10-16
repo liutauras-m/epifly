@@ -5,7 +5,7 @@
 //! POST /v1/uploads/:id/complete          — complete multipart (streaming, no RAM buffering)
 //! POST /v1/uploads/:id/abort             — abort and clean up
 
-use crate::mw::tenant::ResolvedTenant;
+use crate::auth::ResolvedTenant;
 use crate::state::AppState;
 use agent_core::VirtualPath;
 use axum::{
@@ -17,21 +17,8 @@ use chrono::Utc;
 use common::error::HttpError;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::instrument;
 use ulid::Ulid;
-
-fn presign_ttl_secs() -> i64 {
-    std::env::var("RUSTFS_PRESIGN_TTL_SECS")
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(900)
-        .min(3600)
-}
-
-fn presign_ttl() -> Duration {
-    Duration::from_secs(presign_ttl_secs() as u64)
-}
 
 #[derive(Deserialize)]
 pub struct InitiateBody {
@@ -107,11 +94,12 @@ pub async fn presign_part(
         .map_err(|e| HttpError::agent(format!("storage for tenant: {e}")))?;
 
     let url = storage
-        .presign_staging_put(&upload_id, filename, presign_ttl())
+        .presign_staging_put(&upload_id, filename, state.presign_ttl)
         .await
         .map_err(|e| HttpError::agent(format!("presign part: {e}")))?;
 
-    let expires_at = (Utc::now() + chrono::Duration::seconds(presign_ttl_secs())).to_rfc3339();
+    let expires_at =
+        (Utc::now() + chrono::Duration::seconds(state.presign_ttl.as_secs() as i64)).to_rfc3339();
 
     Ok(Json(PartPresignResponse {
         url: url.to_string(),
@@ -159,7 +147,10 @@ pub async fn complete(
     let parts: Vec<agent_core::CompletedPart> = body
         .parts
         .iter()
-        .map(|p| agent_core::CompletedPart { n: p.n, etag: p.etag.clone() })
+        .map(|p| agent_core::CompletedPart {
+            n: p.n,
+            etag: p.etag.clone(),
+        })
         .collect();
 
     let result = storage

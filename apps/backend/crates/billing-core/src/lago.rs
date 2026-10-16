@@ -5,8 +5,8 @@ use crate::types::{CheckoutSession, Invoice, Subscription, SubscriptionStatus};
 use async_trait::async_trait;
 use common::types::TenantId;
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
@@ -15,22 +15,20 @@ type HmacSha256 = Hmac<Sha256>;
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+/// Lago connection settings (`LAGO_API_URL`, `LAGO_API_KEY`, and the organization
+/// HMAC key `LAGO_WEBHOOK_SECRET` used to verify webhooks). All three are required.
+#[derive(Clone)]
 pub struct LagoConfig {
     pub api_url: String,
     pub api_key: String,
     pub webhook_secret: String,
 }
 
-impl LagoConfig {
-    pub fn from_env() -> Result<Self, BillingError> {
-        let api_url = std::env::var("LAGO_API_URL")
-            .unwrap_or_else(|_| "http://lago-api:3000".into());
-        let api_key = std::env::var("LAGO_API_KEY").map_err(|_| {
-            BillingError::Config("LAGO_API_KEY environment variable not set".into())
-        })?;
-        let webhook_secret = std::env::var("LAGO_WEBHOOK_SECRET").unwrap_or_default();
-        Ok(Self { api_url, api_key, webhook_secret })
+impl std::fmt::Debug for LagoConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LagoConfig")
+            .field("api_url", &self.api_url)
+            .finish_non_exhaustive()
     }
 }
 
@@ -133,11 +131,6 @@ impl LagoProvider {
         });
 
         provider
-    }
-
-    pub fn from_env() -> Result<Self, BillingError> {
-        let config = LagoConfig::from_env()?;
-        Ok(Self::new(config))
     }
 
     fn base_url(&self) -> String {
@@ -288,7 +281,11 @@ impl BillingProvider for LagoProvider {
     async fn cancel_subscription(&self, tenant_id: &TenantId) -> Result<(), BillingError> {
         let external_id = format!("{}-", tenant_id);
         // Fetch current subscription to find external_id.
-        let url = format!("{}/subscriptions?external_customer_id={}", self.base_url(), tenant_id);
+        let url = format!(
+            "{}/subscriptions?external_customer_id={}",
+            self.base_url(),
+            tenant_id
+        );
         let resp = self
             .client
             .get(&url)
@@ -320,20 +317,23 @@ impl BillingProvider for LagoProvider {
     }
 
     async fn get_subscription(&self, tenant_id: &TenantId) -> Result<Subscription, BillingError> {
-        let url = format!(
-            "{}/subscriptions?external_customer_id={}",
-            self.base_url(),
-            tenant_id
-        );
+        let url = format!("{}/subscriptions", self.base_url());
         let resp = self
             .client
             .get(&url)
+            .query(&[("external_customer_id", tenant_id.as_str())])
             .header("Authorization", self.auth_header())
             .send()
             .await?;
 
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
             return Err(BillingError::SubscriptionNotFound(tenant_id.to_string()));
+        }
+        if !resp.status().is_success() {
+            return Err(BillingError::Lago(format!(
+                "list subscriptions failed: HTTP {}",
+                resp.status()
+            )));
         }
 
         #[derive(Deserialize)]
@@ -342,17 +342,22 @@ impl BillingProvider for LagoProvider {
         }
 
         let data: SubscriptionsResp = resp.json().await?;
-        let sub = data
-            .subscriptions
-            .into_iter()
-            .next()
-            .ok_or_else(|| BillingError::SubscriptionNotFound(tenant_id.to_string()))?;
+        // Prefer the active subscription when the customer has several.
+        let mut subs = data.subscriptions;
+        let idx = subs
+            .iter()
+            .position(|s| s.status.as_deref() == Some("active"))
+            .unwrap_or(0);
+        if subs.is_empty() {
+            return Err(BillingError::SubscriptionNotFound(tenant_id.to_string()));
+        }
+        let sub = subs.swap_remove(idx);
 
+        // Unknown or not-yet-started states never grant a paid plan.
         let status = match sub.status.as_deref() {
             Some("active") => SubscriptionStatus::Active,
-            Some("pending") => SubscriptionStatus::Trialing,
-            Some("terminated") => SubscriptionStatus::Canceled,
-            _ => SubscriptionStatus::Active,
+            Some("terminated") | Some("canceled") => SubscriptionStatus::Canceled,
+            _ => SubscriptionStatus::Incomplete,
         };
 
         Ok(Subscription {
@@ -424,11 +429,7 @@ impl BillingProvider for LagoProvider {
         tenant_id: &TenantId,
         _return_url: &str,
     ) -> Result<String, BillingError> {
-        let url = format!(
-            "{}/customers/{}/portal_url",
-            self.base_url(),
-            tenant_id
-        );
+        let url = format!("{}/customers/{}/portal_url", self.base_url(), tenant_id);
         let resp = self
             .client
             .get(&url)
@@ -459,23 +460,7 @@ impl BillingProvider for LagoProvider {
     }
 
     fn verify_webhook(&self, payload: &[u8], signature: &str) -> Result<(), BillingError> {
-        if self.config.webhook_secret.is_empty() {
-            // If no secret configured, skip verification (dev mode).
-            tracing::warn!("LAGO_WEBHOOK_SECRET not set — webhook signature verification skipped");
-            return Ok(());
-        }
-
-        let mut mac =
-            HmacSha256::new_from_slice(self.config.webhook_secret.as_bytes()).map_err(|e| {
-                BillingError::Lago(format!("HMAC init error: {}", e))
-            })?;
-        mac.update(payload);
-        let expected = hex::encode(mac.finalize().into_bytes());
-
-        if !constant_time_eq(expected.as_bytes(), signature.as_bytes()) {
-            return Err(BillingError::InvalidSignature);
-        }
-        Ok(())
+        verify_hmac_signature(&self.config.webhook_secret, payload, signature)
     }
 
     async fn add_credits(
@@ -517,23 +502,30 @@ impl BillingProvider for LagoProvider {
         // Fetch gross revenue analytics from Lago.
         let resp = self
             .client
-            .get(format!("{}/api/v1/analytics/gross_revenue", self.base_url()))
+            .get(format!(
+                "{}/api/v1/analytics/gross_revenue",
+                self.base_url()
+            ))
             .bearer_auth(&self.config.api_key)
             .send()
             .await
             .map_err(|e| BillingError::Lago(e.to_string()))?;
 
         if resp.status().is_success() {
-            let data: serde_json::Value = resp.json().await.map_err(|e| {
-                BillingError::Lago(format!("analytics_summary deserialize: {e}"))
-            })?;
+            let data: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| BillingError::Lago(format!("analytics_summary deserialize: {e}")))?;
             Ok(data)
         } else {
             Ok(serde_json::json!({ "configured": true, "data": [] }))
         }
     }
 
-    async fn ensure_plans(&self, catalog: &crate::catalog::PlanCatalog) -> Result<(), BillingError> {
+    async fn ensure_plans(
+        &self,
+        catalog: &crate::catalog::PlanCatalog,
+    ) -> Result<(), BillingError> {
         for plan in catalog.list() {
             let code = &plan.key;
             // Check if plan already exists.
@@ -577,16 +569,89 @@ impl BillingProvider for LagoProvider {
             } else {
                 let status = resp.status().as_u16();
                 let text = resp.text().await.unwrap_or_default();
-                tracing::warn!(plan = code, status, error = text, "ensure_plans upsert failed");
+                tracing::warn!(
+                    plan = code,
+                    status,
+                    error = text,
+                    "ensure_plans upsert failed"
+                );
             }
         }
         Ok(())
     }
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
+/// Lago HMAC webhook signature: `X-Lago-Signature` = Base64(HMAC-SHA256(hmac_key, raw body)).
+/// An empty key or signature never verifies.
+pub fn verify_hmac_signature(
+    hmac_key: &str,
+    payload: &[u8],
+    signature: &str,
+) -> Result<(), BillingError> {
+    use base64::Engine as _;
+    if hmac_key.is_empty() || signature.is_empty() {
+        return Err(BillingError::InvalidSignature);
     }
-    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    let mut mac = HmacSha256::new_from_slice(hmac_key.as_bytes())
+        .map_err(|e| BillingError::Lago(format!("HMAC init error: {e}")))?;
+    mac.update(payload);
+    let expected = base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
+    if common::secret::constant_time_eq(expected.as_bytes(), signature.trim().as_bytes()) {
+        Ok(())
+    } else {
+        Err(BillingError::InvalidSignature)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine as _;
+
+    fn sign(key: &str, body: &[u8]) -> String {
+        let mut mac = HmacSha256::new_from_slice(key.as_bytes()).unwrap();
+        mac.update(body);
+        base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes())
+    }
+
+    #[test]
+    fn valid_signature_verifies() {
+        let body = br#"{"webhook_type":"subscription.started"}"#;
+        assert!(verify_hmac_signature("k3y", body, &sign("k3y", body)).is_ok());
+    }
+
+    #[test]
+    fn tampered_body_or_wrong_key_fails() {
+        let body = br#"{"webhook_type":"subscription.started"}"#;
+        let sig = sign("k3y", body);
+        assert!(verify_hmac_signature("k3y", b"{}", &sig).is_err());
+        assert!(verify_hmac_signature("other", body, &sig).is_err());
+    }
+
+    #[test]
+    fn missing_key_or_signature_never_verifies() {
+        assert!(verify_hmac_signature("", b"{}", &sign("", b"{}")).is_err());
+        assert!(verify_hmac_signature("k3y", b"{}", "").is_err());
+    }
+
+    #[test]
+    fn hex_signatures_are_not_accepted() {
+        let body = b"{}";
+        let mut mac = HmacSha256::new_from_slice(b"k3y").unwrap();
+        mac.update(body);
+        let hex_sig = hex::encode(mac.finalize().into_bytes());
+        assert!(verify_hmac_signature("k3y", body, &hex_sig).is_err());
+    }
+
+    #[test]
+    fn config_debug_hides_secrets() {
+        let cfg = LagoConfig {
+            api_url: "http://lago:3000".into(),
+            api_key: "lago-api-key-value".into(),
+            webhook_secret: "hmac-key-value".into(),
+        };
+        let shown = format!("{cfg:?}");
+        assert!(!shown.contains("lago-api-key-value"));
+        assert!(!shown.contains("hmac-key-value"));
+    }
 }

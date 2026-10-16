@@ -13,16 +13,19 @@ pub struct StorageQuotaService {
     /// Cache: tenant_id → used bytes (60s TTL)
     usage_cache: Cache<String, u64>,
     factory: Arc<TenantStorageFactory>,
+    /// `RUSTFS_QUOTAS` (default on).
+    enabled: bool,
 }
 
 impl StorageQuotaService {
-    pub fn new(factory: Arc<TenantStorageFactory>) -> Arc<Self> {
+    pub fn new(factory: Arc<TenantStorageFactory>, enabled: bool) -> Arc<Self> {
         Arc::new(Self {
             usage_cache: Cache::builder()
                 .max_capacity(4096)
                 .time_to_live(std::time::Duration::from_secs(60))
                 .build(),
             factory,
+            enabled,
         })
     }
 
@@ -58,7 +61,7 @@ impl StorageQuotaService {
         plan: &PlanTier,
         new_bytes: u64,
     ) -> Result<(), QuotaError> {
-        if !quota_enabled() {
+        if !self.enabled {
             return Ok(());
         }
         let Some(limit) = plan_quota_bytes(plan) else {
@@ -81,10 +84,6 @@ impl StorageQuotaService {
         let tid = tenant_id.to_string();
         tokio::spawn(async move { cache.invalidate(&tid).await });
     }
-}
-
-fn quota_enabled() -> bool {
-    std::env::var("RUSTFS_QUOTAS").as_deref() != Ok("off")
 }
 
 #[derive(Debug, thiserror::Error)]

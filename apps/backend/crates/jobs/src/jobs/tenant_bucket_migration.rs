@@ -52,7 +52,9 @@ impl ScheduledJob for TenantBucketMigrationJob {
             ctx.cred_store.as_ref(),
             ctx.tenant_storage_factory.as_ref(),
         ) else {
-            info!("tenant-bucket-migration: admin, cred_store, or storage factory not configured — skipping");
+            info!(
+                "tenant-bucket-migration: admin, cred_store, or storage factory not configured — skipping"
+            );
             return Ok(());
         };
 
@@ -67,10 +69,10 @@ impl ScheduledJob for TenantBucketMigrationJob {
         let mut errors = 0u32;
 
         for tenant_id in &tenant_ids {
-            if let Some(ref only) = only_tenant {
-                if tenant_id != only {
-                    continue;
-                }
+            if let Some(ref only) = only_tenant
+                && tenant_id != only
+            {
+                continue;
             }
 
             let creds = match cred_store.load(tenant_id).await {
@@ -90,11 +92,23 @@ impl ScheduledJob for TenantBucketMigrationJob {
             }
 
             if dry_run {
-                info!(tenant_id, "tenant-bucket-migration: [dry-run] would migrate");
+                info!(
+                    tenant_id,
+                    "tenant-bucket-migration: [dry-run] would migrate"
+                );
                 continue;
             }
 
-            match migrate_tenant(tenant_id, &creds, admin, cred_store, factory, &ctx.audit_store).await {
+            match migrate_tenant(
+                tenant_id,
+                &creds,
+                admin,
+                cred_store,
+                factory,
+                &ctx.audit_store,
+            )
+            .await
+            {
                 Ok(()) => {
                     migrated += 1;
                     info!(tenant_id, "tenant-bucket-migration: migrated");
@@ -106,7 +120,10 @@ impl ScheduledJob for TenantBucketMigrationJob {
             }
         }
 
-        info!(migrated, skipped, errors, dry_run, "tenant-bucket-migration: complete");
+        info!(
+            migrated,
+            skipped, errors, dry_run, "tenant-bucket-migration: complete"
+        );
 
         if errors > 0 {
             anyhow::bail!("tenant-bucket-migration: {errors} tenant(s) failed — check logs");
@@ -145,7 +162,8 @@ async fn migrate_tenant(
     );
 
     // 3. Provision new service account scoped to the per-tenant bucket.
-    let new_iam = rustfs_admin::iam::rotate_tenant_credentials(admin, tenant_id, &new_bucket).await?;
+    let new_iam =
+        rustfs_admin::iam::rotate_tenant_credentials(admin, tenant_id, &new_bucket).await?;
 
     // 4. Build destination client (per-tenant bucket, new creds).
     let dst_client: Arc<dyn ObjectStore> = Arc::new(
@@ -161,10 +179,7 @@ async fn migrate_tenant(
 
     // 5. List all objects under tenants/{tenant_id}/ in the source bucket.
     let legacy_prefix = object_store::path::Path::from(format!("tenants/{tenant_id}/"));
-    let objects: Vec<_> = src_client
-        .list(Some(&legacy_prefix))
-        .try_collect()
-        .await?;
+    let objects: Vec<_> = src_client.list(Some(&legacy_prefix)).try_collect().await?;
 
     let total = objects.len();
     info!(tenant_id, total, "tenant-bucket-migration: copying objects");
@@ -208,12 +223,18 @@ async fn migrate_tenant(
                 dst_md5,
                 "CRITICAL: checksum mismatch during bucket migration — pausing job"
             );
-            anyhow::bail!("checksum mismatch for key {}: src={src_md5} dst={dst_md5}", meta.location);
+            anyhow::bail!(
+                "checksum mismatch for key {}: src={src_md5} dst={dst_md5}",
+                meta.location
+            );
         }
 
         copied += 1;
         if copied.is_multiple_of(100) {
-            info!(tenant_id, copied, total, "tenant-bucket-migration: progress");
+            info!(
+                tenant_id,
+                copied, total, "tenant-bucket-migration: progress"
+            );
         }
     }
 
@@ -238,9 +259,16 @@ async fn migrate_tenant(
             "objects_copied": copied,
         }));
     let audit = Arc::clone(audit_store);
-    tokio::spawn(async move { let _ = audit.append(event).await; });
+    tokio::spawn(async move {
+        let _ = audit.append(event).await;
+    });
 
-    info!(tenant_id, copied, bucket = new_bucket, "tenant-bucket-migration: switched to dedicated bucket");
+    info!(
+        tenant_id,
+        copied,
+        bucket = new_bucket,
+        "tenant-bucket-migration: switched to dedicated bucket"
+    );
     Ok(())
 }
 

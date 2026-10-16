@@ -7,17 +7,16 @@
 //! 3. If a `plan-on-upload` capability is registered for the tenant, its plan steps are
 //!    resolved and executed in a background task.
 
+use crate::auth::ResolvedTenant;
 use crate::state::AppState;
-use crate::ui::session::SessionUser;
 use agent_core::realtime::WorkspaceChangeEvent;
 use agent_core::{PlanStep, run_plan};
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Multipart, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use object_store::{ObjectStore, path::Path as OsPath};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tracing::warn;
@@ -25,16 +24,9 @@ use uuid::Uuid;
 
 pub async fn ui_upload(
     State(state): State<Arc<AppState>>,
-    user: SessionUser,
+    Extension(ResolvedTenant(tenant)): Extension<ResolvedTenant>,
     mut multipart: Multipart,
 ) -> Response {
-    let store = match state.file_store.as_ref() {
-        Some(s) => s,
-        None => return err(StatusCode::SERVICE_UNAVAILABLE, "file storage not configured"),
-    };
-
-    let tenant = user.tenant_context();
-
     let storage_factory = match state.tenant_storage.as_ref() {
         Some(f) => f,
         None => return err(StatusCode::SERVICE_UNAVAILABLE, "storage not configured"),
@@ -65,13 +57,16 @@ pub async fn ui_upload(
     };
     let size = data.len();
 
-    let object_key = storage.attachment_s3_key(&Uuid::new_v4().to_string(), &filename);
-    let os_path = OsPath::from(object_key.as_str());
-
-    if let Err(e) = store.put(&os_path, data.into()).await {
-        warn!(error = %e, "ui upload write failed");
-        return err(StatusCode::INTERNAL_SERVER_ERROR, &format!("storage: {e}"));
-    }
+    let object_key = match storage
+        .put_attachment(&Uuid::new_v4().to_string(), &filename, data, &content_type)
+        .await
+    {
+        Ok(k) => k,
+        Err(e) => {
+            warn!(error = %e, "ui upload write failed");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "storage write failed");
+        }
+    };
 
     // 6.1 — Register attachment as a workspace node via the storage-workspace capability.
     // Clone the Arc under a short-lived lock, then invoke without holding the mutex.
@@ -90,7 +85,10 @@ pub async fn ui_upload(
                 "filename": base_name,
                 "content": meta_content,
             });
-            if let Err(e) = prov.invoke("save_document", &attach_input, Some(&tenant)).await {
+            if let Err(e) = prov
+                .invoke("save_document", &attach_input, Some(&tenant))
+                .await
+            {
                 warn!(error = %e, "upload: workspace registration failed (non-fatal)");
             }
         }
@@ -118,7 +116,8 @@ pub async fn ui_upload(
                         let realtime = Arc::clone(&state.realtime_service);
                         let tenant_bg = tenant.clone();
                         tokio::spawn(async move {
-                            run_plan(steps, registry, Some(llm), Some(tenant_bg), Some(realtime)).await;
+                            run_plan(steps, registry, Some(llm), Some(tenant_bg), Some(realtime))
+                                .await;
                         });
                     }
                 }

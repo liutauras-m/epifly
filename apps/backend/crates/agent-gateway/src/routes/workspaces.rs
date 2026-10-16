@@ -2,7 +2,7 @@
 ///
 /// All routes require the tenant middleware (Extension<ResolvedTenant>).
 /// Access model: every node is private to owner_id; sharing is explicit per node.
-use crate::mw::tenant::ResolvedTenant;
+use crate::auth::ResolvedTenant;
 use crate::state::AppState;
 use agent_core::VirtualPath;
 use axum::{
@@ -15,7 +15,6 @@ use common::error::HttpError;
 use common::memory::workspace::{NodeKind, WorkspaceNode, effective_user_id, validate_name};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Duration;
 use tracing::instrument;
 use ulid::Ulid;
 
@@ -232,52 +231,56 @@ pub async fn tree(
     // § 1.6 Runtime safety net: first-time root listing for unseeded tenants.
     // If this is a root-level query, the list is empty, and the tenant has not
     // been seeded yet, run idempotent provisioning (single-flight per tenant).
-    if q.parent_id.is_none() && nodes.is_empty() {
-        if let Some(ref onboarding) = state.onboarding {
-            let seeded = state
+    if q.parent_id.is_none()
+        && nodes.is_empty()
+        && let Some(ref onboarding) = state.onboarding
+    {
+        let seeded = state
+            .workspace_store
+            .is_tenant_seeded(&tenant.tenant_id)
+            .await
+            .unwrap_or(true); // on error, assume seeded to avoid repeated provision
+
+        if !seeded {
+            // Acquire the per-tenant single-flight lock before provisioning.
+            let guard = {
+                let mut guards = state.onboarding_guards.lock().unwrap();
+                guards
+                    .entry(tenant.tenant_id.as_str().to_owned())
+                    .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                    .clone()
+            };
+            let _lock = guard.lock().await;
+
+            // Re-check after acquiring lock (another request may have seeded).
+            let still_unseeded = state
                 .workspace_store
                 .is_tenant_seeded(&tenant.tenant_id)
                 .await
-                .unwrap_or(true); // on error, assume seeded to avoid repeated provision
+                .unwrap_or(true);
 
-            if !seeded {
-                // Acquire the per-tenant single-flight lock before provisioning.
-                let guard = {
-                    let mut guards = state.onboarding_guards.lock().unwrap();
-                    guards
-                        .entry(tenant.tenant_id.as_str().to_owned())
-                        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-                        .clone()
+            if !still_unseeded {
+                use agent_core::store::onboarding::{OnboardingOptions, TenantKind};
+                let owner = tenant.user_id.as_deref().unwrap_or("__dev__");
+                let opts = OnboardingOptions {
+                    kind: TenantKind::Normal,
+                    root_name: None,
                 };
-                let _lock = guard.lock().await;
-
-                // Re-check after acquiring lock (another request may have seeded).
-                let still_unseeded = state
-                    .workspace_store
-                    .is_tenant_seeded(&tenant.tenant_id)
-                    .await
-                    .unwrap_or(true);
-
-                if !still_unseeded {
-                    use agent_core::store::onboarding::{OnboardingOptions, TenantKind};
-                    let owner = tenant.user_id.as_deref().unwrap_or("__dev__");
-                    let opts = OnboardingOptions { kind: TenantKind::Normal, root_name: None };
-                    if let Err(e) = onboarding.provision(&tenant.tenant_id, owner, opts).await {
-                        tracing::warn!(
-                            error = %e,
-                            tenant_id = %tenant.tenant_id,
-                            "tree safety-net: onboarding provision failed"
-                        );
-                    }
-
-                    // Re-fetch after provisioning so the root folder appears immediately.
-                    let fresh = state
-                        .workspace_store
-                        .list_accessible_children(&tenant.tenant_id, user, None)
-                        .await
-                        .map_err(map_err)?;
-                    return Ok(Json(apply_cursor(fresh, q.after)));
+                if let Err(e) = onboarding.provision(&tenant.tenant_id, owner, opts).await {
+                    tracing::warn!(
+                        error = %e,
+                        tenant_id = %tenant.tenant_id,
+                        "tree safety-net: onboarding provision failed"
+                    );
                 }
+
+                // Re-fetch after provisioning so the root folder appears immediately.
+                let fresh = state
+                    .workspace_store
+                    .list_accessible_children(&tenant.tenant_id, user, None)
+                    .await
+                    .map_err(map_err)?;
+                return Ok(Json(apply_cursor(fresh, q.after)));
             }
         }
     }
@@ -479,29 +482,29 @@ pub async fn move_node(
         .map_err(map_err)?;
 
     // Copy object to new key and delete old key when virtual_path changed.
-    if let Some(old_path) = old_virtual_path {
-        if node.virtual_path != old_path {
-            match state
-                .workspace_content
-                .read(&tenant.tenant_id, &old_path)
-                .await
-            {
-                Ok(content) if !content.is_empty() => {
-                    if let Err(e) = state
+    if let Some(old_path) = old_virtual_path
+        && node.virtual_path != old_path
+    {
+        match state
+            .workspace_content
+            .read(&tenant.tenant_id, &old_path)
+            .await
+        {
+            Ok(content) if !content.is_empty() => {
+                if let Err(e) = state
+                    .workspace_content
+                    .write(&tenant.tenant_id, &node.virtual_path, &content)
+                    .await
+                {
+                    tracing::warn!(error = %e, "move_node: failed to copy object to new key");
+                } else {
+                    let _ = state
                         .workspace_content
-                        .write(&tenant.tenant_id, &node.virtual_path, &content)
-                        .await
-                    {
-                        tracing::warn!(error = %e, "move_node: failed to copy object to new key");
-                    } else {
-                        let _ = state
-                            .workspace_content
-                            .delete(&tenant.tenant_id, &old_path)
-                            .await;
-                    }
+                        .delete(&tenant.tenant_id, &old_path)
+                        .await;
                 }
-                _ => {}
             }
+            _ => {}
         }
     }
 
@@ -539,10 +542,16 @@ pub async fn rename_node(
     let user = effective_user_id(tenant.user_id.as_deref());
 
     // Check if node is a protected root — only admins may rename it.
-    if let Ok(node) = state.workspace_store.get_accessible_node(&tenant.tenant_id, user, id).await {
-        if node.is_protected_root && tenant.role == UserRole::User {
-            return Err(HttpError::forbidden("only admins may rename the workspace root folder"));
-        }
+    if let Ok(node) = state
+        .workspace_store
+        .get_accessible_node(&tenant.tenant_id, user, id)
+        .await
+        && node.is_protected_root
+        && tenant.role == UserRole::User
+    {
+        return Err(HttpError::forbidden(
+            "only admins may rename the workspace root folder",
+        ));
     }
 
     let updated = state
@@ -678,18 +687,6 @@ pub async fn delete_node(
 
 // ── Helpers for presign routes ───────────────────────────────────────────────
 
-fn presign_ttl_secs() -> i64 {
-    std::env::var("RUSTFS_PRESIGN_TTL_SECS")
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(900)
-        .min(3600)
-}
-
-fn presign_ttl() -> Duration {
-    Duration::from_secs(presign_ttl_secs() as u64)
-}
-
 // ── Presigned URL endpoints ──────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -733,10 +730,16 @@ pub async fn presign_upload(
         .map_err(map_err)?;
 
     // Check quota if size is provided
-    if let Some(size) = body.size_bytes {
-        if let Err(e) = state.storage_quota.check(&tenant.tenant_id, &tenant.plan, size).await {
-            return Err(HttpError::validation("size_bytes", format!("quota exceeded: {e}")));
-        }
+    if let Some(size) = body.size_bytes
+        && let Err(e) = state
+            .storage_quota
+            .check(&tenant.tenant_id, &tenant.plan, size)
+            .await
+    {
+        return Err(HttpError::validation(
+            "size_bytes",
+            format!("quota exceeded: {e}"),
+        ));
     }
 
     let vp = VirtualPath::parse(&body.virtual_path)
@@ -751,11 +754,11 @@ pub async fn presign_upload(
         .map_err(|e| HttpError::agent(format!("storage for tenant: {e}")))?;
 
     let url = storage
-        .presign_workspace_put(&vp, presign_ttl())
+        .presign_workspace_put(&vp, state.presign_ttl)
         .await
         .map_err(|e| HttpError::agent(format!("presign PUT: {e}")))?;
 
-    let ttl = presign_ttl_secs();
+    let ttl = state.presign_ttl.as_secs() as i64;
     let expires_at = (Utc::now() + chrono::Duration::seconds(ttl)).to_rfc3339();
 
     Ok(Json(PresignUploadResponse {
@@ -803,11 +806,11 @@ pub async fn presign_download(
         .map_err(|e| HttpError::agent(format!("storage for tenant: {e}")))?;
 
     let url = storage
-        .presign_workspace_get(&vp, presign_ttl(), None)
+        .presign_workspace_get(&vp, state.presign_ttl, None)
         .await
         .map_err(|e| HttpError::agent(format!("presign GET: {e}")))?;
 
-    let ttl = presign_ttl_secs();
+    let ttl = state.presign_ttl.as_secs() as i64;
     let expires_at = (Utc::now() + chrono::Duration::seconds(ttl)).to_rfc3339();
 
     Ok(Json(PresignDownloadResponse {
@@ -864,12 +867,14 @@ pub async fn list_versions(
 
     let versions: Vec<VersionEntry> = raw
         .into_iter()
-        .map(|(version_id, last_modified, size, is_latest)| VersionEntry {
-            version_id,
-            last_modified,
-            size: size as usize,
-            is_current: is_latest,
-        })
+        .map(
+            |(version_id, last_modified, size, is_latest)| VersionEntry {
+                version_id,
+                last_modified,
+                size: size as usize,
+                is_current: is_latest,
+            },
+        )
         .collect();
 
     Ok(Json(versions))

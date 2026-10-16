@@ -4,7 +4,7 @@
 /// `Extension<PlanLimits>` so handlers can clamp tokens/turns/RPM without
 /// calling the deprecated `PlanTier::max_tokens()` etc.
 ///
-/// Must run AFTER `extract_api_key` and `extract_tenant` middleware.
+/// Must run inside `auth::authenticate`.
 use agent_core::PlanTier;
 use axum::{
     extract::Request,
@@ -14,7 +14,7 @@ use axum::{
 use common::error::HttpError;
 use tracing::warn;
 
-use crate::mw::tenant::ResolvedTenant;
+use crate::auth::ResolvedTenant;
 
 /// Middleware: validate plan and insert `Extension<PlanLimits>` for handlers.
 pub async fn enforce_plan(mut req: Request, next: Next) -> Response {

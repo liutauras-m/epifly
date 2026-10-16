@@ -36,23 +36,6 @@ impl Default for AdminLimits {
     }
 }
 
-impl AdminLimits {
-    /// Load limits from environment variables with built-in defaults.
-    pub fn from_env() -> Self {
-        fn env_usize(key: &str, default: usize) -> usize {
-            std::env::var(key)
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(default)
-        }
-        Self {
-            max_capabilities: env_usize("CONUSAI_MAX_CAPABILITIES", 64),
-            max_manifest_bytes: env_usize("CONUSAI_MAX_MANIFEST_BYTES", 65_536),
-            max_wasm_bytes: env_usize("CONUSAI_MAX_WASM_BYTES", 8_388_608),
-        }
-    }
-}
-
 // ── DTOs ──────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -390,9 +373,10 @@ impl CapabilityAdmin {
 
 /// Build a `CapabilityAdmin` from `AppState`-like components.
 pub fn build_admin(
+    capabilities_dir: impl Into<std::path::PathBuf>,
     registry: Arc<Mutex<CapabilityRegistry>>,
     audit: Arc<dyn AuditStore>,
 ) -> CapabilityAdmin {
-    let store = Arc::new(FilesystemStore::from_env());
-    CapabilityAdmin::new(store, registry, audit).with_limits(AdminLimits::from_env())
+    let store = Arc::new(FilesystemStore::new(capabilities_dir));
+    CapabilityAdmin::new(store, registry, audit).with_limits(AdminLimits::default())
 }

@@ -19,6 +19,7 @@
 //! Token-budget assertion is approximate (`bytes / 4`) and compares against
 //! `target/routing_tokens.baseline` for ≤ 110% drift.
 
+use agent_core::capabilities::object_source::NoObjectSource;
 use agent_core::{
     CapabilityRegistry, NativeStorageFactory,
     capabilities::discovery::CapabilityDiscovery,
@@ -78,7 +79,9 @@ fn build_registry() -> CapabilityRegistry {
             model: "claude-haiku-4-5".into(),
         },
     ));
-    let mut reg = CapabilityRegistry::with_default_factories(Arc::clone(&llm));
+    let mut reg =
+        CapabilityRegistry::with_default_factories(Arc::clone(&llm), Arc::new(NoObjectSource))
+            .expect("registry");
     reg.register_factory(NativeStorageFactory::new(
         Arc::clone(&ws_store),
         Arc::clone(&ws_content),
@@ -150,7 +153,10 @@ struct CaseResult {
 fn write_markdown_report(path: &std::path::Path, results: &[CaseResult]) {
     let mut out = String::new();
     out.push_str("# Routing-quality report\n\n");
-    out.push_str(&format!("Generated: {}\n\n", chrono::Utc::now().to_rfc3339()));
+    out.push_str(&format!(
+        "Generated: {}\n\n",
+        chrono::Utc::now().to_rfc3339()
+    ));
     out.push_str("## Per-case results\n\n");
     out.push_str("| id | variant | pass | actual capabilities |\n");
     out.push_str("|----|---------|------|---------------------|\n");

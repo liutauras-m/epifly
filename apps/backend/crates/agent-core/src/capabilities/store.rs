@@ -34,12 +34,6 @@ impl FilesystemStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
     }
-
-    pub fn from_env() -> Self {
-        let dir = std::env::var("CONUSAI_CAPABILITIES_DIR")
-            .unwrap_or_else(|_| "./capabilities".to_string());
-        Self::new(dir)
-    }
 }
 
 impl RegisteredToolStore for FilesystemStore {

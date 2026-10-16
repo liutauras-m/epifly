@@ -40,12 +40,14 @@ impl JobExecutor {
     }
 
     /// Enqueue a background job by name and return the new `task_id`.
+    /// `tenant_id` owns the task (`None` = platform task).
     ///
     /// Returns `Err` if no job with that name is registered.
     pub async fn enqueue(
         self: &Arc<Self>,
         job_name: &str,
         input: serde_json::Value,
+        tenant_id: Option<&str>,
     ) -> anyhow::Result<Uuid> {
         let job = self
             .registry
@@ -53,7 +55,7 @@ impl JobExecutor {
             .ok_or_else(|| anyhow::anyhow!("no background job registered: {job_name}"))?;
 
         let task_id = Uuid::new_v4();
-        let status = TaskStatus::new(task_id, job_name);
+        let status = TaskStatus::new(task_id, job_name, tenant_id.map(str::to_owned));
         let job_name_owned = job_name.to_owned();
 
         // Create broadcast channel for SSE
@@ -94,24 +96,55 @@ impl JobExecutor {
         Ok(task_id)
     }
 
-    /// Get a task's current status snapshot.
+    /// Get any task's status snapshot (platform admin only).
     pub async fn get_status(&self, task_id: Uuid) -> Option<TaskStatus> {
         self.tasks.read().await.get(&task_id).cloned()
     }
 
-    /// List all known task statuses (newest first, up to `limit`).
+    /// A task's status, only when it belongs to `tenant_id`.
+    pub async fn get_status_for_tenant(
+        &self,
+        task_id: Uuid,
+        tenant_id: &str,
+    ) -> Option<TaskStatus> {
+        self.get_status(task_id)
+            .await
+            .filter(|t| t.tenant_id.as_deref() == Some(tenant_id))
+    }
+
+    /// List all known task statuses, newest first (platform admin only).
     pub async fn list_tasks(&self, limit: usize) -> Vec<TaskStatus> {
+        self.list_filtered(limit, |_| true).await
+    }
+
+    /// List the tasks owned by `tenant_id`, newest first.
+    pub async fn list_tasks_for_tenant(&self, tenant_id: &str, limit: usize) -> Vec<TaskStatus> {
+        self.list_filtered(limit, |t| t.tenant_id.as_deref() == Some(tenant_id))
+            .await
+    }
+
+    async fn list_filtered(
+        &self,
+        limit: usize,
+        keep: impl Fn(&TaskStatus) -> bool,
+    ) -> Vec<TaskStatus> {
         let tasks = self.tasks.read().await;
-        let mut all: Vec<TaskStatus> = tasks.values().cloned().collect();
+        let mut all: Vec<TaskStatus> = tasks.values().filter(|t| keep(t)).cloned().collect();
         all.sort_by_key(|x| std::cmp::Reverse(x.created_at));
         all.truncate(limit);
         all
     }
 
-    /// Subscribe to task events for SSE streaming.
+    /// Subscribe to the events of a task owned by `tenant_id`.
     ///
-    /// Returns `None` if the task is already complete (no channel).
-    pub async fn subscribe(&self, task_id: Uuid) -> Option<broadcast::Receiver<TaskEvent>> {
+    /// Returns `None` when the task is unknown, belongs to another tenant, or is
+    /// already complete (no channel).
+    pub async fn subscribe_for_tenant(
+        &self,
+        task_id: Uuid,
+        tenant_id: &str,
+    ) -> Option<broadcast::Receiver<TaskEvent>> {
+        self.get_status_for_tenant(task_id, tenant_id).await?;
         self.channels
             .read()
             .await
@@ -153,8 +186,13 @@ struct JobDispatchAdapter(Arc<JobExecutor>);
 
 #[async_trait::async_trait]
 impl agent_core::JobDispatch for JobDispatchAdapter {
-    async fn enqueue(&self, job_type: &str, payload: serde_json::Value) -> anyhow::Result<String> {
-        let uuid = self.0.enqueue(job_type, payload).await?;
+    async fn enqueue(
+        &self,
+        job_type: &str,
+        payload: serde_json::Value,
+        tenant_id: &str,
+    ) -> anyhow::Result<String> {
+        let uuid = self.0.enqueue(job_type, payload, Some(tenant_id)).await?;
         Ok(uuid.to_string())
     }
 }

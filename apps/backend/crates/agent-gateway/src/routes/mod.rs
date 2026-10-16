@@ -7,16 +7,13 @@ use axum::{
 use std::sync::Arc;
 use utoipa::Modify;
 use utoipa::OpenApi;
-use utoipa::openapi::security::{ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityScheme};
-use utoipa_swagger_ui::SwaggerUi;
+use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 
 mod admin_capabilities;
-pub(crate) mod admin_devices;
 mod admin_jobs;
 mod admin_tenants;
 pub mod agent;
 mod audit;
-pub mod auth;
 pub mod billing;
 pub mod billing_webhook;
 mod capabilities;
@@ -27,7 +24,6 @@ pub(crate) mod internal;
 mod mcp;
 pub mod realtime;
 mod search;
-mod shells;
 mod tasks;
 mod threads;
 mod uploads;
@@ -39,22 +35,10 @@ struct SecurityAddon;
 impl Modify for SecurityAddon {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         let components = openapi.components.get_or_insert_with(Default::default);
+        // One scheme: `Authorization: Bearer <Zitadel access token | API key>`.
         components.add_security_scheme(
             "bearer_auth",
-            SecurityScheme::Http(
-                HttpBuilder::new()
-                    .scheme(HttpAuthScheme::Bearer)
-                    .bearer_format("JWT")
-                    .build(),
-            ),
-        );
-        components.add_security_scheme(
-            "api_key_auth",
-            SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("X-API-Key"))),
-        );
-        components.add_security_scheme(
-            "cookie_auth",
-            SecurityScheme::ApiKey(ApiKey::Cookie(ApiKeyValue::new("conusai_session"))),
+            SecurityScheme::Http(HttpBuilder::new().scheme(HttpAuthScheme::Bearer).build()),
         );
     }
 }
@@ -73,13 +57,9 @@ impl Modify for SecurityAddon {
             common::error::ErrorEnvelope,
             common::error::ApiErrorBody,
             common::error::ApiErrorKind,
-            admin_devices::IssueDeviceRequest,
-            admin_devices::IssueDeviceResponse,
-            admin_devices::DeviceSummary,
         )
     ),
     paths(
-        auth::login,
         health::health,
         chat::completions,
         agent::agent_completions,
@@ -98,12 +78,8 @@ impl Modify for SecurityAddon {
         workspaces::rename_node,
         workspaces::share_node,
         workspaces::unshare_node,
-        admin_devices::issue_device,
-        admin_devices::list_devices,
-        admin_devices::revoke_device,
     ),
     tags(
-        (name = "auth", description = "Authentication"),
         (name = "chat", description = "OpenAI-compatible chat completions"),
         (name = "agent", description = "Thread-aware agent completions with tool calling"),
         (name = "capabilities", description = "Tool capability registry"),
@@ -112,7 +88,7 @@ impl Modify for SecurityAddon {
         (name = "audit", description = "Audit log"),
         (name = "files", description = "File storage — presigned URL based"),
         (name = "uploads", description = "Multipart upload for large files"),
-        (name = "admin", description = "Platform administration (device tokens, etc.)"),
+        (name = "admin", description = "Platform administration"),
     ),
 )]
 pub struct ApiDoc;
@@ -129,84 +105,429 @@ pub struct RouteEntry {
 
 pub const ROUTE_TABLE: &[RouteEntry] = &[
     // Public
-    RouteEntry { method: "GET",  path: "/health",                               auth: "none",        router: "public" },
-    RouteEntry { method: "GET",  path: "/healthz/embeddings",                   auth: "none",        router: "public" },
-    RouteEntry { method: "GET",  path: "/login",                                auth: "none",        router: "public" },
-    RouteEntry { method: "POST", path: "/v1/auth/login",                        auth: "none",        router: "public" },
-    RouteEntry { method: "POST", path: "/v1/auth/legacy/login",                 auth: "none",        router: "public" },
-    RouteEntry { method: "POST", path: "/v1/billing/webhooks",                  auth: "hmac-sig",    router: "public" },
-    RouteEntry { method: "POST", path: "/admin/capabilities/register",          auth: "platform-token", router: "public" },
-    RouteEntry { method: "GET",  path: "/openapi.json",                         auth: "none",        router: "public" },
-    RouteEntry { method: "GET",  path: "/docs",                                 auth: "none",        router: "public" },
-    RouteEntry { method: "GET",  path: "/metrics",                              auth: "none",        router: "public" },
-    // Internal (restrict by network in prod)
-    RouteEntry { method: "POST", path: "/internal/rustfs/events",               auth: "none",        router: "internal" },
-    // Protected (bearer/session/api-key + plan enforcement)
-    RouteEntry { method: "POST", path: "/v1/chat/completions",                  auth: "bearer",      router: "protected" },
-    RouteEntry { method: "POST", path: "/v1/agent/completions",                 auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/capabilities",                      auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/capabilities/search",               auth: "bearer",      router: "protected" },
-    RouteEntry { method: "POST", path: "/mcp",                                  auth: "bearer",      router: "protected" },
-    RouteEntry { method: "POST", path: "/v1/files/upload-url",                  auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/files/download-url",                auth: "bearer",      router: "protected" },
-    RouteEntry { method: "POST", path: "/v1/uploads/initiate",                  auth: "bearer",      router: "protected" },
-    RouteEntry { method: "POST", path: "/v1/uploads/{upload_id}/parts/{n}/presign", auth: "bearer",  router: "protected" },
-    RouteEntry { method: "POST", path: "/v1/uploads/{upload_id}/complete",      auth: "bearer",      router: "protected" },
-    RouteEntry { method: "POST", path: "/v1/uploads/{upload_id}/abort",         auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/audit",                             auth: "bearer",      router: "protected" },
-    RouteEntry { method: "POST", path: "/v1/workspaces",                        auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/workspaces/tree",                   auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/workspaces/search",                 auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/workspaces/{id}",                   auth: "bearer",      router: "protected" },
-    RouteEntry { method: "DELETE", path: "/v1/workspaces/{id}",                 auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/workspaces/{id}/content",           auth: "bearer",      router: "protected" },
-    RouteEntry { method: "PATCH", path: "/v1/workspaces/{id}/content",          auth: "bearer",      router: "protected" },
-    RouteEntry { method: "POST", path: "/v1/workspaces/{id}/move",              auth: "bearer",      router: "protected" },
-    RouteEntry { method: "POST", path: "/v1/workspaces/{id}/rename",            auth: "bearer",      router: "protected" },
-    RouteEntry { method: "POST", path: "/v1/workspaces/{id}/share",             auth: "bearer",      router: "protected" },
-    RouteEntry { method: "POST", path: "/v1/workspaces/{id}/unshare",           auth: "bearer",      router: "protected" },
-    RouteEntry { method: "POST", path: "/v1/workspaces/{id}/presign-upload",    auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/workspaces/{id}/presign-download",  auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/workspaces/nodes/{id}/versions",    auth: "bearer",      router: "protected" },
-    RouteEntry { method: "POST", path: "/v1/workspaces/nodes/{id}/restore",     auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/tasks",                             auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/tasks/{id}",                        auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/tasks/{id}/sse",                    auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/threads",                           auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/threads/{id}/messages",             auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/api/realtime/workspace",               auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/shells/{device_id}/control",        auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/billing/plans",                     auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/billing/subscription",              auth: "bearer",      router: "protected" },
-    RouteEntry { method: "POST", path: "/v1/billing/subscriptions",             auth: "bearer",      router: "protected" },
-    RouteEntry { method: "DELETE", path: "/v1/billing/subscription",            auth: "bearer",      router: "protected" },
-    RouteEntry { method: "POST", path: "/v1/billing/portal",                    auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/billing/invoices",                  auth: "bearer",      router: "protected" },
-    RouteEntry { method: "GET",  path: "/v1/billing/usage",                     auth: "bearer",      router: "protected" },
-    // Admin (super_admin JWT required)
-    RouteEntry { method: "GET",  path: "/admin/capabilities",                   auth: "super-admin", router: "admin" },
-    RouteEntry { method: "POST", path: "/admin/capabilities",                   auth: "super-admin", router: "admin" },
-    RouteEntry { method: "POST", path: "/admin/capabilities/reload",            auth: "super-admin", router: "admin" },
-    RouteEntry { method: "POST", path: "/admin/capabilities/validate",          auth: "super-admin", router: "admin" },
-    RouteEntry { method: "POST", path: "/admin/capabilities/test",              auth: "super-admin", router: "admin" },
-    RouteEntry { method: "GET",  path: "/admin/capabilities/{name}",            auth: "super-admin", router: "admin" },
-    RouteEntry { method: "GET",  path: "/admin/capabilities/{name}/manifest",   auth: "super-admin", router: "admin" },
-    RouteEntry { method: "PATCH", path: "/admin/capabilities/{name}",           auth: "super-admin", router: "admin" },
-    RouteEntry { method: "PATCH", path: "/admin/capabilities/{name}/enabled",   auth: "super-admin", router: "admin" },
-    RouteEntry { method: "DELETE", path: "/admin/capabilities/{name}",          auth: "super-admin", router: "admin" },
-    RouteEntry { method: "POST", path: "/admin/capabilities/{name}/reload",     auth: "super-admin", router: "admin" },
-    RouteEntry { method: "GET",  path: "/admin/capabilities/namespaces",        auth: "super-admin", router: "admin" },
-    RouteEntry { method: "GET",  path: "/admin/jobs",                           auth: "super-admin", router: "admin" },
-    RouteEntry { method: "GET",  path: "/admin/jobs/{name}",                    auth: "super-admin", router: "admin" },
-    RouteEntry { method: "POST", path: "/admin/jobs/{name}/run",                auth: "super-admin", router: "admin" },
-    RouteEntry { method: "GET",  path: "/admin/tasks",                          auth: "super-admin", router: "admin" },
-    RouteEntry { method: "POST", path: "/admin/devices",                        auth: "super-admin", router: "admin" },
-    RouteEntry { method: "GET",  path: "/admin/devices",                        auth: "super-admin", router: "admin" },
-    RouteEntry { method: "DELETE", path: "/admin/devices/{id}",                 auth: "super-admin", router: "admin" },
-    RouteEntry { method: "POST", path: "/admin/billing/credits",                auth: "super-admin", router: "admin" },
-    RouteEntry { method: "POST", path: "/admin/billing/cancel/{tenant_id}",     auth: "super-admin", router: "admin" },
-    RouteEntry { method: "GET",  path: "/admin/billing/dashboard",              auth: "super-admin", router: "admin" },
-    RouteEntry { method: "DELETE", path: "/admin/tenants/{id}",                 auth: "super-admin", router: "admin" },
+    RouteEntry {
+        method: "GET",
+        path: "/health",
+        auth: "none",
+        router: "public",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/healthz/embeddings",
+        auth: "none",
+        router: "public",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/v1/billing/webhooks",
+        auth: "hmac-sig",
+        router: "public",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/admin/capabilities/register",
+        auth: "platform-token",
+        router: "public",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/openapi.json",
+        auth: "none",
+        router: "public",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/metrics",
+        auth: "platform-token",
+        router: "public",
+    },
+    // Internal (mounted only when RUSTFS_NOTIFICATION_WEBHOOK_URL/RUSTFS_WEBHOOK_SECRET are set)
+    RouteEntry {
+        method: "POST",
+        path: "/internal/rustfs/events",
+        auth: "hmac-sig",
+        router: "internal",
+    },
+    // Protected (Authorization: Bearer <Zitadel access token | API key>)
+    RouteEntry {
+        method: "POST",
+        path: "/v1/chat/completions",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/v1/agent/completions",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/capabilities",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/capabilities/search",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/mcp",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/v1/files/upload-url",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/files/download-url",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/v1/uploads/initiate",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/v1/uploads/{upload_id}/parts/{n}/presign",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/v1/uploads/{upload_id}/complete",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/v1/uploads/{upload_id}/abort",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/audit",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/v1/workspaces",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/workspaces/tree",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/workspaces/search",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/workspaces/{id}",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "DELETE",
+        path: "/v1/workspaces/{id}",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/workspaces/{id}/content",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "PATCH",
+        path: "/v1/workspaces/{id}/content",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/v1/workspaces/{id}/move",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/v1/workspaces/{id}/rename",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/v1/workspaces/{id}/share",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/v1/workspaces/{id}/unshare",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/v1/workspaces/{id}/presign-upload",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/workspaces/{id}/presign-download",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/workspaces/nodes/{id}/versions",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/v1/workspaces/nodes/{id}/restore",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/tasks",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/tasks/{id}",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/tasks/{id}/sse",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/threads",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/threads/{id}/messages",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/api/realtime/workspace",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/billing/plans",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/billing/subscription",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/v1/billing/subscriptions",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "DELETE",
+        path: "/v1/billing/subscription",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/v1/billing/portal",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/billing/invoices",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/v1/billing/usage",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/ui/stream",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/ui/upload",
+        auth: "bearer",
+        router: "protected",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/ui/files/download",
+        auth: "bearer",
+        router: "protected",
+    },
+    // Admin (bearer with the Zitadel `super_admin` project role)
+    RouteEntry {
+        method: "GET",
+        path: "/admin/capabilities",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/admin/capabilities",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/admin/capabilities/reload",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/admin/capabilities/validate",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/admin/capabilities/test",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/admin/capabilities/{name}",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/admin/capabilities/{name}/manifest",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "PATCH",
+        path: "/admin/capabilities/{name}",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "PATCH",
+        path: "/admin/capabilities/{name}/enabled",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "DELETE",
+        path: "/admin/capabilities/{name}",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/admin/capabilities/{name}/reload",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/admin/capabilities/namespaces",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/admin/jobs",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/admin/jobs/{name}",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/admin/jobs/{name}/run",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/admin/tasks",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/admin/billing/credits",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "POST",
+        path: "/admin/billing/cancel/{tenant_id}",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "GET",
+        path: "/admin/billing/dashboard",
+        auth: "super-admin",
+        router: "admin",
+    },
+    RouteEntry {
+        method: "DELETE",
+        path: "/admin/tenants/{id}",
+        auth: "super-admin",
+        router: "admin",
+    },
 ];
 
 /// Print ROUTE_TABLE as Markdown, grouped by router section.
@@ -215,7 +536,9 @@ pub fn dump_routes_markdown() -> String {
     out.push_str("> Generated by `--dump-routes`. Do not edit manually.\n\n");
     for section in ["public", "internal", "protected", "admin"] {
         let rows: Vec<_> = ROUTE_TABLE.iter().filter(|r| r.router == section).collect();
-        if rows.is_empty() { continue; }
+        if rows.is_empty() {
+            continue;
+        }
         out.push_str(&format!("## {section}\n\n"));
         out.push_str("| Method | Path | Auth |\n");
         out.push_str("|--------|------|------|\n");
@@ -227,29 +550,38 @@ pub fn dump_routes_markdown() -> String {
     out
 }
 
-/// Routes that require no auth (health probe, auth, OpenAPI).
-/// Note: the old `GET /v1/files/{token}` UUID download shim is REMOVED.
+/// Routes without bearer authentication: health probes, the OpenAPI document, the
+/// signed Lago webhook and the platform-token capability registration.
 pub fn public_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/health", get(health::health))
         .route("/healthz/embeddings", get(health::embeddings_ready))
-        .route("/login", get(auth::login_page))
-        .route("/v1/auth/login", post(auth::login))
-        .route("/v1/auth/legacy/login", post(auth::login))
-        // Lago billing webhooks — signature verified inside handler.
-        .route("/v1/billing/webhooks", post(billing_webhook::handle_webhook))
-        // Self-registration for external capability services.
+        // Lago billing webhooks — HMAC signature verified inside the handler.
+        .route(
+            "/v1/billing/webhooks",
+            post(billing_webhook::handle_webhook),
+        )
+        // Self-registration for external capability services (PLATFORM_ADMIN_TOKEN).
         .route(
             "/admin/capabilities/register",
             post(admin_capabilities::register_capability),
         )
-        // OpenAPI spec + Swagger UI
-        .merge(SwaggerUi::new("/docs").url("/openapi.json", ApiDoc::openapi()))
+        .route("/openapi.json", get(openapi_json))
 }
 
-/// Super-admin only routes (JWT-protected with role=super_admin).
+async fn openapi_json() -> axum::Json<utoipa::openapi::OpenApi> {
+    axum::Json(ApiDoc::openapi())
+}
+
+/// The OpenAPI document as pretty JSON (used by `--dump-openapi`).
+pub fn openapi_document() -> String {
+    ApiDoc::openapi()
+        .to_pretty_json()
+        .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
+}
+
+/// Super-admin only routes. The caller layers `auth::authenticate` outside.
 pub fn admin_router() -> Router<Arc<AppState>> {
-    use crate::mw::admin::require_super_admin_jwt;
     use axum::middleware;
     Router::new()
         .route("/admin/capabilities", get(admin_capabilities::list))
@@ -300,23 +632,24 @@ pub fn admin_router() -> Router<Arc<AppState>> {
         .route("/admin/jobs/{name}", get(admin_jobs::get_job))
         .route("/admin/jobs/{name}/run", post(admin_jobs::run_now))
         .route("/admin/tasks", get(admin_jobs::list_tasks))
-        // ── Device tokens (browser-shell clients) ──────────────────────────
-        .route("/admin/devices", post(admin_devices::issue_device))
-        .route("/admin/devices", get(admin_devices::list_devices))
-        .route("/admin/devices/{id}", delete(admin_devices::revoke_device))
         // ── Admin billing ────────────────────────────────────────────────────
         .route("/admin/billing/credits", post(billing::admin_add_credits))
-        .route("/admin/billing/cancel/{tenant_id}", post(billing::admin_cancel_subscription))
-        .route("/admin/billing/dashboard", get(billing::admin_billing_dashboard))
+        .route(
+            "/admin/billing/cancel/{tenant_id}",
+            post(billing::admin_cancel_subscription),
+        )
+        .route(
+            "/admin/billing/dashboard",
+            get(billing::admin_billing_dashboard),
+        )
         // ── Tenant lifecycle ─────────────────────────────────────────────────
         .route("/admin/tenants/{id}", delete(admin_tenants::delete_tenant))
-        .layer(middleware::from_fn(require_super_admin_jwt))
+        .layer(middleware::from_fn(crate::auth::require_super_admin))
 }
 
-/// Internal routes — not exposed externally (mount behind a firewall or IP allowlist in prod).
+/// Internal routes — HMAC-verified RustFS bucket notifications.
 pub fn internal_router() -> Router<Arc<AppState>> {
-    Router::new()
-        .route("/internal/rustfs/events", post(internal::rustfs_events))
+    Router::new().route("/internal/rustfs/events", post(internal::rustfs_events))
 }
 
 /// Routes protected by the tenant middleware.
@@ -347,7 +680,10 @@ pub fn protected_router(
         .route("/v1/files/download-url", get(files::presign_download))
         // ── Multipart upload for large files ────────────────────────────────
         .route("/v1/uploads/initiate", post(uploads::initiate))
-        .route("/v1/uploads/{upload_id}/parts/{n}/presign", post(uploads::presign_part))
+        .route(
+            "/v1/uploads/{upload_id}/parts/{n}/presign",
+            post(uploads::presign_part),
+        )
         .route("/v1/uploads/{upload_id}/complete", post(uploads::complete))
         .route("/v1/uploads/{upload_id}/abort", post(uploads::abort))
         // ── Audit log ──────────────────────────────────────────────────────
@@ -359,17 +695,35 @@ pub fn protected_router(
         .route("/v1/workspaces/{id}", get(workspaces::get_node))
         .route("/v1/workspaces/{id}", delete(workspaces::delete_node))
         .route("/v1/workspaces/{id}/content", get(workspaces::get_content))
-        .route("/v1/workspaces/{id}/content", patch(workspaces::patch_content))
+        .route(
+            "/v1/workspaces/{id}/content",
+            patch(workspaces::patch_content),
+        )
         .route("/v1/workspaces/{id}/move", post(workspaces::move_node))
         .route("/v1/workspaces/{id}/rename", post(workspaces::rename_node))
         .route("/v1/workspaces/{id}/share", post(workspaces::share_node))
-        .route("/v1/workspaces/{id}/unshare", post(workspaces::unshare_node))
+        .route(
+            "/v1/workspaces/{id}/unshare",
+            post(workspaces::unshare_node),
+        )
         // ── Workspace presign endpoints ─────────────────────────────────────
-        .route("/v1/workspaces/{id}/presign-upload", post(workspaces::presign_upload))
-        .route("/v1/workspaces/{id}/presign-download", get(workspaces::presign_download))
+        .route(
+            "/v1/workspaces/{id}/presign-upload",
+            post(workspaces::presign_upload),
+        )
+        .route(
+            "/v1/workspaces/{id}/presign-download",
+            get(workspaces::presign_download),
+        )
         // ── Workspace versioning ────────────────────────────────────────────
-        .route("/v1/workspaces/nodes/{id}/versions", get(workspaces::list_versions))
-        .route("/v1/workspaces/nodes/{id}/restore", post(workspaces::restore_version))
+        .route(
+            "/v1/workspaces/nodes/{id}/versions",
+            get(workspaces::list_versions),
+        )
+        .route(
+            "/v1/workspaces/nodes/{id}/restore",
+            post(workspaces::restore_version),
+        )
         // ── Tasks (background job polling + SSE) ────────────────────────────
         .route("/v1/tasks", get(tasks::list_tasks))
         .route("/v1/tasks/{id}", get(tasks::get_task))
@@ -379,13 +733,17 @@ pub fn protected_router(
         .route("/v1/threads/{id}/messages", get(threads::get_messages))
         // ── Realtime ────────────────────────────────────────────────────────
         .route("/api/realtime/workspace", get(realtime::realtime_workspace))
-        // ── Shell control ────────────────────────────────────────────────────
-        .route("/v1/shells/{device_id}/control", get(shells::shell_control))
         // ── Billing ─────────────────────────────────────────────────────────
         .route("/v1/billing/plans", get(billing::list_plans))
         .route("/v1/billing/subscription", get(billing::get_subscription))
-        .route("/v1/billing/subscriptions", post(billing::create_subscription))
-        .route("/v1/billing/subscription", delete(billing::cancel_subscription))
+        .route(
+            "/v1/billing/subscriptions",
+            post(billing::create_subscription),
+        )
+        .route(
+            "/v1/billing/subscription",
+            delete(billing::cancel_subscription),
+        )
         .route("/v1/billing/portal", post(billing::billing_portal))
         .route("/v1/billing/invoices", get(billing::list_invoices))
         .route("/v1/billing/usage", get(billing::get_usage))

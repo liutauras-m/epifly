@@ -59,7 +59,10 @@ pub async fn delete_tenant(
                 }
             }
             Ok(None) => {
-                info!(tenant_id, "no credentials found — skipping IAM/storage teardown");
+                info!(
+                    tenant_id,
+                    "no credentials found — skipping IAM/storage teardown"
+                );
             }
             Err(e) => {
                 warn!(tenant_id, error = %e, "failed to load tenant credentials for teardown");

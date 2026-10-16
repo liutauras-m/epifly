@@ -1,6 +1,6 @@
 pub mod artifact;
 pub mod audit;
-pub mod config;
+pub mod env;
 pub mod error;
 pub mod eval;
 pub mod http_client;
@@ -11,10 +11,10 @@ pub mod metrics;
 pub mod path_safety;
 pub mod path_template;
 pub mod prompt;
+pub mod secret;
 pub mod telemetry;
 pub mod trace;
 pub mod types;
-pub mod wasm;
 
 pub mod prelude {
     pub use crate::error::{ConusAiError, Result};

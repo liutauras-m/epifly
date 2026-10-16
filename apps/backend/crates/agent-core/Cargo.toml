@@ -34,7 +34,6 @@ async-trait.workspace = true
 futures.workspace     = true
 bon.workspace         = true
 wasmtime.workspace    = true
-wasmtime-wasi.workspace = true
 reqwest.workspace     = true
 object_store.workspace = true
 bytes.workspace        = true
@@ -46,6 +45,10 @@ notify.workspace       = true
 
 [dev-dependencies]
 proptest.workspace = true
+rsa      = { version = "0.9" }
+rand     = { version = "0.8" }
+tempfile = "3"
+wat      = "1"
 
 [features]
 default          = []

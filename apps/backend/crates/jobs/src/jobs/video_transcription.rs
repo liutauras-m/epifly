@@ -1,11 +1,14 @@
-//! `VideoTranscriptionJob` — transcribes an audio/video file stored in RustFS via
-//! the Whisper API (or a local whisper-rs binary as fallback).
+//! `VideoTranscriptionJob` — transcribes an audio/video file from the tenant's
+//! object storage via the OpenAI Whisper API (`OPENAI_API_KEY`). The file is read
+//! with the tenant's own storage credentials; the OpenAI key is sent to OpenAI only.
 //!
 //! Input JSON: `{ "file_id": "<s3-object-key>", "tenant_id": "<string>" }`
 //! Output JSON: `{ "text": "<transcript>", "file_id": "<output-key>" }`
 
 use crate::context::JobContext;
 use crate::job::BackgroundJob;
+use agent_core::capabilities::object_source::TenantObjectSource;
+use agent_core::{PlanTier, TenantContext};
 use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{info, instrument};
@@ -29,19 +32,27 @@ impl BackgroundJob for VideoTranscriptionJob {
             .ok_or_else(|| anyhow::anyhow!("missing field: file_id"))?
             .to_owned();
 
-        let tenant_id = input["tenant_id"].as_str().unwrap_or("__dev__").to_owned();
+        let tenant_id = input["tenant_id"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing field: tenant_id"))?
+            .to_owned();
 
         info!(file_id = %file_id, tenant_id = %tenant_id, "video-transcription: starting");
 
-        // Check for OpenAI Whisper API key
-        let transcript = if let Ok(api_key) = std::env::var("OPENAI_API_KEY") {
-            transcribe_via_openai_whisper(&api_key, &file_id, &ctx).await?
-        } else {
-            // Fallback: return a placeholder for environments without Whisper
-            format!(
-                "[Transcription placeholder for {file_id}. Set OPENAI_API_KEY to enable real transcription.]"
-            )
-        };
+        let api_key = std::env::var("OPENAI_API_KEY")
+            .ok()
+            .filter(|k| !k.trim().is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!("transcription is not configured (OPENAI_API_KEY unset)")
+            })?;
+        let factory = ctx
+            .tenant_storage_factory
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("object storage is not configured"))?;
+        let tenant = TenantContext::new(tenant_id.as_str(), None::<String>, PlanTier::Free);
+        let file_bytes = factory.read(&tenant, &file_id).await?;
+        let transcript =
+            transcribe_via_openai_whisper(&api_key, &file_id, file_bytes.to_vec()).await?;
 
         info!(
             file_id = %file_id,
@@ -61,22 +72,8 @@ impl BackgroundJob for VideoTranscriptionJob {
 async fn transcribe_via_openai_whisper(
     api_key: &str,
     file_id: &str,
-    ctx: &JobContext,
+    file_bytes: Vec<u8>,
 ) -> anyhow::Result<String> {
-    // Download the file bytes from RustFS/S3 if endpoint is configured.
-    let file_bytes = if let (Some(endpoint), Some(bucket)) = (&ctx.s3_endpoint, &ctx.bucket) {
-        let url = format!("{}/{}/{}", endpoint, bucket, file_id);
-        let client = reqwest::Client::new();
-        let resp = client
-            .get(&url)
-            .header("Authorization", format!("Bearer {api_key}"))
-            .send()
-            .await?;
-        resp.bytes().await?.to_vec()
-    } else {
-        anyhow::bail!("RustFS not configured — cannot download file for transcription");
-    };
-
     // Call OpenAI Whisper transcription endpoint
     let form = reqwest::multipart::Form::new()
         .part(

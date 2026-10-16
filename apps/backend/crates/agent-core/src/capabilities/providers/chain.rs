@@ -6,6 +6,7 @@
 
 use crate::capabilities::card::CapabilityCard;
 use crate::capabilities::manifest::ToolKind;
+use crate::capabilities::object_source::TenantObjectSource;
 use crate::capabilities::provider::{CapabilityFactory, CapabilityProvider};
 use crate::chains::llm_chain::PromptChainCapability;
 use crate::llm::LlmRegistry;
@@ -16,11 +17,12 @@ use std::sync::Arc;
 /// are rejected: all domain logic must be expressed in TOML prompts, not bespoke Rust.
 pub struct ChainFactory {
     pub llm: Arc<LlmRegistry>,
+    pub objects: Arc<dyn TenantObjectSource>,
 }
 
 impl ChainFactory {
-    pub fn new(llm: Arc<LlmRegistry>) -> Self {
-        Self { llm }
+    pub fn new(llm: Arc<LlmRegistry>, objects: Arc<dyn TenantObjectSource>) -> Self {
+        Self { llm, objects }
     }
 }
 
@@ -40,6 +42,7 @@ impl CapabilityFactory for ChainFactory {
         Ok(Arc::new(PromptChainCapability::new(
             card.manifest,
             Arc::clone(&self.llm),
+            Arc::clone(&self.objects),
         )?))
     }
 }

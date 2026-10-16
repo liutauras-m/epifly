@@ -90,7 +90,10 @@ impl<'de> serde::Deserialize<'de> for AcceptEntry {
             },
         }
         Ok(match Form::deserialize(d)? {
-            Form::Bare(mime) => AcceptEntry { mime, max_size_mb: None },
+            Form::Bare(mime) => AcceptEntry {
+                mime,
+                max_size_mb: None,
+            },
             Form::Full { mime, max_size_mb } => AcceptEntry { mime, max_size_mb },
         })
     }
@@ -121,9 +124,7 @@ fn lint(args: LintArgs) -> anyhow::Result<()> {
     }
 
     let pattern = dir.join("*/capability.toml");
-    let pattern_str = pattern
-        .to_str()
-        .context("non-UTF-8 path")?;
+    let pattern_str = pattern.to_str().context("non-UTF-8 path")?;
 
     let paths: Vec<PathBuf> = glob::glob(pattern_str)
         .context("bad glob")?
@@ -131,7 +132,10 @@ fn lint(args: LintArgs) -> anyhow::Result<()> {
         .collect();
 
     if paths.is_empty() {
-        println!("{}", "No capability.toml files found — nothing to lint.".yellow());
+        println!(
+            "{}",
+            "No capability.toml files found — nothing to lint.".yellow()
+        );
         return Ok(());
     }
 
@@ -231,11 +235,15 @@ fn lint_one(path: &Path) -> (usize, usize) {
     if IO_CATEGORIES.contains(&category) {
         let accepts = cap.accepts.as_deref().unwrap_or(&[]);
         if accepts.is_empty() {
-            err(&format!("category `{category}` requires at least one `[[accepts]]` entry"));
+            err(&format!(
+                "category `{category}` requires at least one `[[accepts]]` entry"
+            ));
         }
         let emits = cap.emits.as_deref().unwrap_or(&[]);
         if emits.is_empty() {
-            err(&format!("category `{category}` requires at least one `emits` entry"));
+            err(&format!(
+                "category `{category}` requires at least one `emits` entry"
+            ));
         }
     }
 

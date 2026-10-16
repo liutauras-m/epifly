@@ -20,8 +20,8 @@ pub enum LlmError {
     #[error("provider '{0}' not registered")]
     UnknownProvider(String),
 
-    #[error("tenant override invalid: {0}")]
-    TenantOverride(String),
+    #[error("model '{requested}' is not available on the {plan} plan")]
+    ModelNotAllowed { requested: String, plan: String },
 
     #[error("streaming error: {0}")]
     Streaming(String),

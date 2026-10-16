@@ -1,460 +1,647 @@
-/// Zitadel OIDC identity provider.
-///
-/// Token verification: standard JWT introspection via Zitadel's introspection
-/// endpoint using reqwest (no zitadel crate dependency).
-/// Management: Zitadel REST Management API for org/user operations.
-use super::{
-    AuthError, IdentityContext, IdentityProvider, TenantCreated, TenantManager, TenantSummary,
-};
-use crate::context::tenant::{PlanTier, SubscriptionStatus, UserRole};
+//! Zitadel access-token verification.
+//!
+//! - **JWT access tokens** are verified locally: signature against the issuer's
+//!   JWKS (from OIDC discovery), `iss` = `ZITADEL_ISSUER`, `aud` contains
+//!   `ZITADEL_AUDIENCE`, `exp`/`nbf` with 60 s leeway. Only RS256 is accepted.
+//! - **Opaque access tokens** are checked with the introspection endpoint, when
+//!   `ZITADEL_INTROSPECTION_CLIENT_ID`/`_SECRET` are configured; otherwise they
+//!   are refused. A JWT-shaped token never falls back to introspection.
+//!
+//! The tenant is the user's organization (`urn:zitadel:iam:user:resourceowner:id`,
+//! present when the client requests the `urn:zitadel:iam:user:resourceowner`
+//! scope); a token without it is rejected. Roles come from
+//! `urn:zitadel:iam:org:project:roles`. Nothing about plans is read from tokens.
+
+use super::{AuthError, Identity, TokenVerifier, role_from_project_roles};
 use async_trait::async_trait;
 use common::types::TenantId;
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use moka::future::Cache;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
-use tracing::{debug, warn};
+use std::time::{Duration, Instant};
+use tracing::debug;
 
-/// Counters exposed as atomics so the gateway can sync them into Prometheus
-/// without pulling prometheus into agent-core's dependency tree.
-#[derive(Debug, Default)]
-pub struct ZitadelCacheStats {
-    pub cache_hits: AtomicU64,
-    pub cache_misses: AtomicU64,
+pub const ORG_CLAIM: &str = "urn:zitadel:iam:user:resourceowner:id";
+pub const ROLES_CLAIM: &str = "urn:zitadel:iam:org:project:roles";
+
+/// JWKS keys are refetched after this long.
+const JWKS_TTL: Duration = Duration::from_secs(600);
+/// An unknown `kid` triggers at most one refetch per this interval (no kid-flood DoS).
+const JWKS_MIN_REFRESH: Duration = Duration::from_secs(30);
+/// Introspection results are cached this long at most.
+const INTROSPECTION_CACHE_TTL: Duration = Duration::from_secs(60);
+const LEEWAY_SECS: u64 = 60;
+
+/// Credentials for the introspection endpoint (a Zitadel API application with Basic auth).
+#[derive(Clone)]
+pub struct IntrospectionClient {
+    pub client_id: String,
+    pub client_secret: String,
 }
 
-impl ZitadelCacheStats {
-    pub fn hit(&self) {
-        self.cache_hits.fetch_add(1, Ordering::Relaxed);
-    }
-    pub fn miss(&self) {
-        self.cache_misses.fetch_add(1, Ordering::Relaxed);
-    }
-    pub fn hits(&self) -> u64 {
-        self.cache_hits.load(Ordering::Relaxed)
-    }
-    pub fn misses(&self) -> u64 {
-        self.cache_misses.load(Ordering::Relaxed)
-    }
-}
-
-// ── Config ────────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ZitadelConfig {
-    pub domain: String,
+    /// Issuer URL exactly as it appears in `iss` (no trailing slash).
+    pub issuer: String,
+    /// Required `aud` value (the Zitadel project or API app id).
     pub audience: String,
-    pub introspection_client_id: String,
-    pub introspection_client_secret: String,
-    pub mgmt_pat: String,
+    pub introspection: Option<IntrospectionClient>,
 }
 
 impl ZitadelConfig {
-    pub fn from_env() -> Result<Self, AuthError> {
-        let domain = std::env::var("ZITADEL_DOMAIN")
-            .map_err(|_| AuthError::Config("ZITADEL_DOMAIN not set".into()))?;
-        let audience =
-            std::env::var("ZITADEL_AUDIENCE").unwrap_or_else(|_| "conusai-agent-gateway".into());
-        let introspection_client_id =
-            std::env::var("ZITADEL_INTROSPECTION_CLIENT_ID").unwrap_or_default();
-        let introspection_client_secret =
-            std::env::var("ZITADEL_INTROSPECTION_CLIENT_SECRET").unwrap_or_default();
-        let mgmt_pat = std::env::var("ZITADEL_MGMT_PAT").unwrap_or_default();
-
-        Ok(Self {
-            domain,
-            audience,
-            introspection_client_id,
-            introspection_client_secret,
-            mgmt_pat,
-        })
+    /// Validate the URL shape: https, except loopback hosts (local test servers).
+    pub fn validate(&self) -> Result<(), String> {
+        require_secure_url(&self.issuer)?;
+        if self.audience.trim().is_empty() {
+            return Err("audience is empty".into());
+        }
+        Ok(())
     }
 }
 
-// ── Introspection response ────────────────────────────────────────────────────
+fn require_secure_url(raw: &str) -> Result<(), String> {
+    let url = url::Url::parse(raw).map_err(|e| format!("{raw}: {e}"))?;
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" if is_loopback(&url) => Ok(()),
+        other => Err(format!(
+            "{raw}: scheme {other} is not allowed (https required)"
+        )),
+    }
+}
+
+fn is_loopback(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(d)) => d == "localhost",
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct OidcDiscovery {
+    issuer: String,
+    jwks_uri: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct Jwk {
+    kty: String,
+    #[serde(default)]
+    kid: Option<String>,
+    #[serde(default)]
+    n: Option<String>,
+    #[serde(default)]
+    e: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct JwkSet {
+    keys: Vec<Jwk>,
+}
+
+#[derive(Default)]
+struct JwkState {
+    keys: HashMap<String, DecodingKey>,
+    fetched_at: Option<Instant>,
+}
+
+impl JwkState {
+    fn is_stale(&self) -> bool {
+        self.fetched_at.is_none_or(|t| t.elapsed() > JWKS_TTL)
+    }
+    fn may_refresh_for_unknown_kid(&self) -> bool {
+        self.fetched_at
+            .is_none_or(|t| t.elapsed() > JWKS_MIN_REFRESH)
+    }
+}
+
+/// Claims we read from a verified JWT access token.
+#[derive(Debug, Deserialize)]
+struct AccessTokenClaims {
+    sub: String,
+    #[serde(flatten)]
+    extra: serde_json::Map<String, serde_json::Value>,
+}
 
 #[derive(Debug, Deserialize)]
 struct IntrospectionResponse {
     active: bool,
+    #[serde(default)]
     sub: Option<String>,
+    #[serde(default)]
+    iss: Option<String>,
+    #[serde(default)]
+    aud: Option<serde_json::Value>,
+    #[serde(default)]
     exp: Option<u64>,
-    email: Option<String>,
-    #[serde(rename = "urn:zitadel:iam:org:id")]
-    org_id: Option<String>,
-    #[serde(rename = "urn:zitadel:iam:org:project:roles")]
-    project_roles: Option<HashMap<String, serde_json::Value>>,
-    #[serde(rename = "urn:conusai:plan_tier")]
-    plan_tier: Option<String>,
-    #[serde(rename = "urn:conusai:subscription_status")]
-    subscription_status: Option<String>,
+    #[serde(flatten)]
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
-// ── Zitadel Management API types ──────────────────────────────────────────────
-
-#[derive(Debug, Serialize)]
-struct CreateOrgRequest {
-    name: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateOrgResponse {
-    #[serde(rename = "organizationId")]
-    organization_id: Option<String>,
-}
-
-// ── Provider ──────────────────────────────────────────────────────────────────
-
-/// Max entries in the token introspection cache.
-const TOKEN_CACHE_CAPACITY: u64 = 10_000;
-/// Hard ceiling on cache TTL regardless of token expiry.
-const TOKEN_CACHE_MAX_TTL_SECS: u64 = 60;
-
-pub struct ZitadelProvider {
+pub struct ZitadelVerifier {
     config: ZitadelConfig,
-    client: reqwest::Client,
-    /// Introspection result cache. Key = blake3 hash of the raw token (hex).
-    /// TTL = min(token exp - now, TOKEN_CACHE_MAX_TTL_SECS).
-    token_cache: Cache<String, IdentityContext>,
-    /// Hit/miss counters for the token cache. Exposed as atomics so the gateway
-    /// can sync them into Prometheus without adding prometheus to agent-core.
-    pub stats: Arc<ZitadelCacheStats>,
+    http: reqwest::Client,
+    jwks_uri: tokio::sync::OnceCell<String>,
+    jwks: tokio::sync::RwLock<JwkState>,
+    jwks_refresh: tokio::sync::Mutex<()>,
+    introspection_cache: Cache<String, Identity>,
 }
 
-impl ZitadelProvider {
-    pub fn new(config: ZitadelConfig) -> Self {
-        let client = reqwest::Client::builder()
+impl ZitadelVerifier {
+    pub fn new(config: ZitadelConfig) -> Result<Self, String> {
+        config.validate()?;
+        let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
-            .expect("HTTP client build failed");
-        let token_cache = Cache::builder()
-            .max_capacity(TOKEN_CACHE_CAPACITY)
-            .time_to_live(Duration::from_secs(TOKEN_CACHE_MAX_TTL_SECS))
-            .build();
-        Self {
+            .map_err(|e| e.to_string())?;
+        Ok(Self {
             config,
-            client,
-            token_cache,
-            stats: Arc::new(ZitadelCacheStats::default()),
+            http,
+            jwks_uri: tokio::sync::OnceCell::new(),
+            jwks: tokio::sync::RwLock::new(JwkState::default()),
+            jwks_refresh: tokio::sync::Mutex::new(()),
+            introspection_cache: Cache::builder()
+                .max_capacity(10_000)
+                .time_to_live(INTROSPECTION_CACHE_TTL)
+                .build(),
+        })
+    }
+
+    async fn jwks_uri(&self) -> Result<&str, AuthError> {
+        self.jwks_uri
+            .get_or_try_init(|| async {
+                let url = format!("{}/.well-known/openid-configuration", self.config.issuer);
+                let resp = self
+                    .http
+                    .get(&url)
+                    .send()
+                    .await
+                    .map_err(|e| AuthError::Unavailable(format!("discovery: {e}")))?;
+                if !resp.status().is_success() {
+                    return Err(AuthError::Unavailable(format!(
+                        "discovery HTTP {}",
+                        resp.status()
+                    )));
+                }
+                let d: OidcDiscovery = resp
+                    .json()
+                    .await
+                    .map_err(|e| AuthError::Unavailable(format!("discovery parse: {e}")))?;
+                if d.issuer.trim_end_matches('/') != self.config.issuer {
+                    return Err(AuthError::Unavailable(format!(
+                        "discovery issuer {} does not match ZITADEL_ISSUER",
+                        d.issuer
+                    )));
+                }
+                require_secure_url(&d.jwks_uri).map_err(AuthError::Unavailable)?;
+                Ok(d.jwks_uri)
+            })
+            .await
+            .map(String::as_str)
+    }
+
+    async fn refresh_jwks(&self, for_unknown_kid: bool) -> Result<(), AuthError> {
+        let _single_flight = self.jwks_refresh.lock().await;
+        {
+            let state = self.jwks.read().await;
+            let needed = if for_unknown_kid {
+                state.may_refresh_for_unknown_kid()
+            } else {
+                state.is_stale()
+            };
+            if !needed {
+                return Ok(());
+            }
         }
-    }
-
-    pub fn from_env() -> Result<Self, AuthError> {
-        Ok(Self::new(ZitadelConfig::from_env()?))
-    }
-
-    fn token_cache_key(token: &str) -> String {
-        let hash = blake3::hash(token.as_bytes());
-        hash.to_hex().to_string()
-    }
-
-    fn parse_plan_tier(s: Option<&str>) -> PlanTier {
-        match s {
-            Some("pro") => PlanTier::Pro,
-            Some("enterprise") => PlanTier::Enterprise,
-            _ => PlanTier::Free,
-        }
-    }
-
-    fn parse_subscription_status(s: Option<&str>) -> SubscriptionStatus {
-        match s {
-            Some("active") => SubscriptionStatus::Active,
-            Some("trialing") => SubscriptionStatus::Trialing,
-            Some("past_due") => SubscriptionStatus::PastDue,
-            Some("canceled") => SubscriptionStatus::Canceled,
-            _ => SubscriptionStatus::Active,
-        }
-    }
-
-    fn parse_roles(roles_map: Option<&HashMap<String, serde_json::Value>>) -> Vec<UserRole> {
-        let Some(map) = roles_map else {
-            return vec![UserRole::User];
-        };
-        let mut roles = vec![];
-        if map.contains_key("super_admin") {
-            roles.push(UserRole::SuperAdmin);
-        } else if map.contains_key("admin") {
-            roles.push(UserRole::Admin);
-        } else {
-            roles.push(UserRole::User);
-        }
-        roles
-    }
-
-    fn introspection_url(&self) -> String {
-        format!("{}/oauth/v2/introspect", self.config.domain)
-    }
-}
-
-#[async_trait]
-impl IdentityProvider for ZitadelProvider {
-    async fn verify_access_token(&self, token: &str) -> Result<IdentityContext, AuthError> {
-        let cache_key = Self::token_cache_key(token);
-
-        if let Some(cached) = self.token_cache.get(&cache_key).await {
-            debug!("Zitadel token cache hit");
-            self.stats.hit();
-            return Ok(cached);
-        }
-        self.stats.miss();
-
-        let url = self.introspection_url();
-
+        let uri = self.jwks_uri().await?.to_string();
         let resp = self
-            .client
+            .http
+            .get(&uri)
+            .send()
+            .await
+            .map_err(|e| AuthError::Unavailable(format!("JWKS: {e}")))?;
+        if !resp.status().is_success() {
+            return Err(AuthError::Unavailable(format!(
+                "JWKS HTTP {}",
+                resp.status()
+            )));
+        }
+        let set: JwkSet = resp
+            .json()
+            .await
+            .map_err(|e| AuthError::Unavailable(format!("JWKS parse: {e}")))?;
+
+        let mut keys = HashMap::new();
+        for jwk in set.keys {
+            if jwk.kty != "RSA" {
+                continue;
+            }
+            if let (Some(kid), Some(n), Some(e)) = (jwk.kid, jwk.n, jwk.e)
+                && let Ok(key) = DecodingKey::from_rsa_components(&n, &e)
+            {
+                keys.insert(kid, key);
+            }
+        }
+        let mut state = self.jwks.write().await;
+        state.keys = keys;
+        state.fetched_at = Some(Instant::now());
+        debug!(keys = state.keys.len(), "JWKS refreshed");
+        Ok(())
+    }
+
+    async fn key_for(&self, kid: &str) -> Result<DecodingKey, AuthError> {
+        {
+            let state = self.jwks.read().await;
+            if !state.is_stale()
+                && let Some(k) = state.keys.get(kid)
+            {
+                return Ok(k.clone());
+            }
+        }
+        // Stale keyset: regular refresh. Fresh keyset without the kid: rate-limited refresh.
+        let stale = self.jwks.read().await.is_stale();
+        self.refresh_jwks(!stale).await?;
+        self.jwks
+            .read()
+            .await
+            .keys
+            .get(kid)
+            .cloned()
+            .ok_or_else(|| AuthError::InvalidToken(format!("unknown signing key {kid}")))
+    }
+
+    async fn verify_jwt(&self, token: &str) -> Result<Identity, AuthError> {
+        let header =
+            decode_header(token).map_err(|e| AuthError::InvalidToken(format!("header: {e}")))?;
+        if header.alg != Algorithm::RS256 {
+            return Err(AuthError::InvalidToken(format!(
+                "algorithm {:?} not accepted",
+                header.alg
+            )));
+        }
+        let kid = header
+            .kid
+            .ok_or_else(|| AuthError::InvalidToken("token has no kid".into()))?;
+        let key = self.key_for(&kid).await?;
+        validate_jwt(token, &key, &self.config)
+    }
+
+    async fn verify_opaque(&self, token: &str) -> Result<Identity, AuthError> {
+        let Some(client) = &self.config.introspection else {
+            return Err(AuthError::InvalidToken(
+                "opaque tokens are not accepted (introspection not configured)".into(),
+            ));
+        };
+        let cache_key = blake3::hash(token.as_bytes()).to_hex().to_string();
+        if let Some(hit) = self.introspection_cache.get(&cache_key).await {
+            return Ok(hit);
+        }
+        let url = format!("{}/oauth/v2/introspect", self.config.issuer);
+        let resp = self
+            .http
             .post(&url)
-            .basic_auth(
-                &self.config.introspection_client_id,
-                Some(&self.config.introspection_client_secret),
-            )
+            .basic_auth(&client.client_id, Some(&client.client_secret))
             .form(&[("token", token)])
             .send()
             .await
-            .map_err(|e| AuthError::Provider(e.to_string()))?;
-
+            .map_err(|e| AuthError::Unavailable(format!("introspection: {e}")))?;
         if !resp.status().is_success() {
-            return Err(AuthError::InvalidToken(format!(
+            return Err(AuthError::Unavailable(format!(
                 "introspection HTTP {}",
                 resp.status()
             )));
         }
-
         let intro: IntrospectionResponse = resp
             .json()
             .await
-            .map_err(|e| AuthError::Provider(e.to_string()))?;
-
-        if !intro.active {
-            return Err(AuthError::TokenExpired);
-        }
-
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        if let Some(exp) = intro.exp {
-            if exp < now {
-                return Err(AuthError::TokenExpired);
-            }
-        }
-
-        let sub = intro
-            .sub
-            .ok_or_else(|| AuthError::InvalidToken("no sub claim".into()))?;
-        let tenant_id = intro.org_id.clone().unwrap_or_else(|| sub.clone());
-
-        debug!(sub, tenant_id, "Zitadel token verified");
-
-        let ctx = IdentityContext {
-            user_id: sub,
-            tenant_id: TenantId::from(tenant_id),
-            email: intro.email,
-            roles: Self::parse_roles(intro.project_roles.as_ref()),
-            plan_tier: Self::parse_plan_tier(intro.plan_tier.as_deref()),
-            subscription_status: Self::parse_subscription_status(
-                intro.subscription_status.as_deref(),
-            ),
-        };
-
-        // Cache with TTL capped at TOKEN_CACHE_MAX_TTL_SECS.
-        // moka's per-entry TTL requires the builder feature; we rely on the global TTL
-        // set at construction (60s), which is safe — token exp is always >= 60s in practice.
-        self.token_cache.insert(cache_key, ctx.clone()).await;
-
-        Ok(ctx)
-    }
-
-    async fn user_info(&self, _sub: &str) -> Result<IdentityContext, AuthError> {
-        Err(AuthError::Provider(
-            "ZitadelProvider::user_info requires an access token; use verify_access_token".into(),
-        ))
-    }
-
-    async fn health(&self) -> Result<(), AuthError> {
-        let url = format!("{}/", self.config.domain);
-        self.client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| AuthError::Provider(e.to_string()))?;
-        Ok(())
+            .map_err(|e| AuthError::Unavailable(format!("introspection parse: {e}")))?;
+        let identity = identity_from_introspection(intro, &self.config, unix_now())?;
+        self.introspection_cache
+            .insert(cache_key, identity.clone())
+            .await;
+        Ok(identity)
     }
 }
 
 #[async_trait]
-impl TenantManager for ZitadelProvider {
-    async fn create_tenant(
-        &self,
-        name: &str,
-        owner_email: &str,
-    ) -> Result<TenantCreated, AuthError> {
-        let url = format!("{}/management/v1/orgs", self.config.domain);
-        let body = CreateOrgRequest {
-            name: name.to_string(),
-        };
-
-        let resp = self
-            .client
-            .post(&url)
-            .bearer_auth(&self.config.mgmt_pat)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| AuthError::Provider(e.to_string()))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(AuthError::Provider(format!(
-                "create org failed: HTTP {} — {}",
-                status, text
-            )));
+impl TokenVerifier for ZitadelVerifier {
+    async fn verify(&self, token: &str) -> Result<Identity, AuthError> {
+        if looks_like_jwt(token) {
+            self.verify_jwt(token).await
+        } else {
+            self.verify_opaque(token).await
         }
+    }
+}
 
-        let created: CreateOrgResponse = resp
-            .json()
-            .await
-            .map_err(|e| AuthError::Provider(e.to_string()))?;
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
 
-        let org_id = created
-            .organization_id
-            .ok_or_else(|| AuthError::Provider("no organizationId in response".into()))?;
+/// Three base64url segments whose first one decodes as a JWT header.
+fn looks_like_jwt(token: &str) -> bool {
+    token.split('.').count() == 3 && decode_header(token).is_ok()
+}
 
-        Ok(TenantCreated {
-            tenant_id: TenantId::from(org_id),
-            name: name.to_string(),
-            owner_email: owner_email.to_string(),
+/// Decode and validate a JWT with an already-resolved key (pure; unit-tested).
+pub(crate) fn validate_jwt(
+    token: &str,
+    key: &DecodingKey,
+    config: &ZitadelConfig,
+) -> Result<Identity, AuthError> {
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.set_issuer(&[&config.issuer]);
+    validation.set_audience(&[&config.audience]);
+    validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
+    validation.leeway = LEEWAY_SECS;
+    validation.validate_nbf = true;
+
+    let claims = decode::<AccessTokenClaims>(token, key, &validation)
+        .map_err(|e| AuthError::InvalidToken(e.to_string()))?
+        .claims;
+    identity_from_claims(claims.sub, &claims.extra)
+}
+
+fn identity_from_claims(
+    sub: String,
+    extra: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Identity, AuthError> {
+    if sub.trim().is_empty() {
+        return Err(AuthError::InvalidToken("empty sub".into()));
+    }
+    let tenant_id = extra
+        .get(ORG_CLAIM)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| AuthError::InvalidToken(format!("missing {ORG_CLAIM} claim")))?;
+    let role = role_from_project_roles(
+        extra
+            .get(ROLES_CLAIM)
+            .and_then(|v| v.as_object())
+            .into_iter()
+            .flat_map(|m| m.keys().map(String::as_str)),
+    );
+    let email_verified = extra
+        .get("email_verified")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let email = extra
+        .get("email")
+        .and_then(|v| v.as_str())
+        .filter(|_| email_verified)
+        .map(String::from);
+    Ok(Identity {
+        user_id: sub,
+        tenant_id: TenantId::from(tenant_id.to_string()),
+        email,
+        role,
+    })
+}
+
+fn identity_from_introspection(
+    intro: IntrospectionResponse,
+    config: &ZitadelConfig,
+    now: u64,
+) -> Result<Identity, AuthError> {
+    if !intro.active {
+        return Err(AuthError::InvalidToken("token is not active".into()));
+    }
+    match intro.iss.as_deref().map(|i| i.trim_end_matches('/')) {
+        Some(iss) if iss == config.issuer => {}
+        _ => return Err(AuthError::InvalidToken("issuer mismatch".into())),
+    }
+    let aud_ok = match &intro.aud {
+        Some(serde_json::Value::String(a)) => a == &config.audience,
+        Some(serde_json::Value::Array(list)) => list
+            .iter()
+            .any(|a| a.as_str() == Some(config.audience.as_str())),
+        _ => false,
+    };
+    if !aud_ok {
+        return Err(AuthError::InvalidToken("audience mismatch".into()));
+    }
+    match intro.exp {
+        Some(exp) if exp + LEEWAY_SECS >= now => {}
+        _ => return Err(AuthError::InvalidToken("token expired".into())),
+    }
+    let sub = intro
+        .sub
+        .ok_or_else(|| AuthError::InvalidToken("no sub".into()))?;
+    identity_from_claims(sub, &intro.extra)
+}
+
+#[cfg(test)]
+pub(crate) mod test_keys {
+    //! An RSA key generated once per test process — no key material is committed.
+    use base64::Engine as _;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use rsa::pkcs1::EncodeRsaPrivateKey;
+    use rsa::traits::PublicKeyParts;
+    use std::sync::OnceLock;
+
+    pub struct TestKey {
+        pub private_pem: String,
+        pub n: String,
+        pub e: String,
+    }
+
+    pub fn key() -> &'static TestKey {
+        static KEY: OnceLock<TestKey> = OnceLock::new();
+        KEY.get_or_init(|| {
+            let mut rng = rand::thread_rng();
+            let private = rsa::RsaPrivateKey::new(&mut rng, 2048).expect("generate RSA key");
+            TestKey {
+                private_pem: private
+                    .to_pkcs1_pem(rsa::pkcs8::LineEnding::LF)
+                    .expect("encode PEM")
+                    .to_string(),
+                n: URL_SAFE_NO_PAD.encode(private.n().to_bytes_be()),
+                e: URL_SAFE_NO_PAD.encode(private.e().to_bytes_be()),
+            }
         })
     }
+}
 
-    async fn list_tenants(&self) -> Result<Vec<TenantSummary>, AuthError> {
-        // Zitadel Management API — list organizations.
-        let url = format!("{}/management/v1/orgs", self.config.domain);
-        let resp = self
-            .client
-            .get(&url)
-            .bearer_auth(&self.config.mgmt_pat)
-            .send()
-            .await
-            .map_err(|e| AuthError::Provider(e.to_string()))?;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::tenant::UserRole;
+    use jsonwebtoken::{EncodingKey, Header, encode};
+    use serde_json::json;
 
-        if !resp.status().is_success() {
-            warn!("list_tenants: Zitadel returned {}", resp.status());
-            return Ok(vec![]);
+    const ISS: &str = "https://auth.test.example";
+    const AUD: &str = "gateway-project";
+
+    fn config() -> ZitadelConfig {
+        ZitadelConfig {
+            issuer: ISS.into(),
+            audience: AUD.into(),
+            introspection: None,
         }
-
-        #[derive(Deserialize)]
-        struct ListOrgsResp {
-            result: Option<Vec<OrgEntry>>,
-        }
-        #[derive(Deserialize)]
-        struct OrgEntry {
-            id: Option<String>,
-            name: Option<String>,
-        }
-
-        let data: ListOrgsResp = resp
-            .json()
-            .await
-            .map_err(|e| AuthError::Provider(e.to_string()))?;
-
-        Ok(data
-            .result
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|o| {
-                Some(TenantSummary {
-                    tenant_id: TenantId::from(o.id?),
-                    name: o.name.unwrap_or_default(),
-                    owner_email: None,
-                    plan_tier: PlanTier::Free,
-                    subscription_status: SubscriptionStatus::Active,
-                })
-            })
-            .collect())
     }
 
-    async fn invite_user(
-        &self,
-        _tenant_id: &TenantId,
-        _email: &str,
-        _role: UserRole,
-    ) -> Result<(), AuthError> {
-        // Invite via Zitadel: create user in org + assign role.
-        // Full implementation requires Zitadel user creation + org member assignment.
-        // Minimal stub: logs intent; production impl extends this.
-        tracing::info!(
-            tenant_id = %_tenant_id,
-            email = %_email,
-            role = %_role,
-            "ZitadelProvider::invite_user — stub (implement Zitadel user creation)"
-        );
-        Ok(())
+    fn sign(claims: serde_json::Value) -> String {
+        let k = test_keys::key();
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some("kid-1".into());
+        encode(
+            &header,
+            &claims,
+            &EncodingKey::from_rsa_pem(k.private_pem.as_bytes()).unwrap(),
+        )
+        .unwrap()
     }
 
-    async fn update_plan_claim(
-        &self,
-        tenant_id: &TenantId,
-        tier: PlanTier,
-        status: SubscriptionStatus,
-    ) -> Result<(), AuthError> {
-        // Update Zitadel metadata on the organization so the next token refresh
-        // picks up the new plan_tier and subscription_status claims.
-        let url = format!(
-            "{}/management/v1/orgs/{}/metadata/bulk",
-            self.config.domain, tenant_id
-        );
+    fn decoding_key() -> DecodingKey {
+        let k = test_keys::key();
+        DecodingKey::from_rsa_components(&k.n, &k.e).unwrap()
+    }
 
-        #[derive(Serialize)]
-        struct MetadataEntry {
-            key: String,
-            value: String,
+    fn claims(overrides: serde_json::Value) -> serde_json::Value {
+        let now = unix_now();
+        let mut base = json!({
+            "iss": ISS,
+            "sub": "user-1",
+            "aud": [AUD, "other-client"],
+            "exp": now + 3600,
+            "iat": now,
+            "nbf": now - 5,
+            ORG_CLAIM: "org-42",
+            ROLES_CLAIM: { "admin": { "org-42": "acme" } },
+            "email": "a@example.com",
+            "email_verified": true
+        });
+        for (k, v) in overrides.as_object().unwrap() {
+            if v.is_null() {
+                base.as_object_mut().unwrap().remove(k);
+            } else {
+                base[k] = v.clone();
+            }
         }
-        #[derive(Serialize)]
-        struct BulkSetMetadataRequest {
-            metadata: Vec<MetadataEntry>,
-        }
+        base
+    }
 
-        let body = BulkSetMetadataRequest {
-            metadata: vec![
-                MetadataEntry {
-                    key: "conusai_plan_tier".into(),
-                    value: {
-                        use base64::Engine as _;
-                        base64::engine::general_purpose::STANDARD.encode(tier.to_string())
-                    },
-                },
-                MetadataEntry {
-                    key: "conusai_subscription_status".into(),
-                    value: {
-                        use base64::Engine as _;
-                        base64::engine::general_purpose::STANDARD.encode(status.to_string())
-                    },
-                },
-            ],
+    #[test]
+    fn accepts_valid_token() {
+        let id = validate_jwt(&sign(claims(json!({}))), &decoding_key(), &config()).unwrap();
+        assert_eq!(id.user_id, "user-1");
+        assert_eq!(id.tenant_id.as_str(), "org-42");
+        assert_eq!(id.role, UserRole::Admin);
+        assert_eq!(id.email.as_deref(), Some("a@example.com"));
+    }
+
+    #[test]
+    fn super_admin_role() {
+        let t = sign(claims(json!({ ROLES_CLAIM: { "super_admin": {} } })));
+        let id = validate_jwt(&t, &decoding_key(), &config()).unwrap();
+        assert_eq!(id.role, UserRole::SuperAdmin);
+    }
+
+    #[test]
+    fn rejects_wrong_issuer() {
+        let t = sign(claims(json!({ "iss": "https://evil.example" })));
+        assert!(validate_jwt(&t, &decoding_key(), &config()).is_err());
+    }
+
+    #[test]
+    fn rejects_wrong_audience() {
+        let t = sign(claims(json!({ "aud": ["someone-else"] })));
+        assert!(validate_jwt(&t, &decoding_key(), &config()).is_err());
+    }
+
+    #[test]
+    fn rejects_expired() {
+        let t = sign(claims(json!({ "exp": unix_now() - 3600 })));
+        assert!(validate_jwt(&t, &decoding_key(), &config()).is_err());
+    }
+
+    #[test]
+    fn rejects_missing_org() {
+        let t = sign(claims(json!({ ORG_CLAIM: null })));
+        let err = validate_jwt(&t, &decoding_key(), &config()).unwrap_err();
+        assert!(err.to_string().contains(ORG_CLAIM));
+    }
+
+    #[test]
+    fn ignores_unverified_email_and_plan_claims() {
+        let t = sign(claims(json!({
+            "email_verified": false,
+            "urn:conusai:plan_tier": "enterprise"
+        })));
+        let id = validate_jwt(&t, &decoding_key(), &config()).unwrap();
+        assert_eq!(id.email, None);
+    }
+
+    #[test]
+    fn rejects_hs256() {
+        let mut header = Header::new(Algorithm::HS256);
+        header.kid = Some("kid-1".into());
+        let t = encode(&header, &claims(json!({})), &EncodingKey::from_secret(b"x")).unwrap();
+        assert!(validate_jwt(&t, &decoding_key(), &config()).is_err());
+    }
+
+    #[test]
+    fn introspection_checks_issuer_audience_and_expiry() {
+        let now = unix_now();
+        let ok = |v: serde_json::Value| {
+            identity_from_introspection(serde_json::from_value(v).unwrap(), &config(), now)
         };
+        let base = json!({
+            "active": true, "sub": "u", "iss": ISS, "aud": [AUD], "exp": now + 60,
+            ORG_CLAIM: "org-1"
+        });
+        assert_eq!(ok(base.clone()).unwrap().tenant_id.as_str(), "org-1");
 
-        let resp = self
-            .client
-            .post(&url)
-            .bearer_auth(&self.config.mgmt_pat)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| AuthError::Provider(e.to_string()))?;
+        let mut inactive = base.clone();
+        inactive["active"] = json!(false);
+        assert!(ok(inactive).is_err());
 
-        if !resp.status().is_success() {
-            warn!(
-                tenant_id = %tenant_id,
-                status = %resp.status(),
-                "update_plan_claim: Zitadel metadata update failed"
-            );
-        }
-        Ok(())
+        let mut wrong_aud = base.clone();
+        wrong_aud["aud"] = json!("nope");
+        assert!(ok(wrong_aud).is_err());
+
+        let mut wrong_iss = base.clone();
+        wrong_iss["iss"] = json!("https://evil.example");
+        assert!(ok(wrong_iss).is_err());
+
+        let mut expired = base.clone();
+        expired["exp"] = json!(now - 3600);
+        assert!(ok(expired).is_err());
+
+        let mut no_org = base;
+        no_org.as_object_mut().unwrap().remove(ORG_CLAIM);
+        assert!(ok(no_org).is_err());
     }
 
-    async fn health(&self) -> Result<(), AuthError> {
-        IdentityProvider::health(self).await
+    #[test]
+    fn config_requires_https_except_loopback() {
+        let mut c = config();
+        assert!(c.validate().is_ok());
+        c.issuer = "http://auth.example".into();
+        assert!(c.validate().is_err());
+        c.issuer = "http://127.0.0.1:8080".into();
+        assert!(c.validate().is_ok());
+        c.issuer = "http://localhost:8080".into();
+        assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn jwt_shape_detection() {
+        assert!(looks_like_jwt(&sign(claims(json!({})))));
+        assert!(!looks_like_jwt("opaque-token-value"));
+        assert!(!looks_like_jwt("a.b.c"));
+    }
+
+    #[tokio::test]
+    async fn opaque_token_refused_without_introspection() {
+        let v = ZitadelVerifier::new(config()).unwrap();
+        let err = v.verify("opaque-token-value").await.unwrap_err();
+        assert!(matches!(err, AuthError::InvalidToken(_)));
     }
 }

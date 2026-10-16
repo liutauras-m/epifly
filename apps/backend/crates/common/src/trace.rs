@@ -40,4 +40,3 @@ pub trait SessionRecorder: Send + Sync + 'static {
     fn snapshot(&self) -> SessionTrace;
     fn reset(&self);
 }
-

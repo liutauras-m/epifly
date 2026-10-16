@@ -7,7 +7,7 @@
 //! Does NOT require a running Postgres instance — uses the in-memory registry path.
 
 use agent_core::{
-    CapabilityRegistry, SemanticCapabilityRouter, SemanticRouterConfig,
+    CapabilityRegistry, QdrantVectorStore, SemanticCapabilityRouter, SemanticRouterConfig,
     capabilities::{
         card::CapabilityCard,
         manifest::{ToolDef, ToolKind, ToolManifest},
@@ -15,7 +15,6 @@ use agent_core::{
     },
     context::tenant::{PlanTier, TenantContext},
     indexing::EmbeddingService,
-    QdrantVectorStore,
 };
 use async_trait::async_trait;
 use serde_json::json;
@@ -44,7 +43,14 @@ impl EmbeddingService for ConstEmbedder {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn make_tenant(id: &str) -> TenantContext {
-    TenantContext::new(id, Some("user-1"), PlanTier::Free, "/tmp")
+    TenantContext::new(id, Some("user-1"), PlanTier::Free)
+}
+
+/// The mock MCP servers listen on loopback; every test in this binary sets the
+/// same allowlist value, so concurrent writes are harmless.
+fn allow_loopback_mcp() {
+    // SAFETY: all writers in this test binary store the same value.
+    unsafe { std::env::set_var("CONUSAI_MCP_ALLOWED_HOSTS", "127.0.0.1") };
 }
 
 fn register_remote_mcp(
@@ -82,8 +88,10 @@ fn register_remote_mcp(
         cost_hint: None,
         requires: vec![],
     };
+    allow_loopback_mcp();
     let card = CapabilityCard::new(manifest.clone(), std::path::PathBuf::from("."));
-    let provider = RemoteMcpCapability::new(manifest, endpoint.to_string());
+    let provider =
+        RemoteMcpCapability::new(manifest, endpoint.to_string()).expect("allowed endpoint");
     registry.register(card.with_provider(provider));
 }
 

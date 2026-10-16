@@ -16,7 +16,13 @@ pub fn sanitize_bucket_name(input: &str) -> String {
     let mut name: String = input
         .to_lowercase()
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
 
     // Collapse consecutive dashes into one.

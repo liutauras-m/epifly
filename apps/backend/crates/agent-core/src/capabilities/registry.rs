@@ -1,7 +1,8 @@
 use super::card::CapabilityCard;
 use super::manifest::ToolManifest;
 use super::namespace::NamespaceFilter;
-use super::provider::{BulkCapabilityFactory, CapabilityFactory, CapabilityProvider};
+use super::object_source::TenantObjectSource;
+use super::provider::{CapabilityFactory, CapabilityProvider};
 use crate::llm::LlmRegistry;
 use std::collections::HashMap;
 use std::path::Path;
@@ -13,13 +14,8 @@ use tracing::{info, warn};
 pub struct CapabilityRegistry {
     cards: HashMap<String, CapabilityCard>,
     factories: Vec<Box<dyn CapabilityFactory>>,
-    bulk_factories: Vec<Box<dyn BulkCapabilityFactory>>,
     /// namespace segment → child segment names (for admin autocomplete).
     namespace_index: HashMap<String, Vec<String>>,
-    /// In-process cache of tool description → embedding vector (PR 2.B.3.1).
-    /// Avoids re-embedding unchanged capability descriptions across restarts or
-    /// hot-reload cycles. Key is the exact text sent to `EmbeddingService::embed_documents`.
-    embedding_cache: HashMap<String, Vec<f32>>,
 }
 
 impl CapabilityRegistry {
@@ -27,45 +23,33 @@ impl CapabilityRegistry {
         Self::default()
     }
 
-    pub fn with_default_factories(llm: Arc<LlmRegistry>) -> Self {
-        use super::providers::{chain::ChainFactory, mcp::McpFactory, wasm::WasmFactory};
+    /// Registry with the MCP, WASM (one shared sandboxed runtime) and chain factories.
+    pub fn with_default_factories(
+        llm: Arc<LlmRegistry>,
+        objects: Arc<dyn TenantObjectSource>,
+    ) -> anyhow::Result<Self> {
+        use super::providers::wasm::{WasmFactory, WasmLimits, WasmRuntime};
+        use super::providers::{chain::ChainFactory, mcp::McpFactory};
         let mut r = Self::new();
         r.register_factory(McpFactory);
-        r.register_factory(WasmFactory);
-        r.register_factory(ChainFactory::new(Arc::clone(&llm)));
-        r
+        r.register_factory(WasmFactory::new(WasmRuntime::new(WasmLimits::default())?));
+        r.register_factory(ChainFactory::new(Arc::clone(&llm), objects));
+        Ok(r)
     }
 
     /// Like `with_default_factories` but also includes `DynamicPromptFactory`.
-    pub fn with_all_factories(llm: Arc<LlmRegistry>) -> Self {
-        let mut r = Self::with_default_factories(Arc::clone(&llm));
+    pub fn with_all_factories(
+        llm: Arc<LlmRegistry>,
+        objects: Arc<dyn TenantObjectSource>,
+    ) -> anyhow::Result<Self> {
+        let mut r = Self::with_default_factories(Arc::clone(&llm), Arc::clone(&objects))?;
         use super::providers::dynamic_prompt::DynamicPromptFactory;
-        r.register_factory(DynamicPromptFactory::new(Arc::clone(&llm)));
-        r
+        r.register_factory(DynamicPromptFactory::new(Arc::clone(&llm), objects));
+        Ok(r)
     }
 
     pub fn register_factory(&mut self, factory: impl CapabilityFactory) {
         self.factories.push(Box::new(factory));
-    }
-
-    /// Register a `BulkCapabilityFactory` for use at boot (via `run_bulk_load`).
-    pub fn register_bulk_factory(&mut self, factory: impl BulkCapabilityFactory + 'static) {
-        self.bulk_factories.push(Box::new(factory));
-    }
-
-    /// Run all registered bulk factories to populate the registry.
-    /// Returns total capabilities loaded.
-    pub async fn run_bulk_load(&mut self) -> anyhow::Result<usize> {
-        let factories = std::mem::take(&mut self.bulk_factories);
-        let mut total = 0;
-        for factory in &factories {
-            match factory.load_batch(self).await {
-                Ok(n) => total += n,
-                Err(e) => warn!(error = %e, "bulk factory load_batch failed"),
-            }
-        }
-        self.bulk_factories = factories;
-        Ok(total)
     }
 
     /// Register a card that already has a provider cached on it.
@@ -230,11 +214,7 @@ impl CapabilityRegistry {
     ///
     /// Used by `lexical_capability_hints()` in the agent router (PR 2.B.3).
     /// Returns only capabilities that are enabled and visible to `tenant_id`.
-    pub fn lexical_hint_capabilities(
-        &self,
-        query: &str,
-        tenant_id: &str,
-    ) -> Vec<String> {
+    pub fn lexical_hint_capabilities(&self, query: &str, tenant_id: &str) -> Vec<String> {
         let query_lower = query.to_lowercase();
         let mut matched: Vec<String> = Vec::new();
 
@@ -248,9 +228,11 @@ impl CapabilityRegistry {
             }
 
             // 1. Check capability-level search_keywords.
-            let cap_hit = card.manifest.search_keywords.iter().any(|kw| {
-                word_boundary_contains(&query_lower, &kw.to_lowercase())
-            });
+            let cap_hit = card
+                .manifest
+                .search_keywords
+                .iter()
+                .any(|kw| word_boundary_contains(&query_lower, &kw.to_lowercase()));
             if cap_hit {
                 matched.push(cap_name);
                 continue;
@@ -258,9 +240,9 @@ impl CapabilityRegistry {
 
             // 2. Check per-tool search_keywords.
             let tool_hit = card.manifest.tools.iter().any(|tool| {
-                tool.search_keywords.iter().any(|kw| {
-                    word_boundary_contains(&query_lower, &kw.to_lowercase())
-                })
+                tool.search_keywords
+                    .iter()
+                    .any(|kw| word_boundary_contains(&query_lower, &kw.to_lowercase()))
             });
             if tool_hit {
                 matched.push(cap_name);
@@ -306,27 +288,6 @@ impl CapabilityRegistry {
         for card in &cards {
             self.index_namespace(card);
         }
-    }
-
-    // ── Embedding cache (PR 2.B.3.1) ─────────────────────────────────────────
-    //
-    // Bulk factories call `cache_embedding` after computing a fresh embedding so
-    // subsequent hot-reload cycles skip the embedding service call.  Keyed by the
-    // exact description text; lookup is O(1) average.
-
-    /// Store an embedding vector for `text` in the in-process cache.
-    pub fn cache_embedding(&mut self, text: String, embedding: Vec<f32>) {
-        self.embedding_cache.insert(text, embedding);
-    }
-
-    /// Return a cached embedding for `text`, or `None` if not yet computed.
-    pub fn cached_embedding(&self, text: &str) -> Option<&Vec<f32>> {
-        self.embedding_cache.get(text)
-    }
-
-    /// Number of entries currently in the embedding cache.
-    pub fn embedding_cache_len(&self) -> usize {
-        self.embedding_cache.len()
     }
 
     fn factory_for(&self, card: &CapabilityCard) -> Option<&dyn CapabilityFactory> {
@@ -689,7 +650,10 @@ mod tests {
 
     #[test]
     fn word_boundary_phrase_match() {
-        assert!(word_boundary_contains("i want to get rid of it", "get rid of"));
+        assert!(word_boundary_contains(
+            "i want to get rid of it",
+            "get rid of"
+        ));
         assert!(!word_boundary_contains("get rid", "get rid of")); // too short
     }
 
@@ -744,7 +708,10 @@ mod tests {
         let mut r = CapabilityRegistry::new();
         r.register(make_kw_card("delete-cap", vec!["delete".into()], vec![]));
         let hits = r.lexical_hint_capabilities("delete the file", "any-tenant");
-        assert!(hits.contains(&"delete-cap".to_string()), "expected delete-cap in {hits:?}");
+        assert!(
+            hits.contains(&"delete-cap".to_string()),
+            "expected delete-cap in {hits:?}"
+        );
     }
 
     #[test]
@@ -778,7 +745,13 @@ mod tests {
         let mut card = make_kw_card("scoped-cap", vec!["delete".into()], vec![]);
         card.manifest.tenant_scope = vec!["acme".into()];
         r.register(card);
-        assert!(r.lexical_hint_capabilities("delete something", "acme").contains(&"scoped-cap".to_string()));
-        assert!(r.lexical_hint_capabilities("delete something", "other").is_empty());
+        assert!(
+            r.lexical_hint_capabilities("delete something", "acme")
+                .contains(&"scoped-cap".to_string())
+        );
+        assert!(
+            r.lexical_hint_capabilities("delete something", "other")
+                .is_empty()
+        );
     }
 }

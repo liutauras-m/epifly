@@ -1,7 +1,9 @@
 /// POST /v1/billing/webhooks — public route (mounted in public_router).
 ///
-/// Verifies Lago webhook HMAC signature then dispatches on `event_type`:
-/// - subscription.started|updated|terminated → update_plan_claim
+/// Verifies the Lago HMAC signature (Base64 HMAC-SHA256 of the raw body with
+/// `LAGO_WEBHOOK_SECRET`; unsigned or JWT-signed webhooks are refused), then
+/// dispatches on `event_type`:
+/// - subscription.started|updated|terminated → invalidate the tenant's cached plan
 /// - invoice.payment_succeeded / invoice.payment_failed → audit log
 /// - customer.usage.threshold_reached → SSE quota warning
 ///
@@ -44,15 +46,26 @@ pub async fn handle_webhook(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    let Some(billing) = &state.billing else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    // Lago must be configured to sign webhooks with HMAC (not JWT).
+    let algorithm = headers
+        .get("X-Lago-Signature-Algorithm")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("hmac");
+    if algorithm != "hmac" {
+        warn!(
+            algorithm,
+            "webhook signature algorithm not supported (configure HMAC)"
+        );
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
     let signature = headers
         .get("X-Lago-Signature")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-
-    // Verify signature if billing is configured.
-    if let Some(billing) = &state.billing
-        && let Err(e) = billing.verify_webhook(&body, signature)
-    {
+    if let Err(e) = billing.verify_webhook(&body, signature) {
         warn!(error = %e, "webhook signature verification failed");
         return StatusCode::UNAUTHORIZED.into_response();
     }
@@ -92,7 +105,10 @@ pub async fn handle_webhook(
                 && let Some(customer_id) = obj.get("external_id").and_then(|v| v.as_str())
             {
                 // Push SSE quota warning to the affected tenant.
-                state.realtime_service.broadcast_quota_warning(customer_id).await;
+                state
+                    .realtime_service
+                    .broadcast_quota_warning(customer_id)
+                    .await;
             }
         }
         other => {
@@ -109,52 +125,21 @@ async fn handle_subscription_event(
     obj: Option<serde_json::Value>,
 ) {
     let Some(obj) = obj else { return };
-
     let customer_id = obj
         .get("external_customer_id")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let plan_code = obj
-        .get("plan_code")
-        .and_then(|v| v.as_str())
-        .unwrap_or("free");
-    let status_str = obj
-        .get("status")
-        .and_then(|v| v.as_str())
-        .unwrap_or("active");
-
-    let plan_tier = match plan_code {
-        "pro" => agent_core::PlanTier::Pro,
-        "team" | "enterprise" => agent_core::PlanTier::Enterprise,
-        _ => agent_core::PlanTier::Free,
-    };
-    let sub_status = match status_str {
-        "active" => agent_core::SubscriptionStatus::Active,
-        "pending" => agent_core::SubscriptionStatus::Trialing,
-        "terminated" => agent_core::SubscriptionStatus::Canceled,
-        _ => agent_core::SubscriptionStatus::Active,
-    };
-
-    if !customer_id.is_empty() {
-        let tenant_id = common::types::TenantId::from(customer_id.to_string());
-        if let Err(e) = state
-            .identity
-            .update_plan_claim(&tenant_id, plan_tier, sub_status)
-            .await
-        {
-            warn!(
-                error = %e,
-                event_type,
-                customer_id,
-                "update_plan_claim failed after subscription webhook"
-            );
-        } else {
-            info!(event_type, customer_id, plan_code, "plan claim updated");
-            // Notify live UIs via SSE.
-            state
-                .realtime_service
-                .broadcast_subscription_updated(customer_id)
-                .await;
-        }
+    if customer_id.is_empty() {
+        return;
     }
+    // The plan is re-read from Lago on the tenant's next request.
+    state.plans.invalidate(customer_id).await;
+    info!(
+        event_type,
+        customer_id, "subscription changed — plan cache invalidated"
+    );
+    state
+        .realtime_service
+        .broadcast_subscription_updated(customer_id)
+        .await;
 }

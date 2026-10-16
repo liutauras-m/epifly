@@ -292,7 +292,12 @@ impl SemanticCapabilityRouter {
         let hits = match self.embedder.embed_query(query).await {
             Ok(embedding) => self
                 .vector_store
-                .top_n_capabilities_filtered(&embedding, limit, &self.cfg.namespace, &self.cfg.tags_any)
+                .top_n_capabilities_filtered(
+                    &embedding,
+                    limit,
+                    &self.cfg.namespace,
+                    &self.cfg.tags_any,
+                )
                 .await
                 .unwrap_or_default(),
             Err(e) => {
@@ -676,7 +681,7 @@ mod tests {
     }
 
     fn make_tenant() -> TenantContext {
-        TenantContext::new("tenant-test", Some("user-1"), PlanTier::Free, "/tmp")
+        TenantContext::new("tenant-test", Some("user-1"), PlanTier::Free)
     }
 
     // ── Tool name parsing ─────────────────────────────────────────────────
@@ -774,8 +779,8 @@ mod tests {
     #[tokio::test]
     async fn select_different_tenants_separate_cache_entries() {
         let router = make_router(vec![]);
-        let t1 = TenantContext::new("tenant-a", Some("u1"), PlanTier::Free, "/tmp");
-        let t2 = TenantContext::new("tenant-b", Some("u2"), PlanTier::Free, "/tmp");
+        let t1 = TenantContext::new("tenant-a", Some("u1"), PlanTier::Free);
+        let t2 = TenantContext::new("tenant-b", Some("u2"), PlanTier::Free);
 
         router
             .select("summarize document", Some(&t1))

@@ -18,6 +18,8 @@ impl<'a> Extractor for HeaderExtractor<'a> {
 
 pub async fn propagate_trace(req: Request, next: Next) -> Response {
     let parent_cx = TraceContextPropagator::new().extract(&HeaderExtractor(req.headers()));
-    tracing::Span::current().set_parent(parent_cx);
+    if let Err(e) = tracing::Span::current().set_parent(parent_cx) {
+        tracing::debug!(error = ?e, "could not attach the incoming trace context");
+    }
     next.run(req).await
 }

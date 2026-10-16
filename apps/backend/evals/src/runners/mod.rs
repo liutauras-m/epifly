@@ -11,7 +11,10 @@ pub async fn run_suite_with_scorer(
     model: &str,
     scorer: ScorerKind,
 ) -> Result<()> {
-    use generic::{Scorer, json_content_extractor, text_content_extractor, run_suite_with_override};
+    use generic::{
+        Scorer, json_content_extractor, resolve_scorer, run_suite_with_override,
+        text_content_extractor,
+    };
 
     match suite {
         "invoice" => {
@@ -20,14 +23,15 @@ pub async fn run_suite_with_scorer(
                 "evals/suites/invoice.jsonl",
                 model,
                 |sample| {
-                    let cap = sample.input["capability"].as_str().unwrap_or("extract.fields.invoice");
+                    let cap = sample.input["capability"]
+                        .as_str()
+                        .unwrap_or("extract.fields.invoice");
                     let path = sample.input["image_path"].as_str().unwrap_or("[missing]");
                     format!("Use the {cap} capability on: {path}")
                 },
                 json_content_extractor,
-                Scorer::FieldDiff,
+                resolve_scorer(Scorer::FieldDiff, Some(scorer)),
                 "invoice extraction eval",
-                Some(scorer),
             )
             .await
         }
@@ -37,14 +41,15 @@ pub async fn run_suite_with_scorer(
                 "evals/suites/ocr.jsonl",
                 model,
                 |sample| {
-                    let cap = sample.input["capability"].as_str().unwrap_or("extract.text.ocr_vision");
+                    let cap = sample.input["capability"]
+                        .as_str()
+                        .unwrap_or("extract.text.ocr_vision");
                     let path = sample.input["image_path"].as_str().unwrap_or("[missing]");
                     format!("Use the {cap} capability on: {path}")
                 },
                 text_content_extractor,
-                Scorer::Snippets,
+                resolve_scorer(Scorer::Snippets, Some(scorer)),
                 "OCR quality eval",
-                Some(scorer),
             )
             .await
         }
@@ -62,31 +67,46 @@ pub async fn run_suite_with_scorer(
                     format!("Use the {cap} capability on: {path}")
                 },
                 json_content_extractor,
-                Scorer::FieldDiff,
+                resolve_scorer(Scorer::FieldDiff, Some(scorer)),
                 "smoke eval",
-                Some(scorer),
             )
             .await
         }
         "all" => {
             run_suite_with_override(
-                None, "evals/suites/invoice.jsonl", model,
+                None,
+                "evals/suites/invoice.jsonl",
+                model,
                 |sample| {
-                    let cap = sample.input["capability"].as_str().unwrap_or("extract.fields.invoice");
+                    let cap = sample.input["capability"]
+                        .as_str()
+                        .unwrap_or("extract.fields.invoice");
                     let path = sample.input["image_path"].as_str().unwrap_or("[missing]");
                     format!("Use the {cap} capability on: {path}")
                 },
-                json_content_extractor, Scorer::FieldDiff, "invoice extraction eval", None,
-            ).await.ok();
+                json_content_extractor,
+                resolve_scorer(Scorer::FieldDiff, None),
+                "invoice extraction eval",
+            )
+            .await
+            .ok();
             run_suite_with_override(
-                None, "evals/suites/ocr.jsonl", model,
+                None,
+                "evals/suites/ocr.jsonl",
+                model,
                 |sample| {
-                    let cap = sample.input["capability"].as_str().unwrap_or("extract.text.ocr_vision");
+                    let cap = sample.input["capability"]
+                        .as_str()
+                        .unwrap_or("extract.text.ocr_vision");
                     let path = sample.input["image_path"].as_str().unwrap_or("[missing]");
                     format!("Use the {cap} capability on: {path}")
                 },
-                text_content_extractor, Scorer::Snippets, "OCR quality eval", None,
-            ).await.ok();
+                text_content_extractor,
+                resolve_scorer(Scorer::Snippets, None),
+                "OCR quality eval",
+            )
+            .await
+            .ok();
             Ok(())
         }
         other => anyhow::bail!("unknown suite: {other}. Run `evals list` to see available suites."),

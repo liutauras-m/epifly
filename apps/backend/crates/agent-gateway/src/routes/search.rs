@@ -6,7 +6,7 @@
 /// (with embedding) when their content has changed (hash-based check).
 /// The query is embedded and top-N results are retrieved via cosine ANN search.
 /// Falls back to local substring matching only when the vector path fails.
-use crate::mw::tenant::ResolvedTenant;
+use crate::auth::ResolvedTenant;
 use crate::state::AppState;
 use axum::{
     Extension, Json,

@@ -5,12 +5,12 @@ namespace   = "storage.workspace"
 category    = "storage"
 kind        = "native"
 description = """
-The user's workspace toolkit. Save, organise, find, move, tag and delete
+The user's workspace toolkit. Save, organise, find, move and delete
 documents and folders in the tenant's hierarchical workspace.
 Use these tools whenever the user talks about their files, folders, notes,
 documents, or workspace in natural language.
 """
-tags     = ["workspace", "storage", "files", "folders", "documents", "save", "document", "tree", "find", "move", "delete", "tag"]
+tags     = ["workspace", "storage", "files", "folders", "documents", "save", "document", "tree", "find", "move", "delete"]
 accepts  = ["application/json"]
 emits    = ["application/json"]
 idempotent = false
@@ -23,8 +23,6 @@ search_keywords = [
   "find", "find file", "lookup", "search workspace",
   "move", "rename", "relocate", "move file", "move folder", "reparent",
   "delete", "remove", "trash", "empty folder", "bulk delete",
-  "tag", "label", "annotate",
-  "ensure folder", "today's folder", "date folder",
   "tree", "summarise", "list everything",
   "workspace", "document", "file",
 ]
@@ -111,29 +109,6 @@ type = "string"
 description = "Optional parent folder ULID. Omit or pass null to create the folder at the workspace root."
 
 [[tools]]
-name = "ensure_folder"
-description = "Create the specified directory path (and all parents) in the workspace filesystem."
-
-[tools.input_schema]
-type = "object"
-required = ["path"]
-
-[tools.input_schema.properties.path]
-type = "string"
-description = "Workspace-relative directory path to create"
-
-[[tools]]
-name = "ensure_date_folder"
-description = "Create a YYYY/MM/DD directory under base_path for today's UTC date. Returns the relative path."
-
-[tools.input_schema]
-type = "object"
-
-[tools.input_schema.properties.base_path]
-type = "string"
-description = "Base directory to partition under. Defaults to 'uploads'."
-
-[[tools]]
 name = "move_node"
 description = "Move a workspace node (folder or conversation) under a new parent. Accept either id (ULID) or name for the target, plus either new_parent_id (ULID) or new_parent_name for the destination folder."
 
@@ -199,19 +174,3 @@ description = "Human-readable name of the target folder (e.g. 'Drafts'). Omit to
 type = "string"
 description = "Filter: 'all' (default, deletes everything), 'conversation'/'file' for documents only, 'folder' for sub-folders only."
 enum = ["all", "conversation", "file", "files", "folder", "folders"]
-
-[[tools]]
-name = "tag_object"
-description = "Write tags (key-value pairs) to a .meta.json sidecar next to the target file."
-
-[tools.input_schema]
-type = "object"
-required = ["path"]
-
-[tools.input_schema.properties.path]
-type = "string"
-description = "Workspace-relative path of the file to tag"
-
-[tools.input_schema.properties.tags]
-type = "object"
-description = "Arbitrary key-value pairs to store as metadata"

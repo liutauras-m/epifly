@@ -49,14 +49,6 @@ impl EmbeddingModel {
             _ => None,
         }
     }
-
-    /// Parse from `EMBEDDING_LOCAL_MODEL` env var, defaulting to `MultilingualE5Large`.
-    pub fn from_env() -> Self {
-        std::env::var("EMBEDDING_LOCAL_MODEL")
-            .ok()
-            .and_then(|v| Self::from_name(&v))
-            .unwrap_or(Self::MultilingualE5Large)
-    }
 }
 
 /// Embedding dimensionality of the default model (multilingual-e5-large).
@@ -91,14 +83,10 @@ impl EmbeddingService for NoopEmbeddingService {
     }
 
     async fn embed_query(&self, _: &str) -> anyhow::Result<Vec<f32>> {
-        anyhow::bail!(
-            "embeddings disabled: gateway not compiled with --features local-embeddings"
-        )
+        anyhow::bail!("embeddings disabled: gateway not compiled with --features local-embeddings")
     }
 
     async fn embed_documents(&self, _: Vec<String>) -> anyhow::Result<Vec<Vec<f32>>> {
-        anyhow::bail!(
-            "embeddings disabled: gateway not compiled with --features local-embeddings"
-        )
+        anyhow::bail!("embeddings disabled: gateway not compiled with --features local-embeddings")
     }
 }

@@ -49,8 +49,20 @@ impl std::str::FromStr for ScorerKind {
             "field-diff" => Ok(ScorerKind::FieldDiff),
             "llm-judge" => Ok(ScorerKind::LlmJudge),
             "default" => Ok(ScorerKind::Default),
-            other => anyhow::bail!("unknown scorer: {other}. Allowed: exact, field-diff, llm-judge, default"),
+            other => anyhow::bail!(
+                "unknown scorer: {other}. Allowed: exact, field-diff, llm-judge, default"
+            ),
         }
+    }
+}
+
+/// The scorer to use: the `--scorer` CLI override when given, else the suite default.
+pub fn resolve_scorer(default_scorer: Scorer, scorer_override: Option<ScorerKind>) -> Scorer {
+    match scorer_override {
+        Some(ScorerKind::Exact) => Scorer::Exact,
+        Some(ScorerKind::FieldDiff) => Scorer::FieldDiff,
+        Some(ScorerKind::LlmJudge) => Scorer::LlmJudge,
+        Some(ScorerKind::Default) | None => default_scorer,
     }
 }
 
@@ -58,25 +70,26 @@ impl std::str::FromStr for ScorerKind {
 ///
 /// * `prompt_fn` — builds the user message from an `EvalSample`.
 /// * `extract_fn` — extracts a scoreable `Value` from the raw gateway JSON response.
-/// * `default_scorer` — the suite's default scoring strategy.
-/// * `scorer_override` — when `Some`, replaces the suite's default scorer (from `--scorer` CLI flag).
+/// * `scorer` — from [`resolve_scorer`].
 pub async fn run_suite_with_override(
     dataset: Option<PathBuf>,
     default_dataset: &str,
     model: &str,
     prompt_fn: impl Fn(&EvalSample) -> String,
     extract_fn: impl Fn(&Value) -> Value,
-    default_scorer: Scorer,
+    scorer: Scorer,
     suite_label: &str,
-    scorer_override: Option<ScorerKind>,
 ) -> Result<()> {
-    let scorer = match scorer_override {
-        Some(ScorerKind::Exact) => Scorer::Exact,
-        Some(ScorerKind::FieldDiff) => Scorer::FieldDiff,
-        Some(ScorerKind::LlmJudge) => Scorer::LlmJudge,
-        Some(ScorerKind::Default) | None => default_scorer,
-    };
-    _run_suite_inner(dataset, default_dataset, model, prompt_fn, extract_fn, scorer, suite_label).await
+    _run_suite_inner(
+        dataset,
+        default_dataset,
+        model,
+        prompt_fn,
+        extract_fn,
+        scorer,
+        suite_label,
+    )
+    .await
 }
 
 async fn _run_suite_inner(
@@ -97,7 +110,10 @@ async fn _run_suite_inner(
 
     let gateway_url =
         std::env::var("GATEWAY_URL").unwrap_or_else(|_| "http://localhost:8080".into());
-    let tenant_id = std::env::var("EVAL_TENANT_ID").unwrap_or_else(|_| "eval".into());
+    // The tenant is whatever the bearer credential belongs to (an `API_KEYS` key or a
+    // Zitadel access token); the gateway never takes a tenant from a header.
+    let token = std::env::var("EVAL_BEARER_TOKEN")
+        .map_err(|_| anyhow::anyhow!("EVAL_BEARER_TOKEN is required (API key or access token)"))?;
 
     let content = std::fs::read_to_string(&dataset_path)?;
     let samples: Vec<EvalSample> = content
@@ -127,7 +143,7 @@ async fn _run_suite_inner(
         let prompt = prompt_fn(sample);
         let resp = http
             .post(format!("{gateway_url}/v1/agent/completions"))
-            .header("X-Tenant-ID", &tenant_id)
+            .bearer_auth(&token)
             .json(&json!({
                 "model": model,
                 "messages": [{ "role": "user", "content": prompt }]
@@ -141,7 +157,8 @@ async fn _run_suite_inner(
                     let extracted = extract_fn(&body);
                     let result = match &scorer {
                         Scorer::LlmJudge => {
-                            llm_judge(&http, &gateway_url, &tenant_id, &extracted, &sample.expected).await
+                            llm_judge(&http, &gateway_url, &token, &extracted, &sample.expected)
+                                .await
                         }
                         s => score(s, &extracted, &sample.expected),
                     };
@@ -172,7 +189,7 @@ async fn _run_suite_inner(
 async fn llm_judge(
     http: &reqwest::Client,
     gateway_url: &str,
-    tenant_id: &str,
+    token: &str,
     extracted: &Value,
     expected: &Value,
 ) -> ScorerResult {
@@ -188,7 +205,7 @@ async fn llm_judge(
 
     let resp = http
         .post(format!("{gateway_url}/v1/agent/completions"))
-        .header("X-Tenant-ID", tenant_id)
+        .bearer_auth(token)
         .json(&json!({
             "model": "haiku",
             "messages": [{ "role": "user", "content": judge_prompt }]
@@ -227,7 +244,11 @@ async fn llm_judge(
             let score_val = v["score"].as_f64().unwrap_or(0.0).clamp(0.0, 1.0);
             let passed = v["passed"].as_bool().unwrap_or(score_val >= 0.8);
             let reason = v["reason"].as_str().unwrap_or("(no reason)").to_string();
-            ScorerResult { score: score_val, passed, details: reason }
+            ScorerResult {
+                score: score_val,
+                passed,
+                details: reason,
+            }
         }
         Err(e) => {
             eprintln!("llm-judge: could not parse judge JSON ({e}); falling back to field-diff");
@@ -256,7 +277,11 @@ fn score(scorer: &Scorer, extracted: &Value, expected: &Value) -> ScorerResult {
                 .map(|m| m.keys().cloned().collect())
                 .unwrap_or_default();
             if fields.is_empty() {
-                return ScorerResult { score: 1.0, passed: true, details: "no expected fields".into() };
+                return ScorerResult {
+                    score: 1.0,
+                    passed: true,
+                    details: "no expected fields".into(),
+                };
             }
             let mut hits = 0usize;
             let mut diffs = Vec::new();
@@ -272,7 +297,11 @@ fn score(scorer: &Scorer, extracted: &Value, expected: &Value) -> ScorerResult {
             ScorerResult {
                 score,
                 passed: score >= 0.8,
-                details: if diffs.is_empty() { "all fields match".into() } else { diffs.join("; ") },
+                details: if diffs.is_empty() {
+                    "all fields match".into()
+                } else {
+                    diffs.join("; ")
+                },
             }
         }
         Scorer::Snippets => {
@@ -285,7 +314,10 @@ fn score(scorer: &Scorer, extracted: &Value, expected: &Value) -> ScorerResult {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            let hits = snippets.iter().filter(|s| text.contains(s.as_str())).count();
+            let hits = snippets
+                .iter()
+                .filter(|s| text.contains(s.as_str()))
+                .count();
             let score = if snippets.is_empty() {
                 1.0
             } else {
@@ -313,7 +345,11 @@ fn values_match(expected: &Value, got: &Value) -> bool {
 }
 
 fn fail(details: String) -> ScorerResult {
-    ScorerResult { score: 0.0, passed: false, details }
+    ScorerResult {
+        score: 0.0,
+        passed: false,
+        details,
+    }
 }
 
 /// Standard extractor: parse assistant message content as JSON, fallback to `{raw: ...}`.

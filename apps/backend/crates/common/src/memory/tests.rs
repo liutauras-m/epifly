@@ -12,7 +12,6 @@ fn thread_serialises_roundtrip() {
         last_active: Utc::now(),
         message_count: 3,
         summary: None,
-        metadata: serde_json::json!({"source": "api"}),
     };
     let json = serde_json::to_string(&t).unwrap();
     let restored: Thread = serde_json::from_str(&json).unwrap();
@@ -41,7 +40,7 @@ fn tool_call_serialises_roundtrip() {
     let tc = ToolCall {
         id: "call_abc".into(),
         name: "invoice-processing__extract_invoice".into(),
-        input: serde_json::json!({"image_path": "/tmp/invoice.png"}),
+        input: serde_json::json!({"image_path": "attachments/u1/invoice.png"}),
         output: Some(r#"{"invoice_number": "INV-001"}"#.into()),
     };
     let json = serde_json::to_string(&tc).unwrap();

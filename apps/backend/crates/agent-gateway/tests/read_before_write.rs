@@ -26,7 +26,11 @@ fn capabilities_dir() -> std::path::PathBuf {
         .ancestors()
         .find_map(|a| {
             let candidate = a.join("capabilities");
-            if candidate.is_dir() { Some(candidate) } else { None }
+            if candidate.is_dir() {
+                Some(candidate)
+            } else {
+                None
+            }
         })
         .unwrap_or_else(|| std::path::PathBuf::from("capabilities"))
 }
@@ -59,8 +63,8 @@ fn read_before_write_parses_from_toml() {
         type = "object"
     "#;
 
-    let manifest = ToolManifest::from_toml(toml_str)
-        .expect("manifest with read_before_write must parse");
+    let manifest =
+        ToolManifest::from_toml(toml_str).expect("manifest with read_before_write must parse");
     let tool = manifest.tools.first().expect("must have at least one tool");
     assert_eq!(
         tool.read_before_write.as_deref(),
@@ -165,10 +169,9 @@ fn code_project_add_dependency_has_read_before_write() {
         return;
     }
 
-    let contents = std::fs::read_to_string(&toml_path)
-        .expect("should read capability.toml");
-    let manifest = ToolManifest::from_toml(&contents)
-        .expect("code-project capability.toml should parse");
+    let contents = std::fs::read_to_string(&toml_path).expect("should read capability.toml");
+    let manifest =
+        ToolManifest::from_toml(&contents).expect("code-project capability.toml should parse");
 
     let add_dep = manifest
         .tools

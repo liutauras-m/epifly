@@ -1,4 +1,4 @@
-use crate::mw::tenant::ResolvedTenant;
+use crate::auth::ResolvedTenant;
 use crate::state::AppState;
 use agent_core::capabilities::executor::ToolExecutor;
 use axum::{Extension, Json, extract::State};
@@ -17,7 +17,7 @@ use tracing::instrument;
         (status = 429, description = "Rate limit exceeded"),
         (status = 401, description = "Unauthorized"),
     ),
-    security(("bearer_auth" = []), ("api_key_auth" = [])),
+    security(("bearer_auth" = [])),
     tag = "mcp",
 )]
 #[instrument(skip(state, tenant, req), fields(method = req.method.as_str()))]
@@ -46,7 +46,7 @@ pub async fn dispatch(
 
     let result = match req.method.as_str() {
         "initialize" => Ok(handle_initialize()),
-        "tools/list" => Ok(handle_tools_list(&state)),
+        "tools/list" => Ok(handle_tools_list(&state, &tenant)),
         "tools/call" => handle_tools_call(&state, &tenant, req.params.as_ref()).await,
         _ => Err(JsonRpcError {
             code: -32601,
@@ -84,10 +84,11 @@ fn handle_initialize() -> Value {
     })
 }
 
-fn handle_tools_list(state: &Arc<AppState>) -> Value {
+/// Only capabilities that are enabled and in the caller's tenant scope.
+fn handle_tools_list(state: &Arc<AppState>, tenant: &ResolvedTenant) -> Value {
     let registry = state.registry.lock().unwrap();
     let tools: Vec<Value> = registry
-        .all_enabled()
+        .enabled_for_tenant(tenant.0.tenant_id.as_str())
         .flat_map(ToolExecutor::tool_definitions)
         .collect();
     json!({ "tools": tools })
@@ -125,19 +126,14 @@ async fn handle_tools_call(
     })?;
 
     // Get provider Arc under a short-lived lock; resolve sanitised name to
-    // the original by scanning the registry when the exact lookup misses.
+    // the original. Disabled or out-of-scope capabilities are "not found".
+    let tenant_id = tenant.0.tenant_id.as_str();
     let provider = {
         let registry = state.registry.lock().unwrap();
-        let resolved_name = registry
-            .get(cap_name)
-            .map(|c| c.manifest.name.clone())
-            .or_else(|| {
-                registry
-                    .all()
-                    .find(|c| c.manifest.name.replace('.', "_") == cap_name)
-                    .map(|c| c.manifest.name.clone())
-            });
-        resolved_name.and_then(|n| registry.get_provider(&n))
+        registry
+            .enabled_for_tenant(tenant_id)
+            .find(|c| c.manifest.name == cap_name || c.manifest.name.replace('.', "_") == cap_name)
+            .and_then(|c| c.provider.clone())
     }
     .ok_or_else(|| JsonRpcError {
         code: -32602,

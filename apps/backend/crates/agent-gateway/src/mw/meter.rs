@@ -2,7 +2,7 @@
 ///
 /// Reads `AgentTurnStats` from response extensions (populated by agent/chat
 /// handlers) and calls `billing.report_usage` + `quota.record`.
-use crate::mw::tenant::ResolvedTenant;
+use crate::auth::ResolvedTenant;
 use crate::state::AppState;
 use axum::{
     extract::{Request, State},
@@ -28,10 +28,7 @@ pub async fn record_usage(
     next: Next,
 ) -> Response {
     // Capture tenant before consuming the request.
-    let tenant = req
-        .extensions()
-        .get::<ResolvedTenant>()
-        .cloned();
+    let tenant = req.extensions().get::<ResolvedTenant>().cloned();
 
     let resp = next.run(req).await;
 

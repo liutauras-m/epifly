@@ -97,14 +97,14 @@ prompt = "summarise this svelte project at projects/demo"
 expected_capability = "code-project"
 
 [[case]]
-id = "upload-file"
-prompt = "upload this invoice and store it"
-expected_capability = "file-storage"
+id = "store-file"
+prompt = "store this invoice in my workspace"
+expected_capability = "storage-workspace"
 
 [[case]]
-id = "presigned-url"
-prompt = "give me a temporary link to invoice.pdf"
-expected_capability = "file-storage"
+id = "find-file"
+prompt = "find the file called budget.xlsx"
+expected_capability = "storage-workspace"
 
 [[case]]
 id = "ocr-vision"

@@ -6,13 +6,14 @@
 //! Phase 4.7: Verify focused storage providers are registered.
 //!
 //! Phase 1 (capabilities consolidation): Verify that the two consolidated domain
-//!   providers (storage-workspace, storage-fs) are registered, expose the correct
+//!   provider (storage-workspace) is registered, exposes the correct
 //!   tool surfaces, and that the 14 removed legacy capabilities are gone.
 //!
 //! Phase 8 (code-project): Verify that code-project is registered and exposes the
 //!   expected tool surface (scaffold_project, edit_file, apply_patch, add_dependency,
 //!   read_project, host_project).
 
+use agent_core::capabilities::object_source::NoObjectSource;
 use agent_core::{
     CapabilityRegistry, NativeStorageFactory, PlanTier,
     capabilities::discovery::CapabilityDiscovery,
@@ -20,8 +21,10 @@ use agent_core::{
     context::tenant::TenantContext,
     llm::{LlmBinding, LlmRegistry},
 };
+use common::memory::{
+    InMemoryWorkspaceContent, InMemoryWorkspaceStore, WorkspaceContentStore, WorkspaceStore,
+};
 use std::collections::HashMap;
-use common::memory::{InMemoryWorkspaceContent, InMemoryWorkspaceStore, WorkspaceStore, WorkspaceContentStore};
 use std::sync::Arc;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -32,7 +35,11 @@ fn capabilities_dir() -> std::path::PathBuf {
         .ancestors()
         .find_map(|a| {
             let candidate = a.join("capabilities");
-            if candidate.is_dir() { Some(candidate) } else { None }
+            if candidate.is_dir() {
+                Some(candidate)
+            } else {
+                None
+            }
         })
         .unwrap_or_else(|| std::path::PathBuf::from("capabilities"))
 }
@@ -49,7 +56,9 @@ fn build_test_registry() -> CapabilityRegistry {
             model: "claude-haiku-4-5".into(),
         },
     ));
-    let mut reg = CapabilityRegistry::with_default_factories(Arc::clone(&llm));
+    let mut reg =
+        CapabilityRegistry::with_default_factories(Arc::clone(&llm), Arc::new(NoObjectSource))
+            .expect("registry");
     reg.register_factory(NativeStorageFactory::new(
         Arc::clone(&ws_store),
         Arc::clone(&ws_content),
@@ -68,7 +77,6 @@ fn dev_tenant() -> TenantContext {
         "test-tenant",
         Some::<String>("dev-user".into()),
         PlanTier::Free,
-        "/tmp/conusai-test-ws",
     )
 }
 
@@ -87,9 +95,17 @@ fn invoice_capability_is_registered() {
 
     let provider = provider.unwrap();
     let manifest = provider.manifest();
-    assert_eq!(manifest.namespace.as_deref(), Some("extract.fields.invoice"));
+    assert_eq!(
+        manifest.namespace.as_deref(),
+        Some("extract.fields.invoice")
+    );
     assert_eq!(manifest.category.as_deref(), Some("extract"));
-    assert!(manifest.accepts.iter().any(|a| a.mime.contains("pdf") || a.mime.contains("image")));
+    assert!(
+        manifest
+            .accepts
+            .iter()
+            .any(|a| a.mime.contains("pdf") || a.mime.contains("image"))
+    );
     assert!(!manifest.emits.is_empty());
 }
 
@@ -100,7 +116,12 @@ fn invoice_manifest_has_extract_invoice_tool() {
         Some(p) => p,
         None => return,
     };
-    let tool_names: Vec<&str> = provider.manifest().tools.iter().map(|t| t.name.as_str()).collect();
+    let tool_names: Vec<&str> = provider
+        .manifest()
+        .tools
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
     assert!(
         tool_names.contains(&"extract_invoice"),
         "invoice capability should expose an 'extract_invoice' tool; found: {tool_names:?}"
@@ -120,10 +141,13 @@ fn semantic_router_selects_invoice_for_pdf_extraction_prompt() {
 fn legacy_workspace_monolith_absent() {
     let reg = build_test_registry();
     let old_cap = reg.get_provider("workspace-provider");
-    assert!(old_cap.is_none(), "legacy WorkspaceProvider should not be present");
+    assert!(
+        old_cap.is_none(),
+        "legacy WorkspaceProvider should not be present"
+    );
 }
 
-// ── Phase 1 consolidation — storage-workspace exposes all 11 tools ────────────
+// ── Phase 1 consolidation — storage-workspace exposes all 8 tools ────────────
 
 #[test]
 fn storage_workspace_is_registered() {
@@ -143,11 +167,21 @@ fn storage_workspace_exposes_all_legacy_tools() {
         Some(p) => p,
         None => return,
     };
-    let tool_names: Vec<&str> = provider.manifest().tools.iter().map(|t| t.name.as_str()).collect();
+    let tool_names: Vec<&str> = provider
+        .manifest()
+        .tools
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
     let expected = [
-        "save_document", "list_folders", "show_tree", "find_by_name",
-        "create_folder", "ensure_folder", "ensure_date_folder",
-        "move_node", "delete_node", "bulk_delete", "tag_object",
+        "save_document",
+        "list_folders",
+        "show_tree",
+        "find_by_name",
+        "create_folder",
+        "move_node",
+        "delete_node",
+        "bulk_delete",
     ];
     for tool in &expected {
         assert!(
@@ -155,7 +189,11 @@ fn storage_workspace_exposes_all_legacy_tools() {
             "storage-workspace should expose tool '{tool}'; found: {tool_names:?}"
         );
     }
-    assert_eq!(tool_names.len(), 11, "storage-workspace should have exactly 11 tools; found: {tool_names:?}");
+    assert_eq!(
+        tool_names.len(),
+        8,
+        "storage-workspace should have exactly 8 tools; found: {tool_names:?}"
+    );
 }
 
 #[test]
@@ -171,78 +209,29 @@ fn storage_workspace_manifest_metadata() {
     assert_eq!(m.namespace.as_deref(), Some("storage.workspace"));
 }
 
-// ── Phase 1 consolidation — storage-fs exposes all 5 tools ───────────────────
-
-#[test]
-fn storage_fs_is_registered() {
-    let reg = build_test_registry();
-    let provider = reg.get_provider("storage-fs");
-    assert!(
-        provider.is_some(),
-        "storage-fs provider should be registered; capabilities dir = {:?}",
-        capabilities_dir()
-    );
-}
-
-#[test]
-fn storage_fs_dispatches_all_five_tools() {
-    let reg = build_test_registry();
-    let provider = match reg.get_provider("storage-fs") {
-        Some(p) => p,
-        None => return,
-    };
-    let tool_names: Vec<&str> = provider.manifest().tools.iter().map(|t| t.name.as_str()).collect();
-    let expected = ["read_file", "write_file", "put_object", "move_object", "list_paths"];
-    for tool in &expected {
-        assert!(
-            tool_names.contains(tool),
-            "storage-fs should expose tool '{tool}'; found: {tool_names:?}"
-        );
-    }
-    assert_eq!(tool_names.len(), 5, "storage-fs should have exactly 5 tools; found: {tool_names:?}");
-}
-
-#[test]
-fn storage_fs_renames_list_folders_to_list_paths() {
-    let reg = build_test_registry();
-    let provider = match reg.get_provider("storage-fs") {
-        Some(p) => p,
-        None => return,
-    };
-    let tool_names: Vec<&str> = provider.manifest().tools.iter().map(|t| t.name.as_str()).collect();
-    assert!(
-        tool_names.contains(&"list_paths"),
-        "storage-fs must expose 'list_paths' (not the legacy 'list_folders')"
-    );
-    assert!(
-        !tool_names.contains(&"list_folders"),
-        "storage-fs must NOT expose 'list_folders' — that name belongs to storage-workspace"
-    );
-}
-
-#[test]
-fn storage_fs_manifest_metadata() {
-    let reg = build_test_registry();
-    let provider = match reg.get_provider("storage-fs") {
-        Some(p) => p,
-        None => return,
-    };
-    let m = provider.manifest();
-    assert_eq!(m.category.as_deref(), Some("storage"));
-    assert_eq!(m.kind, ToolKind::Native);
-    assert!(m.idempotent, "storage-fs should be idempotent");
-}
-
 // ── Phase 1 consolidation — legacy capabilities are removed ──────────────────
 
 #[test]
 fn legacy_storage_capabilities_are_removed() {
     let reg = build_test_registry();
     let removed = [
-        "storage-workspace-move", "storage-put", "storage-read-text", "storage-write-text",
-        "storage-move", "storage-delete", "storage-bulk-delete", "storage-list-folders",
-        "storage-create-folder", "storage-ensure-folder", "storage-ensure-date-folder",
-        "storage-find-by-name", "storage-show-tree", "storage-tag",
+        "storage-workspace-move",
+        "storage-put",
+        "storage-read-text",
+        "storage-write-text",
+        "storage-move",
+        "storage-delete",
+        "storage-bulk-delete",
+        "storage-list-folders",
+        "storage-create-folder",
+        "storage-ensure-folder",
+        "storage-ensure-date-folder",
+        "storage-find-by-name",
+        "storage-show-tree",
+        "storage-tag",
+        // Local-filesystem storage is gone: every tool uses the tenant workspace.
+        "storage-fs",
+        "file-storage",
     ];
     for cap in &removed {
         assert!(
@@ -256,8 +245,6 @@ fn legacy_storage_capabilities_are_removed() {
 
 #[tokio::test]
 async fn storage_workspace_save_document_roundtrip() {
-    let tmp = tempfile::tempdir().expect("temp dir");
-
     let ws_store: Arc<dyn WorkspaceStore> = Arc::new(InMemoryWorkspaceStore::new());
     let ws_content: Arc<dyn WorkspaceContentStore> = Arc::new(InMemoryWorkspaceContent::new());
     let factory = NativeStorageFactory::new(Arc::clone(&ws_store), Arc::clone(&ws_content));
@@ -275,15 +262,16 @@ async fn storage_workspace_save_document_roundtrip() {
         None => return,
     };
 
-    let mut tenant = dev_tenant();
-    tenant.workspace_root = tmp.path().to_path_buf();
+    let tenant = dev_tenant();
 
     let input = serde_json::json!({
         "folder_name": "Research",
         "filename": "notes",
         "content": "# My Notes\n\nSome content here."
     });
-    let result = provider.invoke("save_document", &input, Some(&tenant)).await;
+    let result = provider
+        .invoke("save_document", &input, Some(&tenant))
+        .await;
     assert!(result.is_ok(), "save_document should succeed: {:?}", result);
     let v = result.unwrap();
     assert_eq!(v["status"], "ok");
@@ -316,118 +304,6 @@ async fn storage_workspace_show_tree_returns_tree() {
     assert!(result.unwrap()["tree"].is_string());
 }
 
-#[tokio::test]
-async fn storage_fs_write_then_read_roundtrip() {
-    let tmp = tempfile::tempdir().expect("temp dir");
-
-    let ws_store: Arc<dyn WorkspaceStore> = Arc::new(InMemoryWorkspaceStore::new());
-    let ws_content: Arc<dyn WorkspaceContentStore> = Arc::new(InMemoryWorkspaceContent::new());
-    let factory = NativeStorageFactory::new(Arc::clone(&ws_store), Arc::clone(&ws_content));
-
-    let mut reg = CapabilityRegistry::new();
-    reg.register_factory(factory);
-
-    let dir = capabilities_dir();
-    if dir.exists() {
-        let _ = CapabilityDiscovery::new(vec![dir]).discover_into(&mut reg);
-    }
-
-    let provider = match reg.get_provider("storage-fs") {
-        Some(p) => p,
-        None => return,
-    };
-
-    let mut tenant = dev_tenant();
-    tenant.workspace_root = tmp.path().to_path_buf();
-
-    let write_input = serde_json::json!({
-        "path": "notes/scratch.txt",
-        "content": "hello from storage-fs"
-    });
-    let write_result = provider.invoke("write_file", &write_input, Some(&tenant)).await;
-    assert!(write_result.is_ok(), "write_file should succeed: {:?}", write_result);
-
-    let read_input = serde_json::json!({ "path": "notes/scratch.txt" });
-    let read_result = provider.invoke("read_file", &read_input, Some(&tenant)).await;
-    assert!(read_result.is_ok(), "read_file should succeed: {:?}", read_result);
-    assert_eq!(read_result.unwrap()["content"], "hello from storage-fs");
-}
-
-// ── Kept for backwards compat reference — Phase 4.7 functional tests ─────────
-
-#[tokio::test]
-async fn storage_ensure_folder_creates_directory() {
-    let tmp = tempfile::tempdir().expect("temp dir");
-    let ws_path = tmp.path().to_string_lossy().to_string();
-
-    let ws_store: Arc<dyn WorkspaceStore> = Arc::new(InMemoryWorkspaceStore::new());
-    let ws_content: Arc<dyn WorkspaceContentStore> = Arc::new(InMemoryWorkspaceContent::new());
-    let factory = NativeStorageFactory::new(Arc::clone(&ws_store), Arc::clone(&ws_content));
-
-    let mut reg = CapabilityRegistry::new();
-    reg.register_factory(factory);
-
-    let dir = capabilities_dir();
-    if dir.exists() {
-        let _ = CapabilityDiscovery::new(vec![dir]).discover_into(&mut reg);
-    }
-
-    // After consolidation, ensure_folder lives under storage-workspace
-    let provider = match reg.get_provider("storage-workspace") {
-        Some(p) => p,
-        None => return,
-    };
-
-    let mut tenant = dev_tenant();
-    tenant.workspace_root = std::path::PathBuf::from(&ws_path);
-
-    let input = serde_json::json!({ "path": "Research/notes" });
-    let result = provider.invoke("ensure_folder", &input, Some(&tenant)).await;
-
-    assert!(result.is_ok(), "ensure_folder should succeed: {:?}", result);
-    assert!(
-        tmp.path().join("Research/notes").exists(),
-        "directory Research/notes should have been created"
-    );
-}
-
-#[tokio::test]
-async fn storage_write_text_creates_file() {
-    let tmp = tempfile::tempdir().expect("temp dir");
-
-    let ws_store: Arc<dyn WorkspaceStore> = Arc::new(InMemoryWorkspaceStore::new());
-    let ws_content: Arc<dyn WorkspaceContentStore> = Arc::new(InMemoryWorkspaceContent::new());
-    let factory = NativeStorageFactory::new(Arc::clone(&ws_store), Arc::clone(&ws_content));
-
-    let mut reg = CapabilityRegistry::new();
-    reg.register_factory(factory);
-
-    let dir = capabilities_dir();
-    if dir.exists() {
-        let _ = CapabilityDiscovery::new(vec![dir]).discover_into(&mut reg);
-    }
-
-    // After consolidation, write_file lives under storage-fs
-    let provider = match reg.get_provider("storage-fs") {
-        Some(p) => p,
-        None => return,
-    };
-
-    let mut tenant = dev_tenant();
-    tenant.workspace_root = std::path::PathBuf::from(tmp.path());
-
-    let input = serde_json::json!({
-        "path": "Research/meeting-notes.md",
-        "content": "# Meeting notes\n\n- Discussed Q3 roadmap"
-    });
-    let result = provider.invoke("write_file", &input, Some(&tenant)).await;
-
-    assert!(result.is_ok(), "write_file should succeed: {:?}", result);
-    let written = std::fs::read_to_string(tmp.path().join("Research/meeting-notes.md"))
-        .expect("written file should be readable");
-    assert!(written.contains("Q3 roadmap"), "file content should be preserved");
-}
-
 // ── Phase 8 — code-project capability is registered ──────────────────────────
 
 #[test]
@@ -448,10 +324,19 @@ fn code_project_exposes_all_six_tools() {
         Some(p) => p,
         None => return,
     };
-    let tool_names: Vec<&str> = provider.manifest().tools.iter().map(|t| t.name.as_str()).collect();
+    let tool_names: Vec<&str> = provider
+        .manifest()
+        .tools
+        .iter()
+        .map(|t| t.name.as_str())
+        .collect();
     let expected = [
-        "scaffold_project", "edit_file", "apply_patch", "add_dependency",
-        "read_project", "host_project",
+        "scaffold_project",
+        "edit_file",
+        "apply_patch",
+        "add_dependency",
+        "read_project",
+        "host_project",
     ];
     for tool in &expected {
         assert!(
@@ -459,7 +344,11 @@ fn code_project_exposes_all_six_tools() {
             "code-project should expose tool '{tool}'; found: {tool_names:?}"
         );
     }
-    assert_eq!(tool_names.len(), 6, "code-project should have exactly 6 tools; found: {tool_names:?}");
+    assert_eq!(
+        tool_names.len(),
+        6,
+        "code-project should have exactly 6 tools; found: {tool_names:?}"
+    );
 }
 
 #[test]
@@ -473,7 +362,10 @@ fn code_project_manifest_metadata() {
     assert_eq!(m.category.as_deref(), Some("compose"));
     assert_eq!(m.namespace.as_deref(), Some("code.project"));
     assert_eq!(m.kind, ToolKind::Chain);
-    assert!(!m.idempotent, "code-project is not idempotent (modifies project files)");
+    assert!(
+        !m.idempotent,
+        "code-project is not idempotent (modifies project files)"
+    );
 }
 
 #[test]

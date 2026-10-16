@@ -4,13 +4,13 @@
 //! Takes a `LlmChainConfig` and a render context (JSON), renders the prompt template,
 //! calls the LLM, and returns a JSON value.
 //!
-//! When `cfg.vision = true` the executor reads `input.image_path` from the context,
-//! downloads or reads the file, base64-encodes it, and sends it as vision content
-//! alongside the text prompt. All LLM calls go through `LlmRegistry` — never through
-//! `rig::providers::*::Client` directly.
+//! When `cfg.vision = true` the executor reads `input.image_path` — an object key in
+//! the calling tenant's storage, read through [`TenantObjectSource`] — base64-encodes
+//! it, and sends it as vision content alongside the text prompt. Local paths and URLs
+//! are never read. All LLM calls go through `LlmRegistry`.
 
-use crate::capabilities::executor::resolve_image_path;
 use crate::capabilities::manifest::LlmChainConfig;
+use crate::capabilities::object_source::TenantObjectSource;
 use crate::context::tenant::TenantContext;
 use crate::llm::LlmRegistry;
 use crate::llm::types::{LlmRequest, LlmResponse};
@@ -27,11 +27,12 @@ use tracing::{debug, instrument};
 ///
 /// `ctx` should contain `{ "input": <tool_input>, "tenant": { ... } }`.
 /// When `cfg.vision = true`, `ctx.input.image_path` must be present.
-#[instrument(skip(cfg, ctx, llm, tenant), fields(model = %cfg.model, vision = cfg.vision))]
+#[instrument(skip(cfg, ctx, llm, objects, tenant), fields(model = %cfg.model, vision = cfg.vision))]
 pub async fn run_chain(
     cfg: &LlmChainConfig,
     ctx: &Value,
     llm: &Arc<LlmRegistry>,
+    objects: &Arc<dyn TenantObjectSource>,
     tenant: Option<&TenantContext>,
 ) -> anyhow::Result<Value> {
     let prompt = PromptTemplate::new(cfg.prompt_template.clone());
@@ -49,7 +50,7 @@ pub async fn run_chain(
         .map_err(|e| anyhow::anyhow!("run_chain: provider resolve failed: {e}"))?;
 
     if cfg.vision {
-        return run_chain_vision(cfg, ctx, &user_message, llm, tenant).await;
+        return run_chain_vision(cfg, ctx, &user_message, llm, objects, tenant).await;
     }
 
     let mut messages = Vec::new();
@@ -87,14 +88,18 @@ pub async fn run_chain(
     }
 }
 
-/// Vision variant: reads image_path from ctx, base64-encodes, sends as multimodal content.
+/// Vision variant: reads the tenant object named by `image_path`, base64-encodes it,
+/// sends it as multimodal content.
 async fn run_chain_vision(
     cfg: &LlmChainConfig,
     ctx: &Value,
     user_message: &str,
     llm: &Arc<LlmRegistry>,
+    objects: &Arc<dyn TenantObjectSource>,
     tenant: Option<&TenantContext>,
 ) -> anyhow::Result<Value> {
+    let tenant =
+        tenant.ok_or_else(|| anyhow::anyhow!("run_chain_vision: tenant context required"))?;
     // Extract the image path from the input context.
     let image_path = ctx["input"]["image_path"]
         .as_str()
@@ -105,30 +110,15 @@ async fn run_chain_vision(
             )
         })?;
 
-    let (temp_path, effective_path) = resolve_image_path(image_path).await?;
-
-    let bytes = std::fs::read(&effective_path).map_err(|e| {
-        anyhow::anyhow!(
-            "run_chain_vision: cannot read file {:?}: {e}",
-            effective_path
-        )
-    })?;
-
-    // Cleanup temp download after reading.
-    if let Some(ref tmp) = temp_path {
-        let _ = std::fs::remove_file(tmp);
-    }
-
+    let bytes = objects.read(tenant, image_path).await?;
     let b64 = general_purpose::STANDARD.encode(&bytes);
 
-    // Detect media type from extension for correct MIME tag.
-    let media_type = match effective_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase()
-        .as_str()
-    {
+    // Detect media type from the key's extension for the correct MIME tag.
+    let extension = image_path
+        .rsplit_once('.')
+        .map(|(_, ext)| ext.to_lowercase())
+        .unwrap_or_default();
+    let media_type = match extension.as_str() {
         "jpg" | "jpeg" => ImageMediaType::JPEG,
         "gif" => ImageMediaType::GIF,
         "webp" => ImageMediaType::WEBP,
@@ -154,10 +144,10 @@ async fn run_chain_vision(
     // sent upstream contains the actual model id, not the alias string.
     // (Before this fix, `cfg.model = "smart"` was forwarded literally → 404.)
     let binding = llm
-        .resolve_binding(&cfg.model, tenant)
+        .resolve_binding(&cfg.model, Some(tenant))
         .map_err(|e| anyhow::anyhow!("run_chain_vision: model resolve failed: {e}"))?;
     let provider = llm
-        .resolve(&cfg.model, tenant)
+        .resolve(&cfg.model, Some(tenant))
         .map_err(|e| anyhow::anyhow!("run_chain_vision: provider resolve failed: {e}"))?;
 
     let req = LlmRequest::builder()
@@ -249,10 +239,10 @@ fn extract_json_object(raw: &str) -> Option<serde_json::Value> {
             let candidate = &raw[i..=end];
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(candidate) {
                 // Only accept objects that look like a ToolOutput (have "content" or "artifacts").
-                if let Some(obj) = v.as_object() {
-                    if obj.contains_key("content") || obj.contains_key("artifacts") {
-                        return Some(v);
-                    }
+                if let Some(obj) = v.as_object()
+                    && (obj.contains_key("content") || obj.contains_key("artifacts"))
+                {
+                    return Some(v);
                 }
             }
         }
@@ -290,24 +280,24 @@ fn normalize_tool_output(v: serde_json::Value) -> serde_json::Value {
         let pairs: Vec<(String, String)> = if let Some(arr) = files.as_array() {
             arr.iter()
                 .filter_map(|f| {
-                    let path = f.get("path")
+                    let path = f
+                        .get("path")
                         .or_else(|| f.get("name"))
                         .or_else(|| f.get("filename"))
                         .and_then(|s| s.as_str())?;
-                    let content = f.get("content")
+                    let content = f
+                        .get("content")
                         .or_else(|| f.get("data"))
                         .and_then(|s| s.as_str())?;
                     Some((path.to_owned(), content.to_owned()))
                 })
                 .collect()
-        } else if let Some(map) = files.as_object() {
-            map.iter()
-                .filter_map(|(path, content)| {
-                    Some((path.clone(), content.as_str()?.to_owned()))
-                })
-                .collect()
         } else {
-            return None;
+            files
+                .as_object()?
+                .iter()
+                .filter_map(|(path, content)| Some((path.clone(), content.as_str()?.to_owned())))
+                .collect()
         };
 
         if pairs.is_empty() {
@@ -326,7 +316,8 @@ fn normalize_tool_output(v: serde_json::Value) -> serde_json::Value {
     });
 
     if let Some(artifacts) = artifacts_from_files {
-        let summary = obj.get("notes")
+        let summary = obj
+            .get("notes")
             .or_else(|| obj.get("summary"))
             .or_else(|| obj.get("description"))
             .or_else(|| obj.get("project"))
@@ -334,7 +325,8 @@ fn normalize_tool_output(v: serde_json::Value) -> serde_json::Value {
             .unwrap_or("Files generated.")
             .to_owned();
 
-        let metadata = obj.get("metadata")
+        let metadata = obj
+            .get("metadata")
             .cloned()
             .unwrap_or_else(|| json!({"artifact_path_prefix": ""}));
 

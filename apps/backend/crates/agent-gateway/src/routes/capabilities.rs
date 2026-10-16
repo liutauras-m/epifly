@@ -1,4 +1,4 @@
-use crate::mw::tenant::ResolvedTenant;
+use crate::auth::ResolvedTenant;
 use crate::state::AppState;
 use agent_core::PlanLimits;
 use axum::{Extension, Json, extract::State, response::IntoResponse};
@@ -27,8 +27,12 @@ pub async fn list_capabilities(
     {
         return HttpError::rate_limit(None).into_response();
     }
+    let model = state
+        .llm
+        .select_for_plan(&tenant.0.plan, None)
+        .map(|b| b.model)
+        .unwrap_or_default();
     let registry = state.registry.lock().unwrap();
-    let model = std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| "claude-opus-4-7".into());
     let plan_max_turns = limits.max_turns;
     let caps: Vec<Value> = registry
         .enabled_for_tenant(&tenant.0.tenant_id)

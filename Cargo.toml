@@ -9,13 +9,15 @@ members = [
     "apps/backend/crates/agent-gateway",
     "apps/backend/evals",
     "apps/backend/xtask",
-    "apps/browser-shell/src-tauri",
 ]
+# The Tauri shell builds on its own (platform SDKs, webkit2gtk); it is not part
+# of the backend workspace.
+exclude = ["apps/browser-shell/src-tauri"]
 
 [workspace.package]
 version      = "0.3.1"
 edition      = "2024"
-rust-version = "1.95"
+rust-version = "1.99"
 authors      = ["Liutauras Medziunas <info@conusai.com>"]
 license      = "MIT"
 repository   = "https://github.com/liutauras-m/epifly"
@@ -37,7 +39,7 @@ qdrant-client = { version = "1", default-features = false, features = ["serde"] 
 
 # HTTP
 axum         = { version = "0.8", features = ["ws", "multipart"] }
-reqwest      = { version = "0.13", features = ["json", "stream", "multipart", "form"] }
+reqwest      = { version = "0.13", features = ["json", "stream", "multipart", "form", "query"] }
 tower        = { version = "0.5" }
 tower-http   = { version = "0.6", features = ["cors", "trace", "compression-br", "fs"] }
 
@@ -46,9 +48,6 @@ serde        = { version = "1", features = ["derive"] }
 serde_json   = { version = "1" }
 toml         = { version = "0.8" }
 
-# Config
-figment      = { version = "0.10", features = ["env", "toml"] }
-
 # Error handling
 thiserror    = { version = "2" }
 anyhow       = { version = "1" }
@@ -56,19 +55,22 @@ anyhow       = { version = "1" }
 # Tracing / Observability
 tracing                    = { version = "0.1" }
 tracing-subscriber         = { version = "0.3", features = ["env-filter", "json"] }
-opentelemetry              = { version = "0.27", features = ["metrics"] }
-opentelemetry_sdk          = { version = "0.27", features = ["rt-tokio", "metrics"] }
-opentelemetry-otlp         = { version = "0.27", features = ["tonic", "metrics"] }
-opentelemetry-prometheus   = { version = "0.27" }
-prometheus                 = { version = "0.13", features = ["process"] }
-tracing-opentelemetry      = { version = "0.28" }
+opentelemetry              = { version = "0.33.1", features = ["trace", "metrics", "logs"] }
+opentelemetry_sdk          = { version = "0.33.1", features = ["trace", "metrics", "logs"] }
+# OTLP over HTTP/protobuf only (the platform ingest has no gRPC). The SDK's batch
+# processors run on their own threads, so the blocking reqwest client is the
+# supported pairing; TLS comes from the workspace reqwest (rustls).
+opentelemetry-otlp         = { version = "0.33.1", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace", "metrics", "logs"] }
+opentelemetry-appender-tracing = { version = "0.33.1" }
+opentelemetry-prometheus   = { version = "0.33.1" }
+prometheus                 = { version = "0.14", features = ["process"] }
+tracing-opentelemetry      = { version = "0.34.0" }
 
-# WASM — upgraded to wasmtime 44 + Component Model (wasip2)
-wasmtime     = { version = "44", features = ["component-model"] }
-wasmtime-wasi = { version = "44" }
+# WASM — sandboxed core modules (fuel + memory + epoch limits)
+wasmtime     = { version = "49.0.3" }
 
 # Auth / Crypto
-jsonwebtoken = { version = "9" }
+jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto", "use_pem"] }
 sha2         = { version = "0.10" }
 blake3       = { version = "1" }
 
@@ -84,9 +86,8 @@ object_store = { version = "0.11", features = ["aws"] }
 # Encryption (AES-256-GCM for per-tenant credential storage)
 aes-gcm = { version = "0.10" }
 
-# RustFS admin body encryption (argon2id key derivation + chacha20poly1305 AEAD)
+# RustFS admin body encryption (argon2id key derivation + AES-256-GCM)
 argon2          = { version = "0.5", features = ["std"] }
-chacha20poly1305 = { version = "0.10" }
 
 # Local embeddings (optional, feature-gated in agent-core)
 fastembed = { version = "5" }
@@ -129,7 +130,6 @@ notify       = { version = "7", features = ["macos_fsevent"] }
 
 # OpenAPI documentation
 utoipa       = { version = "5", features = ["axum_extras", "chrono", "uuid", "ulid"] }
-utoipa-swagger-ui = { version = "9", features = ["axum"] }
 
 # Test utilities
 proptest     = { version = "1" }

@@ -1,8 +1,7 @@
 use common::types::{TenantId, UserId};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
-/// Platform-level user role.  Carried in JWT claims and UI session cookies.
+/// Platform-level user role, from the Zitadel project roles claim.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum UserRole {
@@ -86,12 +85,22 @@ impl PlanTier {
         "capabilities"
     }
 
-    /// Default LLM alias for this plan tier, used as the third fallback in
-    /// `LlmRegistry::resolve` (after tenant override and caller-supplied alias).
+    /// Default LLM alias for agent/chat turns on this plan.
     pub fn default_alias(&self) -> &'static str {
         match self {
             PlanTier::Free => "haiku",
-            PlanTier::Pro | PlanTier::Enterprise => "opus",
+            PlanTier::Pro => "smart",
+            PlanTier::Enterprise => "opus",
+        }
+    }
+
+    /// LLM aliases a client may request for agent/chat turns on this plan.
+    /// The model is always chosen server-side from this list.
+    pub fn allowed_aliases(&self) -> &'static [&'static str] {
+        match self {
+            PlanTier::Free => &["haiku", "fast", "cheap"],
+            PlanTier::Pro => &["haiku", "fast", "cheap", "smart"],
+            PlanTier::Enterprise => &["haiku", "fast", "cheap", "smart", "opus"],
         }
     }
 }
@@ -112,11 +121,6 @@ pub struct TenantContext {
     pub user_id: Option<UserId>,
     pub plan: PlanTier,
     pub role: UserRole,
-    pub workspace_root: PathBuf,
-    /// Optional LLM alias or concrete model id that overrides the registry default
-    /// for this tenant (e.g. set from DB tenant config or JWT claims).
-    /// Resolution order: this field → caller alias → plan default → global default.
-    pub preferred_model: Option<String>,
 }
 
 impl TenantContext {
@@ -124,30 +128,16 @@ impl TenantContext {
         tenant_id: impl Into<TenantId>,
         user_id: Option<impl Into<UserId>>,
         plan: PlanTier,
-        workspace_root: impl Into<PathBuf>,
     ) -> Self {
         Self {
             tenant_id: tenant_id.into(),
             user_id: user_id.map(Into::into),
             plan,
             role: UserRole::User,
-            workspace_root: workspace_root.into(),
-            preferred_model: None,
         }
     }
 
-    /// Workspace root for this tenant: `{workspace_root}/tenants/{tenant_id}`
-    pub fn tenant_root(&self) -> PathBuf {
-        self.workspace_root.join("tenants").join(&*self.tenant_id)
-    }
-
-    /// Safe join of a relative path under this tenant's root.
-    pub fn safe_path(&self, rel: &str) -> common::error::Result<PathBuf> {
-        let root = self.tenant_root();
-        common::path_safety::safe_join(&root, rel)
-    }
-
-    /// Storage namespace prefix for this tenant (e.g. Postgres table prefix).
+    /// Storage namespace prefix for this tenant.
     pub fn tenant_namespace(&self, kind: &str) -> String {
         format!("{}_{}", kind, &*self.tenant_id)
     }
@@ -169,41 +159,4 @@ impl TenantContext {
         fields.push(("plan", self.plan.to_string()));
         fields
     }
-}
-
-/// Subscription lifecycle state — carried in JWT claims and identity contexts.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum SubscriptionStatus {
-    #[default]
-    Active,
-    Trialing,
-    PastDue,
-    Canceled,
-    Incomplete,
-}
-
-impl std::fmt::Display for SubscriptionStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SubscriptionStatus::Active => write!(f, "active"),
-            SubscriptionStatus::Trialing => write!(f, "trialing"),
-            SubscriptionStatus::PastDue => write!(f, "past_due"),
-            SubscriptionStatus::Canceled => write!(f, "canceled"),
-            SubscriptionStatus::Incomplete => write!(f, "incomplete"),
-        }
-    }
-}
-
-/// JWT claims issued by the gateway.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TenantClaims {
-    pub sub: String, // user_id
-    pub tenant_id: String,
-    pub plan: PlanTier,
-    #[serde(default)]
-    pub role: UserRole,
-    #[serde(default)]
-    pub subscription_status: SubscriptionStatus,
-    pub exp: u64,
 }

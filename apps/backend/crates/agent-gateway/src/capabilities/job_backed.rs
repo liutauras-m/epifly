@@ -5,7 +5,10 @@
 //! This module provides the gateway-level convenience constructor that wires
 //! `Arc<JobExecutor>` → `Arc<dyn JobDispatch>` via `JobExecutor::into_dispatcher`.
 
-use agent_core::{JobBackedProvider, capabilities::manifest::{ToolDef, ToolKind, ToolManifest}};
+use agent_core::{
+    JobBackedProvider,
+    capabilities::manifest::{ToolDef, ToolKind, ToolManifest},
+};
 use jobs::JobExecutor;
 use serde_json::json;
 use std::sync::Arc;

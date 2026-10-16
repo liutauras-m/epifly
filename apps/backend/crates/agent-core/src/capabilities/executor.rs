@@ -8,7 +8,7 @@ use crate::realtime::{RealtimeService, WorkspaceChangeEvent};
 use common::metrics;
 use rig::completion::Message;
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
+
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tracing::{Span, info, instrument, warn};
@@ -399,46 +399,5 @@ async fn run_fallback_cascade(
             warn!(capability = cap, tool, error = %e, "fallback_cascade: primary failed, echoing input");
             Ok(json!({ "fallback": true, "echoed_input": input, "error": e.to_string() }))
         }
-    }
-}
-
-/// If `image_path` is a URL, download it to a temp file and return `(Some(temp), temp_path)`.
-/// If it's a local path, return `(None, original_path)`.
-pub async fn resolve_image_path(image_path: &str) -> anyhow::Result<(Option<PathBuf>, PathBuf)> {
-    // Rewrite /ui/files/{token} URLs to the gateway-internal address.
-    // The frontend embeds window.location.origin (e.g. http://localhost:5175 in dev) but the
-    // gateway must fetch the file through its own loopback — /ui/files supports token-only auth.
-    let rewritten;
-    let image_path = if let Some(path_start) = image_path.find("/ui/files/") {
-        let base = std::env::var("GATEWAY_INTERNAL_URL")
-            .unwrap_or_else(|_| "http://localhost:8080".to_string());
-        rewritten = format!("{}{}", base, &image_path[path_start..]);
-        rewritten.as_str()
-    } else {
-        image_path
-    };
-
-    if image_path.starts_with("http://") || image_path.starts_with("https://") {
-        let bytes = reqwest::get(image_path)
-            .await
-            .map_err(|e| anyhow::anyhow!("download failed: {e}"))?
-            .bytes()
-            .await
-            .map_err(|e| anyhow::anyhow!("read body failed: {e}"))?;
-
-        let ext = if image_path.contains(".pdf") {
-            "pdf"
-        } else if image_path.contains(".jpg") || image_path.contains(".jpeg") {
-            "jpg"
-        } else {
-            "png"
-        };
-
-        let tmp = std::env::temp_dir().join(format!("conusai-{}.{ext}", uuid::Uuid::new_v4()));
-        std::fs::write(&tmp, &bytes).map_err(|e| anyhow::anyhow!("write temp file failed: {e}"))?;
-
-        Ok((Some(tmp.clone()), tmp))
-    } else {
-        Ok((None, Path::new(image_path).to_path_buf()))
     }
 }

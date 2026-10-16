@@ -14,10 +14,6 @@ use std::sync::Arc;
 pub struct JobContext {
     /// Append-only audit log (from `common`).
     pub audit_store: Arc<dyn AuditStore>,
-    /// S3/RustFS endpoint for audio/video file retrieval (may be `None` if not configured).
-    pub s3_endpoint: Option<String>,
-    /// The name of the S3/RustFS bucket.
-    pub bucket: Option<String>,
     /// Billing provider for reconciliation jobs. `None` when Lago is not configured.
     pub billing: Option<Arc<dyn BillingProvider>>,
     /// RustFS admin client for IAM operations (key rotation, provisioning).
@@ -31,15 +27,9 @@ pub struct JobContext {
 }
 
 impl JobContext {
-    pub fn new(
-        audit_store: Arc<dyn AuditStore>,
-        s3_endpoint: Option<String>,
-        bucket: Option<String>,
-    ) -> Self {
+    pub fn new(audit_store: Arc<dyn AuditStore>) -> Self {
         Self {
             audit_store,
-            s3_endpoint,
-            bucket,
             billing: None,
             rustfs_admin: None,
             cred_store: None,

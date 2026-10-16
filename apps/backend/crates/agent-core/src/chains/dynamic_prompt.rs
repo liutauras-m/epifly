@@ -5,6 +5,7 @@
 //! capability.toml (or in-memory config for programmatic use).
 
 use crate::capabilities::manifest::{LlmChainConfig, ToolManifest};
+use crate::capabilities::object_source::TenantObjectSource;
 use crate::capabilities::provider::CapabilityProvider;
 use crate::chains::executor;
 use crate::context::tenant::TenantContext;
@@ -17,15 +18,21 @@ use tracing::instrument;
 pub struct DynamicPromptCapability {
     manifest: ToolManifest,
     llm: Arc<LlmRegistry>,
+    objects: Arc<dyn TenantObjectSource>,
     /// Optional override config; if `None`, falls back to `manifest.chain`.
     override_cfg: Option<Arc<LlmChainConfig>>,
 }
 
 impl DynamicPromptCapability {
-    pub fn new(manifest: ToolManifest, llm: Arc<LlmRegistry>) -> Self {
+    pub fn new(
+        manifest: ToolManifest,
+        llm: Arc<LlmRegistry>,
+        objects: Arc<dyn TenantObjectSource>,
+    ) -> Self {
         Self {
             manifest,
             llm,
+            objects,
             override_cfg: None,
         }
     }
@@ -73,6 +80,6 @@ impl CapabilityProvider for DynamicPromptCapability {
             .map(|t| json!({ "id": &*t.tenant_id, "plan": t.plan.to_string() }))
             .unwrap_or(Value::Null);
         let ctx = json!({ "input": input, "tenant": tenant_view });
-        executor::run_chain(&cfg, &ctx, &self.llm, tenant).await
+        executor::run_chain(&cfg, &ctx, &self.llm, &self.objects, tenant).await
     }
 }

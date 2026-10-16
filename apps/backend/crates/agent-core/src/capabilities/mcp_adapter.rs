@@ -1,3 +1,4 @@
+use crate::capabilities::mcp_allowlist::McpAllowlist;
 use common::mcp::{JsonRpcRequest, JsonRpcResponse};
 use reqwest::Client;
 use serde_json::Value;
@@ -9,9 +10,15 @@ pub struct McpAdapter {
 }
 
 impl McpAdapter {
+    /// Build an adapter for `endpoint`. Refused unless the endpoint passes the
+    /// exact-host allowlist (`CONUSAI_MCP_ALLOWED_HOSTS`).
     pub fn new(endpoint: impl Into<String>) -> common::error::Result<Self> {
+        let endpoint = endpoint.into();
+        McpAllowlist::from_env()
+            .check(&endpoint)
+            .map_err(common::error::ConusAiError::Mcp)?;
         Ok(Self {
-            endpoint: endpoint.into(),
+            endpoint,
             client: common::http_client::build_client()?,
         })
     }

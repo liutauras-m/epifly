@@ -2,7 +2,7 @@
 //!
 //! All routes require `Authorization: Bearer <jwt>` with `role = "super_admin"`.
 
-use crate::mw::tenant::ResolvedTenant;
+use crate::auth::ResolvedTenant;
 use crate::state::AppState;
 use axum::{
     Extension, Json,

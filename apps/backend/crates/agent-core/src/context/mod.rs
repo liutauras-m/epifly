@@ -2,7 +2,7 @@ pub mod conversation;
 pub mod tenant;
 
 pub use conversation::{ConversationService, DefaultConversationService};
-pub use tenant::{PlanTier, TenantClaims, TenantContext};
+pub use tenant::{PlanTier, TenantContext};
 
 use rig::completion::message::Message;
 use serde::{Deserialize, Serialize};

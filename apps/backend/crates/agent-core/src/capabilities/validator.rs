@@ -1,6 +1,7 @@
 //! Validation for capability manifests and tool slugs.
 
 use crate::capabilities::manifest::ToolManifest;
+use crate::capabilities::mcp_allowlist::McpAllowlist;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -120,19 +121,16 @@ impl RegisteredToolValidator {
                     }
                 }
 
-                // MCP endpoint allowlist check.
-                if matches!(m.kind, crate::capabilities::manifest::ToolKind::Mcp) {
-                    let allowed = std::env::var("CONUSAI_MCP_ALLOWED_HOSTS").unwrap_or_default();
-                    if !allowed.is_empty() {
-                        let endpoint = m.config["endpoint"].as_str().unwrap_or("");
-                        let allowed_hosts: Vec<&str> = allowed.split(',').map(str::trim).collect();
-                        let allowed = allowed_hosts.iter().any(|h| endpoint.contains(h));
-                        if !allowed {
-                            r.errors
-                                .push(RegisteredToolValidationError::McpEndpointDisallowed(
-                                    endpoint.to_string(),
-                                ));
-                        }
+                // MCP endpoint allowlist check (exact host; empty list denies).
+                if matches!(
+                    m.kind,
+                    crate::capabilities::manifest::ToolKind::Mcp
+                        | crate::capabilities::manifest::ToolKind::RemoteMcp
+                ) {
+                    let endpoint = m.config["endpoint"].as_str().unwrap_or("");
+                    if let Err(reason) = McpAllowlist::from_env().check(endpoint) {
+                        r.errors
+                            .push(RegisteredToolValidationError::McpEndpointDisallowed(reason));
                     }
                 }
             }

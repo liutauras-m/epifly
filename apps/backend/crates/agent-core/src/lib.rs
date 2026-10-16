@@ -24,8 +24,7 @@ pub use capabilities::card::CapabilityCard;
 pub use capabilities::discovery::{CapabilityDiscovery, ManifestWatcher};
 pub use capabilities::executor::{PlanStep, StepResult, run_plan};
 pub use capabilities::namespace::NamespaceFilter;
-pub use capabilities::provider::{BulkCapabilityFactory, CapabilityFactory};
-pub use capabilities::providers::capability_spec::CapabilitySpecFactory;
+pub use capabilities::provider::CapabilityFactory;
 pub use capabilities::providers::job_backed::{JobBackedProvider, JobDispatch};
 pub use capabilities::providers::native_storage::NativeStorageFactory;
 pub use capabilities::registry::CapabilityRegistry;
@@ -38,29 +37,21 @@ pub use capabilities::validator::{
 };
 pub use chains::llm_chain::PromptChainCapability;
 pub use context::conversation::{ConversationService, DefaultConversationService};
-pub use context::tenant::{
-    PlanLimits, PlanTier, SubscriptionStatus, TenantClaims, TenantContext, UserRole,
-};
-pub use identity::legacy::LegacyIdentityProvider;
-pub use identity::zitadel::{ZitadelCacheStats, ZitadelProvider};
-pub use identity::{
-    AuthError, IdentityContext, IdentityManager, IdentityProvider, TenantCreated, TenantManager,
-    TenantSummary,
-};
-#[cfg(feature = "local-embeddings")]
-pub use indexing::LocalEmbeddingService;
+pub use context::tenant::{PlanLimits, PlanTier, TenantContext, UserRole};
+pub use identity::{AuthError, Identity, TokenVerifier, ZitadelConfig, ZitadelVerifier};
 pub use indexing::{EmbeddingModel, EmbeddingService, NoopEmbeddingService};
+#[cfg(feature = "local-embeddings")]
+pub use indexing::{LocalEmbeddingConfig, LocalEmbeddingService};
 pub use memory::{ContextBuilder, ContextTruncator, OldestFirstTruncator};
-pub use realtime::{RealtimeService, WorkspaceChangeEvent};
 pub use realtime::{InvalidationBus, InvalidationEvent, new_invalidation_bus};
+pub use realtime::{RealtimeService, WorkspaceChangeEvent};
 pub use store::onboarding::TenantOnboardingService;
 pub use store::{
     CompletedPart, CredentialStore, DEFAULT_TENANT_ROOT_NAME, FinalizeResult, HttpMarkerClient,
-    MarkerClient, NoopMarkerClient, OnboardingError, OnboardingOptions, QdrantVectorStore,
-    RedbMetadataStore, RustFsContentStore, StorageCreds, StorageError, StorageLayout,
-    StorageQuotaService, TenantKind, TenantStorage, TenantStorageFactory, TenantStorageMode,
-    VirtualPath, WorkspaceStorage, build_root_store, extract_tenant_from_legacy_key,
-    extract_virtual_path_from_key,
+    MarkerClient, NoopMarkerClient, OnboardingError, OnboardingOptions, QdrantConfig,
+    QdrantVectorStore, RedbMetadataStore, RustFsContentStore, StorageCreds, StorageError,
+    StorageLayout, StorageQuotaService, TenantKind, TenantStorage, TenantStorageFactory,
+    VirtualPath, WorkspaceStorage, extract_tenant_from_legacy_key, extract_virtual_path_from_key,
 };
 
 pub use llm::{

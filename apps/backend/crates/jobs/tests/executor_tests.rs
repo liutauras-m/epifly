@@ -9,11 +9,7 @@ mod tests {
     use tokio::time::{Duration, sleep};
 
     fn make_ctx() -> Arc<JobContext> {
-        Arc::new(JobContext::new(
-            Arc::new(InMemoryAuditStore::new()),
-            None,
-            None,
-        ))
+        Arc::new(JobContext::new(Arc::new(InMemoryAuditStore::new())))
     }
 
     // ── Simple echo background job ────────────────────────────────────────────
@@ -63,7 +59,10 @@ mod tests {
         let reg = make_registry();
         let exec = JobExecutor::new(reg);
         let input = serde_json::json!({"hello": "world"});
-        let task_id = exec.enqueue("echo", input.clone()).await.unwrap();
+        let task_id = exec
+            .enqueue("echo", input.clone(), Some("t1"))
+            .await
+            .unwrap();
 
         // Poll until complete
         let mut attempts = 0;
@@ -83,7 +82,10 @@ mod tests {
     async fn test_fail_job_records_error() {
         let reg = make_registry();
         let exec = JobExecutor::new(reg);
-        let task_id = exec.enqueue("fail", serde_json::Value::Null).await.unwrap();
+        let task_id = exec
+            .enqueue("fail", serde_json::Value::Null, None)
+            .await
+            .unwrap();
 
         let mut attempts = 0;
         loop {
@@ -108,7 +110,9 @@ mod tests {
     async fn test_unknown_job_returns_error() {
         let reg = make_registry();
         let exec = JobExecutor::new(reg);
-        let result = exec.enqueue("nonexistent", serde_json::Value::Null).await;
+        let result = exec
+            .enqueue("nonexistent", serde_json::Value::Null, None)
+            .await;
         assert!(result.is_err());
     }
 
@@ -116,8 +120,14 @@ mod tests {
     async fn test_list_tasks() {
         let reg = make_registry();
         let exec = JobExecutor::new(reg);
-        let id1 = exec.enqueue("echo", serde_json::json!(1)).await.unwrap();
-        let id2 = exec.enqueue("echo", serde_json::json!(2)).await.unwrap();
+        let id1 = exec
+            .enqueue("echo", serde_json::json!(1), None)
+            .await
+            .unwrap();
+        let id2 = exec
+            .enqueue("echo", serde_json::json!(2), None)
+            .await
+            .unwrap();
 
         // Wait a bit
         sleep(Duration::from_millis(100)).await;
@@ -126,5 +136,42 @@ mod tests {
         let ids: Vec<_> = tasks.iter().map(|t| t.id).collect();
         assert!(ids.contains(&id1));
         assert!(ids.contains(&id2));
+    }
+
+    #[tokio::test]
+    async fn tasks_are_visible_only_to_their_tenant() {
+        let reg = make_registry();
+        let exec = JobExecutor::new(reg);
+        let a = exec
+            .enqueue("echo", serde_json::json!("a"), Some("tenant-a"))
+            .await
+            .unwrap();
+        let b = exec
+            .enqueue("echo", serde_json::json!("b"), Some("tenant-b"))
+            .await
+            .unwrap();
+        let platform = exec
+            .enqueue("echo", serde_json::json!("p"), None)
+            .await
+            .unwrap();
+        sleep(Duration::from_millis(100)).await;
+
+        assert!(exec.get_status_for_tenant(a, "tenant-a").await.is_some());
+        assert!(exec.get_status_for_tenant(a, "tenant-b").await.is_none());
+        assert!(
+            exec.get_status_for_tenant(platform, "tenant-a")
+                .await
+                .is_none()
+        );
+        assert!(exec.subscribe_for_tenant(b, "tenant-a").await.is_none());
+
+        let listed: Vec<_> = exec
+            .list_tasks_for_tenant("tenant-a", 50)
+            .await
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(listed, vec![a]);
+        assert_eq!(exec.list_tasks(50).await.len(), 3);
     }
 }

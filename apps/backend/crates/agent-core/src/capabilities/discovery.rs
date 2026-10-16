@@ -15,12 +15,6 @@ impl CapabilityDiscovery {
         Self { dirs }
     }
 
-    pub fn from_env() -> Self {
-        let dir = std::env::var("CONUSAI_CAPABILITIES_DIR")
-            .unwrap_or_else(|_| "./capabilities".to_string());
-        Self::new(vec![PathBuf::from(dir)])
-    }
-
     pub fn discover(&self) -> common::error::Result<CapabilityRegistry> {
         let mut registry = CapabilityRegistry::new();
         self.discover_into(&mut registry)?;
@@ -51,21 +45,13 @@ pub struct ManifestWatcher {
 }
 
 impl ManifestWatcher {
-    /// Start watching all dirs returned by `CapabilityDiscovery::from_env()`.
+    /// Start watching `dirs`.
     ///
     /// Changes to any `capability.toml` file trigger a debounced reload of the affected
     /// capability directory into `registry`. Uses a 250 ms debounce to coalesce rapid saves.
     /// When `realtime` is provided, a `capability.reloaded` event is broadcast on the
     /// `__system__` channel after each successful reload.
     pub fn start(
-        registry: Arc<Mutex<CapabilityRegistry>>,
-        realtime: Option<Arc<RealtimeService>>,
-    ) -> anyhow::Result<Self> {
-        let discovery = CapabilityDiscovery::from_env();
-        Self::start_for_dirs(registry, discovery.dirs, realtime)
-    }
-
-    pub fn start_for_dirs(
         registry: Arc<Mutex<CapabilityRegistry>>,
         dirs: Vec<PathBuf>,
         realtime: Option<Arc<RealtimeService>>,

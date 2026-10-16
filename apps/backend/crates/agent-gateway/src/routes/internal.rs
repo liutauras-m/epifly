@@ -70,13 +70,9 @@ pub async fn rustfs_events(
     headers: HeaderMap,
     body: Bytes,
 ) -> StatusCode {
-    // HMAC verification
-    let webhook_secret = match std::env::var("RUSTFS_WEBHOOK_SECRET") {
-        Ok(s) => s,
-        Err(_) => {
-            warn!("RUSTFS_WEBHOOK_SECRET not set — rejecting all webhook events");
-            return StatusCode::UNAUTHORIZED;
-        }
+    // HMAC verification (the route is mounted only when the secret is configured).
+    let Some(webhook_secret) = state.rustfs_webhook_secret.as_deref() else {
+        return StatusCode::NOT_FOUND;
     };
 
     let sig = headers
@@ -85,7 +81,7 @@ pub async fn rustfs_events(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    if !verify_hmac(&webhook_secret, &body, sig) {
+    if !verify_hmac(webhook_secret, &body, sig) {
         warn!("rustfs event HMAC verification failed");
         return StatusCode::UNAUTHORIZED;
     }
@@ -104,10 +100,13 @@ pub async fn rustfs_events(
         let bucket = &record.s3.bucket.name;
 
         // Extract tenant_id — try legacy key prefix first, then modern bucket name.
-        let tenant_id = extract_tenant_from_legacy_key(key)
-            .or_else(|| extract_tenant_from_bucket(bucket));
+        let tenant_id =
+            extract_tenant_from_legacy_key(key).or_else(|| extract_tenant_from_bucket(bucket));
         let Some(tenant_id) = tenant_id else {
-            warn!(key, bucket, "could not extract tenant_id from object key or bucket");
+            warn!(
+                key,
+                bucket, "could not extract tenant_id from object key or bucket"
+            );
             continue;
         };
 

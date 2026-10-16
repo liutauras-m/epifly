@@ -1,61 +1,65 @@
-use crate::mw::{RateLimiter, RouterQuotaConfig};
-use crate::routes::admin_devices::DeviceToken;
-use agent_core::llm::providers::anthropic::AnthropicProvider;
-use agent_core::{
-    ArtifactBridge, BulkCapabilityFactory, CapabilityAdmin, CapabilityDiscovery,
-    CapabilityRegistry, CapabilitySpecFactory, ConversationService, CredentialStore,
-    DefaultConversationService, EmbeddingService, LlmRegistry, ManifestWatcher, NamespaceFilter,
-    NativeStorageFactory, NoopEmbeddingService, QdrantVectorStore, RealtimeService,
-    RedbMetadataStore, RustFsContentStore, SemanticCapabilityRouter, SemanticRouterConfig,
-    StorageQuotaService, TenantOnboardingService, TenantStorageFactory, build_admin,
-};
-use agent_core::realtime::{InvalidationBus, new_invalidation_bus};
-use agent_core::identity::IdentityManager;
-use agent_core::{LegacyIdentityProvider, ZitadelCacheStats, ZitadelProvider};
-use billing_core::{BillingProvider, LagoProvider, PlanCatalog, QuotaChecker};
-use std::sync::Arc as StdArc;
-use common::audit::AuditStore;
-use common::memory::{
-    InMemoryAuditStore, InMemoryThreadStore, InMemoryWorkspaceContent, InMemoryWorkspaceStore,
-    ThreadStore, WorkspaceContentStore, WorkspaceStore,
-};
-use jobs::jobs::{AuditLogCleanupJob, CapabilityHealthCheckJob, LagoReconcileJob, RustFsKeyRotationJob, TenantBucketMigrationJob, VideoTranscriptionJob};
-use jobs::{JobAdmin, JobContext, JobExecutor, JobRegistry};
+use crate::auth::ApiKeyEntry;
 use crate::capabilities::job_backed::transcribe_video_provider;
-use object_store::aws::AmazonS3Builder;
-use object_store::ObjectStore;
-use rustfs_admin::RustFsAdminClient;
+use crate::config::GatewayConfig;
 use crate::metrics::{RouterMetrics, RustFsMetrics};
+use crate::mw::{RateLimiter, RouterQuotaConfig};
+use crate::plans::PlanResolver;
+use agent_core::capabilities::object_source::TenantObjectSource;
+use agent_core::llm::providers::anthropic::AnthropicProvider;
+use agent_core::realtime::{InvalidationBus, new_invalidation_bus};
+use agent_core::{
+    ArtifactBridge, CapabilityAdmin, CapabilityDiscovery, CapabilityRegistry, ConversationService,
+    CredentialStore, DefaultConversationService, EmbeddingService, LlmRegistry, ManifestWatcher,
+    NamespaceFilter, NativeStorageFactory, QdrantVectorStore, RealtimeService, RedbMetadataStore,
+    RustFsContentStore, SemanticCapabilityRouter, SemanticRouterConfig, StorageQuotaService,
+    TenantOnboardingService, TenantStorageFactory, TokenVerifier, ZitadelVerifier, build_admin,
+};
+use billing_core::lago::LagoProvider;
+use billing_core::{BillingProvider, PlanCatalog, QuotaChecker};
+use common::audit::AuditStore;
+use common::memory::{ThreadStore, WorkspaceContentStore, WorkspaceStore};
+use jobs::jobs::{
+    AuditLogCleanupJob, CapabilityHealthCheckJob, LagoReconcileJob, RustFsKeyRotationJob,
+    TenantBucketMigrationJob, VideoTranscriptionJob,
+};
+use jobs::{JobAdmin, JobContext, JobExecutor, JobRegistry};
+use object_store::ObjectStore;
+use object_store::aws::AmazonS3Builder;
+use rustfs_admin::{RustFsAdminClient, S3Config};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tracing::{info, warn};
-#[cfg(not(feature = "local-embeddings"))]
-use tracing::error;
+use std::time::Duration;
+use tracing::info;
 
 pub struct AppState {
     pub registry: Arc<Mutex<CapabilityRegistry>>,
     pub rate_limiter: RateLimiter,
     pub llm: Arc<LlmRegistry>,
-    /// RustFS / S3-compatible file store (root credentials — admin path only)
-    pub file_store: Option<Arc<dyn ObjectStore>>,
-    /// RustFS admin client (root credentials — used for bootstrap and provisioning)
+    pub anthropic_api_key: String,
+    /// Bearer-token verifier (Zitadel).
+    pub verifier: Arc<dyn TokenVerifier>,
+    /// Machine-client keys (`API_KEYS`).
+    pub api_keys: Vec<ApiKeyEntry>,
+    /// Server-side plan tier per tenant (Lago, cached).
+    pub plans: PlanResolver,
+    /// `PLATFORM_ADMIN_TOKEN` — capability self-registration and `/metrics`.
+    pub platform_admin_token: String,
+    /// RustFS admin client (root credentials — bootstrap and IAM provisioning).
     pub rustfs_admin: Option<Arc<RustFsAdminClient>>,
-    /// Per-tenant credential store (encrypted in redb)
+    /// Per-tenant credential store (encrypted in redb).
     pub cred_store: Option<Arc<CredentialStore>>,
-    /// Per-tenant storage factory — single source of truth for all S3 operations
+    /// Per-tenant storage factory — single source of truth for tenant S3 operations.
     pub tenant_storage: Option<Arc<TenantStorageFactory>>,
-    /// Tenant onboarding service — provisions IAM + default workspace root
+    /// Tenant onboarding service — provisions IAM + default workspace root.
     pub onboarding: Option<Arc<TenantOnboardingService>>,
-    /// Per-tenant storage quota service
     pub storage_quota: Arc<StorageQuotaService>,
-    /// Prometheus metrics for storage operations and fallbacks.
+    pub presign_ttl: Duration,
+    /// HMAC secret of the RustFS bucket-notification webhook, when configured.
+    pub rustfs_webhook_secret: Option<String>,
     pub rustfs_metrics: Option<Arc<RustFsMetrics>>,
-    /// Router-decision metrics (set by `main.rs` at boot; None in test mode).
     pub router_metrics: Option<Arc<RouterMetrics>>,
     /// Per-tenant single-flight mutex for the onboarding safety net in the `tree` route.
     pub onboarding_guards: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
-    /// In-memory device tokens for browser-shell (keyed by blake3 hash of plaintext token).
-    pub device_tokens: Mutex<HashMap<String, DeviceToken>>,
     pub thread_store: Arc<dyn ThreadStore>,
     pub audit_store: Arc<dyn AuditStore>,
     pub workspace_store: Arc<dyn WorkspaceStore>,
@@ -70,182 +74,84 @@ pub struct AppState {
     pub realtime_service: Arc<RealtimeService>,
     pub semantic_router: Arc<SemanticCapabilityRouter>,
     pub router_quota: RouterQuotaConfig,
-    /// Kept alive so the bulk-loaded capability cards stay registered after boot;
-    /// readers should go through `state.registry` rather than this field.
-    #[allow(dead_code)]
-    pub capability_spec_factory: Option<Arc<CapabilitySpecFactory>>,
     pub artifact_bridge: Option<Arc<ArtifactBridge>>,
-    /// Broadcast channel for workspace invalidation events (PR 3.A).
-    /// Emit to this when workspace content changes so SSE clients can revalidate.
+    /// Broadcast channel for workspace invalidation events.
     pub invalidation_bus: InvalidationBus,
-    /// Identity provider (legacy HMAC/JWT or Zitadel OIDC).
-    pub identity: StdArc<dyn IdentityManager>,
-    /// Hot-reload watcher for capability TOML manifests. Kept alive for the process lifetime —
-    /// dropping it stops the notify thread that drives manifest hot-reload.
+    /// Hot-reload watcher for capability manifests; dropping it stops hot reload.
     #[allow(dead_code)]
     pub manifest_watcher: Option<ManifestWatcher>,
-    /// Token cache counters when Zitadel is the active provider; None for legacy.
-    pub zitadel_cache_stats: Option<StdArc<ZitadelCacheStats>>,
-    /// Billing provider (Lago). None when LAGO_API_KEY not configured.
-    pub billing: Option<StdArc<dyn BillingProvider>>,
-    /// In-process quota checker.
-    pub quota: Option<StdArc<QuotaChecker>>,
-    /// Plan catalog loaded at boot.
-    pub plan_catalog: StdArc<PlanCatalog>,
+    /// Billing provider (Lago). None when `LAGO_API_KEY` is not configured.
+    pub billing: Option<Arc<dyn BillingProvider>>,
+    /// In-process quota checker (present with billing).
+    pub quota: Option<Arc<QuotaChecker>>,
+    pub plan_catalog: Arc<PlanCatalog>,
+}
+
+fn storage_err(e: impl std::fmt::Display) -> common::error::ConusAiError {
+    common::error::ConusAiError::Storage(e.to_string())
 }
 
 impl AppState {
-    pub async fn from_env() -> common::error::Result<Self> {
-        if std::env::var("CONUSAI_TEST_MODE").as_deref() == Ok("1") {
-            return Self::with_in_memory_stores();
-        }
-
-        if std::env::var_os("PLATFORM_ADMIN_TOKEN").is_none_or(|v| v.is_empty())
-            && !cfg!(debug_assertions)
-        {
-            tracing::warn!(
-                config = "missing",
-                env = "PLATFORM_ADMIN_TOKEN",
-                "/admin/capabilities/register is OPEN in a non-debug build"
-            );
-        }
-
-        let llm = Arc::new(build_llm_registry());
+    pub async fn from_config(cfg: &GatewayConfig) -> anyhow::Result<Self> {
+        let llm = Arc::new(build_llm_registry()?);
 
         // ── Persistent stores (redb + Qdrant + RustFS) ───────────────────────
-
-        let redb_path = std::env::var("REDB_PATH")
-            .unwrap_or_else(|_| "/data/conusai.redb".into());
-        let metadata_store: Arc<RedbMetadataStore> = RedbMetadataStore::open(&redb_path)
-            .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?;
-
-        // Share the same Database handle — redb v2 forbids two instances on one file.
-        let cred_store: Arc<CredentialStore> = Arc::new(
-            CredentialStore::new(metadata_store.db())
-                .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?,
+        let metadata_store = RedbMetadataStore::open(&cfg.redb_path).map_err(storage_err)?;
+        // Share the same Database handle — redb forbids two instances on one file.
+        let cred_store = Arc::new(
+            CredentialStore::new(metadata_store.db(), &cfg.iam_enc_key).map_err(storage_err)?,
         );
 
-        // ── Embedding service (must be before Qdrant so dims are known) ─────
-        let embedding_service: Arc<dyn EmbeddingService> = match std::env::var("EMBEDDING_BACKEND")
-            .as_deref()
-        {
-            Ok("local") | Err(_) => {
-                #[cfg(feature = "local-embeddings")]
-                {
-                    let svc = agent_core::LocalEmbeddingService::from_env()?;
-                    info!(
-                        model = svc.model().name(),
-                        dims = svc.dims(),
-                        "embedding service: local fastembed"
-                    );
-                    Arc::new(svc)
-                }
-                #[cfg(not(feature = "local-embeddings"))]
-                {
-                    // Visible boot banner on stderr — survives log-level filtering.
-                    eprintln!(
-                        "\n\
-                         ╔════════════════════════════════════════════════════════════════════╗\n\
-                         ║  ⚠️  GATEWAY HAS NO EMBEDDINGS                                     ║\n\
-                         ║  Semantic router will return ZERO tools every turn.                ║\n\
-                         ║  Rebuild: cargo build --features agent-gateway/local-embeddings    ║\n\
-                         ╚════════════════════════════════════════════════════════════════════╝\n"
-                    );
-                    error!(
-                        "local-embeddings feature not compiled — semantic router will serve zero \
-                         tools. Rebuild with: cargo build --features agent-gateway/local-embeddings"
-                    );
-                    Arc::new(NoopEmbeddingService)
-                }
-            }
-            Ok(other) => {
-                return Err(common::error::ConusAiError::Config(format!(
-                    "unknown EMBEDDING_BACKEND={other} (supported: local)"
-                )));
-            }
-        };
-
-        let qdrant_url = std::env::var("QDRANT_URL")
-            .unwrap_or_else(|_| "http://qdrant:6334".into());
+        let embedding_service = build_embedding_service(cfg)?;
         let vector_store = Arc::new(
-            QdrantVectorStore::connect_from_service(&qdrant_url, embedding_service.as_ref())
+            QdrantVectorStore::connect_from_service(&cfg.qdrant, embedding_service.as_ref())
                 .await
-                .map_err(|e| common::error::ConusAiError::Storage(e.to_string()))?,
+                .map_err(storage_err)?,
         );
 
-        let thread_store: Arc<dyn ThreadStore> = {
-            let s: Arc<RedbMetadataStore> = Arc::clone(&metadata_store);
-            s
-        };
-        let audit_store: Arc<dyn AuditStore> = {
-            let s: Arc<RedbMetadataStore> = Arc::clone(&metadata_store);
-            s
-        };
-        let workspace_store: Arc<dyn WorkspaceStore> = {
-            let s: Arc<RedbMetadataStore> = Arc::clone(&metadata_store);
-            s
-        };
+        let thread_store: Arc<dyn ThreadStore> = metadata_store.clone();
+        let audit_store: Arc<dyn AuditStore> = metadata_store.clone();
+        let workspace_store: Arc<dyn WorkspaceStore> = metadata_store.clone();
 
         let tenant_storage = Arc::new(TenantStorageFactory::new(
             Arc::clone(&cred_store),
             Arc::clone(&audit_store),
+            &cfg.s3,
         ));
-
         let workspace_content: Arc<dyn WorkspaceContentStore> =
             RustFsContentStore::new(Arc::clone(&tenant_storage));
+        let file_store = build_root_store(&cfg.s3)?;
+        let rustfs_admin = Arc::new(RustFsAdminClient::from_config(&cfg.s3));
+        let onboarding = TenantOnboardingService::new(
+            Arc::clone(&workspace_store),
+            Arc::clone(&tenant_storage),
+            Arc::clone(&cred_store),
+            Arc::clone(&rustfs_admin),
+        );
+        let storage_quota =
+            StorageQuotaService::new(Arc::clone(&tenant_storage), cfg.storage_quotas);
 
-        info!("workspace content: RustFS/S3 object store (per-tenant IAM via TenantStorageFactory)");
-
-        let file_store = init_file_store();
-
-        let rustfs_admin = init_rustfs_admin();
-
-        let onboarding = rustfs_admin.as_ref().map(|admin| {
-            TenantOnboardingService::new(
-                Arc::clone(&workspace_store),
-                Arc::clone(&tenant_storage),
-                Arc::clone(&cred_store),
-                Arc::clone(admin),
-            )
-        });
-
-        let storage_quota = StorageQuotaService::new(Arc::clone(&tenant_storage));
-
-        let mut registry_raw = CapabilityRegistry::with_all_factories(Arc::clone(&llm));
-        // NativeStorageFactory handles ToolKind::Native manifests (storage-workspace,
-        // storage-read-text, storage-write-text) loaded from the capabilities directory.
+        // ── Capabilities ──────────────────────────────────────────────────────
+        let objects: Arc<dyn TenantObjectSource> = tenant_storage.clone();
+        let mut registry_raw = CapabilityRegistry::with_all_factories(Arc::clone(&llm), objects)?;
         registry_raw.register_factory(NativeStorageFactory::new(
             Arc::clone(&workspace_store),
             Arc::clone(&workspace_content),
         ));
-        CapabilityDiscovery::from_env().discover_into(&mut registry_raw)?;
-
-        let capability_spec_factory = Arc::new(CapabilitySpecFactory::new(
-            Arc::clone(&llm),
-            Arc::clone(&embedding_service),
-            Arc::clone(&vector_store),
-        ));
-        match capability_spec_factory.load_batch(&mut registry_raw).await {
-            Ok(loaded) => info!(loaded, "capability-spec bulk load complete"),
-            Err(e) => warn!(error = %e, "capability-spec bulk load failed; continuing startup"),
-        }
-
+        CapabilityDiscovery::new(vec![cfg.capabilities_dir.clone()])
+            .discover_into(&mut registry_raw)?;
         let registry = Arc::new(Mutex::new(registry_raw));
 
-        let router_cfg = SemanticRouterConfig {
-            top_k: std::env::var("SEMANTIC_ROUTER_TOP_K")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(20),
-            namespace: NamespaceFilter::Any,
-            include_always: vec!["storage-workspace".into()],
-            ..Default::default()
-        };
         let semantic_router = SemanticCapabilityRouter::new(
             Arc::clone(&registry),
             Arc::clone(&vector_store),
             Arc::clone(&embedding_service),
-            router_cfg,
+            SemanticRouterConfig {
+                top_k: cfg.semantic_top_k,
+                namespace: NamespaceFilter::Any,
+                include_always: vec!["storage-workspace".into()],
+                ..Default::default()
+            },
         );
 
         let conversation_service: Arc<dyn ConversationService> =
@@ -253,95 +159,68 @@ impl AppState {
                 thread_store: Arc::clone(&thread_store),
                 workspace_store: Arc::clone(&workspace_store),
             });
+        let tool_admin = Arc::new(build_admin(
+            cfg.capabilities_dir.clone(),
+            Arc::clone(&registry),
+            Arc::clone(&audit_store),
+        ));
 
-        let tool_admin = Arc::new(build_admin(Arc::clone(&registry), Arc::clone(&audit_store)));
+        // ── Identity ──────────────────────────────────────────────────────────
+        let verifier: Arc<dyn TokenVerifier> = Arc::new(
+            ZitadelVerifier::new(cfg.zitadel.clone())
+                .map_err(|e| anyhow::anyhow!("Zitadel: {e}"))?,
+        );
+        info!(issuer = %cfg.zitadel.issuer, api_keys = cfg.api_keys.len(), "identity: Zitadel + API keys");
 
-        // ── Identity provider ─────────────────────────────────────────────
-        let auth_provider = std::env::var("CONUSAI_AUTH_PROVIDER")
-            .unwrap_or_else(|_| "legacy".into());
-        let (identity, zitadel_cache_stats): (StdArc<dyn IdentityManager>, Option<StdArc<ZitadelCacheStats>>) =
-            if auth_provider == "zitadel" {
-                match ZitadelProvider::from_env() {
-                    Ok(p) => {
-                        info!("identity provider: Zitadel OIDC");
-                        let stats = StdArc::clone(&p.stats);
-                        (StdArc::new(p) as StdArc<dyn IdentityManager>, Some(stats))
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "Zitadel provider init failed — falling back to legacy");
-                        (StdArc::new(LegacyIdentityProvider::from_env()) as StdArc<dyn IdentityManager>, None)
-                    }
-                }
-            } else {
-                info!("identity provider: legacy HMAC/JWT");
-                (StdArc::new(LegacyIdentityProvider::from_env()) as StdArc<dyn IdentityManager>, None)
-            };
-
-        // ── Plan catalog ──────────────────────────────────────────────────
-        let plan_catalog = StdArc::new(PlanCatalog::load());
-        info!(plans = plan_catalog.list().len(), "plan catalog loaded");
-
-        // ── Billing (Lago) — initialized before job registry so reconcile job has it ──
-        let (billing, quota): (Option<StdArc<dyn BillingProvider>>, Option<StdArc<QuotaChecker>>) =
-            match LagoProvider::from_env() {
-                Ok(provider) => {
+        // ── Billing ───────────────────────────────────────────────────────────
+        let plan_catalog = Arc::new(PlanCatalog::load());
+        let (billing, quota): (Option<Arc<dyn BillingProvider>>, Option<Arc<QuotaChecker>>) =
+            match &cfg.lago {
+                Some(lago) => {
                     info!("billing provider: Lago");
-                    let quota_checker = StdArc::new(QuotaChecker::new(StdArc::clone(&plan_catalog)));
-                    (Some(StdArc::new(provider) as StdArc<dyn BillingProvider>), Some(quota_checker))
+                    (
+                        Some(Arc::new(LagoProvider::new(lago.clone()))),
+                        Some(Arc::new(QuotaChecker::new(Arc::clone(&plan_catalog)))),
+                    )
                 }
-                Err(e) => {
-                    warn!(error = %e, "Lago not configured — billing/metering disabled");
+                None => {
+                    info!(
+                        "billing not configured (LAGO_API_KEY unset) — every tenant is on the Free plan"
+                    );
                     (None, None)
                 }
             };
 
-        let s3_endpoint = std::env::var("S3_ENDPOINT").ok();
-        let bucket = std::env::var("S3_BUCKET")
-            .unwrap_or_else(|_| "workspace".into());
-        let mut job_ctx = JobContext::new(
-            Arc::clone(&audit_store),
-            s3_endpoint,
-            Some(bucket),
-        );
-        if let (Some(ra), Some(cs)) = (rustfs_admin.as_ref(), Some(&cred_store)) {
-            job_ctx = job_ctx.with_rustfs(Arc::clone(ra), Arc::clone(cs));
-        }
-        job_ctx = job_ctx.with_storage(
-            Arc::clone(&tenant_storage),
-            Arc::clone(&workspace_store),
-        );
-        let job_ctx = Arc::new(job_ctx);
-        let job_registry = build_job_registry(job_ctx, billing.clone());
+        // ── Jobs ──────────────────────────────────────────────────────────────
+        let job_ctx = JobContext::new(Arc::clone(&audit_store))
+            .with_rustfs(Arc::clone(&rustfs_admin), Arc::clone(&cred_store))
+            .with_storage(Arc::clone(&tenant_storage), Arc::clone(&workspace_store));
+        let job_registry = build_job_registry(Arc::new(job_ctx), billing.clone());
         let job_executor = JobExecutor::new(Arc::clone(&job_registry));
         let job_admin = Arc::new(JobAdmin::new(
             Arc::clone(&job_registry),
             Arc::clone(&job_executor),
         ));
+        registry
+            .lock()
+            .unwrap()
+            .register_provider(Arc::new(transcribe_video_provider(&job_executor)));
 
-        let artifact_bridge = file_store.as_ref().map(|fs| {
-            ArtifactBridge::new(Arc::clone(fs), Arc::clone(&workspace_content))
-        });
+        let artifact_bridge = ArtifactBridge::new(
+            Arc::clone(&file_store),
+            Arc::clone(&workspace_content),
+            cfg.public_base_url.clone(),
+        );
 
         let realtime_service = RealtimeService::new();
-
-        // Register job-backed capabilities that need Arc<JobExecutor>.
-        {
-            use agent_core::capabilities::provider::CapabilityProvider;
-            let provider: Arc<dyn CapabilityProvider> = Arc::new(
-                transcribe_video_provider(&job_executor),
-            );
-            registry.lock().unwrap().register_provider(provider);
-            info!("transcribe-video capability registered");
-        }
-
-        // Start hot-reload watcher (250 ms debounce, non-fatal if notify unavailable).
-        let manifest_watcher = match ManifestWatcher::start(Arc::clone(&registry), Some(Arc::clone(&realtime_service))) {
-            Ok(w) => {
-                info!("manifest hot-reload watcher started");
-                Some(w)
-            }
+        let manifest_watcher = match ManifestWatcher::start(
+            Arc::clone(&registry),
+            vec![cfg.capabilities_dir.clone()],
+            Some(Arc::clone(&realtime_service)),
+        ) {
+            Ok(w) => Some(w),
             Err(e) => {
-                warn!(error = %e, "manifest watcher unavailable — hot-reload disabled");
+                tracing::warn!(error = %e, "manifest watcher unavailable — hot-reload disabled");
                 None
             }
         };
@@ -350,16 +229,21 @@ impl AppState {
             registry,
             rate_limiter: RateLimiter::new(),
             llm,
-            file_store,
-            rustfs_admin,
+            anthropic_api_key: cfg.anthropic_api_key.clone(),
+            verifier,
+            api_keys: cfg.api_keys.clone(),
+            plans: PlanResolver::new(billing.clone()),
+            platform_admin_token: cfg.platform_admin_token.clone(),
+            rustfs_admin: Some(rustfs_admin),
             cred_store: Some(cred_store),
             tenant_storage: Some(tenant_storage),
-            onboarding,
+            onboarding: Some(onboarding),
             storage_quota,
+            presign_ttl: cfg.presign_ttl,
+            rustfs_webhook_secret: cfg.rustfs_webhook_secret.clone(),
             rustfs_metrics: None,
             router_metrics: None,
             onboarding_guards: Arc::new(Mutex::new(HashMap::new())),
-            device_tokens: Mutex::new(HashMap::new()),
             thread_store,
             audit_store,
             workspace_store,
@@ -374,48 +258,147 @@ impl AppState {
             realtime_service,
             semantic_router,
             router_quota: RouterQuotaConfig::from_env(),
-            capability_spec_factory: Some(capability_spec_factory),
-            artifact_bridge,
+            artifact_bridge: Some(artifact_bridge),
             invalidation_bus: new_invalidation_bus(),
-            identity,
             manifest_watcher,
-            zitadel_cache_stats,
             billing,
             quota,
             plan_catalog,
         })
     }
+}
 
-    /// Build an `AppState` backed entirely by in-memory stores — no external dependencies.
-    ///
-    /// Activated when `CONUSAI_TEST_MODE=1` is set.
-    pub fn with_in_memory_stores() -> common::error::Result<Self> {
-        info!("CONUSAI_TEST_MODE=1 — using in-memory stores (no Qdrant / RustFS)");
+#[cfg(feature = "local-embeddings")]
+fn build_embedding_service(cfg: &GatewayConfig) -> anyhow::Result<Arc<dyn EmbeddingService>> {
+    let svc = agent_core::LocalEmbeddingService::new(&agent_core::LocalEmbeddingConfig {
+        model: cfg.embedding.model,
+        cache_dir: cfg.embedding.cache_dir.clone(),
+        max_batch: cfg.embedding.max_batch,
+    })?;
+    info!(
+        model = svc.model().name(),
+        dims = svc.dims(),
+        "embedding service: local fastembed"
+    );
+    Ok(Arc::new(svc))
+}
 
-        let llm = Arc::new(build_llm_registry());
+#[cfg(not(feature = "local-embeddings"))]
+fn build_embedding_service(_cfg: &GatewayConfig) -> anyhow::Result<Arc<dyn EmbeddingService>> {
+    tracing::error!(
+        "built without the `local-embeddings` feature — the semantic router serves zero tools"
+    );
+    Ok(Arc::new(agent_core::NoopEmbeddingService))
+}
+
+/// Root-credential store for the shared bucket — artifact materialisation only.
+/// Tenant reads and writes always go through `TenantStorageFactory`.
+fn build_root_store(s3: &S3Config) -> anyhow::Result<Arc<dyn ObjectStore>> {
+    let store = AmazonS3Builder::new()
+        .with_endpoint(s3.endpoint.trim_end_matches('/'))
+        .with_bucket_name(&s3.bucket)
+        .with_access_key_id(&s3.access_key_id)
+        .with_secret_access_key(&s3.secret_access_key)
+        .with_allow_http(true)
+        .with_region("us-east-1")
+        .build()?;
+    Ok(Arc::new(store))
+}
+
+fn build_llm_registry() -> anyhow::Result<LlmRegistry> {
+    use agent_core::llm::types::LlmBinding;
+
+    let mut providers: HashMap<String, Arc<dyn agent_core::CompletionProvider>> = HashMap::new();
+    providers.insert("anthropic".into(), Arc::new(AnthropicProvider::from_env()?));
+
+    let default_binding = LlmBinding {
+        provider: "anthropic".into(),
+        model: "claude-haiku-4-5".into(),
+    };
+
+    // Canonical aliases consumed by chain manifests and the plan allowlists.
+    // Override the model per alias with `LLM_ALIAS_<ALIAS>` (e.g. `LLM_ALIAS_SMART`).
+    let alias_specs: &[(&str, &str)] = &[
+        ("smart", "claude-sonnet-4-6"),
+        ("opus", "claude-opus-4-7"),
+        ("haiku", "claude-haiku-4-5"),
+        ("fast", "claude-haiku-4-5"),
+        ("cheap", "claude-haiku-4-5"),
+    ];
+    let mut aliases: HashMap<String, LlmBinding> = HashMap::new();
+    for (alias, default_model) in alias_specs {
+        let env_key = format!("LLM_ALIAS_{}", alias.to_uppercase());
+        let model = common::env::var(&env_key).unwrap_or_else(|| (*default_model).to_string());
+        aliases.insert(
+            (*alias).to_string(),
+            LlmBinding {
+                provider: "anthropic".into(),
+                model,
+            },
+        );
+    }
+
+    Ok(LlmRegistry::new(providers, aliases, default_binding))
+}
+
+fn build_job_registry(
+    ctx: Arc<JobContext>,
+    billing: Option<Arc<dyn BillingProvider>>,
+) -> Arc<JobRegistry> {
+    let ctx = match billing {
+        Some(b) => Arc::new(Arc::unwrap_or_clone(ctx).with_billing(b)),
+        None => ctx,
+    };
+    let mut registry = JobRegistry::new(ctx);
+    registry.register_scheduled(CapabilityHealthCheckJob);
+    registry.register_scheduled(AuditLogCleanupJob);
+    registry.register_scheduled(LagoReconcileJob);
+    registry.register_scheduled(RustFsKeyRotationJob);
+    registry.register_scheduled(TenantBucketMigrationJob);
+    registry.register_background(VideoTranscriptionJob);
+    Arc::new(registry)
+}
+
+/// In-memory state for router-level tests: no Qdrant, RustFS, Lago or Zitadel.
+#[cfg(test)]
+pub mod test_support {
+    use super::*;
+    use agent_core::NoopEmbeddingService;
+    use agent_core::capabilities::object_source::NoObjectSource;
+    use common::memory::{
+        InMemoryAuditStore, InMemoryThreadStore, InMemoryWorkspaceContent, InMemoryWorkspaceStore,
+    };
+
+    pub const TEST_PLATFORM_TOKEN: &str = "test-platform-admin-token-0123456789abcdef";
+
+    pub fn state(verifier: Arc<dyn TokenVerifier>, api_keys: Vec<ApiKeyEntry>) -> AppState {
+        let llm = Arc::new(LlmRegistry::new(
+            HashMap::new(),
+            HashMap::new(),
+            agent_core::LlmBinding {
+                provider: "anthropic".into(),
+                model: "claude-haiku-4-5".into(),
+            },
+        ));
         let thread_store: Arc<dyn ThreadStore> = Arc::new(InMemoryThreadStore::new());
         let workspace_store: Arc<dyn WorkspaceStore> = Arc::new(InMemoryWorkspaceStore::new());
         let workspace_content: Arc<dyn WorkspaceContentStore> =
             Arc::new(InMemoryWorkspaceContent::new());
+        let audit_store: Arc<dyn AuditStore> = Arc::new(InMemoryAuditStore::new());
 
-        let mut registry = CapabilityRegistry::with_default_factories(Arc::clone(&llm));
+        let mut registry =
+            CapabilityRegistry::with_default_factories(Arc::clone(&llm), Arc::new(NoObjectSource))
+                .unwrap();
         registry.register_factory(NativeStorageFactory::new(
             Arc::clone(&workspace_store),
             Arc::clone(&workspace_content),
         ));
-        CapabilityDiscovery::from_env().discover_into(&mut registry)?;
-
-        let conversation_service: Arc<dyn ConversationService> =
-            Arc::new(DefaultConversationService {
-                thread_store: Arc::clone(&thread_store),
-                workspace_store: Arc::clone(&workspace_store),
-            });
-
-        let audit_store: Arc<dyn AuditStore> = Arc::new(InMemoryAuditStore::new());
-
         let registry = Arc::new(Mutex::new(registry));
-        let tool_admin = Arc::new(build_admin(Arc::clone(&registry), Arc::clone(&audit_store)));
-
+        let tool_admin = Arc::new(build_admin(
+            std::env::temp_dir().join("gateway-test-capabilities"),
+            Arc::clone(&registry),
+            Arc::clone(&audit_store),
+        ));
         let embedding_service: Arc<dyn EmbeddingService> = Arc::new(NoopEmbeddingService);
         let vector_store = Arc::new(QdrantVectorStore::noop());
         let semantic_router = SemanticCapabilityRouter::new(
@@ -427,38 +410,59 @@ impl AppState {
                 ..Default::default()
             },
         );
-
-        let job_ctx = Arc::new(JobContext::new(Arc::clone(&audit_store), None, None));
-        let job_registry = build_job_registry(job_ctx, None);
+        let job_registry =
+            build_job_registry(Arc::new(JobContext::new(Arc::clone(&audit_store))), None);
         let job_executor = JobExecutor::new(Arc::clone(&job_registry));
         let job_admin = Arc::new(JobAdmin::new(
             Arc::clone(&job_registry),
             Arc::clone(&job_executor),
         ));
 
-        let plan_catalog = StdArc::new(PlanCatalog::default());
-        let identity: StdArc<dyn IdentityManager> =
-            StdArc::new(LegacyIdentityProvider::from_env()) as StdArc<dyn IdentityManager>;
+        // Quotas disabled; the factory is never asked for credentials.
+        let db = Arc::new(
+            redb::Database::builder()
+                .create_with_backend(redb::backends::InMemoryBackend::new())
+                .unwrap(),
+        );
+        let cs = Arc::new(CredentialStore::new(db, &[7u8; 32]).unwrap());
+        let s3 = S3Config {
+            endpoint: "http://127.0.0.1:9".into(),
+            access_key_id: "unused".into(),
+            secret_access_key: "unused".into(),
+            bucket: "unused".into(),
+        };
+        let storage_quota = StorageQuotaService::new(
+            Arc::new(TenantStorageFactory::new(cs, Arc::clone(&audit_store), &s3)),
+            false,
+        );
 
-        Ok(Self {
+        AppState {
             registry,
             rate_limiter: RateLimiter::new(),
             llm,
-            file_store: None,
+            anthropic_api_key: String::new(),
+            verifier,
+            api_keys,
+            plans: PlanResolver::new(None),
+            platform_admin_token: TEST_PLATFORM_TOKEN.into(),
             rustfs_admin: None,
             cred_store: None,
             tenant_storage: None,
             onboarding: None,
-            storage_quota: noop_quota_service(),
+            storage_quota,
+            presign_ttl: Duration::from_secs(900),
+            rustfs_webhook_secret: None,
             rustfs_metrics: None,
             router_metrics: None,
             onboarding_guards: Arc::new(Mutex::new(HashMap::new())),
-            device_tokens: Mutex::new(HashMap::new()),
-            thread_store,
+            thread_store: Arc::clone(&thread_store),
             audit_store,
-            workspace_store,
+            workspace_store: Arc::clone(&workspace_store),
             workspace_content,
-            conversation_service,
+            conversation_service: Arc::new(DefaultConversationService {
+                thread_store,
+                workspace_store,
+            }),
             tool_admin,
             job_registry,
             job_executor,
@@ -468,140 +472,12 @@ impl AppState {
             realtime_service: RealtimeService::new(),
             semantic_router,
             router_quota: RouterQuotaConfig::default(),
-            capability_spec_factory: None,
             artifact_bridge: None,
             invalidation_bus: new_invalidation_bus(),
-            identity,
             manifest_watcher: None,
-            zitadel_cache_stats: None,
             billing: None,
             quota: None,
-            plan_catalog,
-        })
-    }
-}
-
-/// Build a quota service backed by a dev-fallback factory (for test mode).
-fn noop_quota_service() -> Arc<StorageQuotaService> {
-    // In test mode there's no redb or RustFS. Use a factory that always falls back.
-    // RUSTFS_DEV_FALLBACK_ROOT=on is set by the test harness so for_tenant won't error.
-    // Quota checks are disabled in test mode anyway (RUSTFS_QUOTAS=off default).
-    use agent_core::store::creds::CredentialStore;
-    use redb::Database;
-    let db = Arc::new(
-        Database::builder()
-            .create_with_backend(redb::backends::InMemoryBackend::new())
-            .unwrap(),
-    );
-    let cs = Arc::new(CredentialStore::new(db).unwrap());
-    let audit: Arc<dyn common::audit::AuditStore> =
-        Arc::new(common::memory::InMemoryAuditStore::new());
-    // Safety: single-threaded at startup in test/dev mode; no concurrent env reads.
-    unsafe { std::env::set_var("RUSTFS_DEV_FALLBACK_ROOT", "on") };
-    StorageQuotaService::new(Arc::new(TenantStorageFactory::new(cs, audit)))
-}
-
-fn init_file_store() -> Option<Arc<dyn ObjectStore>> {
-    let endpoint = std::env::var("S3_ENDPOINT")
-        .unwrap_or_else(|_| "http://rustfs:9000".into());
-    let bucket = std::env::var("S3_BUCKET")
-        .unwrap_or_else(|_| "workspace".into());
-    let access_key = std::env::var("RUSTFS_ROOT_ACCESS_KEY")
-        .or_else(|_| std::env::var("AWS_ACCESS_KEY_ID"))
-        .unwrap_or_else(|_| "rustfsadmin".into());
-    let secret_key = std::env::var("RUSTFS_ROOT_SECRET_KEY")
-        .or_else(|_| std::env::var("AWS_SECRET_ACCESS_KEY"))
-        .unwrap_or_else(|_| "rustfsadmin".into());
-
-    match AmazonS3Builder::new()
-        .with_endpoint(&endpoint)
-        .with_bucket_name(&bucket)
-        .with_access_key_id(&access_key)
-        .with_secret_access_key(&secret_key)
-        .with_allow_http(true)
-        .with_region("us-east-1")
-        .build()
-    {
-        Ok(store) => {
-            info!(endpoint, bucket, "RustFS/S3 root file store initialised");
-            Some(Arc::new(store))
-        }
-        Err(e) => {
-            warn!(error = %e, "Failed to initialise file store");
-            None
+            plan_catalog: Arc::new(PlanCatalog::default()),
         }
     }
-}
-
-fn init_rustfs_admin() -> Option<Arc<RustFsAdminClient>> {
-    if std::env::var("S3_ENDPOINT").is_ok() {
-        Some(Arc::new(RustFsAdminClient::from_env()))
-    } else {
-        warn!("S3_ENDPOINT not set — RustFS admin client disabled");
-        None
-    }
-}
-
-fn build_llm_registry() -> LlmRegistry {
-    use agent_core::llm::types::LlmBinding;
-    use std::collections::HashMap;
-
-    let mut providers: HashMap<String, Arc<dyn agent_core::CompletionProvider>> = HashMap::new();
-
-    match AnthropicProvider::from_env() {
-        Ok(p) => {
-            providers.insert("anthropic".into(), Arc::new(p));
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "Anthropic provider unavailable at startup");
-        }
-    }
-
-    let default_binding = LlmBinding {
-        provider: "anthropic".into(),
-        model: "claude-haiku-4-5".into(),
-    };
-
-    // Canonical aliases consumed by chain TOML manifests + plan.orchestrate.
-    // Override via env (e.g. `LLM_ALIAS_SMART=claude-opus-4-7`) for cost tuning.
-    let alias_specs: &[(&str, &str, &str)] = &[
-        ("smart", "anthropic", "claude-sonnet-4-6"),
-        ("opus", "anthropic", "claude-opus-4-7"),
-        ("haiku", "anthropic", "claude-haiku-4-5"),
-        ("fast", "anthropic", "claude-haiku-4-5"),
-        ("cheap", "anthropic", "claude-haiku-4-5"),
-    ];
-    let mut aliases: HashMap<String, LlmBinding> = HashMap::new();
-    for (alias, provider, default_model) in alias_specs {
-        let env_key = format!("LLM_ALIAS_{}", alias.to_uppercase());
-        let model = std::env::var(&env_key).unwrap_or_else(|_| (*default_model).to_string());
-        aliases.insert(
-            (*alias).to_string(),
-            LlmBinding {
-                provider: (*provider).to_string(),
-                model,
-            },
-        );
-    }
-
-    LlmRegistry::new(providers, aliases, default_binding)
-}
-
-fn build_job_registry(
-    ctx: Arc<JobContext>,
-    billing: Option<StdArc<dyn BillingProvider>>,
-) -> Arc<JobRegistry> {
-    let ctx = if let Some(b) = billing {
-        Arc::new(Arc::unwrap_or_clone(ctx).with_billing(b))
-    } else {
-        ctx
-    };
-    let mut registry = JobRegistry::new(ctx);
-    registry.register_scheduled(CapabilityHealthCheckJob);
-    registry.register_scheduled(AuditLogCleanupJob);
-    registry.register_scheduled(LagoReconcileJob);
-    registry.register_scheduled(RustFsKeyRotationJob);
-    registry.register_scheduled(TenantBucketMigrationJob);
-    registry.register_background(VideoTranscriptionJob);
-    Arc::new(registry)
 }

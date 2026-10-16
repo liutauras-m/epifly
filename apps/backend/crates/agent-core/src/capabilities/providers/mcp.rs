@@ -1,6 +1,7 @@
 use crate::capabilities::card::CapabilityCard;
 use crate::capabilities::manifest::{ToolKind, ToolManifest};
 use crate::capabilities::mcp_adapter::McpAdapter;
+use crate::capabilities::mcp_allowlist::McpAllowlist;
 use crate::capabilities::provider::{CapabilityFactory, CapabilityProvider};
 use crate::context::tenant::TenantContext;
 use async_trait::async_trait;
@@ -24,6 +25,9 @@ impl McpProvider {
                 )
             })?
             .to_string();
+        McpAllowlist::from_env()
+            .check(&endpoint)
+            .map_err(|e| anyhow::anyhow!("MCP tool '{}': {e}", card.manifest.name))?;
         Ok(Self {
             manifest: card.manifest,
             endpoint,

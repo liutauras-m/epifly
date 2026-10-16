@@ -3,24 +3,15 @@
 //! POST /v1/files/upload-url  — issue a presigned PUT URL for direct browser → RustFS upload
 //! GET  /v1/files/download-url?virtual_path= — issue a presigned GET URL
 
-use crate::mw::tenant::ResolvedTenant;
+use crate::auth::ResolvedTenant;
 use crate::state::AppState;
 use agent_core::VirtualPath;
 use axum::{Extension, Json, extract::State};
 use chrono::Utc;
 use common::error::HttpError;
 use serde::{Deserialize, Serialize};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use tracing::instrument;
-
-fn presign_ttl() -> Duration {
-    let secs: u64 = std::env::var("RUSTFS_PRESIGN_TTL_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(900)
-        .min(3600);
-    Duration::from_secs(secs)
-}
 
 #[derive(Deserialize)]
 pub struct PresignUploadBody {
@@ -77,7 +68,7 @@ pub async fn presign_upload(
     let vp = VirtualPath::parse(&body.virtual_path)
         .map_err(|e| HttpError::validation("virtual_path", e.to_string()))?;
 
-    let ttl = presign_ttl();
+    let ttl = state.presign_ttl;
     let url = storage
         .presign_workspace_put(&vp, ttl)
         .await
@@ -123,7 +114,7 @@ pub async fn presign_download(
     let vp = VirtualPath::parse(&q.virtual_path)
         .map_err(|e| HttpError::validation("virtual_path", e.to_string()))?;
 
-    let ttl = presign_ttl();
+    let ttl = state.presign_ttl;
     let url = storage
         .presign_workspace_get(&vp, ttl, None)
         .await
@@ -136,4 +127,3 @@ pub async fn presign_download(
         expires_at,
     }))
 }
-

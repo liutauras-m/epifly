@@ -46,6 +46,12 @@ fn tier_limits_are_strictly_ordered() {
     assert!(free.max_tokens < pro.max_tokens && pro.max_tokens < ent.max_tokens);
     assert!(free.max_turns < pro.max_turns && pro.max_turns < ent.max_turns);
     assert!(free.rate_limit_rpm < pro.rate_limit_rpm && pro.rate_limit_rpm < ent.rate_limit_rpm);
-    assert!(free.max_tools_per_turn < pro.max_tools_per_turn && pro.max_tools_per_turn < ent.max_tools_per_turn);
-    assert!(free.max_invokes_per_turn < pro.max_invokes_per_turn && pro.max_invokes_per_turn < ent.max_invokes_per_turn);
+    assert!(
+        free.max_tools_per_turn < pro.max_tools_per_turn
+            && pro.max_tools_per_turn < ent.max_tools_per_turn
+    );
+    assert!(
+        free.max_invokes_per_turn < pro.max_invokes_per_turn
+            && pro.max_invokes_per_turn < ent.max_invokes_per_turn
+    );
 }

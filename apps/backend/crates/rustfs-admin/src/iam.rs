@@ -35,10 +35,7 @@ pub struct IamCreds {
 /// Idempotent: safe to re-invoke; creates a new service account on each call
 /// (rotation-safe — old key must be deprovisioned separately).
 #[instrument(skip(client), fields(tenant_id))]
-pub async fn provision_tenant(
-    client: &RustFsAdminClient,
-    tenant_id: &str,
-) -> Result<IamCreds> {
+pub async fn provision_tenant(client: &RustFsAdminClient, tenant_id: &str) -> Result<IamCreds> {
     // Compute per-tenant bucket name.
     let bucket_name = sanitize_bucket_name(&format!("ws-{tenant_id}"));
 
@@ -79,7 +76,12 @@ pub async fn rotate_tenant_credentials(
         .create_bucket_scoped_service_account(tenant_id, bucket_name)
         .await?;
 
-    tracing::info!(tenant_id, access_key, bucket = bucket_name, "rotated per-tenant IAM credentials");
+    tracing::info!(
+        tenant_id,
+        access_key,
+        bucket = bucket_name,
+        "rotated per-tenant IAM credentials"
+    );
 
     Ok(IamCreds {
         access_key,
@@ -92,10 +94,7 @@ pub async fn rotate_tenant_credentials(
 /// Delete the service account (called when a tenant is removed or keys are
 /// rotated and the old key is past its grace period).
 #[instrument(skip(client), fields(access_key))]
-pub async fn deprovision_tenant(
-    client: &RustFsAdminClient,
-    access_key: &str,
-) -> Result<()> {
+pub async fn deprovision_tenant(client: &RustFsAdminClient, access_key: &str) -> Result<()> {
     client.delete_service_account(access_key).await?;
     tracing::info!(access_key, "deleted tenant IAM service account");
     Ok(())

@@ -1,8 +1,8 @@
-//! UI router — session-authenticated endpoints for streaming and file management.
-//! HTML rendering is handled by the SvelteKit frontend (apps/web).
+//! UI router — streaming chat, upload and download for the web app.
+//! Mounted behind the same bearer authentication as `/v1/*`.
 
 use crate::state::AppState;
-use crate::ui::handlers::{billing_admin, chat, files, upload};
+use crate::ui::handlers::{chat, files, upload};
 use axum::{
     Router,
     routing::{get, post},
@@ -14,5 +14,4 @@ pub fn ui_router() -> Router<Arc<AppState>> {
         .route("/ui/stream", post(chat::ui_stream))
         .route("/ui/upload", post(upload::ui_upload))
         .route("/ui/files/download", get(files::ui_download))
-        .route("/ui/admin/billing", get(billing_admin::billing_admin_dashboard))
 }

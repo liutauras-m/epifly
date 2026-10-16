@@ -1,3 +1,4 @@
+use crate::auth::ResolvedTenant;
 /// POST /v1/agent/completions — Anthropic tool-use agent loop with optional thread memory.
 ///
 /// Supports both blocking (default) and streaming (`"stream": true`) modes.
@@ -7,9 +8,7 @@
 /// Pass `"thread_id": "<ulid>"` to load history from Postgres and persist the turn.
 /// Pass `"max_turns": N` to override the default tool-call rounds (capped by plan tier).
 use crate::mw::meter::AgentTurnStats;
-use crate::mw::tenant::ResolvedTenant;
 use crate::state::AppState;
-use billing_core::events::{ActionType, UsageEvent};
 use agent_core::{ContextBuilder, PlanLimits, map_rig_error};
 use axum::{
     Extension, Json,
@@ -19,9 +18,9 @@ use axum::{
         sse::{Event, Sse},
     },
 };
+use billing_core::events::{ActionType, UsageEvent};
 use chrono::Utc;
 use common::audit::AuditEvent;
-use std::time::Instant;
 use common::error::HttpError;
 use common::memory::thread::Message;
 use common::metrics;
@@ -30,6 +29,7 @@ use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::convert::Infallible;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{Span, info, instrument, warn};
@@ -72,7 +72,9 @@ pub async fn agent_completions(
     }
 
     if req.stream.unwrap_or(false) {
-        stream_agent(state, tenant, limits, req).await.into_response()
+        stream_agent(state, tenant, limits, req)
+            .await
+            .into_response()
     } else {
         match blocking_agent(state, tenant, limits, req).await {
             Ok((v, stats)) => {
@@ -116,25 +118,20 @@ async fn build_ctx(
     limits: PlanLimits,
     req: &crate::routes::chat::ChatRequest,
 ) -> Result<AgentCtx, HttpError> {
-    let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
-    if api_key.trim().is_empty() {
-        return Err(err500(
-            "ANTHROPIC_API_KEY is not configured; set it before starting agent-gateway".into(),
-        ));
-    }
-    let model_id = req
-        .model
-        .as_deref()
-        .unwrap_or("claude-opus-4-7")
-        .to_string();
+    let api_key = state.anthropic_api_key.clone();
+    // The model is chosen server-side from the plan's allowlist.
+    let model_id = crate::routes::chat::select_model(state, tenant, req.model.as_deref())?.model;
     // Prefer PlanCatalog limits (runtime-configurable) over compiled-in tier defaults.
+    // `max_turns` is the per-request tool-round cap; `max_turns_per_day` is a daily
+    // quota enforced by the router quota layer, not a per-request limit.
     let catalog = state.plan_catalog.by_tier(&tenant.0.plan);
     let catalog_max_tokens = catalog.map(|p| p.max_tokens).unwrap_or(limits.max_tokens);
-    let catalog_max_turns = catalog
-        .and_then(|p| p.max_turns_per_day)
-        .unwrap_or(limits.max_turns as u64) as usize;
+    let catalog_max_turns = catalog.map(|p| p.max_turns).unwrap_or(limits.max_turns) as usize;
 
-    let max_tokens = req.max_tokens.unwrap_or(catalog_max_tokens).min(catalog_max_tokens);
+    let max_tokens = req
+        .max_tokens
+        .unwrap_or(catalog_max_tokens)
+        .min(catalog_max_tokens);
 
     Span::current().record("gen_ai.request.model", model_id.as_str());
 
@@ -275,9 +272,9 @@ async fn build_ctx(
     let semantic_cap_names: HashSet<String> = tools
         .iter()
         .filter_map(|v| {
-            v.get("name")?.as_str().and_then(|n| {
-                n.split_once("__").map(|(cap, _)| cap.to_string())
-            })
+            v.get("name")?
+                .as_str()
+                .and_then(|n| n.split_once("__").map(|(cap, _)| cap.to_string()))
         })
         .collect();
     // Gather lexical-only tool defs; prepend them so they survive max_tools truncation
@@ -340,7 +337,9 @@ async fn build_ctx(
                     cap = cap_name,
                     "forced_capability resolved but has no tools — pin dropped"
                 );
-                if tools.len() > max_tools { tools.truncate(max_tools); }
+                if tools.len() > max_tools {
+                    tools.truncate(max_tools);
+                }
                 "dropped"
             }
             None => {
@@ -350,13 +349,17 @@ async fn build_ctx(
                     tenant = tenant_id,
                     "forced_capability not found or disabled for tenant — ignoring"
                 );
-                if tools.len() > max_tools { tools.truncate(max_tools); }
+                if tools.len() > max_tools {
+                    tools.truncate(max_tools);
+                }
                 "dropped"
             }
         }
     } else {
         // No forced pin — apply normal truncation.
-        if tools.len() > max_tools { tools.truncate(max_tools); }
+        if tools.len() > max_tools {
+            tools.truncate(max_tools);
+        }
         "none"
     };
 
@@ -387,8 +390,14 @@ async fn build_ctx(
         let mut out: Vec<String> = Vec::new();
         for t in &tools {
             if let Some(name) = t.get("name").and_then(|v| v.as_str()) {
-                let cap = name.split_once("__").map(|(c, _)| c).unwrap_or(name).to_string();
-                if !out.contains(&cap) { out.push(cap); }
+                let cap = name
+                    .split_once("__")
+                    .map(|(c, _)| c)
+                    .unwrap_or(name)
+                    .to_string();
+                if !out.contains(&cap) {
+                    out.push(cap);
+                }
             }
         }
         out
@@ -400,7 +409,11 @@ async fn build_ctx(
                 .tools_for_capability_exact_for_tenant(cap_name, &tenant_id)
                 .unwrap_or_default()
                 .into_iter()
-                .filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(|s| s.to_string()))
+                .filter_map(|v| {
+                    v.get("name")
+                        .and_then(|n| n.as_str())
+                        .map(|s| s.to_string())
+                })
                 .collect()
         } else {
             vec![]
@@ -436,10 +449,7 @@ async fn build_ctx(
         .enumerate()
         .map(|(i, m)| {
             // Inject attachment content blocks into the last user turn only.
-            if m.role == "user"
-                && Some(i) == last_user_pos
-                && !req.attachment_content.is_empty()
-            {
+            if m.role == "user" && Some(i) == last_user_pos && !req.attachment_content.is_empty() {
                 let mut content: Vec<Value> = req.attachment_content.clone();
                 if !m.content.is_empty() {
                     content.push(json!({"type": "text", "text": m.content}));
@@ -728,19 +738,22 @@ async fn blocking_agent(
                 model: model_id.clone(),
                 duration_ms: start.elapsed().as_millis() as u64,
             };
-            return Ok((json!({
-                "id": format!("chatcmpl-{}", Uuid::new_v4()),
-                "object": "chat.completion",
-                "model": model_id,
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
-                "usage": {
-                    "prompt_tokens":     total_input,
-                    "completion_tokens": total_output,
-                    "total_tokens":      total_input + total_output,
-                },
-                "tool_calls_made": tool_calls_made,
-                "thread_id": thread_id,
-            }), stats));
+            return Ok((
+                json!({
+                    "id": format!("chatcmpl-{}", Uuid::new_v4()),
+                    "object": "chat.completion",
+                    "model": model_id,
+                    "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+                    "usage": {
+                        "prompt_tokens":     total_input,
+                        "completion_tokens": total_output,
+                        "total_tokens":      total_input + total_output,
+                    },
+                    "tool_calls_made": tool_calls_made,
+                    "thread_id": thread_id,
+                }),
+                stats,
+            ));
         }
 
         // Tool use round
@@ -1144,7 +1157,9 @@ pub async fn stream_agent(
                             .map(|c| c.iter().collect::<String>())
                             .collect();
                         if let Ok(embeddings) = emb_svc.embed_documents(chunks.clone()).await {
-                            for (i, (chunk, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
+                            for (i, (chunk, emb)) in
+                                chunks.iter().zip(embeddings.iter()).enumerate()
+                            {
                                 let chunk_id = format!("{node_id_str}_t{i}");
                                 let _ = vs
                                     .upsert_content_embedding_full(
@@ -1221,8 +1236,11 @@ pub async fn stream_agent(
 
                     // Also broadcast to the InvalidationBus for any out-of-band subscribers.
                     let _ = state.invalidation_bus.send(
-                        agent_core::realtime::invalidation::InvalidationEvent::new("workspace", &tenant_id)
-                            .with_keys(all_changed_paths.clone()),
+                        agent_core::realtime::invalidation::InvalidationEvent::new(
+                            "workspace",
+                            &tenant_id,
+                        )
+                        .with_keys(all_changed_paths.clone()),
                     );
                 }
 
@@ -1256,8 +1274,10 @@ pub async fn stream_agent(
                         )))
                         .await;
                     let _ = state.invalidation_bus.send(
-                        agent_core::realtime::invalidation::InvalidationEvent::new("threads", &tenant_id)
-                            .with_keys(vec![tid.clone()]),
+                        agent_core::realtime::invalidation::InvalidationEvent::new(
+                            "threads", &tenant_id,
+                        )
+                        .with_keys(vec![tid.clone()]),
                     );
                 }
 
@@ -1368,11 +1388,18 @@ pub async fn stream_agent(
             }
             quota.record(&tid, &ActionType::AgentTurn, 1).await;
             if total_input + total_output > 0 {
-                let tok_event = UsageEvent::new(tid.clone(), tid.clone(), ActionType::Token, total_input + total_output);
+                let tok_event = UsageEvent::new(
+                    tid.clone(),
+                    tid.clone(),
+                    ActionType::Token,
+                    total_input + total_output,
+                );
                 if let Err(e) = billing.report_usage(tok_event).await {
                     warn!(error = %e, "stream metering: report_usage(token) failed");
                 }
-                quota.record(&tid, &ActionType::Token, total_input + total_output).await;
+                quota
+                    .record(&tid, &ActionType::Token, total_input + total_output)
+                    .await;
             }
         }
     });
@@ -1516,7 +1543,8 @@ async fn resolve_and_invoke(
     tenant: &ResolvedTenant,
 ) -> anyhow::Result<(Value, Vec<String>)> {
     // PR 2.D — inject current file content before chain runs (prevents fabrication).
-    let injected = maybe_inject_current_content(state, full_tool_name, input, &tenant.0.tenant_id).await;
+    let injected =
+        maybe_inject_current_content(state, full_tool_name, input, &tenant.0.tenant_id).await;
     let effective_input = injected.as_ref().unwrap_or(input);
 
     let mut raw_result = state
@@ -1608,7 +1636,10 @@ pub fn merge_pinned(pinned: Vec<Value>, semantic: Vec<Value>, max_tools: usize) 
 
     let mut result = pinned;
     for tool in semantic {
-        let name = tool.get("name").and_then(|n| n.as_str()).map(|s| s.to_string());
+        let name = tool
+            .get("name")
+            .and_then(|n| n.as_str())
+            .map(|s| s.to_string());
         if name.as_deref().map(|n| !seen.contains(n)).unwrap_or(true) {
             result.push(tool);
         }
@@ -1655,7 +1686,11 @@ mod tests {
     #[test]
     fn merge_pinned_survives_truncation() {
         let pinned = vec![tool("extract_invoice")]; // would be evicted at max_tools=2
-        let semantic = vec![tool("save_document"), tool("read_file"), tool("upload_file")];
+        let semantic = vec![
+            tool("save_document"),
+            tool("read_file"),
+            tool("upload_file"),
+        ];
         let result = merge_pinned(pinned, semantic, 2);
 
         assert_eq!(result.len(), 2, "result should be truncated to max_tools=2");
@@ -1682,7 +1717,10 @@ mod tests {
             .filter_map(|v| v.get("name")?.as_str())
             .collect();
         let deduped_count = names.iter().filter(|&&n| n == "save_document").count();
-        assert_eq!(deduped_count, 1, "save_document should appear exactly once; got {names:?}");
+        assert_eq!(
+            deduped_count, 1,
+            "save_document should appear exactly once; got {names:?}"
+        );
     }
 
     // Empty pinned list: output is just semantic (truncated).

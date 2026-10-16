@@ -22,9 +22,14 @@ use std::sync::Arc;
 /// inside the `jobs` crate; the gateway passes `Arc<dyn JobDispatch>` at construction.
 #[async_trait]
 pub trait JobDispatch: Send + Sync + 'static {
-    /// Enqueue a background job of the given type with a JSON payload.
-    /// Returns the opaque task ID (UUID string).
-    async fn enqueue(&self, job_type: &str, payload: Value) -> anyhow::Result<String>;
+    /// Enqueue a background job of the given type with a JSON payload, owned by
+    /// `tenant_id` (only that tenant can read the task back). Returns the task ID.
+    async fn enqueue(
+        &self,
+        job_type: &str,
+        payload: Value,
+        tenant_id: &str,
+    ) -> anyhow::Result<String>;
 }
 
 // ── JobBackedProvider ──────────────────────────────────────────────────────────
@@ -75,15 +80,18 @@ impl CapabilityProvider for JobBackedProvider {
             anyhow::bail!("unknown tool: {tool_name}");
         }
         let tenant_id = tenant
-            .map(|t| t.tenant_id.as_str().to_owned())
-            .unwrap_or_else(|| "__dev__".to_owned());
+            .map(|t| t.tenant_id.as_str())
+            .ok_or_else(|| anyhow::anyhow!("job-backed tools require tenant context"))?;
 
         let mut payload = input.clone();
         if let Some(obj) = payload.as_object_mut() {
             obj.insert("tenant_id".into(), json!(tenant_id));
         }
 
-        let task_id = self.dispatcher.enqueue(&self.job_type, payload).await?;
+        let task_id = self
+            .dispatcher
+            .enqueue(&self.job_type, payload, tenant_id)
+            .await?;
         Ok(json!({
             "task_id": task_id,
             "status": "queued",

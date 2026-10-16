@@ -23,8 +23,8 @@ impl ScheduledJob for CapabilityHealthCheckJob {
         // Check RustFS / S3 is reachable (if configured). Any HTTP response —
         // including 401/403 from anonymous bucket-root access — means the
         // service is up; only a transport-level error counts as unreachable.
-        if let Some(endpoint) = &ctx.s3_endpoint {
-            let health_url = format!("{}/", endpoint);
+        if let Some(admin) = &ctx.rustfs_admin {
+            let health_url = format!("{}/", admin.endpoint);
             match reqwest::get(&health_url).await {
                 Ok(resp) => {
                     info!(status = %resp.status(), "capability-health-check: storage healthy");

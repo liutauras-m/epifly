@@ -5,7 +5,7 @@
 //! - `content_embeddings`: workspace content search (tenant_id payload filter).
 //!
 //! Both use cosine distance. Dimensionality is set at construction time and must
-//! match the active embedding model (`EMBEDDING_DIMS`, default 1024).
+//! match the active embedding model.
 
 use crate::capabilities::namespace::NamespaceFilter;
 use crate::indexing::EMBEDDING_DIMS;
@@ -75,21 +75,28 @@ pub struct QdrantVectorStore {
     dims: u64,
 }
 
-impl QdrantVectorStore {
-    pub async fn connect(url: &str) -> anyhow::Result<Self> {
-        Self::connect_with_dims(url, EMBEDDING_DIMS as u64).await
-    }
+/// Connection settings for Qdrant. `grpc_url` is the gRPC endpoint (port 6334)
+/// — ConusAI Cloud injects it as `QDRANT_GRPC_URL` next to the REST `QDRANT_URL`,
+/// which this client does not use. The API key is sent on every request.
+#[derive(Clone)]
+pub struct QdrantConfig {
+    pub grpc_url: String,
+    pub api_key: String,
+}
 
+impl QdrantVectorStore {
     /// Connect and derive the collection names from the active embedding service's dims.
     pub async fn connect_from_service(
-        url: &str,
+        cfg: &QdrantConfig,
         svc: &dyn EmbeddingService,
     ) -> anyhow::Result<Self> {
-        Self::connect_with_dims(url, svc.dims()).await
+        Self::connect_with_dims(cfg, svc.dims()).await
     }
 
-    pub async fn connect_with_dims(url: &str, dims: u64) -> anyhow::Result<Self> {
-        let client = Qdrant::from_url(url).build()?;
+    pub async fn connect_with_dims(cfg: &QdrantConfig, dims: u64) -> anyhow::Result<Self> {
+        let client = Qdrant::from_url(&cfg.grpc_url)
+            .api_key(cfg.api_key.clone())
+            .build()?;
         let store = Self {
             inner: Some(client),
             dims,
@@ -114,40 +121,33 @@ impl QdrantVectorStore {
         let content_name = content_collection(self.dims);
         for name in [cap_name.as_str(), content_name.as_str()] {
             if client.collection_exists(name).await? {
-                // Verify the collection's vector dimension matches our embedding model.
-                let mut needs_recreate = false;
+                // The collection name carries the dimension, so a mismatch means the
+                // collection was created by hand. Refuse to start rather than drop data.
                 let info = client.collection_info(name).await?;
-                if let Some(config) = info.result.and_then(|r| r.config) {
-                    if let Some(params) = config
-                        .params
-                        .and_then(|p| p.vectors_config)
-                        .and_then(|vc| vc.config)
+                if let Some(params) = info
+                    .result
+                    .and_then(|r| r.config)
+                    .and_then(|c| c.params)
+                    .and_then(|p| p.vectors_config)
+                    .and_then(|vc| vc.config)
+                {
+                    use qdrant_client::qdrant::vectors_config::Config;
+                    let existing_dim = match params {
+                        Config::Params(vp) => Some(vp.size),
+                        Config::ParamsMap(pm) => pm.map.get("default").map(|p| p.size),
+                    };
+                    if let Some(dim) = existing_dim
+                        && dim != self.dims
                     {
-                        use qdrant_client::qdrant::vectors_config::Config;
-                        let existing_dim = match params {
-                            Config::Params(vp) => Some(vp.size),
-                            Config::ParamsMap(pm) => pm.map.get("default").map(|p| p.size),
-                        };
-                        if let Some(dim) = existing_dim {
-                            if dim != self.dims {
-                                tracing::warn!(
-                                    collection = name,
-                                    existing_dim = dim,
-                                    expected_dim = self.dims,
-                                    "Qdrant dimension mismatch — dropping and recreating collection"
-                                );
-                                client.delete_collection(name).await?;
-                                needs_recreate = true;
-                            }
-                        }
+                        anyhow::bail!(
+                            "Qdrant collection {name} has dimension {dim}, expected {}; \
+                             migrate or delete it explicitly",
+                            self.dims
+                        );
                     }
                 }
-                if !needs_recreate {
-                    // Ensure indexes exist even on pre-existing collections.
-                    self.ensure_payload_indexes(client, name).await?;
-                    continue;
-                }
-                // Fall through to create new collection with correct dims.
+                self.ensure_payload_indexes(client, name).await?;
+                continue;
             }
             let mut vcb = VectorsConfigBuilder::default();
             vcb.add_named_vector_params(
@@ -172,8 +172,7 @@ impl QdrantVectorStore {
                 .field_index_params(payload_index_params::IndexParams::KeywordIndexParams(
                     KeywordIndexParams {
                         is_tenant: Some(true),
-                        on_disk: Some(false),
-                        enable_hnsw: None,
+                        ..Default::default()
                     },
                 ));
         client.create_field_index(tenant_index).await?;
@@ -183,8 +182,7 @@ impl QdrantVectorStore {
                 .field_index_params(payload_index_params::IndexParams::KeywordIndexParams(
                     KeywordIndexParams {
                         is_tenant: Some(false),
-                        on_disk: Some(false),
-                        enable_hnsw: None,
+                        ..Default::default()
                     },
                 ));
         client.create_field_index(owner_index).await?;
@@ -195,8 +193,7 @@ impl QdrantVectorStore {
                 .field_index_params(payload_index_params::IndexParams::KeywordIndexParams(
                     KeywordIndexParams {
                         is_tenant: Some(false),
-                        on_disk: Some(false),
-                        enable_hnsw: None,
+                        ..Default::default()
                     },
                 ));
         client.create_field_index(shared_index).await?;
@@ -467,6 +464,8 @@ impl QdrantVectorStore {
         Ok(())
     }
 
+    // One argument per Qdrant payload field.
+    #[allow(clippy::too_many_arguments)]
     #[instrument(skip(self, embedding))]
     pub async fn upsert_content_embedding_full(
         &self,

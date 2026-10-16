@@ -34,6 +34,9 @@ impl std::fmt::Display for TaskState {
 pub struct TaskStatus {
     pub id: Uuid,
     pub job_name: String,
+    /// Owning tenant. `None` for platform tasks started by a super-admin;
+    /// tenant routes only ever see their own tasks.
+    pub tenant_id: Option<String>,
     pub state: TaskState,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -44,11 +47,12 @@ pub struct TaskStatus {
 }
 
 impl TaskStatus {
-    pub fn new(id: Uuid, job_name: impl Into<String>) -> Self {
+    pub fn new(id: Uuid, job_name: impl Into<String>, tenant_id: Option<String>) -> Self {
         let now = chrono::Utc::now();
         Self {
             id,
             job_name: job_name.into(),
+            tenant_id,
             state: TaskState::Queued,
             created_at: now,
             updated_at: now,

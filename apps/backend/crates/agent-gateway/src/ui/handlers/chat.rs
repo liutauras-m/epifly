@@ -4,22 +4,19 @@
 //! from the UI composer, resolves any attached file tokens into Anthropic content blocks,
 //! constructs a `ChatRequest`, and proxies SSE chunks straight to the browser.
 
-use crate::mw::tenant::ResolvedTenant;
+use crate::auth::ResolvedTenant;
 use crate::routes::agent;
 use crate::routes::chat::{ChatMessage, ChatRequest};
 use crate::state::AppState;
-use crate::ui::session::SessionUser;
 use agent_core::TenantStorage;
 use axum::{
-    http::HeaderMap,
-    Json,
+    Extension, Json,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use common::error::HttpError;
-use object_store::path::Path as OsPath;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -43,8 +40,7 @@ pub struct UiChatBody {
 
 pub async fn ui_stream(
     State(state): State<Arc<AppState>>,
-    user: SessionUser,
-    headers: HeaderMap,
+    Extension(tenant): Extension<ResolvedTenant>,
     Json(body): Json<UiChatBody>,
 ) -> Response {
     let trimmed = body.message.trim();
@@ -55,8 +51,6 @@ pub async fn ui_stream(
         )
             .into_response();
     }
-
-    let tenant = ResolvedTenant(user.tenant_context());
 
     if !state
         .rate_limiter
@@ -73,13 +67,13 @@ pub async fn ui_stream(
     };
 
     let attachment_content = if !body.attachment_ids.is_empty() {
-        resolve_attachments(&state, &body.attachment_ids, storage.as_ref()).await
+        resolve_attachments(&body.attachment_ids, storage.as_ref()).await
     } else {
         vec![]
     };
 
     let attachment_hint = if !body.attachment_ids.is_empty() {
-        build_attachment_hint(&state, &headers, &body.attachment_ids, storage.as_ref())
+        build_attachment_hint(&body.attachment_ids, storage.as_ref())
     } else {
         String::new()
     };
@@ -93,7 +87,7 @@ pub async fn ui_stream(
     };
 
     let req = ChatRequest {
-        model: body.model.or_else(|| Some("claude-opus-4-7".into())),
+        model: body.model,
         messages: vec![ChatMessage {
             role: "user".into(),
             content: effective_message,
@@ -113,58 +107,24 @@ pub async fn ui_stream(
         .into_response()
 }
 
-fn build_attachment_hint(
-    _state: &Arc<AppState>,
-    headers: &HeaderMap,
-    attachment_ids: &[String],
-    storage: Option<&TenantStorage>,
-) -> String {
-    let origin = request_origin(headers);
-
-    let mut lines = Vec::new();
-    for object_key in attachment_ids {
-        if !storage.map(|s| s.owns_object_key(object_key)).unwrap_or(false) {
-            continue;
-        }
-        let filename = object_key.split('/').next_back().unwrap_or("file");
-        let encoded_key = object_key
-            .chars()
-            .flat_map(|c| {
-                if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~' || c == '/' {
-                    vec![c]
-                } else {
-                    format!("%{:02X}", c as u32).chars().collect()
-                }
-            })
-            .collect::<String>();
-        lines.push(format!(
-            "- {filename} (image_path: {origin}/ui/files/download?key={encoded_key})"
-        ));
-    }
-
+/// Tell the model which attachments it can pass to vision tools. `image_path` is the
+/// object key in the tenant's storage — the only form vision tools accept.
+fn build_attachment_hint(attachment_ids: &[String], storage: Option<&TenantStorage>) -> String {
+    let lines: Vec<String> = attachment_ids
+        .iter()
+        .filter(|key| storage.is_some_and(|s| s.owns_object_key(key)))
+        .map(|key| {
+            let filename = key.rsplit('/').next().unwrap_or("file");
+            format!("- {filename} (image_path: {key})")
+        })
+        .collect();
     if lines.is_empty() {
         return String::new();
     }
-
     format!(
         "[Attached files — pass image_path directly to invoice-processing__extract_invoice or ocr-service__extract_text]\n{}",
         lines.join("\n")
     )
-}
-
-fn request_origin(headers: &HeaderMap) -> String {
-    let proto = headers
-        .get("x-forwarded-proto")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("http");
-
-    let host = headers
-        .get("x-forwarded-host")
-        .or_else(|| headers.get("host"))
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("localhost:8080");
-
-    format!("{proto}://{host}")
 }
 
 // ── Attachment resolution ─────────────────────────────────────────────────────
@@ -176,32 +136,24 @@ fn request_origin(headers: &HeaderMap) -> String {
 /// - PDFs: `{"type":"document","source":{"type":"base64","media_type":"application/pdf",...}}`
 /// - Everything else: a text block describing the file
 async fn resolve_attachments(
-    state: &Arc<AppState>,
     attachment_ids: &[String],
     storage: Option<&TenantStorage>,
 ) -> Vec<Value> {
-    let Some(store) = state.file_store.as_ref() else {
+    let Some(storage) = storage else {
         return vec![];
     };
 
     let mut blocks = Vec::with_capacity(attachment_ids.len());
 
     for object_key in attachment_ids {
-        // attachment_ids are now object keys directly (no UUID token lookup)
-        if !storage.map(|s| s.owns_object_key(object_key)).unwrap_or(false) {
-            continue;
-        }
-        let object_key = object_key.clone();
-
-        let filename = object_key.split('/').next_back().unwrap_or("file").to_string();
+        // Attachment ids are object keys; read with the tenant's own credentials.
+        let filename = object_key
+            .split('/')
+            .next_back()
+            .unwrap_or("file")
+            .to_string();
         let ct = content_type_from_filename(&filename);
-
-        let os_path = OsPath::from(object_key.as_str());
-        let get_result = match store.get(&os_path).await {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-        let bytes = match get_result.bytes().await {
+        let bytes = match storage.get_owned_object(object_key).await {
             Ok(b) => b,
             Err(_) => continue,
         };
@@ -252,16 +204,21 @@ async fn resolve_attachments(
 }
 
 fn content_type_from_filename(name: &str) -> &'static str {
-    match name.rsplit('.').next().map(|e| e.to_ascii_lowercase()).as_deref() {
+    match name
+        .rsplit('.')
+        .next()
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
         Some("jpg") | Some("jpeg") => "image/jpeg",
         Some("png") => "image/png",
         Some("gif") => "image/gif",
         Some("webp") => "image/webp",
         Some("pdf") => "application/pdf",
         Some(
-            "txt" | "md" | "markdown" | "csv" | "json" | "yaml" | "yml" | "toml" | "xml"
-            | "html" | "htm" | "css" | "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "rb"
-            | "go" | "java" | "c" | "cpp" | "h" | "sh" | "sql" | "log",
+            "txt" | "md" | "markdown" | "csv" | "json" | "yaml" | "yml" | "toml" | "xml" | "html"
+            | "htm" | "css" | "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "rb" | "go" | "java"
+            | "c" | "cpp" | "h" | "sh" | "sql" | "log",
         ) => "text/plain",
         _ => "application/octet-stream",
     }

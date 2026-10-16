@@ -1,7 +1,7 @@
 //! Offline embedding backend using fastembed (ONNX, no GPU, no API key needed).
 //!
 //! Enabled only when compiled with `--features agent-core/local-embeddings`.
-//! Activated at runtime via `EMBEDDING_BACKEND=local`.
+//! Configured by the gateway (`EMBEDDING_LOCAL_MODEL`, `EMBEDDING_CACHE_DIR`).
 //!
 //! Default model: `multilingual-e5-large` (1024-dim).
 //! The multilingual-e5 family requires `query: ` prefix for queries
@@ -40,7 +40,16 @@ pub struct LocalEmbeddingService {
     max_batch: usize,
 }
 
-const DEFAULT_MAX_BATCH: usize = 256;
+pub const DEFAULT_MAX_BATCH: usize = 256;
+
+/// Settings for the local fastembed model. The model files are downloaded into
+/// `cache_dir` (`EMBEDDING_CACHE_DIR`) — the only place this service writes.
+#[derive(Debug, Clone)]
+pub struct LocalEmbeddingConfig {
+    pub model: EmbeddingModel,
+    pub cache_dir: std::path::PathBuf,
+    pub max_batch: usize,
+}
 
 impl LocalEmbeddingService {
     fn build(
@@ -48,16 +57,12 @@ impl LocalEmbeddingService {
         model: EmbeddingModel,
         query_prefix: &'static str,
         passage_prefix: &'static str,
+        cfg: &LocalEmbeddingConfig,
     ) -> anyhow::Result<Self> {
-        let max_batch = std::env::var("EMBEDDING_MAX_BATCH")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(DEFAULT_MAX_BATCH);
-
-        let mut opts = InitOptions::new(fe_model).with_show_download_progress(true);
-        if let Ok(cache_dir) = std::env::var("EMBEDDING_CACHE_DIR") {
-            opts = opts.with_cache_dir(cache_dir.into());
-        }
+        let max_batch = cfg.max_batch.max(1);
+        let opts = InitOptions::new(fe_model)
+            .with_show_download_progress(false)
+            .with_cache_dir(cfg.cache_dir.clone());
 
         let emb = TextEmbedding::try_new(opts)
             .map_err(|e| anyhow::anyhow!("failed to init local embedding model: {e}"))?;
@@ -70,32 +75,29 @@ impl LocalEmbeddingService {
         })
     }
 
-    /// Construct from the typed `EmbeddingModel` enum.
-    pub fn from_model(model: EmbeddingModel) -> anyhow::Result<Self> {
-        info!(model = model.name(), "initialising local fastembed model");
+    /// Load the configured model.
+    pub fn new(cfg: &LocalEmbeddingConfig) -> anyhow::Result<Self> {
+        let model = cfg.model;
+        info!(model = model.name(), cache_dir = %cfg.cache_dir.display(), "initialising local fastembed model");
         match model {
             EmbeddingModel::MultilingualE5Large => Self::build(
                 FastEmbedModel::MultilingualE5Large,
                 model,
                 "query: ",
                 "passage: ",
+                cfg,
             ),
             EmbeddingModel::BgeSmallEnV15 => {
-                Self::build(FastEmbedModel::BGESmallENV15, model, "", "")
+                Self::build(FastEmbedModel::BGESmallENV15, model, "", "", cfg)
             }
-            EmbeddingModel::BgeM3 => Self::build(FastEmbedModel::BGEM3, model, "", ""),
+            EmbeddingModel::BgeM3 => Self::build(FastEmbedModel::BGEM3, model, "", "", cfg),
             EmbeddingModel::NomicEmbedTextV15 => {
-                Self::build(FastEmbedModel::NomicEmbedTextV15, model, "", "")
+                Self::build(FastEmbedModel::NomicEmbedTextV15, model, "", "", cfg)
             }
             EmbeddingModel::AllMiniLML6V2 => {
-                Self::build(FastEmbedModel::AllMiniLML6V2, model, "", "")
+                Self::build(FastEmbedModel::AllMiniLML6V2, model, "", "", cfg)
             }
         }
-    }
-
-    /// Construct from env vars (`EMBEDDING_LOCAL_MODEL`).
-    pub fn from_env() -> anyhow::Result<Self> {
-        Self::from_model(EmbeddingModel::from_env())
     }
 }
 

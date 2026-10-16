@@ -5,7 +5,7 @@
 //! whenever a workspace node is inserted, updated, or deleted within the
 //! specified tenant.
 
-use crate::mw::tenant::ResolvedTenant;
+use crate::auth::ResolvedTenant;
 use crate::state::AppState;
 use axum::{
     extract::ws::{Message, WebSocket},

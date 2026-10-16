@@ -7,6 +7,7 @@
 
 use crate::capabilities::manifest::ToolManifest;
 use crate::capabilities::mcp_adapter::McpAdapter;
+use crate::capabilities::mcp_allowlist::McpAllowlist;
 use crate::capabilities::provider::CapabilityProvider;
 use crate::context::tenant::TenantContext;
 use async_trait::async_trait;
@@ -19,8 +20,12 @@ pub struct RemoteMcpCapability {
 }
 
 impl RemoteMcpCapability {
-    pub fn new(manifest: ToolManifest, endpoint: String) -> Arc<Self> {
-        Arc::new(Self { manifest, endpoint })
+    /// Refused unless `endpoint` passes the exact-host MCP allowlist.
+    pub fn new(manifest: ToolManifest, endpoint: String) -> anyhow::Result<Arc<Self>> {
+        McpAllowlist::from_env()
+            .check(&endpoint)
+            .map_err(|e| anyhow::anyhow!("remote MCP '{}': {e}", manifest.name))?;
+        Ok(Arc::new(Self { manifest, endpoint }))
     }
 }
 

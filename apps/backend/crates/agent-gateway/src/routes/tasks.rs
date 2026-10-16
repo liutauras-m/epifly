@@ -1,6 +1,9 @@
 //! `/v1/tasks` — query background task status and subscribe to SSE streams.
+//!
+//! Every handler is scoped to the caller's tenant: another tenant's task id is
+//! answered exactly like an unknown id (404).
 
-use crate::mw::tenant::ResolvedTenant;
+use crate::auth::ResolvedTenant;
 use crate::state::AppState;
 use axum::{
     Extension, Json,
@@ -29,20 +32,29 @@ fn default_limit() -> usize {
 
 pub async fn list_tasks(
     State(state): State<Arc<AppState>>,
-    Extension(_tenant): Extension<ResolvedTenant>,
+    Extension(tenant): Extension<ResolvedTenant>,
     axum::extract::Query(q): axum::extract::Query<ListQuery>,
 ) -> Json<Vec<TaskStatus>> {
-    Json(state.job_executor.list_tasks(q.limit.min(200)).await)
+    Json(
+        state
+            .job_executor
+            .list_tasks_for_tenant(tenant.0.tenant_id.as_str(), q.limit.min(200))
+            .await,
+    )
 }
 
 // ── Get single task ───────────────────────────────────────────────────────────
 
 pub async fn get_task(
     State(state): State<Arc<AppState>>,
-    Extension(_tenant): Extension<ResolvedTenant>,
+    Extension(tenant): Extension<ResolvedTenant>,
     Path(id): Path<Uuid>,
 ) -> impl IntoResponse {
-    match state.job_executor.get_status(id).await {
+    match state
+        .job_executor
+        .get_status_for_tenant(id, tenant.0.tenant_id.as_str())
+        .await
+    {
         Some(s) => (StatusCode::OK, Json(s)).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
@@ -52,17 +64,21 @@ pub async fn get_task(
 
 pub async fn task_sse(
     State(state): State<Arc<AppState>>,
-    Extension(_tenant): Extension<ResolvedTenant>,
+    Extension(tenant): Extension<ResolvedTenant>,
     Path(id): Path<Uuid>,
 ) -> impl IntoResponse {
-    match state.job_executor.subscribe(id).await {
+    let tenant_id = tenant.0.tenant_id.as_str();
+    let Some(status) = state
+        .job_executor
+        .get_status_for_tenant(id, tenant_id)
+        .await
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match state.job_executor.subscribe_for_tenant(id, tenant_id).await {
         None => {
-            // Task already complete (or not found) — send a single terminal event
-            let status = state.job_executor.get_status(id).await;
-            let data = match status {
-                Some(s) => serde_json::to_string(&s).unwrap_or_default(),
-                None => r#"{"error":"task not found"}"#.to_owned(),
-            };
+            // Task already complete — send a single terminal event.
+            let data = serde_json::to_string(&status).unwrap_or_default();
             let stream = futures::stream::once(async move {
                 Ok::<Event, std::convert::Infallible>(
                     Event::default().event("task_update").data(data),

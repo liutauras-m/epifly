@@ -29,7 +29,6 @@ list-tree
 mime-detect
 ocr-tesseract
 ocr-vision
-presigned-url
 read-project
 rename-node
 runtime-echo
@@ -37,4 +36,5 @@ save-doc
 scaffold-nextjs
 scaffold-react
 scaffold-sveltekit
-upload-file
+store-file
+find-file

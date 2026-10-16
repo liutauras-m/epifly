@@ -1,6 +1,6 @@
 //! In-memory implementations of all store traits.
 //!
-//! Intended for tests and for local dev when `CONUSAI_TEST_MODE=1` is set.
+//! Intended for tests.
 //! No Postgres or RustFS required — everything lives in locked HashMaps / Vecs.
 //!
 //! These are **not** thread-safe across process restarts; data is lost on exit.

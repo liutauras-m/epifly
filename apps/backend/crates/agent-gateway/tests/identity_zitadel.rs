@@ -1,140 +1,250 @@
-//! Zitadel identity provider integration tests.
+//! Zitadel token verification against a stubbed issuer (wiremock on loopback).
 //!
-//! Uses `wiremock` to stub `/oauth/v2/introspect` and asserts:
-//! - First call performs a remote introspection (cache miss).
-//! - Identical token within the TTL window is served from cache (cache hit, no extra request).
-//! - Inactive token returns `AuthError::TokenExpired`.
-//! - Missing `sub` claim returns `AuthError::InvalidToken`.
+//! JWT path: discovery → JWKS → RS256 signature, issuer, audience, expiry, org claim.
+//! Opaque path: introspection with caching; inactive/foreign tokens are refused and
+//! an unreachable issuer is reported as `Unavailable`, not as a valid identity.
 
-use agent_core::identity::{AuthError, IdentityProvider};
-use agent_core::identity::zitadel::{ZitadelConfig, ZitadelProvider};
+use agent_core::identity::zitadel::{IntrospectionClient, ORG_CLAIM, ROLES_CLAIM};
+use agent_core::{AuthError, TokenVerifier, UserRole, ZitadelConfig, ZitadelVerifier};
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use rsa::pkcs1::EncodeRsaPrivateKey;
+use rsa::traits::PublicKeyParts;
+use serde_json::json;
+use std::sync::OnceLock;
 use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+const AUD: &str = "gateway-project";
 
-fn make_provider(server: &MockServer) -> ZitadelProvider {
-    ZitadelProvider::new(ZitadelConfig {
-        domain: server.uri(),
-        audience: "test-audience".into(),
-        introspection_client_id: "client".into(),
-        introspection_client_secret: "secret".into(),
-        mgmt_pat: "pat".into(),
+struct Key {
+    pem: String,
+    n: String,
+    e: String,
+}
+
+/// Generated per test process; no key material is committed.
+fn key() -> &'static Key {
+    static K: OnceLock<Key> = OnceLock::new();
+    K.get_or_init(|| {
+        let private = rsa::RsaPrivateKey::new(&mut rand::thread_rng(), 2048).unwrap();
+        Key {
+            pem: private
+                .to_pkcs1_pem(rsa::pkcs8::LineEnding::LF)
+                .unwrap()
+                .to_string(),
+            n: URL_SAFE_NO_PAD.encode(private.n().to_bytes_be()),
+            e: URL_SAFE_NO_PAD.encode(private.e().to_bytes_be()),
+        }
     })
 }
 
-fn active_response(sub: &str, tenant_id: &str) -> serde_json::Value {
-    serde_json::json!({
-        "active": true,
-        "sub": sub,
-        "exp": 9_999_999_999u64,
-        "email": format!("{sub}@example.com"),
-        "urn:zitadel:iam:org:id": tenant_id,
-        "urn:conusai:plan_tier": "pro",
-        "urn:conusai:subscription_status": "active"
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+async fn issuer() -> MockServer {
+    let server = MockServer::start().await;
+    let uri = server.uri();
+    Mock::given(method("GET"))
+        .and(path("/.well-known/openid-configuration"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "issuer": uri,
+            "jwks_uri": format!("{uri}/oauth/v2/keys"),
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/oauth/v2/keys"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "keys": [{ "kty": "RSA", "kid": "k1", "alg": "RS256", "use": "sig", "n": key().n, "e": key().e }]
+        })))
+        .mount(&server)
+        .await;
+    server
+}
+
+fn verifier(server: &MockServer, introspection: bool) -> ZitadelVerifier {
+    ZitadelVerifier::new(ZitadelConfig {
+        issuer: server.uri(),
+        audience: AUD.into(),
+        introspection: introspection.then(|| IntrospectionClient {
+            client_id: "client".into(),
+            client_secret: "secret".into(),
+        }),
+    })
+    .unwrap()
+}
+
+fn sign(iss: &str, extra: serde_json::Value) -> String {
+    let mut claims = json!({
+        "iss": iss, "sub": "user-1", "aud": [AUD], "exp": now() + 600, "iat": now(),
+        ORG_CLAIM: "org-1", ROLES_CLAIM: { "super_admin": {} }
+    });
+    for (k, v) in extra.as_object().unwrap() {
+        claims[k] = v.clone();
+    }
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some("k1".into());
+    encode(
+        &header,
+        &claims,
+        &EncodingKey::from_rsa_pem(key().pem.as_bytes()).unwrap(),
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn jwt_verified_via_discovery_and_jwks() {
+    let server = issuer().await;
+    let v = verifier(&server, false);
+    let id = v.verify(&sign(&server.uri(), json!({}))).await.unwrap();
+    assert_eq!(id.tenant_id.as_str(), "org-1");
+    assert_eq!(id.user_id, "user-1");
+    assert_eq!(id.role, UserRole::SuperAdmin);
+}
+
+#[tokio::test]
+async fn jwt_with_wrong_audience_issuer_or_expiry_is_rejected() {
+    let server = issuer().await;
+    let v = verifier(&server, false);
+    for bad in [
+        sign(&server.uri(), json!({ "aud": ["other-project"] })),
+        sign("https://evil.example", json!({})),
+        sign(&server.uri(), json!({ "exp": now() - 3600 })),
+    ] {
+        assert!(matches!(
+            v.verify(&bad).await,
+            Err(AuthError::InvalidToken(_))
+        ));
+    }
+}
+
+#[tokio::test]
+async fn jwt_without_org_claim_is_rejected() {
+    let server = issuer().await;
+    let v = verifier(&server, false);
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some("k1".into());
+    let token = encode(
+        &header,
+        &json!({ "iss": server.uri(), "sub": "u", "aud": [AUD], "exp": now() + 600 }),
+        &EncodingKey::from_rsa_pem(key().pem.as_bytes()).unwrap(),
+    )
+    .unwrap();
+    assert!(matches!(
+        v.verify(&token).await,
+        Err(AuthError::InvalidToken(_))
+    ));
+}
+
+#[tokio::test]
+async fn jwt_signed_by_another_key_is_rejected() {
+    let server = issuer().await;
+    let v = verifier(&server, false);
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some("unknown-kid".into());
+    let token = encode(
+        &header,
+        &json!({ "iss": server.uri(), "sub": "u", "aud": [AUD], "exp": now() + 600, ORG_CLAIM: "o" }),
+        &EncodingKey::from_rsa_pem(key().pem.as_bytes()).unwrap(),
+    )
+    .unwrap();
+    assert!(matches!(
+        v.verify(&token).await,
+        Err(AuthError::InvalidToken(_))
+    ));
+}
+
+fn introspection(server_uri: &str, active: bool, aud: &str) -> serde_json::Value {
+    json!({
+        "active": active, "sub": "user-2", "iss": server_uri, "aud": [aud],
+        "exp": now() + 600, ORG_CLAIM: "org-2",
+        "urn:conusai:plan_tier": "enterprise"
     })
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
 #[tokio::test]
-async fn cache_miss_on_first_call_then_hit() {
-    let server = MockServer::start().await;
-
-    // Introspect endpoint — mounted once; it should only be hit once.
+async fn opaque_token_introspected_once_then_cached() {
+    let server = issuer().await;
     Mock::given(method("POST"))
         .and(path("/oauth/v2/introspect"))
-        .and(body_string_contains("token=test-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(active_response("user1", "tenant1")))
-        .expect(1) // asserts exactly one HTTP call is made
+        .and(body_string_contains("token=opaque-1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(introspection(
+            &server.uri(),
+            true,
+            AUD,
+        )))
+        .expect(1)
         .mount(&server)
         .await;
-
-    let provider = make_provider(&server);
-
-    // First call — must hit the wiremock server (miss).
-    let ctx1 = provider.verify_access_token("test-token").await.expect("first call failed");
-    assert_eq!(ctx1.user_id, "user1");
-    assert_eq!(ctx1.tenant_id.as_ref(), "tenant1");
-    assert_eq!(provider.stats.misses(), 1, "expected 1 cache miss");
-    assert_eq!(provider.stats.hits(), 0, "expected 0 cache hits");
-
-    // Second call with the same token — must come from cache (no new HTTP call).
-    let ctx2 = provider.verify_access_token("test-token").await.expect("second call failed");
-    assert_eq!(ctx2.user_id, "user1");
-    assert_eq!(provider.stats.hits(), 1, "expected 1 cache hit");
-    assert_eq!(provider.stats.misses(), 1, "still only 1 miss");
-
-    // wiremock verifies `expect(1)` on drop — if a second HTTP call was made the test fails.
+    let v = verifier(&server, true);
+    let a = v.verify("opaque-1").await.unwrap();
+    let b = v.verify("opaque-1").await.unwrap();
+    assert_eq!(a, b);
+    assert_eq!(a.tenant_id.as_str(), "org-2");
+    assert_eq!(a.role, UserRole::User);
 }
 
 #[tokio::test]
-async fn different_tokens_each_miss() {
-    let server = MockServer::start().await;
-
+async fn inactive_or_foreign_opaque_tokens_are_rejected() {
+    let server = issuer().await;
     Mock::given(method("POST"))
         .and(path("/oauth/v2/introspect"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(active_response("userA", "tenantA")))
+        .and(body_string_contains("token=inactive"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(introspection(
+            &server.uri(),
+            false,
+            AUD,
+        )))
         .mount(&server)
         .await;
-
-    let provider = make_provider(&server);
-
-    provider.verify_access_token("token-A").await.expect("A failed");
-    provider.verify_access_token("token-B").await.expect("B failed");
-
-    assert_eq!(provider.stats.misses(), 2, "two distinct tokens = two misses");
-    assert_eq!(provider.stats.hits(), 0);
+    Mock::given(method("POST"))
+        .and(path("/oauth/v2/introspect"))
+        .and(body_string_contains("token=foreign"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(introspection(
+            &server.uri(),
+            true,
+            "another-app",
+        )))
+        .mount(&server)
+        .await;
+    let v = verifier(&server, true);
+    assert!(matches!(
+        v.verify("inactive").await,
+        Err(AuthError::InvalidToken(_))
+    ));
+    assert!(matches!(
+        v.verify("foreign").await,
+        Err(AuthError::InvalidToken(_))
+    ));
 }
 
 #[tokio::test]
-async fn inactive_token_returns_expired_error() {
-    let server = MockServer::start().await;
-
-    Mock::given(method("POST"))
-        .and(path("/oauth/v2/introspect"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "active": false
-        })))
-        .mount(&server)
-        .await;
-
-    let provider = make_provider(&server);
-    let err = provider.verify_access_token("dead-token").await.unwrap_err();
-    assert!(matches!(err, AuthError::TokenExpired), "got: {err:?}");
-}
-
-#[tokio::test]
-async fn missing_sub_returns_invalid_token() {
-    let server = MockServer::start().await;
-
-    Mock::given(method("POST"))
-        .and(path("/oauth/v2/introspect"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "active": true,
-            "exp": 9_999_999_999u64
-            // no "sub"
-        })))
-        .mount(&server)
-        .await;
-
-    let provider = make_provider(&server);
-    let err = provider.verify_access_token("no-sub-token").await.unwrap_err();
-    assert!(matches!(err, AuthError::InvalidToken(_)), "got: {err:?}");
-}
-
-#[tokio::test]
-async fn introspect_http_failure_returns_provider_error() {
-    // Point at a server that returns 500.
-    let server = MockServer::start().await;
-
+async fn introspection_outage_is_unavailable() {
+    let server = issuer().await;
     Mock::given(method("POST"))
         .and(path("/oauth/v2/introspect"))
         .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
+    let v = verifier(&server, true);
+    assert!(matches!(
+        v.verify("whatever").await,
+        Err(AuthError::Unavailable(_))
+    ));
+}
 
-    let provider = make_provider(&server);
-    let err = provider.verify_access_token("some-token").await.unwrap_err();
-    assert!(matches!(err, AuthError::InvalidToken(_)), "HTTP 500 should map to InvalidToken, got: {err:?}");
+#[tokio::test]
+async fn opaque_tokens_refused_without_introspection() {
+    let server = issuer().await;
+    let v = verifier(&server, false);
+    assert!(matches!(
+        v.verify("opaque").await,
+        Err(AuthError::InvalidToken(_))
+    ));
 }
