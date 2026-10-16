@@ -1,23 +1,69 @@
 {
   "$schema": "https://build.conusai.com/schemas/conusai.schema.json",
   "schema_version": 2,
-  "compose": { "file": "docker-compose.yml" },
+  "compose": {
+    "file": "docker-compose.yml"
+  },
   "env": [
-    "APP_DOMAIN", "ANTHROPIC_API_KEY", "PLATFORM_ADMIN_TOKEN", "RUSTFS_IAM_ENC_KEY", "AUTH_SESSION_KEY",
-    "ZITADEL_MASTERKEY", "ZITADEL_DB_PASSWORD", "ZITADEL_ADMIN_USERNAME", "ZITADEL_ADMIN_PASSWORD",
-    "ZITADEL_AUDIENCE", "ZITADEL_WEB_CLIENT_ID",
-    "LAGO_SECRET_KEY_BASE", "LAGO_ENCRYPTION_PRIMARY_KEY", "LAGO_ENCRYPTION_DETERMINISTIC_KEY",
-    "LAGO_ENCRYPTION_KEY_DERIVATION_SALT", "LAGO_RSA_PRIVATE_KEY", "LAGO_API_KEY", "LAGO_WEBHOOK_SECRET",
+    "WEB_HOST",
+    "AUTH_HOST",
+    "BILLING_HOST",
+    "ANTHROPIC_API_KEY",
+    "PLATFORM_ADMIN_TOKEN",
+    "RUSTFS_IAM_ENC_KEY",
+    "AUTH_SESSION_KEY",
+    "ZITADEL_MASTERKEY",
+    "ZITADEL_DB_PASSWORD",
+    "ZITADEL_ADMIN_USERNAME",
+    "ZITADEL_ADMIN_PASSWORD",
+    "ZITADEL_AUDIENCE",
+    "ZITADEL_WEB_CLIENT_ID",
+    "LAGO_SECRET_KEY_BASE",
+    "LAGO_ENCRYPTION_PRIMARY_KEY",
+    "LAGO_ENCRYPTION_DETERMINISTIC_KEY",
+    "LAGO_ENCRYPTION_KEY_DERIVATION_SALT",
+    "LAGO_RSA_PRIVATE_KEY",
+    "LAGO_API_KEY",
+    "LAGO_WEBHOOK_SECRET",
     "OTEL_EXPORTER_OTLP_ENDPOINT"
   ],
   "services": {
-    "web": { "public": { "port": 3000, "primary": true }, "size": "small" },
-    "gateway": { "public": { "port": 8080 }, "size": "large" },
-    "zitadel": { "public": { "port": 8080 }, "size": "medium" },
-    "lago-api": { "public": { "port": 3000 }, "size": "medium" },
-    "lago-migrate": { "kind": "job" },
-    "lago-worker": { "size": "medium" },
-    "lago-clock": { "size": "small" },
-    "current-time": { "size": "small" }
+    "web": {
+      "public": {
+        "port": 3000,
+        "primary": true
+      },
+      "size": "small"
+    },
+    "gateway": {
+      "public": {
+        "port": 8080
+      },
+      "size": "large"
+    },
+    "zitadel": {
+      "public": {
+        "port": 8080
+      },
+      "size": "medium"
+    },
+    "lago-api": {
+      "public": {
+        "port": 3000
+      },
+      "size": "medium"
+    },
+    "lago-migrate": {
+      "kind": "job"
+    },
+    "lago-worker": {
+      "size": "medium"
+    },
+    "lago-clock": {
+      "size": "small"
+    },
+    "current-time": {
+      "size": "small"
+    }
   }
 }

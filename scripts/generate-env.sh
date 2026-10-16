@@ -11,7 +11,9 @@ b64() { openssl rand -base64 "$1" | tr -d '\n'; }
 hex() { openssl rand -hex "$1"; }
 pg_password=$(hex 24)
 declare -A v=(
-  [APP_DOMAIN]=localhost
+  [WEB_HOST]=localhost:3000
+  [AUTH_HOST]=localhost:8085
+  [BILLING_HOST]=localhost:3001
   [PLATFORM_ADMIN_TOKEN]=$(b64 32)
   [RUSTFS_IAM_ENC_KEY]=$(b64 32)
   [AUTH_SESSION_KEY]=$(b64 32)

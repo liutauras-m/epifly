@@ -8,6 +8,8 @@
 #   S3        S3_BUCKET AWS_ENDPOINT_URL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 #   Platform  CONUSAI_API_URL CONUSAI_API_TOKEN (OTLP goes to the platform's /otel/v1)
 # Everything else is a project variable; docs/deploy-conusai-cloud.md lists them all.
+# WEB_HOST, AUTH_HOST and BILLING_HOST are the public hostnames of web, zitadel and
+# lago-api: the platform's generated ones or custom domains.
 # Locally, docker-compose.local.yml adds those services: `just up`.
 #
 # Platform rules this file follows: no top-level x-* keys, no hostname/container_name,
@@ -21,7 +23,7 @@ services:
       dockerfile: apps/backend/Dockerfile
     restart: unless-stopped
     environment:
-      WEB_ORIGIN: "https://${APP_DOMAIN}"
+      WEB_ORIGIN: "https://${WEB_HOST}"
       QDRANT_GRPC_URL: "${QDRANT_GRPC_URL}"
       QDRANT_API_KEY: "${QDRANT_API_KEY}"
       S3_BUCKET: "${S3_BUCKET}"
@@ -29,7 +31,7 @@ services:
       AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
       AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
       RUSTFS_IAM_ENC_KEY: "${RUSTFS_IAM_ENC_KEY}"
-      ZITADEL_ISSUER: "https://auth.${APP_DOMAIN}"
+      ZITADEL_ISSUER: "https://${AUTH_HOST}"
       ZITADEL_AUDIENCE: "${ZITADEL_AUDIENCE}"
       PLATFORM_ADMIN_TOKEN: "${PLATFORM_ADMIN_TOKEN}"
       # Billing is on once LAGO_API_KEY is set; LAGO_WEBHOOK_SECRET is the organization's
@@ -64,9 +66,9 @@ services:
       dockerfile: apps/web/Dockerfile
     restart: unless-stopped
     environment:
-      ORIGIN: "https://${APP_DOMAIN}"
+      ORIGIN: "https://${WEB_HOST}"
       GATEWAY_URL: http://gateway:8080
-      ZITADEL_ISSUER: "https://auth.${APP_DOMAIN}"
+      ZITADEL_ISSUER: "https://${AUTH_HOST}"
       ZITADEL_WEB_CLIENT_ID: "${ZITADEL_WEB_CLIENT_ID}"
       AUTH_SESSION_KEY: "${AUTH_SESSION_KEY}"
       BODY_SIZE_LIMIT: 100M
@@ -112,7 +114,7 @@ services:
     command: ["start-from-init", "--masterkeyFromEnv", "--tlsMode", "external"]
     environment:
       ZITADEL_MASTERKEY: "${ZITADEL_MASTERKEY}"
-      ZITADEL_EXTERNALDOMAIN: "auth.${APP_DOMAIN}"
+      ZITADEL_EXTERNALDOMAIN: "${AUTH_HOST}"
       ZITADEL_EXTERNALPORT: "443"
       ZITADEL_EXTERNALSECURE: "true"
       ZITADEL_TLS_ENABLED: "false"
@@ -158,8 +160,8 @@ services:
       LAGO_ENCRYPTION_DETERMINISTIC_KEY: "${LAGO_ENCRYPTION_DETERMINISTIC_KEY}"
       LAGO_ENCRYPTION_KEY_DERIVATION_SALT: "${LAGO_ENCRYPTION_KEY_DERIVATION_SALT}"
       LAGO_RSA_PRIVATE_KEY: "${LAGO_RSA_PRIVATE_KEY}"
-      LAGO_API_URL: "https://billing.${APP_DOMAIN}"
-      LAGO_FRONT_URL: "https://billing.${APP_DOMAIN}"
+      LAGO_API_URL: "https://${BILLING_HOST}"
+      LAGO_FRONT_URL: "https://${BILLING_HOST}"
       LAGO_DISABLE_SIGNUP: "true"
       LAGO_SIDEKIQ_WEB: "false"
       LAGO_DISABLE_PDF_GENERATION: "true"
