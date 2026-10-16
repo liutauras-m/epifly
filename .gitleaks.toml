@@ -8,3 +8,8 @@ description = "Generated keys and sample tokens in unit tests"
 paths = [
   '''tools/epifly/tests/unit/secrets\.test\.ts''',
 ]
+# Multi-line PEM fixtures cannot carry an inline `gitleaks:allow`; match their constant name.
+regexTarget = "line"
+regexes = [
+  '''const TEST_RSA_PRIVATE_KEY''',
+]

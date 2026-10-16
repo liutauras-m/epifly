@@ -287,14 +287,14 @@ mod tests {
 
     #[test]
     fn redact_jwt() {
-        let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+        let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"; // gitleaks:allow
         let result = RedactPiiHook::redact(&format!("Token: {jwt}"));
         assert!(!result.contains(jwt), "JWT should be redacted");
     }
 
     #[test]
     fn redact_api_key() {
-        let result = RedactPiiHook::redact("Key: sk-proj-1234567890abcdef1234567890abcdef");
+        let result = RedactPiiHook::redact("Key: sk-proj-1234567890abcdef1234567890abcdef"); // gitleaks:allow
         assert!(!result.contains("sk-proj"), "API key should be redacted");
     }
 

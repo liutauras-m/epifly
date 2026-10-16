@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn pii_jwt_redacted() {
         let r = redactor();
-        let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+        let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"; // gitleaks:allow
         let input = format!("my token: {jwt}");
         let out = r.redact_user_text(&input);
         assert!(!out.contains("eyJhbGci"), "JWT must be redacted");
