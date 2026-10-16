@@ -1,0 +1,10 @@
+# Secret scanning: `gitleaks dir .` locally, and the `secrets` job in CI.
+# Extends the default rules; the allowlist holds test fixtures only, never real values.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Generated keys and sample tokens in unit tests"
+paths = [
+  '''tools/epifly/tests/unit/secrets\.test\.ts''',
+]

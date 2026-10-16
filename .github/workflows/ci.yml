@@ -15,6 +15,17 @@ defaults:
     working-directory: .
 
 jobs:
+  secrets:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gitleaks
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.0/gitleaks_8.24.0_linux_x64.tar.gz \
+            | tar -xz -C /usr/local/bin gitleaks
+      - run: gitleaks dir . --config .gitleaks.toml --redact --no-banner
+
   fmt:
     name: Rust Format
     runs-on: ubuntu-latest

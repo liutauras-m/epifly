@@ -8,9 +8,12 @@ Cargo.lock
 
 # ── Environment / secrets ─────────────────────────────────────────────────────
 .env
-.env.local
-.env.*.local
-# Keep .env.example tracked (safe template)
+.env.*
+# Keep the .env.example templates tracked (placeholders only, never real values)
+!.env.example
+# Bearer tokens used for manual API testing
+.token
+.token.*
 
 # ── Dokploy local credentials (API key + project URL) ────────────────────────
 .dokploy
@@ -27,6 +30,7 @@ Cargo.lock
 # ── Claude local files ────────────────────────────────────────────────────────
 .claude/settings.local.json
 .claude/worktrees/
+.claire/
 
 # ── macOS ─────────────────────────────────────────────────────────────────────
 **/.DS_Store
