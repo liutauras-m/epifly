@@ -18,7 +18,7 @@ edition      = "2024"
 rust-version = "1.95"
 authors      = ["Liutauras Medziunas <info@conusai.com>"]
 license      = "MIT"
-repository   = "https://github.com/conusai/conusai-platform"
+repository   = "https://github.com/liutauras-m/epifly"
 
 [workspace.dependencies]
 # Async runtime
