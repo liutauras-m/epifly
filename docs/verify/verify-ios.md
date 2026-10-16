@@ -1,10 +1,12 @@
 # ConusAI iOS Simulator — Install & Verification Plan
 
-End-to-end install of the **`apps/browser-shell` Tauri 2 app** onto a macOS iOS Simulator, plus the Playwright iOS WebKit suite that exercises the same UI surface without Tauri. Companion to [`verify.md`](verify.md) (Docker / data-plane verification).
+Install of the **`apps/browser-shell` Tauri 2 app** onto a macOS iOS Simulator, plus the Playwright iOS WebKit suite that exercises the same UI surface without Tauri. Companion to [`verify.md`](verify.md) (gateway / data plane) and [`verify-web.md`](verify-web.md).
 
-> **Architecture under test**: `apps/browser-shell` (SvelteKit `adapter-static` + Tauri 2 with `tauri-plugin-{dialog,stronghold,http}`); Rust `browser_shell_lib` compiled for `aarch64-apple-ios-sim`; bundled into `ConusAI Browser.app`; installed on a booted iOS Simulator via `xcrun simctl`. Backed at runtime by the Docker gateway on `http://localhost:8080` (Qdrant + RustFS + agent-gateway).
+> **Architecture under test**: `apps/browser-shell` (SvelteKit `adapter-static` + Tauri 2); Rust `browser_shell_lib` compiled for `aarch64-apple-ios-sim`; bundled into `ConusAI Browser.app`; installed on a booted iOS Simulator via `xcrun simctl`. The shell calls the gateway directly at the build-time `VITE_GATEWAY_URL` with `Authorization: Bearer <Zitadel access token>`. Sign-in is Rust-side Zitadel OIDC (authorization code + PKCE, `state`, `nonce`) through the system browser and a loopback redirect `http://127.0.0.1:<port>/callback` (`src-tauri/src/auth/`); the refresh token lives in a Stronghold vault keyed with Argon2 over a per-install salt, the access token only in memory. No token is stored in the webview.
 >
-> The Playwright iOS suite (`e2e/ios/**`) uses the **`ios-mobile-web` project** — WebKit + iPhone 15 viewport (393 × 852 @ DPR 3) — against the SvelteKit Node SSR build (`apps/web/build/index.js`) on port 4173. It validates the same packaged UI without spinning up a real simulator.
+> **Mobile sign-in is not implemented**: the loopback redirect and `open::that` system-browser launch are desktop mechanisms, so on the iOS simulator the shell shows its sign-in screen but cannot complete sign-in. Everything past the sign-in screen is verified through the Playwright `ios-mobile-web` project instead.
+>
+> The Playwright iOS suite (`e2e/ios/**`) uses the **`ios-mobile-web` project** — WebKit + iPhone 15 viewport (393 × 852 @ DPR 3) — against the `apps/web` SSR build on port 4173, signed in through the mock OIDC provider (`e2e/fixtures/mock-oidc.mjs`).
 
 ---
 
@@ -13,19 +15,15 @@ End-to-end install of the **`apps/browser-shell` Tauri 2 app** onto a macOS iOS 
 | Surface | Status | Notes |
 |---|---|---|
 | Tauri iOS scaffold (`src-tauri/gen/apple/`) | ✅ Initialised | `browser-shell.xcodeproj` + `project.yml` + `Podfile` committed |
-| `tauri ios build --target aarch64-sim --debug` | ✅ Works | Produces `ConusAI Browser.app` (arm64 Mach-O) |
-| `xcrun simctl install` | ✅ Works | Installs against booted simulator |
-| `xcrun simctl launch com.conusai.browser` | ✅ Works | Launches and renders Foundry login screen |
-| Native chat stream bridge (`chat_stream.rs` ↔ `tauri-stream.ts`) | ✅ Implemented | Direct SSE proxy to `/ui/stream` over Tauri events |
-| Stronghold-backed device token vault | ✅ Implemented | Encrypted via blake3 hash of password |
-| OIDC PKCE login via system browser | ✅ Implemented | `pkce_login`, `open_in_system_browser` invokes |
-| Playwright `ios-mobile-web` project (mock) | ✅ Verified | 34/34 pass — features.spec.ts + responsive.spec.ts |
-| Playwright iOS business spec (live gateway) | ✅ Verified | 42/42 pass with `GATEWAY_INTEGRATION_TEST=1` against Docker stack |
-| **iOS Simulator install** — `iPhone 16 Pro / iOS 18.4` | ✅ Verified | 2026-05-21 — `xcrun simctl install` → `launch` → Foundry login renders |
-| **Appium XCUITest — native shell drive** | ✅ Verified | 2026-05-21 — V1 launch · V2 login · V4 chat compose · V5 backend · V9 SSE response — all green on iPhone 16 Pro |
-| **Chat end-to-end on simulator** | ✅ Verified | 2026-05-21 — `STREAM_TEST_OK` prompt → user bubble → SSE thinking → assistant bubble with full response; screenshot at `/tmp/ios-verify-v9-3-ai-bubble.png` |
-| Live dev mode (`tauri ios dev`) | ⚠️ Untried in this pass | Should work; not in scope for the install-only validation |
-| Physical device install (`.ipa` + provisioning profile) | ⚠️ Requires Apple Developer team id | `tauri.conf.json → iOS.developmentTeam` is `null` |
+| `tauri ios build --target aarch64-sim --debug` | ✅ Works | Produces `ConusAI Browser.app` (arm64 Mach-O); needs the three `VITE_*` build variables |
+| `xcrun simctl install` / `launch com.conusai.browser` | ✅ Works | Launches into the sign-in screen |
+| Sign-in on iOS / Android | ❌ Not implemented | Desktop loopback flow only |
+| Native chat stream bridge (`chat_stream.rs` ↔ `tauri-stream.ts`) | ✅ Implemented | SSE from `/ui/stream` relayed as Tauri events, bearer token added by Rust |
+| Refresh-token vault (Stronghold) | ✅ Implemented | Rust only; the Stronghold JS API is not registered |
+| Playwright `ios-mobile-web` project | ✅ Runs in CI | `e2e/ios/features.spec.ts`, `e2e/ios/responsive.spec.ts` |
+| Playwright iOS business spec (live gateway) | ⏭ Gated | `GATEWAY_INTEGRATION_TEST=1`; no working live configuration (see Phase 8.2) |
+| Appium XCUITest suites (`e2e/wdio/specs/ios/{native,verify,capabilities-tour}.spec.ts`) | ⏭ Skipped | `describe.skip` since 2026-10-16: they forged the removed session cookie; they need a test Zitadel user and a scripted sign-in |
+| Physical device install (`.ipa` + provisioning profile) | ⚠️ Requires Apple Developer team id | `tauri.conf.json → bundle.iOS.developmentTeam` is `null` |
 
 ---
 
@@ -35,23 +33,26 @@ End-to-end install of the **`apps/browser-shell` Tauri 2 app** onto a macOS iOS 
 # Xcode 16.x with iOS 18 SDK
 xcode-select -p                    # → /Applications/Xcode.app/Contents/Developer
 xcodebuild -version                # → Xcode 16+
-xcrun --version
 
 # CocoaPods (Tauri uses these for some plugin linkage)
-which pod                          # → /opt/homebrew/bin/pod
+which pod
 
 # Tauri CLI 2 (pinned via apps/browser-shell/package.json)
 cd apps/browser-shell
-pnpm exec tauri --version          # → tauri-cli 2.11.x
+pnpm exec tauri --version
 
 # At least one booted iOS Simulator
-xcrun simctl list devices booted   # → iPhone 16 Pro (...UDID...) (Booted)
+xcrun simctl list devices booted
 
-# Backend stack reachable at http://localhost:8080
-curl -sf http://localhost:8080/health   # → {"capabilities":N,"status":"ok",...}
+# Build-time configuration (public values, compiled into the app)
+export VITE_GATEWAY_URL=http://127.0.0.1:8080          # the simulator reaches the host on 127.0.0.1
+export VITE_ZITADEL_ISSUER=http://localhost:8085
+export VITE_ZITADEL_NATIVE_CLIENT_ID=<native app client id>
 ```
 
-The Tauri shell talks to `http://localhost:8080` from inside the simulator — confirm the Docker gateway is up before launch (see [`verify.md`](verify.md) §Phase 4). The web SSR app at `:4173` is **not** required for the simulator build.
+`just shell-ios-dev` and `just shell-ios-build` set `VITE_GATEWAY_URL` themselves; the two
+Zitadel values must come from the environment. The local gateway stack is `just up`
+([`verify.md`](verify.md)).
 
 ---
 
@@ -172,112 +173,13 @@ xcrun simctl io "$SIM_ID" screenshot /tmp/ios-shell/launch.png
 open /tmp/ios-shell/launch.png
 ```
 
-✅ **Pass**: the Foundry login screen renders — `ConusAI` brand mark, `"Enter the workshop."` heading, `YOUR NAME` field, `PLAN TIER` (Free / Pro / Enterprise) radio group, orange `Get started →` CTA.
+✅ **Pass**: the sign-in screen renders — `ConusAI` brand mark, `"Enter the workshop."` heading and one `Sign in` button (`packages/ui/src/lib/features/ShellLoginScreen.svelte`). Tapping it cannot complete on iOS (see the note at the top).
 
 ---
 
-## Phase 4 — Driving the running app — **Appium XCUITest is the canonical path**
+## Phase 4 — Appium XCUITest harness
 
-> **Do not** automate the simulator via AppleScript / `cliclick` / coordinate math. ConusAI ships a **WebdriverIO + Appium XCUITest** harness purpose-built for this — same selector syntax as Playwright, attaches directly to the WKWebView inside the Tauri shell, no fragile pixel coordinates. The harness is at `e2e/wdio/` and is already wired into `package.json`.
->
-> Why this and not Playwright? Playwright's `ios-mobile-web` project emulates iPhone via WebKit + viewport spoofing on the host — it never enters the real simulator, never touches the native shell, can't validate Stronghold-backed sessions, Tauri invokes, or the native SSE bridge (`chat_stream.rs` ↔ `tauri-stream.ts`). Appium attaches to the actual `ConusAI Browser.app` process on iOS via XCUITest and switches between `NATIVE_APP` and `WEBVIEW_<pid>` contexts at will.
-
-### 4.1 Tooling inventory
-
-| Layer | Tool | Version | Wired |
-|---|---|---|---|
-| Test runner | WebdriverIO | 9.27.x | `e2e/wdio/wdio.ios-native.conf.ts` |
-| Server | Appium | 3.4.2 | `pnpm appium` (port 4723) |
-| iOS driver | `appium-xcuitest-driver` | 11.3.0 | auto-installed |
-| Specs (3 baseline) | `e2e/wdio/specs/ios/native.spec.ts` | — | launch / login form / login submit |
-| Specs (V1–V15, 1370 lines) | `e2e/wdio/specs/ios/verify.spec.ts` | — | mirrors `verify.md` phases for the iOS shell |
-| Specs (Safari mode) | `e2e/wdio/specs/ios/safari.spec.ts` | — | no native app needed |
-
-### 4.2 Running the suite
-
-```bash
-# 1. Backend up (see verify.md Phase 4)
-curl -sf http://localhost:8080/health
-
-# 2. Simulator + installed .app (Phases 1–3 above)
-xcrun simctl list devices booted   # confirm iPhone 16 Pro is booted
-
-# 3. Start Appium (background)
-pnpm appium > /tmp/appium.log 2>&1 &
-curl -sf http://127.0.0.1:4723/status   # → {"ready":true,...}
-
-# 4. Run all native tests
-export IOS_DEVICE_UDID=$(xcrun simctl list devices booted | awk -F'[()]' '/Booted/ {print $2; exit}')
-pnpm wdio:ios-native     # native.spec.ts + verify.spec.ts
-
-# 5. Run a focused subset (mocha grep on describe titles)
-pnpm exec wdio run e2e/wdio/wdio.ios-native.conf.ts \
-  --spec e2e/wdio/specs/ios/verify.spec.ts \
-  --mochaOpts.grep '^(V1 |V2 |V4 |V9 )'   # launch + login + chat + SSE response
-```
-
-The runner re-installs the `.app` automatically (`appium:app` capability in the config), so you don't usually need a manual `xcrun simctl install` between runs.
-
-### 4.3 Phase coverage (verify.spec.ts)
-
-| Group | Describe | What it asserts |
-|---|---|---|
-| V1 | App launch | `NATIVE_APP` context + `XCUIElementTypeWebView` exists |
-| V2 | Workshop login | Form renders · name validation · enterprise pre-selected · `localStorage` session survives refresh |
-| V3 | Workspace chrome | Topbar · greeting · sidebar overlay · plan badge · 44px touch targets · no horizontal overflow |
-| V4 | Chat compose & submit | Textarea input · submit transitions to chat · user-bubble on send · `new conversation` resets |
-| V5 | Backend connectivity | `/health` 200 · `/ui/stream` returns `text/event-stream` |
-| V7 | File upload | Attach button · presigned `/v1/files` round-trip |
-| V9 | SSE stream response | User bubble instantly · thinking indicator · **assistant bubble settles with full streamed content** · scrollable container |
-| V10 | Tool call cards | Card appears for `wasm-ping` · success status · result `42` mentioned |
-| V11 | iOS keyboard | Software keyboard show/hide · `Cmd+Enter` submit shortcut |
-| V12 | Workspace sidebar | Workspace heading · tree · New folder UI |
-| V13 | Conversation scrolling | Multi-message fill · scrollable container · reset |
-| V14 | Attachment UI | Paperclip · file picker · hidden `<input>` · in-flight state |
-| V15 | Folder + MD file creation | Create via UI + API round-trip |
-| V8 | Logout | Logout button · returns to login form |
-
-### 4.4 Selector hygiene — known pitfall
-
-`native.spec.ts` was originally written against an older shell whose login form used `#name-input` / `name="plan"` / button label "Begin". The current `MobileShell.svelte` uses:
-
-| Old selector | Current selector |
-|---|---|
-| `#name-input` | `#shell-name-input` |
-| `input[name="plan"]` | `input[name="shell-plan"]` |
-| `button[type="submit"]` text "Begin" | text "Get started" |
-
-If the shell login form is restructured, update both `native.spec.ts` and the `login()` helper in `verify.spec.ts` together. Fixed 2026-05-21.
-
-### 4.5 SSE stream-completion race in tests (V9.3)
-
-`V9.3 — Assistant bubble appears after stream completes` originally polled with `waitUntil` that resolved as soon as **any** text appeared in the bubble. With the Anthropic stream chunked at ~5–10 char boundaries, the test grabbed `" st"` (the first delta) before the full `STREAM_TEST_OK` token arrived and then asserted on the partial text.
-
-Fixed 2026-05-21 — the poller now requires either:
-
-1. The `.thinking` indicator is absent (stream complete), AND
-2. The bubble contains the expected token OR text length is stable for two consecutive polls (≥ 750 ms apart).
-
-Apply the same pattern to any new SSE assertion.
-
-### 4.6 Appium driver hygiene
-
-```bash
-# List installed drivers
-pnpm exec appium driver list
-# → xcuitest@11.3.0 [installed (npm)]
-
-# Diagnose missing tools (interactive — Ctrl-C to abort prompts)
-pnpm exec appium driver doctor xcuitest
-
-# Required external tools for XCUITest:
-#   xcrun, xcodebuild, idevice_id, ios-deploy (real device only)
-brew install libimobiledevice ios-deploy
-```
-
-### 4.7 Real device (out of scope for this verification)
-
-Same WDIO config, three extras: Apple Developer team id, WebDriverAgent code-signed once, dev provisioning profile installed on the device. Set `IOS_REAL_DEVICE=1` + `APPLE_TEAM_ID=…` + `WDA_BUNDLE_ID=…` and build with `--target aarch64` (not `-sim`). The `e2e/wdio/README.md` has the full recipe.
+`e2e/wdio/` holds a WebdriverIO + Appium XCUITest harness (`pnpm appium`, `pnpm wdio:ios-native`, config `e2e/wdio/wdio.ios-native.conf.ts`). Its native-shell suites are skipped (`describe.skip`) because they signed in by forging the removed `conusai_session` cookie. They can return once there is a test Zitadel user and a scripted sign-in step. `e2e/wdio/specs/ios/safari.spec.ts` drives the web app in Mobile Safari and signs in through `e2e/wdio/fixtures/login.ts` (the BFF flow). Setup details: `e2e/wdio/README.md`.
 
 ---
 
@@ -322,7 +224,7 @@ xcrun simctl launch "$SIM_ID" com.conusai.browser
 # Send to background (useful when scripting)
 xcrun simctl terminate "$SIM_ID" com.conusai.browser
 
-# Wipe state — clears Stronghold vault, web view storage, NSUserDefaults
+# Wipe state — clears the Stronghold vault, web view storage, NSUserDefaults
 xcrun simctl uninstall "$SIM_ID" com.conusai.browser
 ```
 
@@ -332,41 +234,18 @@ xcrun simctl uninstall "$SIM_ID" com.conusai.browser
 
 The Playwright `ios-mobile-web` project runs WebKit with the iPhone 15 viewport against the SvelteKit Node SSR build. It exercises the same `@conusai/ui` components the Tauri shell ships, without spinning up Tauri.
 
-### 8.1 Mock-only suite (default, fast)
+### 8.1 Mock suite (default)
 
 ```bash
-cd <repo-root>
-pnpm exec playwright test --project=ios-mobile-web
-# → 42 passed (~30s with capabilities-business gated, ~5s without)
+pnpm --filter web build
+pnpm e2e:ios                       # = playwright test --project=ios-mobile-web
 ```
 
-Covers: login, workspace, hamburger nav, SSE chat stream, tool-call cards, file upload (drag-drop), composer touch targets, forge dark theme, workspace SSR persistence, responsive layout.
+Covers sign-in through the mock IdP, the signed-out page, workspace elements, SSE chat stream, file upload and responsive layout at 393 px. Screenshots land in `test-results/`.
 
-### 8.2 Live gateway integration suite
+### 8.2 Live gateway use cases
 
-The `capabilities-business.spec.ts` use cases (UC1–UC5 from `plan.md §10`) hit the real Docker gateway. They self-skip unless `GATEWAY_INTEGRATION_TEST=1` is set.
-
-```bash
-# Prerequisites for live mode
-export UI_SESSION_KEY=conusai-foundry-dev-secret-change-me-32b   # must match the gateway
-export CONUSAI_BACKEND_URL=http://localhost:8080
-export GATEWAY_INTEGRATION_TEST=1
-SECRET=$(docker exec conusai-gateway sh -c 'echo -n "$JWT_SECRET"')
-export SUPER_TOKEN=$(python3 -c "import jwt,time; print(jwt.encode({
-  'sub':'dev-user','tenant_id':'dev','plan':'enterprise',
-  'role':'super_admin','subscription_status':'active',
-  'exp':int(time.time())+7200
-}, '$SECRET', algorithm='HS256'))")
-
-# Tenant credentials fallback (test tenant has no IAM)
-grep -q RUSTFS_DEV_FALLBACK_ROOT .env.local || echo "RUSTFS_DEV_FALLBACK_ROOT=on" >> .env.local
-docker compose stop agent-gateway && docker compose rm -f agent-gateway && docker compose up -d agent-gateway
-
-pnpm exec playwright test --project=ios-mobile-web --timeout=120000
-# → 42 passed (~55s)
-```
-
-Asserted live paths:
+`e2e/ios/capabilities-business.spec.ts` (UC1–UC5) self-skips unless `GATEWAY_INTEGRATION_TEST=1` is set; its registry check also needs `SUPER_TOKEN`, a Zitadel access token of a `super_admin` user. The Playwright web server is wired to the mock IdP and to no gateway (`playwright.config.ts`), so the use cases have no working live configuration at present.
 
 | UC | Domain | Capabilities exercised |
 |----|--------|------------------------|
@@ -375,8 +254,6 @@ Asserted live paths:
 | UC3 | Healthcare — medical claim | `extract.fields.medical_claim` ∥ `extract.ocr.vision` ∥ `ocr-service` (one of) |
 | UC4 | HR — 8-CV screening | `extract.fields.cv` (mandatory); `compose.email`, `plan.orchestrate` (soft) |
 | UC5 | Operations — incident + photos | extractor card OR graceful "Could not process image" error |
-
-Screenshots land in `test-results/ios-playwright-visual/uc{1..5}-*.png` for audit.
 
 ---
 
@@ -387,16 +264,10 @@ Screenshots land in `test-results/ios-playwright-visual/uc{1..5}-*.png` for audi
 | `failed to rename app: Directory not empty (os error 66)` | Stale `arm64-sim/ConusAI Browser.app` from a previous build | `rm -rf` the destination, then `cp -R` the fresh `.app` from `browser-shell_iOS.xcarchive/Products/Applications/` |
 | `xcrun simctl install` errors with `Failed to load the simulator runtime` | Booted simulator's OS not installed | `xcrun simctl runtime list`; install via Xcode → Settings → Components |
 | App launches but shows blank screen | SvelteKit static build missing | `cd apps/browser-shell && pnpm build` then re-run `tauri ios build` |
-| App launches but cannot reach `/ui/upload` etc. | Docker gateway not up, or wrong host | `curl -sf http://localhost:8080/health` first; the simulator hits the host's `localhost` |
-| `Invalid status code 404 Not Found with message: model: smart` in gateway logs | LLM alias map empty | Verify `state.rs::build_llm_registry` populates `smart`/`fast`/`cheap`/`opus`/`haiku` — fixed 2026-05-21 |
-| `storage: tenant credentials missing or invalid for tenant` (HTTP 500 on upload) | Per-tenant IAM not provisioned for `dev` tenant | Set `RUSTFS_DEV_FALLBACK_ROOT=on` in `.env.local`, recreate the gateway container |
-| `Tool not found: media_time_get_current_time` on MCP `tools/call` | Sanitised-name lookup missed the dotted manifest name | Fixed 2026-05-21 in `routes/mcp.rs::handle_tools_call` (sanitisation reverse-lookup) |
-| Manifest `cost_hint = "low"` rejected at load | Bare-string label not accepted by old `CostHint` deserialiser | Fixed 2026-05-21 — `#[serde(untagged)]` impl accepts both labels and objects |
+| App launches but cannot reach the gateway | Gateway not up, or `VITE_GATEWAY_URL` wrong at build time | `curl -s http://localhost:8080/health` first; rebuild with `VITE_GATEWAY_URL=http://127.0.0.1:8080` |
+| `this build has no VITE_ZITADEL_ISSUER; rebuild with it set` | Build-time variable missing | Export the three `VITE_*` variables and rebuild |
 | `tauri ios dev` cannot connect to dev server | Simulator can't reach host on `localhost:5174` | Tauri auto-sets `TAURI_DEV_HOST`; if it doesn't, set it manually to the host's LAN IP |
 | App icon warning during build | iPad 83.5×83.5@2x is 168×168 (should be 167×167) | Regenerate icons; non-blocking |
-| Appium WDIO test: `element ("#name-input") still not displayed` | Stale selectors — current `MobileShell.svelte` uses `#shell-name-input` / `name="shell-plan"` | Update selectors in spec; fixed 2026-05-21 (see §4.4) |
-| Appium WDIO test: `expect("STREAM_TEST_OK") got " st"` | SSE poller resolves on first delta before stream completes | Wait for `.thinking` absence + stable text length; fixed 2026-05-21 (see §4.5) |
-| `WARN webdriver: Request encountered a stale element` during context switch | Harmless — WebView reflows when SSE settles; WDIO retries automatically | Ignore; logged with `logLevel: 'warn'` in the WDIO config |
 
 ---
 
@@ -417,79 +288,16 @@ cd apps/browser-shell && \
 
 ---
 
-## Verification Log
-
-| Date | Tester | Simulator | Result |
-|---|---|---|---|
-| 2026-05-21 | iOS audit | iPhone 16 Pro · iOS 18.4 · UDID `64897BF0-…` | ✅ Build (debug, aarch64-sim) → install → launch → Foundry login screen renders. PID 35777. Bundle id `com.conusai.browser` registered. |
-| 2026-05-21 | iOS audit | WebKit / iPhone 15 viewport (Playwright) | ✅ 42/42 pass (mock + live integration via `GATEWAY_INTEGRATION_TEST=1`) |
-| 2026-05-21 | iOS audit | iPhone 16 Pro · iOS 18.4 (Appium XCUITest) | ✅ `native.spec.ts` 3/3 (launch · login form · login submit). |
-| 2026-05-21 | iOS audit | iPhone 16 Pro · iOS 18.4 (Appium XCUITest) | ✅ `verify.spec.ts` V1/V2/V4/V5/V9 all green: app launches with `NATIVE_APP` + `WEBVIEW_<pid>` contexts; login form accepts name + plan; chat composer submits; `/ui/stream` returns `text/event-stream`; AI bubble settles with the full `STREAM_TEST_OK` response (verified on-screen). Screenshots saved to `/tmp/ios-verify-v*.png` and `test-results/ios-verify/`. |
-| 2026-05-21 | iOS audit | iPhone 16 Pro · iOS 18.4 (Appium XCUITest) | 🟡 Mobile chat next-step verification: V13.2 (messages container scrollable) passes. V10.1/V10.2 skipped (see §17 known bug — tool-card UI). V10.3 + V11.x + V13.1/V13.3 fail on test-setup fragility (already-running session bleeds state, Appium WKWebView freezes during SSE) — app-side behaviour was confirmed manually with screenshots: wasm-ping returns 42 in the AI response, software keyboard appears, multi-message conversation scrolls. |
-
----
-
 ## §17 Known bug — Tool-card UI does not render on mobile shell (Svelte 5 reactivity gap)
 
-**Discovered:** 2026-05-21, via `pnpm wdio:ios-native --mochaOpts.grep '^V10 '` on the iPhone 16 Pro simulator.
+**Discovered:** 2026-05-21 on the iPhone 16 Pro simulator (Appium, before the shell moved to Zitadel sign-in).
 
-**Symptom:** When the agent invokes a tool (e.g. `wasm-ping`), the `<ToolCallCard>` chip does **not** render in the chat view, even though the data path is intact end-to-end:
+**Symptom:** when the agent invokes a tool, the `<ToolCallCard>` chip does not render in the mobile chat view although the data path is intact: the gateway emits `tool_call_start` / `tool_call_result` on `/ui/stream`, `chat_stream.rs` relays them, `tauri-stream.ts` turns them into `tool_start` / `tool_result` deltas, and `createChatStream` fills its `toolCards` map. The `{#each [...toolCards.entries()]}` block in `<AgentChatStream>` never iterates.
 
-- Gateway emits `tool_call_start` and `tool_call_result` in the SSE stream — verified by curling `/ui/stream` directly.
-- Rust `chat_stream.rs` parses both and emits `ChunkPayload::ToolStart` / `ChunkPayload::ToolResult` events.
-- JS `tauri-stream.ts` translates to `{ kind: 'tool_start' | 'tool_result' }` deltas.
-- `createChatStream` populates `toolCards: Map<string, ToolCardEntry>` — verified at runtime: `chatStream.toolCards.size === 1` with `status: 'success'`.
-- The AI response correctly mentions the tool's output (`Result: 42`, `Tool: wasm-ping`).
-- **But** `<AgentChatStream>`'s `{#each [...toolCards.entries()] as [id, card] (id)}` block never iterates — `document.querySelectorAll('.tool-card').length === 0`.
+**Diagnosis:** Svelte 5 deep-state `Map` mutations exposed through a plain-object factory getter do not propagate to child component templates. Mutating with `.set()`, reassigning a new `Map`, and reading a `toolCardsVersion` counter in the getter all failed; `createChatStream` also publishes a flattened `toolCardsList`.
 
-**Diagnosis:** Svelte 5 deep-state Map mutations exposed via a **plain-object factory getter** don't propagate reactively to child component templates. Both reassignment (`toolCards = new Map(...)`) and direct mutation (`toolCards.set(...)`) were tried; neither makes the child re-render. Adding a `toolCardsVersion = $state(0)` counter that the getter reads (`void toolCardsVersion;`) and bumping it on every mutation also did not fix it — confirming the gap is in how the child re-evaluates the prop expression `chatStream.toolCards`, not in the source-side tracking.
+**Affected paths:** `packages/ui/src/lib/features/createChatStream.svelte.ts`, `packages/ui/src/lib/features/AgentChatStream.svelte`, `packages/ui/src/lib/features/screens/ChatScreen.svelte`.
 
-**Affected paths:**
+**Suggested fix:** convert `createChatStream` to a Svelte 5 class with `$state` fields instead of a factory with getters, then re-enable V10.1 and V10.2 in `e2e/wdio/specs/ios/verify.spec.ts` (that suite also needs the scripted Zitadel sign-in described in Phase 4).
 
-- `packages/ui/src/lib/features/createChatStream.svelte.ts` — exposes `toolCards` via factory getter.
-- `packages/ui/src/lib/features/AgentChatStream.svelte` — destructures `let { toolCards } = $props()` and iterates with `{#each [...toolCards.entries()]}`.
-- `apps/browser-shell/src/lib/mobile/screens/ChatScreen.svelte` — passes the Map down: `<AgentChatStream toolCards={chatStream.toolCards} />`.
-
-**Workarounds tried (none resolved it):**
-
-1. Mutate via `.set()` directly on the `$state` Map.
-2. Reassign `toolCards = new Map(toolCards)` to create a fresh reference each time.
-3. Add a `toolCardsVersion = $state(0)` counter and `void toolCardsVersion` in the getter.
-4. Publish a parallel `toolCardsList: Array<[string, ToolCardEntry]>` getter — same Map-in-prop reactivity gap likely applies to derived arrays too.
-
-**Tests affected:**
-
-- `e2e/wdio/specs/ios/verify.spec.ts` V10.1 + V10.2 — marked `it.skip(...)` with a reference to this section.
-- V10.3 — passes intermittently; the AI response text-content path is unaffected.
-
-**Suggested fix (deferred):**
-
-- Convert `createChatStream` to a Svelte 5 **class** with reactive fields, not a factory + getters. Svelte 5 class fields with `$state` annotations propagate through prop boundaries cleanly. Estimated effort: ~2 AI-hr (touches `createChatStream.svelte.ts`, `AgentChatStream.svelte`, `ChatScreen.svelte` props type, and the web shell at `apps/web/src/routes/+page.svelte`).
-- Reproducer test once fixed: re-enable V10.1 + V10.2 in `verify.spec.ts` and run `pnpm wdio:ios-native --mochaOpts.grep '^V10 '`. Expected: 3/3 pass.
-
-**What works today (confirmed in this session):**
-
-- ✅ Tool **execution** end-to-end on mobile — the wasm-ping tool runs server-side, result `42` reaches Claude, Claude relays it in plain text inside the AI bubble.
-- ✅ Chat **streaming** — V9 (4/4) passes, AI bubble settles with full content.
-- ✅ All other chat surfaces — login, compose, submit, new-conversation reset, scrollable container — render correctly.
-
-Users see the tool result **in the assistant's natural-language response**; they only miss the live status chip ("running → success") that the tool-card UI would have shown. The agent is fully functional.
-
----
-
-## §19 Live state + deep links (PR 3.A.6 / 3.A.8 / 3.C — manual)
-
-The Playwright suite in `apps/web` covers the web-side guarantees (`e2e/web/live-resources.spec.ts`, `e2e/web/url-state.spec.ts`, `e2e/web/tool-errors.spec.ts`). The Tauri iOS shell behaviour is verified manually because the Tauri WebDriver bridge does not yet handle deep links + background lifecycle on the simulator.
-
-### Checklist
-
-1. **Deep-link cold open** — boot the iOS simulator, install the shell build, then:
-   ```sh
-   xcrun simctl openurl booted "conusai://open?ws=<known-ws-id>"
-   ```
-   Expected: app launches into the chat screen with that workspace selected (breadcrumb shows the node, composer is ready). If the id is unknown, a toast `Workspace not found, returning to root` fires and the URL clears.
-2. **Mid-session URL refresh** — from inside the app, select a workspace node, kill via the multitask switcher, then re-launch via the same `xcrun simctl openurl …` command. Expected: same node restored, no reset.
-3. **Background → foreground live refresh** — open the app, mutate workspace from a separate desktop browser session (e.g. create a folder via the web app), then foreground the simulator app. Expected: workspace tree shows the new folder within ~1 s of resume. This exercises `createLiveResource`'s `visibilitychange === 'visible'` handler (PR 3.A.8).
-4. **Recents live refresh** — open the drawer, note the recents count, start a new chat from a desktop browser session, then resume the shell. Expected: recents list shows the new thread row within ~1 s.
-
-If any step fails: capture a `xcrun simctl io booted recordVideo` clip, attach it to the regression bug. Do **not** mark green unless all four pass back-to-back.
+Users still see the tool result in the assistant's text; only the live status chip is missing.

@@ -33,7 +33,7 @@ Each eval case should include:
   "input": "...",
   "tenant": "tenant_a",
   "expected_capability": "invoice-processing",
-  "forbidden_capabilities": ["storage-fs", "admin"],
+  "forbidden_capabilities": ["storage-workspace", "admin"],
   "expected_schema_valid": true,
   "max_latency_ms": 3000,
   "must_not_leak": ["tenant_b"]

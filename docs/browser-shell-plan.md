@@ -1,14 +1,14 @@
 # Browser Shell ↔ ConusAI Web Parity Plan
 
-**Status:** merge-ready · 2026-05-10 (final, post-Rust-team-review)
+**Status:** historical · 2026-10-16. Phases 1–4 and 6 (shared assets, design system, SDK, chat/workspace UI, shell integration) shipped. Phase 5 (device tokens in Stronghold) was replaced: the shell now signs in with Zitadel through the system browser and a loopback PKCE redirect run in Rust, keeps only the refresh token in a Rust-only Stronghold vault (argon2 over a per-install salt) and calls the gateway with `Authorization: Bearer`; device tokens, client-side token signing and webview token storage are gone, and mobile sign-in is not yet implemented. Current design: [frontend.md](frontend.md) §7, [arch.md](arch.md) §7; user view: [browser-shell-user-guide.md](browser-shell-user-guide.md). Instructions below that described device tokens have been removed.
 **Owners:** platform / frontend / Rust (Phase 5–6)
-**Related:** [docs/tasks/app.md](tasks/app.md), [docs/adr/006-tauri-browser-shell.md](adr/006-tauri-browser-shell.md), [docs/adr/008-multi-platform-shell.md](adr/008-multi-platform-shell.md)
+**Related:** `docs/tasks/app.md`, `docs/adr/006-tauri-browser-shell.md`, `docs/adr/008-multi-platform-shell.md`
 
 > **Decision (final):** Approved. Option B (shared `@conusai/ui` + dual idiomatic SvelteKit apps) is the 2026 gold-standard for a multi-platform, capability-based agent platform. Refinements landed in this revision:
 >
 > 1. **`createCapabilityRendererRegistry()`** (Phase 4) — pure `.ts` module + thin runes context provider (`.svelte.ts`). Frontend mirror of the Rust `CapabilityRegistry` / `SemanticCapabilityRouter`. Reactive registration, optional `fallbackRenderer`, no global state, zero-Svelte consumers possible.
 > 2. **OpenAPI → TS generation pulled forward into Phase 3** — keeps `@conusai/sdk` 100% in sync with `agent-gateway` utoipa routes; makes `CapabilityCard` 1:1 with Rust `agent-core::capability::CapabilityCard`. CI asserts structural hash parity.
-> 3. **`device_auth.rs` + `DeviceAuthService` + `DeviceTokenProvider` + `DeviceAuthAdmin` traits** (Phase 5) — rename from `keychain.rs`; thin service wrapping `Arc<RwLock<Stronghold>>` with explicit `init_stronghold` command, mock-Stronghold unit tests, and a separate admin trait reserved for token rotation / audit.
+> 3. *(Phase 5 device-token refinement — superseded, see Status.)*
 > 4. **`TabManager` service** (Phase 6) — extract `set_active_tab_content_bounds` + future multi-window logic into [tabs.rs](../apps/browser-shell/src-tauri/src/tabs.rs); `main.rs` stays a registration shell.
 > 5. **Shared `ThemeScript`** + **assets manifest** + **`ConusSdk` type alias** — micro-SRP polish that eliminates the last copy-paste between apps.
 >
@@ -18,7 +18,7 @@
 
 ## 1. Goal
 
-Ship the **Tauri browser-shell** as the desktop ConusAI app: same chat, workspace, auth, theming, and assets as `apps/web`, **plus** the shell-only superpowers (tab management, session recorder, Stronghold-backed device tokens, screenshot capture).
+Ship the **Tauri browser-shell** as the desktop ConusAI app: same chat, workspace, auth, theming, and assets as `apps/web`, **plus** the shell-only superpowers (tab management, session recorder, screenshot capture).
 
 Today, [apps/browser-shell](../apps/browser-shell) only consumes a thin `@conusai/ui` widget set; it has no Foundry CSS, no logos/favicons, no chat composer, no workspace dialogs, no auth, no API client. The audit in §2 lists the deltas; §5–§10 implement the fix.
 
@@ -32,7 +32,7 @@ Today, [apps/browser-shell](../apps/browser-shell) only consumes a thin `@conusa
 | Logos, favicon, icon sprite | ✅ [static/](../apps/web/static) | ❌ | Move to `@conusai/ui/assets` |
 | Streaming chat composer + tool cards | ✅ 968 LoC in [+page.svelte](../apps/web/src/routes/+page.svelte) | ❌ | Extract to `@conusai/ui` features |
 | Workspace tree (lazy load, search, dialogs) | ✅ | partial (read-only `WorkspaceTree`) | Promote dialogs + search |
-| Auth (login, session, hooks) | ✅ [hooks.server.ts](../apps/web/src/hooks.server.ts) | ❌ | Replace SvelteKit server with Stronghold-token client auth |
+| Auth (login, session, hooks) | ✅ [hooks.server.ts](../apps/web/src/hooks.server.ts) | ❌ | Native sign-in in Rust (Phase 5, superseded — see Status) |
 | API client (`lib/api/*`) | ✅ | ❌ (uses Tauri `invoke` only) | Promote to `@conusai/sdk` |
 | Toasts, LiveAnnouncer, a11y actions | ✅ | partial (`ToastHost`) | Promote `LiveAnnouncer` + actions |
 | Tabs / recorder / Stronghold | ❌ | ✅ | Keep shell-only |
@@ -42,9 +42,9 @@ Today, [apps/browser-shell](../apps/browser-shell) only consumes a thin `@conusa
 **Option B: shared `@conusai/ui` + dual SvelteKit apps**, *not* embedding the web SPA in a WebView.
 
 Rationale:
-- Embedding `apps/web` (Option A in [docs/tasks/app.md](tasks/app.md)) locks the desktop UX to the gateway origin, forces cookie-based login, and marshals recorder/tab events across an iframe boundary — fragile and adds a network hop per interaction. Every major agent platform (Claude Desktop, Cursor, Windsurf) eventually regrets the iframe path.
+- Embedding `apps/web` (Option A in `docs/tasks/app.md`) locks the desktop UX to the gateway origin, forces cookie-based login, and marshals recorder/tab events across an iframe boundary — fragile and adds a network hop per interaction. Every major agent platform (Claude Desktop, Cursor, Windsurf) eventually regrets the iframe path.
 - A shared `@conusai/ui` package, consumed by both `apps/web` (adapter-node, served by the gateway) and `apps/browser-shell` (adapter-static, packaged by Tauri), keeps each adapter idiomatic, lets the shell call `invoke()` directly, and gives the gateway the canonical web build for free.
-- Cost: one refactor pass to lift web code into the shared package. Benefit: one source of truth, no iframe, mobile shell ([adr/008](adr/008-multi-platform-shell.md)) reuses everything.
+- Cost: one refactor pass to lift web code into the shared package. Benefit: one source of truth, no iframe, mobile shell (`adr/008`) reuses everything.
 
 **Backend boundary (explicit):** the Tauri shell does **not** host a Rust `CapabilityRegistry`. Recorder, tabs, screenshot, and Stronghold are *shell chrome / native services*, not LLM-callable tools. The only canonical capability surface lives in `agent-core` and is consumed by the frontend `createCapabilityRendererRegistry()` via OpenAPI-generated `CapabilityCard` types. This keeps SRP clean: backend = capability provider, shell = chrome + transport, UI = renderer.
 
@@ -108,7 +108,7 @@ P1 Shared assets & icons     →  visual parity unblocked
 P2 Shared design system      →  Foundry CSS + self-hosted fonts in @conusai/ui
 P3 Shared API client / SDK   →  one createConusSdk(), no duplicated fetch code
 P4 Shared chat + workspace   →  largest lift; runes-only feature slices
-P5 Shell auth (Stronghold)   →  replaces SvelteKit hooks with native auth
+P5 Shell auth (superseded)   →  Rust loopback PKCE sign-in
 P6 Shell integration         →  wires recorder/tabs around the shared UI
 ```
 
@@ -166,7 +166,7 @@ P6 Shell integration         →  wires recorder/tabs around the shared UI
 **Goal:** one TypeScript SDK for all REST/SSE calls, kept in lock-step with `agent-gateway` utoipa routes. Web and shell pick different transports but the same surface.
 **Effort:** ~3.5 AI-hours.
 
-1. Audit [apps/web/src/lib/api/](../apps/web/src/lib/api): `client.ts`, `endpoints.ts`, `glyphs.ts`, `stream.ts`, `types.ts`, `workspaces.ts`. Pure ESM; only SvelteKit dep is the `fetch` argument.
+1. Audit `apps/web/src/lib/api/`: `client.ts`, `endpoints.ts`, `glyphs.ts`, `stream.ts`, `types.ts`, `workspaces.ts`. Pure ESM; only SvelteKit dep is the `fetch` argument.
 2. Move all of `lib/api/` into `packages/sdk/src/`.
 3. Replace the `fetch` parameter with a constructor-injected fetch implementation, exposing a single named factory `createConusSdk` plus a public `ConusSdk` type alias (matches `rig-core`'s `Agent` + `AgentBuilder` ergonomics; trivial DI in tests):
    ```ts
@@ -189,9 +189,9 @@ P6 Shell integration         →  wires recorder/tabs around the shared UI
      tokenProvider: TokenProvider;
    }
    ```
-4. In `apps/web`, build the SDK per-request in `+layout.server.ts` using SvelteKit's `event.fetch` + cookie-based `TokenProvider`.
-5. In `apps/browser-shell`, build the SDK once in `+layout.svelte` using `globalThis.fetch` + the Stronghold-loaded `TokenProvider` (Phase 5).
-6. Move shared response shapes from [apps/web/src/lib/api/types.ts](../apps/web/src/lib/api/types.ts) into `@conusai/types`. **Pull the OpenAPI → TS generation forward into this phase**: harden [scripts/openapi-to-types.sh](../scripts/openapi-to-types.sh), wire it as a `prebuild` step in `packages/types/package.json`, and add it to the `turbo build` pipeline so every build (and CI run) regenerates against `agent-gateway`'s utoipa output. Add a CI step `pnpm types:assert-parity` that hashes the JSON-Schema for `CapabilityCard` (and other shared types) on both Rust and TS sides and fails on mismatch — cheap structural-diff guard against silent drift. The regenerated `CapabilityCard` is now a **1:1 mirror** of the Rust `agent-core::capability::CapabilityCard`, which the Phase 4 `CapabilityRendererRegistry` consumes directly.
+4. In `apps/web`, the browser SDK calls its own origin and the SvelteKit server adds the bearer token (today's design: [frontend.md](frontend.md) §6.4).
+5. In `apps/browser-shell`, build the SDK once with a fetch wrapper that adds the bearer token obtained from Rust (see Status).
+6. Move shared response shapes from `apps/web/src/lib/api/types.ts` into `@conusai/types`. **Pull the OpenAPI → TS generation forward into this phase**: harden [scripts/openapi-to-types.sh](../scripts/openapi-to-types.sh), wire it as a `prebuild` step in `packages/types/package.json`, and add it to the `turbo build` pipeline so every build (and CI run) regenerates against `agent-gateway`'s utoipa output. Add a CI step `pnpm types:assert-parity` that hashes the JSON-Schema for `CapabilityCard` (and other shared types) on both Rust and TS sides and fails on mismatch — cheap structural-diff guard against silent drift. The regenerated `CapabilityCard` is now a **1:1 mirror** of the Rust `agent-core::capability::CapabilityCard`, which the Phase 4 `CapabilityRendererRegistry` consumes directly.
 7. Re-export from `@conusai/sdk`:
    ```diff
    - import { workspacesApi } from '$lib/api';
@@ -199,7 +199,7 @@ P6 Shell integration         →  wires recorder/tabs around the shared UI
    ```
 8. Preserve the existing discriminated `{ data } | { error }` return union — no `throw` in SDK methods, no `any`.
 
-**Verify:** move [tests/sse-parser.test.ts](../apps/web/src/tests/sse-parser.test.ts), [tests/reconnect.test.ts](../apps/web/src/tests/reconnect.test.ts) into `packages/sdk/tests/`; `pnpm --filter @conusai/sdk test` green; both apps build; web smoke passes.
+**Verify:** move `tests/sse-parser.test.ts`, `tests/reconnect.test.ts` into `packages/sdk/tests/`; `pnpm --filter @conusai/sdk test` green; both apps build; web smoke passes.
 
 ## 8. Phase 4 — Shared chat + workspace features (+ capability registry)
 
@@ -214,7 +214,7 @@ Decompose into `packages/ui/src/lib/features/` and `packages/ui/src/lib/capabili
 | `AgentChatStream.svelte` | message list, word-token animation, scroll-near; renders tool/capability outputs via the registry (no per-capability `if`s) | ~180 |
 | `ToolCallCard.svelte` | thin dispatcher → `getRendererForCapability(card)`; renders fallback for unregistered capabilities | ~60 |
 | `WorkspaceExplorer.svelte` | tree + lazy load + search + recents | ~250 |
-| `NewNodeDialog.svelte`, `ConfirmDialog.svelte`, `MoveDialog.svelte`, `ShareDialog.svelte` | promote from [lib/workspace/dialogs/](../apps/web/src/lib/workspace/dialogs) as-is | — |
+| `NewNodeDialog.svelte`, `ConfirmDialog.svelte`, `MoveDialog.svelte`, `ShareDialog.svelte` | promote from `lib/workspace/dialogs/` as-is | — |
 | `createChatStream()` (rune factory) | wraps `conusSdk.chat.stream`, AbortController, 45 s inactivity timer, tool-card map | ~120 |
 | `createWorkspaceTree()` (rune factory) | tree state, lazy loading, search debounce, refresh | ~80 |
 | `CapabilityRendererRegistry.ts` | frontend mirror of Rust `CapabilityRegistry`; maps capability name → Svelte component | ~50 |
@@ -322,131 +322,12 @@ Why this matters:
 - New: `packages/ui/tests/` with vitest + `@testing-library/svelte` covering `AgentChatStream` word-flush, `WorkspaceExplorer` lazy load, `ToolCallCard` registry dispatch + status transitions, `CapabilityRendererRegistry` lookup + fallback, and **a canary test asserting that a renderer dynamically registered after mount is immediately picked up by `ToolCallCard`** (proves runtime symmetry with Rust `CapabilityRegistry`).
 - 100% rune usage in promoted components (lint rule).
 
-## 9. Phase 5 — Shell auth (Stronghold-native)
+## 9. Phase 5 — Shell auth *(superseded)*
 
-**Goal:** the shell does not need SvelteKit `hooks.server.ts` or cookie session; it authenticates via a device token loaded from Stronghold (already partially scaffolded in [apps/browser-shell/src/routes/+layout.svelte](../apps/browser-shell/src/routes/+layout.svelte#L36-L52)).
-**Effort:** ~3 AI-hours (≈1 Rust + 2 TS). Rust owner ships the module + commands in a single PR.
-
-1. Define a `TokenProvider` interface in `@conusai/sdk`:
-   ```ts
-   export interface TokenProvider {
-     get(): Promise<string | null>;
-     set(token: string): Promise<void>;
-     clear(): Promise<void>;
-   }
-   ```
-2. **Web** implementation: cookie-backed (`event.locals.session` server-side, `/v1/session` client-side). No change to existing flow.
-3. **Shell** implementation: rename `apps/browser-shell/src-tauri/src/keychain.rs` → `device_auth.rs` (the public surface is *device auth*; "keychain" is an implementation detail of one platform adapter). Introduce a thin `DeviceAuthService` wrapping `Arc<RwLock<Stronghold>>` that implements a `DeviceTokenProvider` trait — symmetric with the TS `TokenProvider` interface and ready for iOS Secure Enclave / Android Keystore adapters with zero changes to the Tauri commands.
-
-   ```rust
-   // apps/browser-shell/src-tauri/src/device_auth.rs
-   use iota_stronghold::{Stronghold, ClientError};
-   use std::sync::Arc;
-   use tauri::{State, Manager};
-   use tokio::sync::RwLock;
-   use thiserror::Error;
-
-   #[derive(Debug, Error, serde::Serialize)]
-   #[serde(tag = "type", content = "message")]
-   pub enum DeviceAuthError {
-       #[error("vault not provisioned")]
-       NotProvisioned,
-       #[error("device token missing")]
-       TokenMissing,
-       #[error(transparent)]
-       Stronghold(#[from] ClientError),
-       #[error(transparent)]
-       Io(#[from] std::io::Error),
-   }
-
-   #[async_trait::async_trait]
-   pub trait DeviceTokenProvider: Send + Sync {
-       async fn get(&self)   -> Result<String, DeviceAuthError>;
-       async fn set(&self, token: String) -> Result<(), DeviceAuthError>;
-       async fn clear(&self) -> Result<(), DeviceAuthError>;
-   }
-
-   /// Reserved for super-admin operations (token rotation, audit). Kept separate so the
-   /// hot path (`DeviceTokenProvider`) stays minimal and the admin surface can evolve
-   /// without touching command signatures.
-   #[async_trait::async_trait]
-   pub trait DeviceAuthAdmin: DeviceTokenProvider {
-       async fn rotate(&self) -> Result<(), DeviceAuthError>;
-       async fn audit(&self)  -> Result<Vec<AuditEntry>, DeviceAuthError>;
-   }
-
-   pub type StrongholdState = Arc<RwLock<Stronghold>>;
-
-   pub struct DeviceAuthService(StrongholdState);
-
-   impl DeviceAuthService {
-       pub async fn new(app: &tauri::AppHandle) -> Result<Self, DeviceAuthError> {
-           let path = app.path().app_data_dir()?.join("device.vault");
-           let stronghold = Stronghold::load_or_create(path /*, passphrase from OS keychain via plugin */)
-               .await?;
-           Ok(Self(Arc::new(RwLock::new(stronghold))))
-       }
-   }
-
-   #[async_trait::async_trait]
-   impl DeviceTokenProvider for DeviceAuthService { /* read/write/clear via Stronghold store */ }
-
-   #[tauri::command]
-   pub async fn init_stronghold(
-       app: tauri::AppHandle,
-       state: State<'_, DeviceAuthService>,
-   ) -> Result<(), DeviceAuthError> { /* one-time vault provisioning on first launch */ Ok(()) }
-
-   #[tauri::command]
-   pub async fn get_device_token(state: State<'_, DeviceAuthService>) -> Result<String, DeviceAuthError> {
-       state.get().await
-   }
-
-   #[tauri::command]
-   pub async fn set_device_token(token: String, state: State<'_, DeviceAuthService>) -> Result<(), DeviceAuthError> {
-       state.set(token).await
-   }
-
-   #[tauri::command]
-   pub async fn clear_device_token(state: State<'_, DeviceAuthService>) -> Result<(), DeviceAuthError> {
-       state.clear().await
-   }
-   ```
-
-   Registration in `main.rs`:
-
-   ```rust
-   tauri::Builder::default()
-       .setup(|app| {
-           let svc = tauri::async_runtime::block_on(DeviceAuthService::new(app.handle()))?;
-           app.manage(svc);
-           Ok(())
-       })
-       .invoke_handler(tauri::generate_handler![
-           device_auth::init_stronghold,
-           device_auth::get_device_token,
-           device_auth::set_device_token,
-           device_auth::clear_device_token,
-           // … existing recorder / tabs / telemetry commands
-       ])
-   ```
-
-   - All errors are `thiserror` + `serde::Serialize` (never `anyhow::Error` — that breaks Tauri TS type generation).
-   - All inputs validated via serde at the command boundary.
-   - `init_stronghold` is required by the `tauri-plugin-stronghold` 2026 API and keeps Stronghold provisioning out of the Svelte layer.
-   - **Mock-Stronghold tests** (`#[cfg(test)] mod tests { struct InMemoryVault; impl DeviceTokenProvider for InMemoryVault … }`) cover all four commands without a real vault. Non-negotiable production hygiene.
-4. On first launch, if `get_device_token` returns `TokenMissing`, render `LoginPanel.svelte` (promoted from [apps/web/src/routes/login/+page.svelte](../apps/web/src/routes/login/+page.svelte) into `@conusai/ui/features/auth/`) with a pluggable `onSubmit(creds) => Promise<token>`.
-5. After successful sign-in, call `set_device_token` (shell) or rely on cookie set by gateway (web).
-6. Sign-out calls `clear_device_token` + re-mounts `LoginPanel`. Web sign-out hits `/logout`.
-7. Replace the env-var token fallback (currently end of `loadTokenFromStronghold`) with an explicit "Sign in" CTA — no silent fallback in production builds.
-
-**Security checks (OWASP-aligned):**
-- Stronghold passphrase derived from OS keychain (macOS Keychain / Windows Credential Manager / GNOME Keyring) via [tauri-plugin-stronghold](https://v2.tauri.app/plugin/stronghold/) — never hardcoded.
-- Token never logged.
-- Shell CSP in [tauri.conf.json](../apps/browser-shell/src-tauri/tauri.conf.json) tightened to: `default-src 'self'; connect-src 'self' https://api.<gateway> wss://api.<gateway>; img-src 'self' data: blob:`. Sourced from a single `packages/config/csp.ts` so web and shell stay in sync.
-- `withGlobalTauri: false` (already set).
-
-**Verify:** manual login → quit app → relaunch → no re-auth prompt; manual sign-out → relaunch → login screen shown; Tauri-generated TS types include `DeviceAuthError` variants (`NotProvisioned`, `TokenMissing`, `Stronghold`, `Io`).
+The device-token design planned here (`device_auth.rs`, `DeviceAuthService`,
+`get/set/clear_device_token` commands, a name+plan `LoginPanel`) was built and later
+deleted. Its replacement is described in the Status line at the top and in
+[frontend.md](frontend.md) §7.
 
 ## 10. Phase 6 — Shell integration
 
@@ -481,7 +362,7 @@ Final shell layout (`apps/browser-shell/src/routes/+layout.svelte`):
 5. Delete any SvelteKit server hooks/routes from the shell — adapter-static does not run them.
 
 **Verify (per [docs/verify/verify.md](verify/verify.md)):**
-- `pnpm tauri dev` launches → `LoginPanel` → after login, `WorkspaceExplorer` shows live tree from gateway → "New conversation" → send message → streamed reply with same animation as web → start recorder → load page in tab → stop recorder → trace appears as workspace node → click trace → `ArtifactPreview` renders JSON.
+- `pnpm --filter browser-shell tauri dev` launches → sign-in screen → after sign-in, `WorkspaceExplorer` shows live tree from gateway → "New conversation" → send message → streamed reply with same animation as web → start recorder → load page in tab → stop recorder → trace appears as workspace node → click trace → `ArtifactPreview` renders JSON.
 - Unified Playwright suite: `web` + `browser-shell` projects both green for the parity smoke spec.
 
 ## 11. Cross-cutting concerns
@@ -502,7 +383,7 @@ Final shell layout (`apps/browser-shell/src/routes/+layout.svelte`):
 | P2 design system | frontend | 1 | 2 | `app.css` deleted from `apps/web`; both apps theme-switch via shared `ThemeScript`; offline fonts in shell |
 | P3 SDK + OpenAPI gen | all | 1 | 3.5 | `apps/web/src/lib/api` deleted; `createConusSdk` + `ConusSdk` alias used in both apps; `types:assert-parity` green; SDK tests green |
 | P4 chat + workspace + registry | all (Rust pairs on registry symmetry) | 2–3 | 13.5 | `apps/web/+page.svelte` ≤ 80 LoC; 100% rune usage; pure registry + provider split; runtime-registration canary test green |
-| P5 shell auth | Rust | 1 | 3.2 (~1.7 Rust) | `device_auth.rs` + `DeviceAuthService` + `DeviceAuthAdmin` shipped; mock-Stronghold tests green; typed `DeviceAuthError` in generated TS |
+| P5 shell auth | Rust | 1 | 3.2 (~1.7 Rust) | Superseded — see Status |
 | P6 shell integration | Rust | 1 | 4 | `TabManager` service live; unified Playwright suite green; manual checklist signed off |
 | **Total** | — | **6** | **27.2** | Desktop parity shipped |
 
@@ -512,14 +393,14 @@ Approximate token cost for LLM-assisted refactors: **~205k input / 52k output**,
 
 1. Bump `@conusai/ui` and `@conusai/sdk` to `0.6.0` (semver — public re-export surface changed).
 2. Promote OpenAPI-generated TS client as the *only* SDK transport surface (deprecate any hand-written request shapes still lingering in `packages/types`).
-3. Update [docs/adr/006-tauri-browser-shell.md](adr/006-tauri-browser-shell.md) and [docs/adr/008-multi-platform-shell.md](adr/008-multi-platform-shell.md) with: "Parity achieved via Option B + `CapabilityRendererRegistry` symmetry (2026-05-10)."
+3. Update `docs/adr/006-tauri-browser-shell.md` and `docs/adr/008-multi-platform-shell.md` with: "Parity achieved via Option B + `CapabilityRendererRegistry` symmetry (2026-05-10)."
 4. Run the full [docs/verify/verify.md](verify/verify.md) checklist on both `web` and `browser-shell` targets before tagging `v0.3.3`.
 5. Land `apps/mobile-shell` (Tauri Mobile, ~8–10 AI-hours) — see §14.
 
 ## 13. Out of scope (intentionally deferred)
 
-- Mobile shell ([adr/008-multi-platform-shell.md](adr/008-multi-platform-shell.md)) — see §14 for the trivial follow-up path.
-- Replacing the Askama Foundry UI ([docs/tasks/app.md](tasks/app.md)) — kept as zero-JS fallback / admin surface.
+- Mobile shell (`adr/008-multi-platform-shell.md`) — see §14 for the trivial follow-up path.
+- Replacing the Askama Foundry UI (`docs/tasks/app.md`) — kept as zero-JS fallback / admin surface.
 - Rewriting capability cards / artifact preview beyond what already exists in `@conusai/ui`.
 - New state libraries, i18n, virtualisation. Re-evaluate only after parity ships.
 
@@ -529,10 +410,10 @@ The plan is engineered around Tauri v2's canonical 2026 multi-platform story: **
 
 | Platform | Single codebase? | How it works | Notes |
 |---|---|---|---|
-| **macOS** (desktop) | ✅ | `apps/browser-shell` (Tauri v2) + `@conusai/ui` + `@conusai/sdk` | Native window, Stronghold keychain, tray icon, recorder, tabs |
-| **Windows** (desktop) | ✅ | Same Tauri binary, different `--target` | Same Rust core ([device_auth.rs](../apps/browser-shell/src-tauri/src/device_auth.rs), [tabs.rs](../apps/browser-shell/src-tauri/src/tabs.rs), [recorder.rs](../apps/browser-shell/src-tauri/src/recorder.rs), [telemetry.rs](../apps/browser-shell/src-tauri/src/telemetry.rs)) |
-| **iOS** | Prepared (zero rework) | Future `apps/mobile-shell` (Tauri Mobile) re-imports the same `@conusai/ui` + `@conusai/sdk` | iOS Keychain adapter swaps for Stronghold via `TokenProvider` |
-| **Android** | Prepared (zero rework) | Same Tauri Mobile target | Android Keystore adapter via `TokenProvider` |
+| **macOS** (desktop) | ✅ | `apps/browser-shell` (Tauri v2) + `@conusai/ui` + `@conusai/sdk` | Native window, Stronghold refresh-token vault, tray icon, recorder, tabs |
+| **Windows** (desktop) | ✅ | Same Tauri binary, different `--target` | Same Rust core ([auth/](../apps/browser-shell/src-tauri/src/auth), [tabs.rs](../apps/browser-shell/src-tauri/src/tabs.rs), [recorder.rs](../apps/browser-shell/src-tauri/src/recorder.rs), [telemetry.rs](../apps/browser-shell/src-tauri/src/telemetry.rs)) |
+| **iOS** | Prepared (zero rework) | Future `apps/mobile-shell` (Tauri Mobile) re-imports the same `@conusai/ui` + `@conusai/sdk` | Sign-in on mobile not yet implemented |
+| **Android** | Prepared (zero rework) | Same Tauri Mobile target | Sign-in on mobile not yet implemented |
 
 Desktop parity (macOS + Windows) is **100% single-source** the moment Phase 6 lands — `tauri build --target aarch64-apple-darwin` and `--target x86_64-pc-windows-msvc` produce signed binaries from the same source tree. No conditional code in `@conusai/ui`; no per-platform forks of the chat/workspace/capability surfaces.
 

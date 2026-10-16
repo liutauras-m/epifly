@@ -1,3 +1,5 @@
+> **Status (2026-10-16): historical.** The `storage-fs` and `file-storage` capabilities this review builds on were deleted in the ConusAI Cloud refactor; `storage-workspace` is the only storage capability. Current reference: [capabilities-arch.md](capabilities-arch.md).
+
 **Capabilities Consolidation Refactor — Architecture Review (2026-05-21, post-adjustment)**
 
 **Review score**: **96 % aligned** with Project Instructions v0.3.2 + arch.md (audit 2026-05-19/20) + 2026 external best practices (Anthropic Claude tool-use guides, Reddit r/LocalLLaMA/r/MachineLearning/r/ClaudeAI, X/agent-research discourse, recent papers on agentic systems).

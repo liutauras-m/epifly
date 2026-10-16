@@ -1,6 +1,8 @@
 # ConusAI Browser Shell — User Guide
 
-The ConusAI Browser Shell is a native Tauri 2 application that brings the ConusAI agent interface to macOS, Windows, Linux, iOS, and Android. This guide covers installation, first-launch provisioning, recording sessions, replay, and troubleshooting.
+The ConusAI Browser Shell is a native Tauri 2 application that brings the ConusAI agent interface to macOS, Windows, Linux, iOS, and Android. This guide covers installation, signing in, recording sessions, replay, and troubleshooting.
+
+> Sign-in currently works in the desktop builds (macOS, Windows, Linux) only. Sign-in on iOS and Android is not yet implemented, so the mobile builds stop at the sign-in screen.
 
 ---
 
@@ -41,31 +43,30 @@ The ConusAI Browser Shell is a native Tauri 2 application that brings the ConusA
 
 ---
 
-## First Launch: Device Token Provisioning
+## First Launch: Signing In
 
-### What is a device token?
+Each build of the shell is made for one ConusAI instance: the gateway URL and the
+sign-in service (Zitadel) are fixed when the app is built. There is nothing to
+paste or configure.
 
-A device token is a short-lived credential that binds your device to your organisation's ConusAI workspace. It authorises the shell to connect to the agent gateway and identifies your device in audit logs. Tokens are scoped to a tenant and expire after a configurable period (default: 30 days).
+1. Launch the app. It shows the sign-in screen.
+2. Click **Sign in**. Your default system browser opens your organisation's sign-in page.
+3. Sign in with your organisation account (the same one you use for the web app).
+4. The browser shows a short confirmation page; return to the app. You are signed in.
 
-### How an admin issues a device token
+The browser hands the result back to the app over a one-time local address on
+your computer (`http://127.0.0.1:<port>/callback`), so a firewall prompt about a
+local connection may appear on first sign-in. Sign-in times out after five
+minutes.
 
-Your ConusAI administrator issues device tokens from the admin console:
+Your organisation and plan come from your account; the shell never asks for
+them. The app keeps a long-lived refresh token in an encrypted vault in its
+app-data directory and fetches short-lived access tokens with it, so you stay
+signed in across restarts.
 
-1. Log in to the Foundry UI (`https://<your-instance>/`) as a super-admin.
-2. Navigate to **Admin → Device Tokens → New Token**.
-3. Enter a display name for the device (e.g. "Alice's MacBook") and select the appropriate tenant and plan.
-4. Click **Generate**. Copy the token — it is shown only once.
-5. Share the token securely with the device owner (e.g. via a password manager or an encrypted message).
-
-### Entering your token
-
-On first launch, the Browser Shell shows a **Provision Device** screen:
-
-1. Paste the token into the **Device Token** field.
-2. Optionally enter the **Gateway URL** if your instance is self-hosted (e.g. `https://api.example.com`).
-3. Tap or click **Connect**.
-
-The shell verifies the token against the gateway. On success, it saves the token in the system keychain and will refresh it automatically before expiry. You will not need to re-enter the token unless it is revoked.
+**Signing out** (profile menu → **Sign out**) revokes the refresh token, clears the
+vault and opens the sign-in service's logout page in your browser, so the next
+sign-in asks for your credentials again.
 
 ---
 
@@ -155,11 +156,20 @@ In dry-run mode the agent steps through the recorded interaction sequence, but a
 
 **Fix:** Ensure your device runs Android 10 (API 29) or later. If the device meets the requirement, go to **Settings → Apps → ConusAI → Permissions** and grant the required permissions (network access, storage).
 
-### All platforms — token provisioning fails
+### All platforms — sign-in does not finish
 
-**Symptom:** "Invalid or expired device token" error on first launch.
+**Symptom:** The browser shows the sign-in page, but the app stays on the sign-in screen or reports an error.
 
-**Fix:** Ask your administrator to issue a new token. Tokens expire after 30 days by default and can only be used once. Ensure the **Gateway URL** field matches your organisation's instance URL exactly (no trailing slash).
+**Fix:**
+- Complete the sign-in within five minutes, then click **Sign in** again.
+- Allow the local connection if a firewall asks: the browser returns to the app via `127.0.0.1`.
+- "no refresh token" or a redirect error from the sign-in page means the instance's Zitadel native application is misconfigured; tell your administrator (see [deploy-conusai-cloud.md](deploy-conusai-cloud.md)).
+
+### All platforms — "Your session expired. Please sign in again."
+
+**Symptom:** The app returns to the sign-in screen with this message.
+
+**Fix:** Sign in again. It happens when your administrator ended your session or the refresh token expired.
 
 ### All platforms — recordings not uploading
 
@@ -176,7 +186,7 @@ In dry-run mode the agent steps through the recorded interaction sequence, but a
 | Data | Storage location | Retention |
 |---|---|---|
 | Recorded session events | Encrypted local cache, then uploaded to your organisation's RustFS bucket | Configurable by admin (default: 90 days) |
-| Device token | System keychain (macOS Keychain, Windows Credential Manager, Android Keystore) | Until revoked or expired |
+| Sign-in refresh token | Encrypted Stronghold vault in the app-data directory (key derived with Argon2 over a per-install salt) | Until you sign out or it expires |
 | Agent chat history | Your organisation's Postgres instance | Configurable by admin |
 | Diagnostic logs | Local app data directory | 7 days rolling |
 
@@ -190,4 +200,4 @@ The Browser Shell does not send data to Anthropic or any third party. All traffi
 
 **Request server-side deletion:** Contact your ConusAI administrator. Admins can delete sessions and chat history from the Foundry admin console under **Admin → Data Management**.
 
-**Revoke your device token:** Ask your administrator to revoke your token under **Admin → Device Tokens**. Revocation takes effect immediately and prevents further uploads from that device.
+**Sign out of the device:** Choose **Sign out** in the profile menu. This revokes the refresh token at the sign-in service and deletes it from the vault. An administrator can also end your sessions in the sign-in service (Zitadel).

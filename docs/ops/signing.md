@@ -126,23 +126,18 @@ manager (1Password, Bitwarden) and in an offline backup. Google Play App Signing
 
 ---
 
-## Device token provisioning
+## Build-time sign-in configuration
 
-Device tokens are separate from code-signing and are managed via the gateway API:
+Shell builds carry no credentials. Sign-in is Zitadel OIDC (authorization code + PKCE
+through the system browser and a loopback redirect, `apps/browser-shell/src-tauri/src/auth/`);
+the refresh token is kept in a Stronghold vault on the device. Three public values are
+compiled in and must be set in the environment of every release build:
 
-```bash
-# Issue a token for a new shell installation (requires PLATFORM_ADMIN_TOKEN)
-curl -X POST https://api.conusai.com/admin/devices \
-  -H "Authorization: Bearer $PLATFORM_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"tenant_id":"acme","device_label":"Alice laptop"}'
-# Response: { "id": "...", "token": "abcdef...", "device_label": "Alice laptop" }
-# Store the token in the shell's Stronghold vault at first launch.
+| Variable | Value |
+|---|---|
+| `VITE_GATEWAY_URL` | Public origin of the gateway service (its ConusAI Cloud public hostname) |
+| `VITE_ZITADEL_ISSUER` | Zitadel issuer, `https://<AUTH_HOST>` |
+| `VITE_ZITADEL_NATIVE_CLIENT_ID` | Client id of the Zitadel native application (see [deploy-conusai-cloud.md](../deploy-conusai-cloud.md)) |
 
-# Revoke a token
-curl -X DELETE https://api.conusai.com/admin/devices/{id} \
-  -H "Authorization: Bearer $PLATFORM_ADMIN_TOKEN"
-```
-
-`CONUSAI_FEATURE_BROWSER_SHELL=1` must be set in the gateway environment for these
-endpoints to be active.
+A build without them starts but cannot sign in. `.github/workflows/release-shell.yml` does
+not pass them yet; add them as repository variables before the next release.

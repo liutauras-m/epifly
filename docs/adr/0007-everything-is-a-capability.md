@@ -107,7 +107,9 @@ Job-backed capabilities (e.g. `transcribe-video`) are registered programmaticall
 granularity lives in `[[tools]]`, not in directories.
 
 The 15 granular `storage.*` capabilities collapsed into two:
-`storage-workspace` (11 workspace-node tools) and `storage-fs` (5 filesystem-path tools).
+`storage-workspace` (workspace-node tools) and `storage-fs` (filesystem-path tools).
+Since 2026-10-16 only `storage-workspace` remains (8 tools); `storage-fs` and the
+`file-storage` MCP wrapper were deleted in the ConusAI Cloud refactor.
 Provider dispatch is on `tool_name` in `invoke()` — the canonical pattern for multi-tool
 native capabilities. `ToolManifest` schema is unchanged; no `[[config.tools]]` extension exists.
 

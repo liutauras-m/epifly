@@ -1,5 +1,7 @@
 # Capabilities Consolidation Refactor — Detailed Plan
 
+> **Status (2026-10-16): historical.** Implemented, then superseded: the ConusAI Cloud refactor deleted `storage-fs` and `file-storage`; `storage-workspace` (8 tools) remains. Current reference: [capabilities-arch.md](capabilities-arch.md).
+
 > **Goal.** (1) Collapse the 15 granular `storage.*` capabilities into **two
 > domain-level capabilities** (`storage-workspace`, `storage-fs`) without
 > changing tool semantics, breaking the agent loop, or touching
@@ -8,7 +10,7 @@
 > scaffold and edit code projects (Svelte, React, Python, Rust, …) without
 > abusing `storage-fs` for it.
 >
-> **Driver.** [`docs/tasks/capabilities-task.md`](../tasks/capabilities-task.md)
+> **Driver.** `docs/tasks/capabilities-task.md`
 > — too many near-duplicate storage embeddings dilute ANN signal and confuse
 > the LLM. Consolidating yields higher accuracy, lower token cost, and the
 > same hot-reload + per-tool testability. The `code-project` addition
@@ -54,21 +56,21 @@ no Rust logic needs to be rewritten.
 | Current cap dir                                                                                                    | Namespace                       | `[config] op`        | Tools (single each, except `storage-workspace`)        |
 | ------------------------------------------------------------------------------------------------------------------ | ------------------------------- | -------------------- | ------------------------------------------------------ |
 | [storage-workspace](../../apps/backend/capabilities/storage-workspace/capability.toml)                             | `storage.workspace`             | `workspace`          | `save_document`, `list_folders`                         |
-| [storage-workspace-move](../../apps/backend/capabilities/storage-workspace-move/capability.toml)                   | `storage.node.move`             | `move_node`          | `move_node`                                            |
-| [storage-create-folder](../../apps/backend/capabilities/storage-create-folder/capability.toml)                     | `storage.folder.create`         | `create_folder`      | `create_folder`                                        |
-| [storage-ensure-folder](../../apps/backend/capabilities/storage-ensure-folder/capability.toml)                     | `storage.object.ensure_folder`  | `ensure_folder`      | `ensure_folder`                                        |
-| [storage-ensure-date-folder](../../apps/backend/capabilities/storage-ensure-date-folder/capability.toml)           | `storage.ensure_date_folder`    | `ensure_date_folder` | `ensure_date_folder`                                   |
-| [storage-find-by-name](../../apps/backend/capabilities/storage-find-by-name/capability.toml)                       | `storage.node.find_by_name`     | `find_by_name`       | `find_by_name`                                         |
-| [storage-show-tree](../../apps/backend/capabilities/storage-show-tree/capability.toml)                             | `storage.tree.show`             | `show_tree`          | `show_tree`                                            |
-| [storage-list-folders](../../apps/backend/capabilities/storage-list-folders/capability.toml)                       | `storage.object.list`           | `list_folders`       | `list_folders` *(filesystem-prefix listing)*           |
-| [storage-delete](../../apps/backend/capabilities/storage-delete/capability.toml)                                   | `storage.node.delete`           | `delete_node`        | `delete_node`                                          |
-| [storage-bulk-delete](../../apps/backend/capabilities/storage-bulk-delete/capability.toml)                         | `storage.node.bulk_delete`      | `bulk_delete`        | `bulk_delete`                                          |
-| [storage-tag](../../apps/backend/capabilities/storage-tag/capability.toml)                                         | `storage.object.tag`            | `tag_object`         | `tag_object`                                           |
-| [storage-put](../../apps/backend/capabilities/storage-put/capability.toml)                                         | `storage.put`                   | `put_object`         | `put_object`                                           |
-| [storage-move](../../apps/backend/capabilities/storage-move/capability.toml)                                       | `storage.object.move`           | `move_object`        | `move_object`                                          |
-| [storage-read-text](../../apps/backend/capabilities/storage-read-text/capability.toml)                             | `storage.fs.read`               | `read_text`          | `read_file`                                            |
-| [storage-write-text](../../apps/backend/capabilities/storage-write-text/capability.toml)                           | `storage.fs.write`              | `write_text`         | `write_file`                                           |
-| [file-storage](../../apps/backend/capabilities/file-storage/capability.toml) *(MCP, **keep**)*                     | `storage.object`                | n/a (mcp endpoint)   | `upload_file`, `download_file`, `presigned_url`        |
+| storage-workspace-move                   | `storage.node.move`             | `move_node`          | `move_node`                                            |
+| storage-create-folder                     | `storage.folder.create`         | `create_folder`      | `create_folder`                                        |
+| storage-ensure-folder                     | `storage.object.ensure_folder`  | `ensure_folder`      | `ensure_folder`                                        |
+| storage-ensure-date-folder           | `storage.ensure_date_folder`    | `ensure_date_folder` | `ensure_date_folder`                                   |
+| storage-find-by-name                       | `storage.node.find_by_name`     | `find_by_name`       | `find_by_name`                                         |
+| storage-show-tree                             | `storage.tree.show`             | `show_tree`          | `show_tree`                                            |
+| storage-list-folders                       | `storage.object.list`           | `list_folders`       | `list_folders` *(filesystem-prefix listing)*           |
+| storage-delete                                   | `storage.node.delete`           | `delete_node`        | `delete_node`                                          |
+| storage-bulk-delete                         | `storage.node.bulk_delete`      | `bulk_delete`        | `bulk_delete`                                          |
+| storage-tag                                         | `storage.object.tag`            | `tag_object`         | `tag_object`                                           |
+| storage-put                                         | `storage.put`                   | `put_object`         | `put_object`                                           |
+| storage-move                                       | `storage.object.move`           | `move_object`        | `move_object`                                          |
+| storage-read-text                             | `storage.fs.read`               | `read_text`          | `read_file`                                            |
+| storage-write-text                           | `storage.fs.write`              | `write_text`         | `write_file`                                           |
+| file-storage *(MCP, **keep**)*                     | `storage.object`                | n/a (mcp endpoint)   | `upload_file`, `download_file`, `presigned_url`        |
 
 ### 1.2 Code-level facts confirmed by audit
 
@@ -289,7 +291,7 @@ net during the migration window and is deleted at the end of Phase 7.
 
 ### Phase 5 — Router & embeddings (≈ 15 min, runtime check)
 
-- [ ] **5.1** Start the stack (`./start.sh`); confirm gateway logs:
+- [ ] **5.1** Start the stack; confirm gateway logs:
       - exactly two new cards loaded (`storage-workspace`, `storage-fs`),
       - **zero `WARN factory create failed`** for the new manifests,
       - the `capability.reloaded` event fires for both.

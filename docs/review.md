@@ -1,3 +1,5 @@
+> **Status (2026-10-16): historical.** Review of an older tree. Dokploy (`dokploy/`, `tools/epifly`), `storage-fs` and Jaeger were deleted in the ConusAI Cloud refactor; deployment is one compose project on ConusAI Cloud ([deploy-conusai-cloud.md](deploy-conusai-cloud.md)) and telemetry goes over OTLP to the platform.
+
 I can’t truthfully “review all code” from one architecture dump. What I **can** do from the uploaded architecture reference is define the code-review/refactor plan that should be run against the repo. The doc claims it was generated from the current code and covers routes, env vars, DB tables, Tauri commands, UI primitives, capability manifests, and infra services, so it is a usable audit map — not a substitute for source-level inspection. 
 
 ## Immediate verdict

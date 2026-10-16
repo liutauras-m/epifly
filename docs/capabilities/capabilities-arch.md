@@ -130,7 +130,7 @@ A free-form `serde_json::Value` consumed by the per-kind factory:
 - **`native`** — `op = "<dispatch key>"`; some natives also embed
   `[[config.steps]]` (e.g. [`plan-on-upload/capability.toml`](../../apps/backend/capabilities/plan-on-upload/capability.toml)).
 - **`wasm`** — `wasm_module = "tesseract_ocr.wasm"`.
-- **`mcp`** — adapter-specific (endpoint, OAuth scopes, env-var refs like `${S3_ENDPOINT}`).
+- **`mcp`** — adapter-specific (endpoint, OAuth scopes, env-var refs).
 
 ---
 
@@ -269,20 +269,23 @@ a live pipeline timeline without polling.
 - `update`, `delete`, `set_enabled`, `reload`
 - `test_invoke` — executes the tool with arbitrary input for QA.
 
-Limits are environment-tunable:
-`CONUSAI_MAX_CAPABILITIES`, `CONUSAI_MAX_MANIFEST_BYTES`, `CONUSAI_MAX_WASM_BYTES`.
+The limits are compiled-in defaults (`AdminLimits::default()` in
+`agent-core/src/capabilities/admin.rs`); no environment variable changes them.
 
 #### `POST /admin/capabilities/register`
 
-Authenticated by `Bearer ${PLATFORM_ADMIN_TOKEN}` (or `X-Tenant-ID: dev`
-in dev mode when `JWT_SECRET` is unset — see
-[`agent-gateway/src/routes/mod.rs`](../../apps/backend/crates/agent-gateway/src/routes/mod.rs)).
-Body is a `ToolManifest` plus an `endpoint` URL; the gateway:
+Authenticated only by `Authorization: Bearer ${PLATFORM_ADMIN_TOKEN}` — there is
+no development bypass (see
+[`admin_capabilities.rs`](../../apps/backend/crates/agent-gateway/src/routes/admin_capabilities.rs)).
+Body is a manifest (`namespace`, `tools[]`, …) plus an `endpoint` URL whose host
+must be listed in `CONUSAI_MCP_ALLOWED_HOSTS`; the gateway:
 
-1. Validates the manifest.
-2. Inserts a row into `capability_specs` with `strategy = "remote_mcp"`.
-3. Builds a `RemoteMcpCapability` and `registry.replace(provider)`s it.
-4. Schedules a Qdrant re-embed so the router sees the new capability immediately.
+1. Validates the registration.
+2. Builds one `RemoteMcpCapability` per tool and registers it in memory;
+   a name that already exists is refused with `409 Conflict` (never overwritten).
+3. Embeds the manifests in Qdrant so the router sees the new capability immediately.
+
+Registrations live as long as the gateway process; services re-register at start.
 
 This is how a containerised, polyglot service joins the platform without
 touching Rust code — see §6.
@@ -364,18 +367,15 @@ gateway startup. Categories follow [taxonomy.md](taxonomy.md).
 ### 5.6 `storage` — workspace I/O
 
 **Consolidated 2026-05-22 (capabilities-consolidation refactor).** The 15 granular
-per-op capabilities have been collapsed into two domain-level capabilities plus the
-unchanged MCP wrapper. Provider dispatch is on `tool_name` in `invoke()`; no `[config] op`
+per-op capabilities were collapsed into domain-level capabilities; since 2026-10-16
+`storage-workspace` is the only one (`storage-fs` and the `file-storage` MCP wrapper
+were deleted — file transfer goes through the presigned `/v1/files/*` and
+`/v1/uploads/*` routes). Provider dispatch is on `tool_name` in `invoke()`; no `[config] op`
 is needed in the manifests. See [plan.md](plan.md) for rationale.
 
 | Cap dir                                                                                  | Namespace          | Kind   | Tool(s) → effect                                                                                                                                                                                                                  |
 | ---------------------------------------------------------------------------------------- | ------------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [file-storage](../../apps/backend/capabilities/file-storage/capability.toml)             | `storage.object`   | mcp    | `upload_file`, `download_file`, `presigned_url` (RustFS / AWS S3). Unchanged.                                                                                                                                                     |
-| [storage-workspace](../../apps/backend/capabilities/storage-workspace/capability.toml)   | `storage.workspace`| native | **11 tools**: `save_document`, `list_folders`, `show_tree`, `find_by_name`, `create_folder`, `ensure_folder`, `ensure_date_folder`, `move_node`, `delete_node`, `bulk_delete`, `tag_object`. Use for natural-language workspace ops. |
-| [storage-fs](../../apps/backend/capabilities/storage-fs/capability.toml)                 | `storage.fs`       | native | **5 tools**: `read_file`, `write_file`, `put_object`, `move_object`, `list_paths`. Use when the user gives an explicit path. `list_paths` replaces the legacy `list_folders` fs variant to avoid name collision with the workspace tool. |
-
-> **Naming rule.** `list_folders` belongs to `storage-workspace` (workspace-node listing).
-> The fs-level listing tool is `list_paths` in `storage-fs`.
+| [storage-workspace](../../apps/backend/capabilities/storage-workspace/capability.toml)   | `storage.workspace`| native | **8 tools**: `save_document`, `list_folders`, `show_tree`, `find_by_name`, `create_folder`, `move_node`, `delete_node`, `bulk_delete`. Use for natural-language workspace ops. |
 
 ### 5.7 `deliver` — push to external systems
 
@@ -415,28 +415,32 @@ self-registers at startup, with no Rust changes required.
 
 ```yaml
 current-time:
-  build: { context: ./services/current-time }
+  build:
+    context: services/current-time
   environment:
-    GATEWAY_URL: "http://host.docker.internal:8080"
-    PLATFORM_ADMIN_TOKEN: "${PLATFORM_ADMIN_TOKEN:-}"
-    SERVICE_URL: "http://host.docker.internal:8082"
-  ports: ["8082:8082"]
-  depends_on: { agent-gateway: { condition: service_started } }
+    GATEWAY_URL: http://gateway:8080
+    SERVICE_URL: http://current-time:8082
+    PLATFORM_ADMIN_TOKEN: "${PLATFORM_ADMIN_TOKEN}"
+  expose: ["8082"]
+  depends_on:
+    gateway:
+      condition: service_healthy
 ```
+
+The gateway allows the endpoint because `CONUSAI_MCP_ALLOWED_HOSTS: current-time`.
 
 ### 6.2 Lifecycle
 
-1. **Boot.** FastAPI starts on `:8082`; `@app.on_event("startup")` schedules
+1. **Boot.** FastAPI starts on `:8082`; its `lifespan` hook schedules
    `register_with_retry()` as a background task — the HTTP server is up before
    registration completes so health checks succeed regardless.
 2. **Registration.** Up to 25 attempts (5 s apart) POST a `MANIFEST` object to
    `${GATEWAY_URL}/admin/capabilities/register` with
-   `Authorization: Bearer ${PLATFORM_ADMIN_TOKEN}`. In dev (no JWT secret) the
-   service falls back to `X-Tenant-ID: dev`.
+   `Authorization: Bearer ${PLATFORM_ADMIN_TOKEN}`.
 3. **Manifest.** The payload declares
-   `kind = "remote_mcp"`, `namespace = "media.time.current-time"`, and the MCP
-   endpoint `${SERVICE_URL}/mcp`. The gateway stores it in `capability_specs`
-   and constructs a `RemoteMcpCapability` that dispatches to the endpoint.
+   `kind = "remote_mcp"`, `namespace = "media.time"`, and the MCP
+   endpoint `${SERVICE_URL}/mcp`. The gateway constructs a `RemoteMcpCapability`
+   that dispatches to the endpoint.
 4. **Invocation.** When the LLM emits `media_time_current-time__get_current_time`,
    `ToolExecutor::invoke` resolves the provider, which calls `McpAdapter::call_tool`,
    which POSTs JSON-RPC 2.0 `tools/call` to `http://current-time:8082/mcp`.
@@ -464,8 +468,8 @@ Unknown methods return `-32601`; parse errors return `-32700`.
 - Any language, any process, any host can join the platform — Rust, Python,
   Go, Node. The only contract is `POST /mcp` + JSON-RPC.
 - No agent-gateway rebuild, deploy, or coordination required.
-- Manifest changes are picked up by re-registering — semantic router
-  re-embeds on `replace()`.
+- Registration never overwrites an existing name (`409`); a changed manifest
+  takes effect when the gateway restarts and the service registers again.
 
 ---
 
@@ -487,13 +491,13 @@ Unknown methods return `-32601`; parse errors return `-32700`.
 | LLM never picks an obviously-relevant cap| Embedding text too sparse; missing `search_keywords`                         | `manifest.embedding_text()`; expand `search_keywords` / `tags` and reload    |
 | Cap routed but invoke fails 404          | Tool name not on the provider                                               | Check `tools[]` block and Anthropic-safe name sanitisation                    |
 | Remote MCP unreachable                   | Service down or registration retries exhausted                              | `current-time` logs; `/admin/capabilities` shows `last_error`                 |
-| Hot-reload didn't pick up edit           | Watcher not running (mount missing) or wrong dir                            | Confirm `./apps/backend/capabilities` is bind-mounted                         |
+| Hot-reload didn't pick up edit           | Watcher not running or wrong dir                                            | `CONUSAI_CAPABILITIES_DIR` (`/app/capabilities` in the image, copied at build) |
 
-### 7.3 Limits & quotas (defaults; env-tunable)
+### 7.3 Limits & quotas (compiled-in `AdminLimits` defaults)
 
-- `CONUSAI_MAX_CAPABILITIES = 64`
-- `CONUSAI_MAX_MANIFEST_BYTES = 65_536`
-- `CONUSAI_MAX_WASM_BYTES = 8_388_608`
+- max capabilities = 64
+- max manifest bytes = 65 536
+- max WASM bytes = 8 388 608
 - Router `top_k ≤ 50` per turn
 - Chain `max_tokens` defaults to 2048; the reducer used by `parallel_consensus` caps at 2048.
 
@@ -506,8 +510,9 @@ Each invocation emits:
 - Realtime events on the tenant channel: `pipeline.step.started`, `pipeline.step.finished`.
 - System events: `capability.reloaded` on `__system__`.
 
-Pipe to Jaeger via the optional `observability` profile in
-[docker-compose.yml](../../docker-compose.yml).
+With `OTEL_EXPORTER_OTLP_ENDPOINT` set, traces, metrics and logs go over
+OTLP/HTTP to ConusAI Cloud's ingest (`<platform>/otel/v1/*`) and appear in its
+Observe view; see [deploy-conusai-cloud.md](../deploy-conusai-cloud.md).
 
 ---
 

@@ -1,6 +1,8 @@
 # Rig 0.36 Native Migration Plan
 
-> Source inputs: [docs/rig-features.md](docs/tasks/rig-features.md) (strategic mandate) and [docs/arch.md](docs/arch.md) / [docs/arch2.md](docs/arch2.md) (current implementation audit).
+> **Status (2026-10-16): historical.** There is no Swagger UI any more; routes surface in the OpenAPI document (`GET /openapi.json`, `agent-gateway --dump-openapi`). Current behaviour: [arch.md](arch.md).
+
+> Source inputs: `docs/rig-features.md` (strategic mandate) and [docs/arch.md](arch.md) / `docs/arch2.md` (current implementation audit).
 > Goal: replace ConusAI's custom vector / memory / modality / provider glue with **first-class Rig 0.36 abstractions** while preserving tenant isolation, semantic prefilter ≤ 50, and the current capability factory + TOML manifest contract.
 > Audit anchor date: 2026-05-11 · backend 0.3.1 · `rig-core = 0.36`.
 
@@ -33,14 +35,14 @@ These remain non-negotiable across every phase below — every PR must prove the
 
 | Concern | Current implementation | Files to retire / refactor |
 | --- | --- | --- |
-| Vector ANN | `QdrantVectorStore` thin client + `SemanticCapabilityRouter` (moka cache, blake3 keys, manual top-K) | [apps/backend/crates/agent-core/src/store/qdrant_vector.rs](apps/backend/crates/agent-core/src/store/qdrant_vector.rs), [semantic_router.rs](apps/backend/crates/agent-core/src/capabilities/semantic_router.rs), [vector_store/mod.rs](apps/backend/crates/agent-core/src/vector_store/mod.rs) |
-| Embeddings | Custom `EmbeddingService` trait + `LocalEmbeddingService` (fastembed) + `OpenAiEmbeddingService` | [indexing/embedding_service.rs](apps/backend/crates/agent-core/src/indexing/embedding_service.rs), [local_embedding_service.rs](apps/backend/crates/agent-core/src/indexing/local_embedding_service.rs) |
-| Long-term memory | `ContextBuilder` + `OldestFirstTruncator` walking workspace ancestors | [memory/context_builder.rs](apps/backend/crates/agent-core/src/memory/context_builder.rs), [memory/truncator.rs](apps/backend/crates/agent-core/src/memory/truncator.rs) |
-| Multimodal | Vision **input** only via `ContractPipeline::UserContent::image_base64` | [chains/contract.rs](apps/backend/crates/agent-core/src/chains/contract.rs) |
-| Providers | `AnthropicProvider` only (custom `CompletionProvider` impl) | [llm/providers/anthropic.rs](apps/backend/crates/agent-core/src/llm/providers/anthropic.rs) |
-| Cap registry semantic search | `capabilities/embedding.rs` builds capability text vectors fed into Qdrant | [capabilities/embedding.rs](apps/backend/crates/agent-core/src/capabilities/embedding.rs) |
+| Vector ANN | `QdrantVectorStore` thin client + `SemanticCapabilityRouter` (moka cache, blake3 keys, manual top-K) | [apps/backend/crates/agent-core/src/store/qdrant_vector.rs](../apps/backend/crates/agent-core/src/store/qdrant_vector.rs), [semantic_router.rs](../apps/backend/crates/agent-core/src/capabilities/semantic_router.rs), [vector_store/mod.rs](../apps/backend/crates/agent-core/src/vector_store/mod.rs) |
+| Embeddings | Custom `EmbeddingService` trait + `LocalEmbeddingService` (fastembed) + `OpenAiEmbeddingService` | [indexing/embedding_service.rs](../apps/backend/crates/agent-core/src/indexing/embedding_service.rs), [local_embedding_service.rs](../apps/backend/crates/agent-core/src/indexing/local_embedding_service.rs) |
+| Long-term memory | `ContextBuilder` + `OldestFirstTruncator` walking workspace ancestors | [memory/context_builder.rs](../apps/backend/crates/agent-core/src/memory/context_builder.rs), [memory/truncator.rs](../apps/backend/crates/agent-core/src/memory/truncator.rs) |
+| Multimodal | Vision **input** only via `ContractPipeline::UserContent::image_base64` | `chains/contract.rs` |
+| Providers | `AnthropicProvider` only (custom `CompletionProvider` impl) | [llm/providers/anthropic.rs](../apps/backend/crates/agent-core/src/llm/providers/anthropic.rs) |
+| Cap registry semantic search | `capabilities/embedding.rs` builds capability text vectors fed into Qdrant | [capabilities/embedding.rs](../apps/backend/crates/agent-core/src/capabilities/embedding.rs) |
 
-Touchpoints that **must keep working** through every phase: `AgentRuntime::prompt` ([agent/builder.rs](apps/backend/crates/agent-core/src/agent/builder.rs)), `AppState` wiring ([agent-gateway/src/state.rs](apps/backend/crates/agent-gateway/src/state.rs)), and the gateway tests in [tests/remote_mcp_e2e.rs](apps/backend/crates/agent-gateway/tests/remote_mcp_e2e.rs).
+Touchpoints that **must keep working** through every phase: `AgentRuntime::prompt` ([agent/builder.rs](../apps/backend/crates/agent-core/src/agent/builder.rs)), `AppState` wiring ([agent-gateway/src/state.rs](../apps/backend/crates/agent-gateway/src/state.rs)), and the gateway tests in [tests/remote_mcp_e2e.rs](../apps/backend/crates/agent-gateway/tests/remote_mcp_e2e.rs).
 
 ---
 
@@ -51,7 +53,7 @@ Touchpoints that **must keep working** through every phase: `AgentRuntime::promp
 **Outcome:** delete `QdrantVectorStore`, the moka cache, and the blake3 key code; capability prefilter becomes a one-line `index.top_n(query, k)` call. LanceDB is the embedded backend (sub-ms ANN, perfect for the Tauri shell); `rig-qdrant` remains as a feature-gated cloud backend.
 
 #### A.1 Workspace deps
-- Edit root [Cargo.toml](Cargo.toml) `[workspace.dependencies]`: bump nothing, add
+- Edit root [Cargo.toml](../Cargo.toml) `[workspace.dependencies]`: bump nothing, add
   ```toml
   rig-core    = { version = "=0.36", features = ["derive"] }   # `derive` required for #[derive(Embed)]
   rig-lancedb = "0.36"
@@ -59,7 +61,7 @@ Touchpoints that **must keep working** through every phase: `AgentRuntime::promp
   lancedb     = "0.21"   # transitively required for index init
   ```
   Pin Rig with `=0.36` and add a `cargo deny` rule to block accidental minor bumps; CI runs a quarterly "Rig compatibility matrix" job against the latest `0.36.x` patch.
-- In [agent-core/Cargo.toml](apps/backend/crates/agent-core/Cargo.toml) add features:
+- In [agent-core/Cargo.toml](../apps/backend/crates/agent-core/Cargo.toml) add features:
   ```toml
   [features]
   default          = ["vector-lancedb"]
@@ -72,7 +74,7 @@ Touchpoints that **must keep working** through every phase: `AgentRuntime::promp
   vector-qdrant    = "Cloud Qdrant backend for multi-node deployments."
   local-embeddings = "Bundle fastembed for offline embedding generation."
   ```
-  The `[package.metadata.features]` table is the 2026 community convention for documenting Cargo features so `cargo metadata` and IDEs surface them; also mirrored in a new [docs/features.md](docs/features.md).
+  The `[package.metadata.features]` table is the 2026 community convention for documenting Cargo features so `cargo metadata` and IDEs surface them; also mirrored in a new `docs/features.md`.
 - Remove the direct `qdrant-client` dep from `agent-core` once Phase A.5 lands; keep it only behind `vector-qdrant`.
 
 #### A.2 New module `agent_core::vector` (replaces `store::qdrant_vector` + `vector_store/mod.rs`)
@@ -113,7 +115,7 @@ The `lancedb::Connection` is held inside an `Arc<tokio::sync::Mutex<…>>` (or `
 
 #### A.3 Replace `SemanticCapabilityRouter`
 
-Refactor [semantic_router.rs](apps/backend/crates/agent-core/src/capabilities/semantic_router.rs):
+Refactor [semantic_router.rs](../apps/backend/crates/agent-core/src/capabilities/semantic_router.rs):
 
 - Drop `moka`, `blake3` cache, manual top-K loop, custom `CachedResult`.
 - Hold `Arc<dyn rig::vector_store::VectorStoreIndexDyn>` instead of `Arc<QdrantVectorStore>`.
@@ -132,10 +134,10 @@ Refactor [semantic_router.rs](apps/backend/crates/agent-core/src/capabilities/se
   ```
 - Tenant + namespace filters are pushed into the Rig `Filter` AST — replaces the hand-rolled `NamespaceFilter` and remains portable when swapping `vector-lancedb` ↔ `vector-qdrant`.
 - Keep `include_always` semantics by union-ing those names after the Rig query.
-- Preserve the `RouterMetrics` counters (cache_hits/misses become hit/miss against Rig's own caching layer when present, else dropped — wire OTel counters in [common::metrics](apps/backend/crates/common/src/metrics.rs) instead).
+- Preserve the `RouterMetrics` counters (cache_hits/misses become hit/miss against Rig's own caching layer when present, else dropped — wire OTel counters in [common::metrics](../apps/backend/crates/common/src/metrics.rs) instead).
 
 #### A.4 Capability indexing pipeline
-- Replace [capabilities/embedding.rs](apps/backend/crates/agent-core/src/capabilities/embedding.rs) (manual `embed_capability_text`) with Rig's `EmbeddingsBuilder`:
+- Replace [capabilities/embedding.rs](../apps/backend/crates/agent-core/src/capabilities/embedding.rs) (manual `embed_capability_text`) with Rig's `EmbeddingsBuilder`:
   ```rust
   let docs = registry.iter_cards()
       .map(CapabilityRecord::from_card)
@@ -149,7 +151,7 @@ Refactor [semantic_router.rs](apps/backend/crates/agent-core/src/capabilities/se
 - Move this into `agent-gateway::capabilities::bootstrap` so it runs once during `AppState` build, after capability discovery.
 
 #### A.5 AppState rewire
-- In [agent-gateway/src/state.rs](apps/backend/crates/agent-gateway/src/state.rs), replace the `QdrantVectorStore` field with `Arc<dyn VectorStoreIndexDyn>` (capability index) and a separate content index for `coco_indexer`.
+- In [agent-gateway/src/state.rs](../apps/backend/crates/agent-gateway/src/state.rs), replace the `QdrantVectorStore` field with `Arc<dyn VectorStoreIndexDyn>` (capability index) and a separate content index for `coco_indexer`.
 - Update the `tests/remote_mcp_e2e.rs` `ConstEmbedder` test double to implement Rig's `EmbeddingModel` trait instead of the custom `EmbeddingService`. This is the canary test for Phase A.
 
 #### A.6 Cleanup
@@ -195,7 +197,7 @@ where M: rig::completion::CompletionModel + Send + Sync + 'static
 }
 ```
 
-This deletes the bespoke streaming loop in [anthropic.rs](apps/backend/crates/agent-core/src/llm/providers/anthropic.rs). Streaming logic now lives once in the adapter using `rig::streaming::StreamedAssistantContent`.
+This deletes the bespoke streaming loop in [anthropic.rs](../apps/backend/crates/agent-core/src/llm/providers/anthropic.rs). Streaming logic now lives once in the adapter using `rig::streaming::StreamedAssistantContent`.
 
 #### B.2 Feature-flagged provider registration
 
@@ -223,11 +225,11 @@ all-providers = ["provider-openai","provider-gemini","provider-groq",
 - Returns `HashMap<String, Arc<dyn CompletionProvider>>` — same shape `LlmRegistry::from_config` already expects, so the registry itself does **not** change.
 
 #### B.3 Boot validation
-- `verify_llm_providers` ([llm/registry.rs](apps/backend/crates/agent-core/src/llm/registry.rs)) is unchanged in behaviour — still alias→provider checks, no network.
+- `verify_llm_providers` ([llm/registry.rs](../apps/backend/crates/agent-core/src/llm/registry.rs)) is unchanged in behaviour — still alias→provider checks, no network.
 - New `validate_provider_credentials_optional` (gated behind a `--probe-providers` CLI flag) calls a 1-token completion; **off by default** to honour principle 5.
 
 #### B.4 Config surface
-Extend [common::config::LlmConfig](apps/backend/crates/common/src/config.rs) example block:
+Extend common::config::LlmConfig example block:
 ```toml
 [llm]
 default = "fast"
@@ -251,7 +253,7 @@ default = "fast"
 
 #### C.1 Backend: registry split
 
-Add to [llm/types.rs](apps/backend/crates/agent-core/src/llm/types.rs):
+Add to [llm/types.rs](../apps/backend/crates/agent-core/src/llm/types.rs):
 ```rust
 pub enum ModalityKind { Completion, ImageGen, AudioGen, Transcription }
 pub struct ModalBinding { pub provider: String, pub model: String, pub kind: ModalityKind }
@@ -273,11 +275,11 @@ Add three built-in capabilities under `capabilities/builtin/`:
 - `audio_speak.rs` — TTS via `AudioGenerationModelDyn`; streamed bytes piped into the existing artifact store.
 - `audio_transcribe.rs` — accepts `{ artifact_id }` or raw bytes, returns `{ text, segments[], language }`.
 
-Each capability is a normal TOML manifest under [apps/backend/capabilities/](apps/backend/capabilities/) so the existing factory chain (`McpFactory → WasmFactory → ChainFactory → BuiltinFactory`) picks them up unchanged.
+Each capability is a normal TOML manifest under [apps/backend/capabilities/](../apps/backend/capabilities) so the existing factory chain (`McpFactory → WasmFactory → ChainFactory → BuiltinFactory`) picks them up unchanged.
 
 #### C.3 Streaming protocol delta
 
-Extend `ChatStreamDelta` (and the `chat:chunk:<id>` event payload) in [packages/types](packages/types/) with a tagged union (2026 streaming-API convention — `#[serde(tag = "kind")]` on the Rust mirror keeps forward-compatibility when new chunk kinds land):
+Extend `ChatStreamDelta` (and the `chat:chunk:<id>` event payload) in [packages/types](../packages/types) with a tagged union (2026 streaming-API convention — `#[serde(tag = "kind")]` on the Rust mirror keeps forward-compatibility when new chunk kinds land):
 ```ts
 type ChunkPayload =
   | { kind: "text"; delta: string }
@@ -286,7 +288,7 @@ type ChunkPayload =
   | { kind: "audio"; artifactId: string; mime: "audio/mpeg" | "audio/wav" }
   | { kind: "transcript"; segments: TranscriptSegment[] };
 ```
-Rust mirror in [agent-gateway/src/routes/v1/agent.rs](apps/backend/crates/agent-gateway/src/routes/v1/agent.rs):
+Rust mirror in `agent-gateway/src/routes/v1/agent.rs`:
 ```rust
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -346,7 +348,7 @@ Tenant + scope (`thread_id`, `workspace_node_id`) live in record metadata; recal
 
 #### D.3 Auto-recall hook
 
-Add a Rig `PromptHook` (alongside `TracingHook` and `PermissionHook` in [agent/hooks.rs](apps/backend/crates/agent-core/src/agent/hooks.rs)):
+Add a Rig `PromptHook` (alongside `TracingHook` and `PermissionHook` in [agent/hooks.rs](../apps/backend/crates/agent-core/src/agent/hooks.rs)):
 ```rust
 pub struct MemoryRecallHook { index: Arc<dyn VectorStoreIndexDyn>, tenant: TenantContext, thread: Ulid }
 impl<M: CompletionModel> PromptHook<M> for MemoryRecallHook {
@@ -384,7 +386,7 @@ Delete after grep:
 These run in parallel with Phases A–D.
 
 ### 3.1 Telemetry
-- New OTel attributes: `rig.provider`, `rig.model`, `rig.modality`, `vector.backend`, `memory.scope`. Define once in [common::metrics](apps/backend/crates/common/src/metrics.rs).
+- New OTel attributes: `rig.provider`, `rig.model`, `rig.modality`, `vector.backend`, `memory.scope`. Define once in [common::metrics](../apps/backend/crates/common/src/metrics.rs).
 - Histograms: `rig_completion_duration_ms`, `vector_topk_duration_ms`, `memory_recall_duration_ms`.
 
 ### 3.2 Error mapping
@@ -392,11 +394,11 @@ These run in parallel with Phases A–D.
 
 ### 3.3 Config + secrets
 - Extend `LlmConfig` schema; add `--print-effective-config` CLI flag for ops.
-- Document new env vars in [docs/ops/](docs/ops/) (`OPENAI_API_KEY`, `GROQ_API_KEY`, `OLLAMA_HOST`, …).
+- Document new env vars in [docs/ops/](ops/) (`OPENAI_API_KEY`, `GROQ_API_KEY`, `OLLAMA_HOST`, …).
 
 ### 3.4 Documentation
-- After **each** phase ships, append a "Migration log" entry to [docs/arch.md](docs/arch.md) and update [docs/arch2.md](docs/arch2.md) §4.4 (Rig usage) with the now-current trait surface.
-- Update [docs/capability-authoring-guide.md](docs/capability-authoring-guide.md) with the new image/audio/transcription manifest examples.
+- After **each** phase ships, append a "Migration log" entry to [docs/arch.md](arch.md) and update `docs/arch2.md` §4.4 (Rig usage) with the now-current trait surface.
+- Update [docs/capability-authoring-guide.md](capability-authoring-guide.md) with the new image/audio/transcription manifest examples.
 
 ### 3.5 Test matrix
 | Layer | Tooling | Phase coverage |

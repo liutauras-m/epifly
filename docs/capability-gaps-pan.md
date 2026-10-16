@@ -1,5 +1,7 @@
 # Capability Authoring Guide — Gap Closure Plan v0.3
 
+> **Status (2026-10-16): historical.** The `file-storage` and `storage-fs` capabilities and the `X-Tenant-ID` header it mentions were deleted in the ConusAI Cloud refactor; tenants come only from the bearer token. Current reference: [capability-authoring-guide.md](capability-authoring-guide.md).
+
 > Source: cross-check of [capability-authoring-guide.md](capability-authoring-guide.md)
 > against the live code in `apps/backend/...` (2026-05-09).
 > Replaces v0.2 after a second review pass; folds in the v0.3 refinements
@@ -21,7 +23,7 @@
 ## 0. Audit corrections (v0.1 → v0.2)
 
 The first pass flagged TOML-vs-YAML as a real gap. It is **not** — the active
-backend at [apps/backend/capabilities](apps/backend/capabilities/) ships
+backend at [apps/backend/capabilities](../apps/backend/capabilities) ships
 `capability.toml` files exactly as the guide describes:
 
 ```
@@ -35,11 +37,11 @@ apps/backend/capabilities/
 └── template-wasm/capability.{toml,wasm}
 ```
 
-The loader at [tools/registry.rs](apps/backend/crates/agent-core/src/tools/registry.rs#L131)
+The loader at `tools/registry.rs`
 hard-codes `capability.toml`. The root [capabilities/](capabilities/) directory
 with `.yaml` files is stale and is **not** consumed by the active backend
 (only the legacy root `crates/agent-gateway` referenced it, and the workspace
-no longer builds it — only [apps/backend/crates/agent-gateway/Cargo.toml](apps/backend/crates/agent-gateway/Cargo.toml)
+no longer builds it — only [apps/backend/crates/agent-gateway/Cargo.toml](../apps/backend/crates/agent-gateway/Cargo.toml)
 exists).
 
 Result: the guide is correct; the **repo** has a stale tree to remove.
@@ -53,10 +55,10 @@ Result: the guide is correct; the **repo** has a stale tree to remove.
 | G1 | Reference service uses `CONUSAI_PLATFORM_URL` / `CONUSAI_PLATFORM_TOKEN` / `CONUSAI_SERVICE_URL`; guide documents `GATEWAY_URL` / `PLATFORM_ADMIN_TOKEN` / `SERVICE_URL` | Medium — anyone copy-pasting the guide will get unregistered services | Docs + service env-var contract |
 | G2 | `tenant_scope` is **stored** on every row and **propagated** into `ToolManifest`, but no routing/listing path filters by it. Tools with non-empty `tenant_scope` are exposed to every tenant | High — silent tenant leak of scoped tools | `routes/capabilities.rs`, `routes/search.rs`, agent tool selection |
 | G3 | Stale root `capabilities/*.yaml` and root `crates/agent-gateway` tree | Low — confusion / lint noise | Repo cleanup |
-| G4 | Guide does not mention `dynamic_prompt` `ToolKind` (it exists in [manifest.rs](apps/backend/crates/agent-core/src/tools/manifest.rs#L62-L65)) | Low — undocumented but functional surface | Docs |
+| G4 | Guide does not mention `dynamic_prompt` `ToolKind` (it exists in `manifest.rs`) | Low — undocumented but functional surface | Docs |
 | G5 | Guide claims Python example uses `GATEWAY_URL` / `PLATFORM_ADMIN_TOKEN`; real `current-time` service uses `CONUSAI_*` names → guide and reference example diverge | Medium (subset of G1) | Docs |
 | G6 | No automated test that a registered `remote_mcp` capability is reachable end-to-end (register → LISTEN/NOTIFY reload → `tools/list` from gateway → invoke) | Medium — regression risk on the hot-reload path | `apps/backend/crates/agent-gateway/tests/` |
-| G7 | `PLATFORM_ADMIN_TOKEN` is read at request time inside the handler ([admin_capabilities.rs](apps/backend/crates/agent-gateway/src/routes/admin_capabilities.rs#L560-L575)); env value can drift from the rest of the gateway config; no startup warning when unset in non-dev mode | Low — config-hygiene | `state.rs`, handler |
+| G7 | `PLATFORM_ADMIN_TOKEN` is read at request time inside the handler ([admin_capabilities.rs](../apps/backend/crates/agent-gateway/src/routes/admin_capabilities.rs#L560-L575)); env value can drift from the rest of the gateway config; no startup warning when unset in non-dev mode | Low — config-hygiene | `state.rs`, handler |
 
 Items G1, G2, G6 are merge-blocking for "production-ready" claims in the
 guide. G3–G5, G7 are quality / cleanup.
@@ -85,7 +87,7 @@ whose `tenant_scope` is non-empty *and* does not contain the resolved tenant.
 
 Files & exact changes:
 
-1. [tools/registry.rs](apps/backend/crates/agent-core/src/tools/registry.rs) —
+1. `tools/registry.rs` —
    add helper (canonical method name `enabled_for_tenant`, mirrors the
    v0.4 vocabulary used elsewhere on `CapabilityCard`):
    ```rust
@@ -102,16 +104,16 @@ Files & exact changes:
        }
    }
    ```
-2. [routes/capabilities.rs](apps/backend/crates/agent-gateway/src/routes/capabilities.rs) —
+2. [routes/capabilities.rs](../apps/backend/crates/agent-gateway/src/routes/capabilities.rs) —
    replace `all_enabled()` with `enabled_for_tenant(&tenant.0.tenant_id)`.
-3. [routes/search.rs](apps/backend/crates/agent-gateway/src/routes/search.rs#L42-L60) —
+3. [routes/search.rs](../apps/backend/crates/agent-gateway/src/routes/search.rs#L42-L60) —
    same swap before passing `cards` into `vector_search` / `local_search`.
 4. Agent tool-selection path — grep for callers of `registry.all_enabled()`
    inside `agent` / `chat` handlers and the
-   [SemanticCapabilityRouter](apps/backend/crates/agent-core/src/tools/semantic_router.rs#L88-L100)
+   SemanticCapabilityRouter
    constructor; thread the tenant id through and filter at the same point.
 5. SQL safety net: extend the search SQL in
-   [search.rs](apps/backend/crates/agent-gateway/src/routes/search.rs)
+   [search.rs](../apps/backend/crates/agent-gateway/src/routes/search.rs)
    `top_n_capabilities` to add
    `WHERE cardinality(tenant_scope) = 0 OR $tenant = ANY(tenant_scope)` so
    ANN cannot leak even if the in-memory filter is bypassed. Confirm the
@@ -142,15 +144,15 @@ Decision: **adopt the guide's names** (`GATEWAY_URL`, `PLATFORM_ADMIN_TOKEN`,
 
 Files & changes:
 
-1. [services/current-time/main.py](services/current-time/main.py#L100-L150) —
+1. [services/current-time/main.py](../services/current-time/main.py#L100-L150) —
    accept the new names, keep `CONUSAI_PLATFORM_URL` / `CONUSAI_PLATFORM_TOKEN`
    / `CONUSAI_SERVICE_URL` as fallbacks for one release with a deprecation
    `print(...)` on use.
-2. [docker-compose.yml](docker-compose.yml) `services.current-time.environment`
+2. [docker-compose.yml](../docker-compose.yml) `services.current-time.environment`
    — set the new names; keep old as commented-out for migration.
-3. [admin_capabilities.rs](apps/backend/crates/agent-gateway/src/routes/admin_capabilities.rs#L560)
+3. [admin_capabilities.rs](../apps/backend/crates/agent-gateway/src/routes/admin_capabilities.rs#L560)
    — keep reading `PLATFORM_ADMIN_TOKEN`; add a startup check in
-   [state.rs](apps/backend/crates/agent-gateway/src/state.rs) using
+   [state.rs](../apps/backend/crates/agent-gateway/src/state.rs) using
    `var_os` (avoids a needless `String` alloc and treats invalid UTF-8
    identically to "unset") with a structured `tracing` field for ops
    dashboards:
@@ -183,7 +185,7 @@ every `ToolKind` variant.
 
 Files & changes:
 
-1. New [apps/backend/crates/agent-gateway/tests/remote_mcp_e2e.rs](apps/backend/crates/agent-gateway/tests):
+1. New [apps/backend/crates/agent-gateway/tests/remote_mcp_e2e.rs](../apps/backend/crates/agent-gateway/tests):
    spin up a `wiremock` server that answers `tools/list` and `tools/call`,
    register it via `POST /admin/capabilities/register`, wait for the
    `RealtimeService` reload using `tokio::time::timeout(Duration::from_secs(2), …)`
@@ -191,7 +193,7 @@ Files & changes:
    and assert the wiremock saw the call. Pinned regression for the
    LISTEN/NOTIFY → `reload_one` → `invalidate_all` chain.
 2. Delete the stale root [capabilities/](capabilities/) `*.yaml` directory and
-   the stale root [crates/](crates/) tree if `cargo metadata` confirms they
+   the stale root `crates/` tree if `cargo metadata` confirms they
    are not workspace members. (Verify first with
    `cargo metadata --format-version 1 | jq '.workspace_members'`; do **not**
    delete unless absent.)
@@ -202,7 +204,7 @@ Files & changes:
 4. [capability-authoring-guide.md](capability-authoring-guide.md) §Option A:
    replace the lone TOML example with a one-line bullet per **every** real
    `ToolKind` variant from
-   [manifest.rs](apps/backend/crates/agent-core/src/tools/manifest.rs#L55-L67):
+   `manifest.rs`:
    `chain`, `wasm`, `native`, `mcp`, `docker`, `dynamic_prompt`, `remote_mcp`.
    Each bullet links to the variant and gives one sentence on when to choose it.
 
@@ -236,9 +238,9 @@ its 25–32 AI-h scope.
 PR-1/2/3 deliberately leave the existing invoice / contract pipeline
 **unchanged**. After they merge, the upload→extract path is still:
 
-- `POST /ui/extract-invoice` ([ui/handlers/invoice.rs](apps/backend/crates/agent-gateway/src/ui/handlers/invoice.rs))
-- `InvoicePipeline` ([chains/invoice.rs](apps/backend/crates/agent-core/src/chains/invoice.rs))
-- `match tool_name { "extract_invoice" => … }` in [tools/providers/chain.rs:45-180](apps/backend/crates/agent-core/src/tools/providers/chain.rs#L45-L180)
+- `POST /ui/extract-invoice` (`ui/handlers/invoice.rs`)
+- `InvoicePipeline` (`chains/invoice.rs`)
+- `match tool_name { "extract_invoice" => … }` in `tools/providers/chain.rs:45-180`
 - Frontend `isInvoice()` heuristics + `invoiceCard()`
 
 This is intentional — those four sites are deleted by the genericization epic
@@ -272,10 +274,10 @@ generic Svelte `ToolResultCard`). Codebase reality check (2026-05-10):
 
 | Claim in suggestion | Codebase truth |
 |---|---|
-| "New `PromptCapabilityFactory`" | Already shipped as [`DynamicPromptFactory`](apps/backend/crates/agent-core/src/tools/providers/dynamic_prompt.rs) + [`DynamicPromptCapability`](apps/backend/crates/agent-core/src/chains/dynamic_prompt.rs) (v0.3.2). Use it as-is; do **not** add a parallel factory. |
-| "Extend `LlmChainConfig` with `output_schema`, vision, model" | All three fields already exist on [`LlmChainConfig`](apps/backend/crates/agent-core/src/tools/manifest.rs#L7-L25). |
+| "New `PromptCapabilityFactory`" | Already shipped as `DynamicPromptFactory` + [`DynamicPromptCapability`](../apps/backend/crates/agent-core/src/chains/dynamic_prompt.rs) (v0.3.2). Use it as-is; do **not** add a parallel factory. |
+| "Extend `LlmChainConfig` with `output_schema`, vision, model" | All three fields already exist on `LlmChainConfig`. |
 | "Auto-generate Rig tool schema from `input_schema`" | `ToolDef.input_schema` is already JSON Schema; Rig conversion is a 1-call wrapper, not a new abstraction. |
-| "Delete `chains/invoice.rs`, `chains/contract.rs`, the `match` in `tools/providers/chain.rs`, and `ui/handlers/invoice.rs`" | These **do** still exist ([chain.rs:45-180](apps/backend/crates/agent-core/src/tools/providers/chain.rs#L45-L180), [ui/handlers/invoice.rs](apps/backend/crates/agent-gateway/src/ui/handlers/invoice.rs)) — real work, **separate epic**. |
+| "Delete `chains/invoice.rs`, `chains/contract.rs`, the `match` in `tools/providers/chain.rs`, and `ui/handlers/invoice.rs`" | These **do** still exist (`chain.rs:45-180`, `ui/handlers/invoice.rs`) — real work, **separate epic**. |
 | "Add `intent_hints` + `result_view` manifest blocks" | Not present today. Worth adding, but it changes the manifest contract — belongs with the port, not with G1-G7. |
 | "On-boot eval hook" | The `evals/` crate exists; no on-boot hook. Cheap (~2 AI-h) but orthogonal. |
 | "Qdrant embedding of `intent_hints`" | Semantic router already embeds descriptions; adding `intent_hints` is a one-field append once the manifest is extended. |
@@ -301,7 +303,7 @@ off in the same milestone. Otherwise it stays out.
 1. PR-1, PR-2, PR-3 merged; CI green including the new
    `tenant_scope` (+ proptest), `remote_mcp_e2e`, and `lint-no-stale-trees`
    jobs.
-2. Reference service ([services/current-time/main.py](services/current-time/main.py))
+2. Reference service ([services/current-time/main.py](../services/current-time/main.py))
    uses the canonical env-var names; `docker compose up` self-registers cleanly
    and the deprecated `CONUSAI_*` names still work for one release with a
    one-time deprecation log line.

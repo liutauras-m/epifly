@@ -1,3 +1,5 @@
+> **Status (2026-10-16): historical.** Jaeger and the OTel collector are gone; telemetry goes over OTLP/HTTP to ConusAI Cloud. `storage-fs` was deleted. Current behaviour: [arch.md](../arch.md).
+
 ## Verdict
 
 Your architecture is **strong but overextended**. The foundation is credible: Rust/Axum gateway, typed OpenAPI, capability abstraction, tenant-aware storage boundaries, Qdrant semantic routing, OTel/Prometheus, SvelteKit + Tauri shared UI. That is not amateur hour. The uploaded architecture explicitly defines a multitenant agent gateway, capability providers, semantic router, redb/Qdrant/RustFS persistence, shared UI packages, generated OpenAPI, audit logs, and observability. 
@@ -146,7 +148,7 @@ Each eval case should include:
   "input": "...",
   "tenant": "tenant_a",
   "expected_capability": "invoice-processing",
-  "forbidden_capabilities": ["storage-fs", "admin"],
+  "forbidden_capabilities": ["storage-workspace", "admin"],
   "expected_schema_valid": true,
   "max_latency_ms": 3000,
   "must_not_leak": ["tenant_b"]

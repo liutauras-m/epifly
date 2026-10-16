@@ -1,3 +1,5 @@
+> **Status (2026-10-16): done.** Swagger UI (`/docs`) was deleted; `/metrics` requires `Authorization: Bearer <PLATFORM_ADMIN_TOKEN>`; `/openapi.json` stays public. See [arch.md](../arch.md).
+
 6. Public /metrics, /docs, /openapi.json need environment-specific policy
 
 The doc lists /metrics, /docs, and /openapi.json as public/no-auth. That is convenient in dev and often wrong in production.

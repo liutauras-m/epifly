@@ -1,6 +1,6 @@
 # ConusAI Platform — Architecture Reference
 
-> **Audit date:** 2026-05-26
+> **Audit date:** 2026-10-16 (deployment, auth, environment, observability, web and shell auth re-derived for the ConusAI Cloud refactor)
 > **Workspace version:** 0.3.1 (Cargo workspace), pnpm workspace `@conusai/*` 0.6.0
 > **Status:** Source of truth — fully re-derived from current code. Supersedes all
 > prior revisions of this file.
@@ -58,7 +58,7 @@ to a **capability** — an opaque tool implementation that can be:
 - a **native** provider (Rust, compiled in)
 - an **LLM chain** (data-driven prompt + JSON Schema, declared in TOML)
 - a **remote MCP** server (JSON-RPC 2.0 over HTTPS)
-- a **WASM** component (wasmtime 44, component-model)
+- a **WASM** module (wasmtime 49, fuel/memory/epoch limits)
 - a **job-backed** capability (returns `task_id`, work runs on a tokio-cron worker)
 
 A **semantic router** (Qdrant + per-capability embeddings + scoring) selects the
@@ -76,18 +76,24 @@ The frontend ships two surfaces from a single codebase:
 Both consume the same component library (`packages/ui`), the same typed HTTP
 SDK (`packages/sdk`), and the same OpenAPI-generated types (`packages/types`).
 
-Identity is delegated to **Zitadel** in production (OIDC PKCE) with a
-**legacy HMAC** adapter for local dev. Billing/metering is delegated to **Lago**
-(self-hosted, MIT). Observability is OpenTelemetry → Jaeger; metrics are
-Prometheus over `/metrics`.
+Identity is delegated to **Zitadel**: every protected gateway route takes
+`Authorization: Bearer` with a Zitadel access token (or a hashed machine API
+key); the tenant is the user's Zitadel organization. The web app is a
+backend-for-frontend that holds the tokens server-side; the native shell holds
+them in Rust. Billing/metering is delegated to **Lago**, which also decides
+each tenant's plan. Telemetry leaves over OTLP HTTP/protobuf to ConusAI Cloud's
+`/otel/v1` ingest; Prometheus text stays available on `/metrics` (platform
+token). The whole stack deploys to **ConusAI Cloud** as one compose project
+with linked managed Postgres, Redis, Qdrant and S3 (§10.7).
 
 ---
 
 ## 2. Repository Topology
 
 ```
-conusai-platform/
-├── Cargo.toml                      # Rust workspace root (resolver "3", edition 2024, rust 1.95)
+epifly/
+├── Cargo.toml                      # Rust workspace root (resolver "3", edition 2024, rust-version 1.99)
+├── Cargo.lock
 ├── package.json                    # pnpm workspace root (pnpm 10.13.1, node ≥22)
 ├── pnpm-workspace.yaml             # Lists apps/* and packages/*
 ├── pnpm-lock.yaml
@@ -95,101 +101,86 @@ conusai-platform/
 ├── biome.json                      # Lint + format (Biome) for all JS/TS/Svelte
 ├── eslint.config.js                # ESLint flat config — Svelte parser + Biome bridge
 ├── playwright.config.ts            # Top-level Playwright config (web, iOS, shell e2e)
-├── rust-toolchain.toml             # Pins to 1.95
+├── rust-toolchain.toml             # Pins 1.99.1
 ├── renovate.json                   # Renovate bot config
-├── justfile                        # `just <recipe>` runner (web/shell/backend/ios/android dev recipes)
+├── justfile                        # `just <recipe>`: up/down/logs/config (local stack), web/shell/backend dev
 ├── Makefile                        # CI helpers (verify-routes-doc, …)
-├── docker-compose.yml              # Full local stack (Postgres, Redis, Zitadel, Lago quad, Qdrant, RustFS, Gateway, OTel, Jaeger) — mirrors `dokploy/infra` for parity
-├── start.sh / stop.sh              # Smoke wrapper around docker compose + host gateway
+├── conusai.json                    # ConusAI Cloud project config: compose file, required env names, public services, sizes
+├── docker-compose.yml              # The deployed stack: gateway, web, current-time, zitadel, lago-migrate/api/worker/clock
+├── docker-compose.local.yml        # Local only: adds Postgres, Redis (Valkey), Qdrant, RustFS and host ports
+├── .env.example                    # Every variable, project vs linked-service (docs/deploy-conusai-cloud.md)
 ├── README.md
-├── build_output.txt                # Last `cargo build` log (gitignored at root, sometimes committed)
 │
 ├── apps/
 │   ├── backend/                    # Cargo workspace member crates (see §5)
-│   │   ├── Dockerfile              # multi-stage; targets: gateway
-│   │   ├── start.sh / stop.sh      # Host-gateway smoke helpers
-│   │   ├── start-verify.sh         # Verify route table dump matches docs
+│   │   ├── Dockerfile              # agent-gateway image (cargo-chef, debian trixie-slim, uid 10001)
 │   │   ├── rust-toolchain.toml     # Pinned, overrides root if cargo runs here
 │   │   ├── crates/
-│   │   │   ├── agent-gateway/      # Axum HTTP server, route handlers, AppState, middleware
+│   │   │   ├── agent-gateway/      # Axum HTTP server, route handlers, AppState, auth, env contract
 │   │   │   ├── agent-core/         # Agents, capabilities, LLM, memory, vector store, identity
-│   │   │   ├── common/             # Shared utilities (errors, config, telemetry, types)
+│   │   │   ├── common/             # Shared utilities (errors, env contract, secrets, telemetry, types)
 │   │   │   ├── billing-core/       # Lago provider, plan catalog, quota
 │   │   │   ├── jobs/               # Cron + ad-hoc background worker
 │   │   │   └── rustfs-admin/       # S3-compatible RustFS bootstrap & IAM client
 │   │   ├── evals/                  # CLI eval harness (`cargo run -p evals`)
 │   │   ├── xtask/                  # Workspace task runner (`cargo xtask …`)
-│   │   ├── capabilities/           # 25 TOML manifests (see §9)
-│   │   ├── scripts/                # OTel collector config, route table dumper helpers
-│   │   └── target/                 # `cargo build` output (gitignored)
+│   │   └── capabilities/           # 23 TOML manifests (see §9)
 │   │
-│   ├── web/                        # SvelteKit web app (port 3000 prod, 5173 dev)
-│   │   ├── package.json            # 0.1.0 — SvelteKit 2.21, Svelte 5.33, adapter-node 5
+│   ├── web/                        # SvelteKit backend-for-frontend (port 3000 prod, 5173 dev)
+│   │   ├── Dockerfile              # node 24 trixie-slim, adapter-node, uid 10001
+│   │   ├── package.json            # 0.1.0 — SvelteKit 2.21, Svelte 5.33, adapter-node 5, openid-client 6
 │   │   ├── svelte.config.js
-│   │   ├── vite.config.ts          # Proxies /v1, /api, /admin, /ui, /swagger-ui, /docs, /openapi.json, /metrics
-│   │   ├── tsconfig.json
+│   │   ├── vite.config.ts          # dev port 5173; no dev proxy (the server routes proxy, as in prod)
 │   │   ├── playwright.config.ts    # web-only e2e
 │   │   ├── src/
 │   │   │   ├── app.html
-│   │   │   ├── hooks.server.ts     # CSRF, session verify, font preload
+│   │   │   ├── hooks.server.ts     # init: validate env; session resolve + login redirect; security headers
 │   │   │   ├── lib/
-│   │   │   │   ├── sdk.ts          # createConusSdk wrapper (port-aware backend URL)
+│   │   │   │   ├── sdk.ts          # createConusSdk, same-origin, no token in the browser
 │   │   │   │   └── server/
-│   │   │   │       ├── session.ts  # HMAC-SHA256 cookie session + BackendJwt adapter
-│   │   │   │       ├── oidc.ts     # ZitadelOidcAdapter (PKCE S256)
-│   │   │   │       └── env.ts      # BACKEND_URL helper + createServerFetch
+│   │   │   │       ├── config.ts   # Web env contract (ORIGIN, GATEWAY_URL, ZITADEL_*, AUTH_SESSION_KEY)
+│   │   │   │       ├── auth/       # oidc.ts, session.ts, seal.ts (AES-256-GCM), transaction.ts
+│   │   │   │       ├── proxy.ts    # Same-origin proxy to the gateway (bearer injection)
+│   │   │   │       ├── proxy-route.ts
+│   │   │   │       └── gateway.ts  # Server-side gateway fetch for load functions
 │   │   │   └── routes/             # See §6
 │   │   ├── static/
-│   │   ├── build/                  # adapter-node output
 │   │   └── e2e/                    # Playwright fixtures, visual + a11y + motion-budget specs
 │   │
 │   └── browser-shell/              # Tauri 2 shell (desktop + iOS + Android)
 │       ├── package.json            # 0.4.0
 │       ├── svelte.config.js        # adapter-static
 │       ├── vite.config.ts          # dev port 5174
-│       ├── src-tauri/              # Rust crate (see §7)
+│       ├── scripts/tauri.mjs       # Tauri CLI wrapper
+│       ├── src-tauri/              # Rust crate (see §7); src/auth/ = OIDC + Stronghold vault
 │       └── src/                    # Svelte frontend (Tauri webview)
 │
 ├── packages/
 │   ├── ui/                         # @conusai/ui 0.6.0 (see §8.1)
 │   ├── sdk/                        # @conusai/sdk 0.6.0 — typed HTTP client (see §8.2)
-│   └── types/                      # @conusai/types 0.6.0 — generated from /openapi.json (see §8.3)
+│   └── types/                      # @conusai/types 0.6.0 — generated from the OpenAPI document (see §8.3)
 │
 ├── services/
 │   └── current-time/               # FastAPI MCP example — self-registers via /admin/capabilities/register
 │       ├── main.py
-│       ├── Dockerfile
+│       ├── Dockerfile              # python 3.14 slim, uid 10001
 │       └── requirements.txt
 │
 ├── docker/
-│   └── zitadel/                    # bootstrap.sh + defaults.yaml seed (dev project, redirect URIs)
+│   └── zitadel/                    # bootstrap.sh + defaults.yaml — not referenced by any compose file
 │
 ├── e2e/                            # Cross-app e2e (separate from apps/*/e2e)
-│   ├── fixtures/
-│   ├── helpers/
+│   ├── fixtures/                   # incl. mock-oidc.mjs (local OIDC issuer for web e2e)
+│   ├── helpers/                    # incl. auth.ts
 │   ├── ios/                        # iOS WebDriver runs (capabilities under apps/browser-shell/src-tauri/capabilities/)
 │   ├── shell-macos/                # Desktop shell WDIO runs
 │   ├── wdio/                       # WebdriverIO config
 │   └── web/                        # Cross-app web spec collection
 │
-├── scripts/                        # Repo-wide JS/Python helpers (see §10.5)
-├── tools/
-│   └── epifly/                     # `@conusai/epifly` TS CLI — deploy/destroy/diff/doctor/init/logs/secret/status/verify/wipe (tsup ESM, jest+ts-jest, commander)
-├── dokploy/                        # Production deployment stack (see §10.7)
-│   ├── .env.example                # Source of truth for all Shared Env keys
-│   ├── domains.yaml                # Per-app hostname registry consumed by `sync-domains.mjs`
-│   ├── generate-prod-env.mjs       # Local-dev secret generator → `.env.production` (mode 0600)
-│   ├── infra/                      # Postgres + Redis + Zitadel + Lago (api/worker/clock/migrate) + Qdrant + RustFS + pg-password-sync + domain-sync
-│   ├── gateway/                    # agent-gateway compose (Rust backend) + domain-sync init
-│   ├── web/                        # SvelteKit web compose + domain-sync init
-│   ├── observability/              # Jaeger + otel-collector + domain-sync init
-│   ├── capabilities/               # current-time + future MCP sidecars
-│   ├── epifly-deploy/scripts/      # `deploy.mjs` — 6-phase reconciler (volumes → secrets → composes → domains → deploys → verify)
-│   ├── scripts/                    # `sync-domains.mjs` (tRPC domain reconciler), `wipe-volumes.sh`
-│   └── lib/                        # ESM helpers (manifest, secrets, compose-vars, verify, docker, dokploy-client, dotenv)
-├── workspaces/                     # Per-tenant scratch trees (gitignored content)
+├── scripts/                        # Repo-wide helpers incl. generate-env.sh (see §10)
 └── docs/
     ├── arch.md                     # ← this file
+    ├── deploy-conusai-cloud.md     # Deployment procedure and every project variable
     ├── plan.md
     ├── ui-plan.md
     ├── ui-design.md
@@ -209,27 +200,11 @@ conusai-platform/
     ├── project-instructions.md
     ├── capability-authoring-guide.md
     ├── capability-gaps-plan.md
-    ├── capability-gaps-pan.md      # typo'd alias kept for in-flight links
+    ├── capability-gaps-pan.md
     ├── adr/
-    │   ├── 0007-everything-is-a-capability.md
-    │   └── 0008-orchestration-hook-vs-subexecution.md
     ├── branding/
-    │   ├── branding.md
-    │   ├── indes.html              # (sic — file name typo)
-    │   └── mobile.html
     ├── capabilities/
-    │   ├── capabilities-arch.md
-    │   ├── how-to-add-a-domain.md
-    │   ├── orchestration.md
-    │   ├── plan-update.md
-    │   ├── plan.md
-    │   ├── taxonomy.md
-    │   └── upload-pipeline.md
-    ├── ops/
-    │   ├── billing.md
-    │   ├── rustfs.md
-    │   └── signing.md
-    ├── research/
+    ├── ops/                        # billing.md, rustfs.md, signing.md
     ├── tasks/
     └── verify/
 ```
@@ -240,8 +215,9 @@ conusai-platform/
 
 ### Rust workspace (`Cargo.toml`)
 
-- `resolver = "3"`, `edition = "2024"`, `rust-version = "1.95"`
+- `resolver = "3"`, `edition = "2024"`, `rust-version = "1.99"` (toolchain 1.99.1)
 - Workspace package version: `0.3.1`
+- Members: `common`, `rustfs-admin`, `agent-core`, `jobs`, `billing-core`, `agent-gateway`, `evals`, `xtask`; `apps/browser-shell/src-tauri` is excluded and builds on its own
 - Release profile: `opt-level = 3`, `lto = "thin"`, `codegen-units = 1`, `strip = "symbols"`
 
 | Crate | Version (workspace = root, otherwise inline) | Key features |
@@ -254,25 +230,23 @@ conusai-platform/
 | `redb` | `2` | embedded KV |
 | `postcard` | `1` | redb value codec |
 | `qdrant-client` | `1` | `serde` |
-| `reqwest` | `0.13` | `json`, `stream`, `multipart`, `form` |
-| `figment` | `0.10` | env + TOML config layering |
-| `opentelemetry` | `0.27` |  |
-| `tracing-opentelemetry` | `0.28` |  |
-| `prometheus` | `0.13` | text exposition |
-| `wasmtime` | `44` | component-model + WASI 0.2 |
-| `wasmtime-wasi` | `44` |  |
-| `jsonwebtoken` | `9` | OIDC + legacy HMAC |
-| `blake3` | `1` | device-token hashing |
+| `reqwest` | `0.13` | `json`, `stream`, `multipart`, `form`, `query` |
+| `opentelemetry`, `opentelemetry_sdk` | `0.33.1` | `trace`, `metrics`, `logs` |
+| `opentelemetry-otlp` | `0.33.1` | `http-proto` + blocking reqwest client only (no gRPC) |
+| `opentelemetry-appender-tracing`, `opentelemetry-prometheus` | `0.33.1` | logs bridge, Prometheus registry |
+| `tracing-opentelemetry` | `0.34.0` |  |
+| `prometheus` | `0.14` | `process`; text exposition |
+| `wasmtime` | `49.0.3` | sandboxed core modules (fuel + memory + epoch limits) |
+| `jsonwebtoken` | `11.1.0` | `rust_crypto`; Zitadel RS256 access-token verification |
+| `blake3` | `1` | API-key hashing (`API_KEYS`) |
 | `schemars` | `0.8` | JSON Schema gen |
 | `object_store` | `0.11` | `aws` (RustFS) |
-| `aes-gcm` | `0.10` | IAM creds at rest in redb |
-| `argon2` | `0.5` | password hashing (legacy adapter) |
-| `chacha20poly1305` | `0.10` | session ticket sealing |
+| `aes-gcm` | `0.10` | per-tenant S3 credentials at rest in redb |
+| `argon2` | `0.5` | RustFS admin body encryption key derivation |
 | `fastembed` | `5` | feature-gated local embeddings |
-| `moka` | `0.12` | `future` — Zitadel token cache |
+| `moka` | `0.12` | `future` — JWKS/introspection, plan and webhook caches |
 | `tokio-cron-scheduler` | `0.13` | jobs |
-| `utoipa` | `5` |  |
-| `utoipa-swagger-ui` | `9` |  |
+| `utoipa` | `5` | OpenAPI document (`/openapi.json`; no Swagger UI) |
 | `notify` | `7` | `macos_fsevent` — manifest hot-reload |
 | `proptest` | `1` | property tests |
 | `wiremock` | `0.6` | HTTP test doubles |
@@ -285,9 +259,9 @@ conusai-platform/
 
 | Package | Version | Key deps |
 |---------|---------|----------|
-| `web` (`apps/web`) | 0.1.0 | SvelteKit 2.21, adapter-node 5.2.12, Svelte 5.33, Vite 6.3.5, Tailwind v4 (`@tailwindcss/vite` 4.3), `bits-ui` 2.18, `tailwind-variants` 3.2, `tailwind-merge` 3.6, `clsx` 2.1, `lucide-svelte` 0.477, `@lucide/svelte` 1.16, `lighthouse` 13.3, `@axe-core/playwright` 4.11, `@playwright/test` 1.49 |
-| `browser-shell` (`apps/browser-shell`) | 0.4.0 | SvelteKit + adapter-static 3, Svelte 5.33, `@tauri-apps/api` 2, `tauri-plugin-{dialog,stronghold}` 2, `vite-plugin-static-copy` 1 |
-| `browser-shell-tauri` (`src-tauri/Cargo.toml`) | 0.4.0 | tauri 2 + `unstable`, `tauri-plugin-{dialog,stronghold,http,haptics}` 2, optional `tauri-plugin-updater` (non-iOS/Android), optional `tauri-plugin-webdriver-automation` 0.1.3 (macOS debug + `e2e` feature) |
+| `web` (`apps/web`) | 0.1.0 | SvelteKit 2.21, adapter-node 5.2.12, `openid-client` 6.8, Svelte 5.33, Vite 6.3.5, Tailwind v4 (`@tailwindcss/vite` 4.3), `bits-ui` 2.18, `tailwind-variants` 3.2, `tailwind-merge` 3.6, `clsx` 2.1, `lucide-svelte` 0.477, `@lucide/svelte` 1.16, `lighthouse` 13.3, `@axe-core/playwright` 4.11, `@playwright/test` 1.49 |
+| `browser-shell` (`apps/browser-shell`) | 0.4.0 | SvelteKit + adapter-static 3, Svelte 5.33, `@tauri-apps/api` 2, `@tauri-apps/plugin-dialog` 2, `vite-plugin-static-copy` 1 |
+| `browser-shell-tauri` (`src-tauri/Cargo.toml`) | 0.4.0 | tauri 2.12 + `unstable`, `tauri-plugin-{dialog,haptics}` 2, `tauri-plugin-stronghold` 2.4 (`kdf`), reqwest 0.13.5, optional `tauri-plugin-updater` (`updater` feature), optional `tauri-plugin-webdriver-automation` 0.1.3 (`e2e` feature) |
 | `@conusai/ui` | 0.6.0 | Svelte 5 peer; deps: `@tauri-apps/plugin-haptics` 2.3.2, `lucide-svelte` 0.477 (dev); test dep `jsdom` 29.1 |
 | `@conusai/sdk` | 0.6.0 | OpenAPI-derived types — runtime-free aside from fetch |
 | `@conusai/types` | 0.6.0 | `openapi-typescript` 7; prebuild runs `scripts/openapi-to-types.sh` |
@@ -305,7 +279,7 @@ conusai-platform/
 - iOS minimum: 16.0
 - Android minSdkVersion: 26
 - Deep-link plugin: desktop scheme `conusai`, mobile host `open` with `pathPrefix ["/"]`
-- CSP: `default-src 'self'; connect-src 'self' http://localhost:* http://127.0.0.1:* http://10.0.2.2:* https: wss:; img-src 'self' http://localhost:* http://127.0.0.1:* http://10.0.2.2:* data: blob:`
+- CSP in the file: `default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data: blob:; …` — no remote origin. `scripts/tauri.mjs` (the `tauri` script) requires `VITE_GATEWAY_URL`, `VITE_ZITADEL_ISSUER` and `VITE_ZITADEL_NATIVE_CLIENT_ID` for `dev`/`build` and adds the gateway origin to `connect-src`/`img-src`; the issuer is not added (only Rust talks to Zitadel)
 
 ---
 
@@ -328,7 +302,8 @@ Eleven hard rules. Every PR is reviewed against this list.
    `scripts/check-design-tokens.mjs` rejects raw hex/rgb literals outside the
    token files.
 5. **Plan tiers gate routes, not features.** Plan checks live in
-   `mw::plan::PlanLayer` and apply on a per-route basis. UI may show degraded
+   `mw::plan::enforce_plan` and `mw::router_quota`, and the plan itself is
+   resolved server-side from Lago (`plans.rs`), never from a client. UI may show degraded
    states, but enforcement is server-side.
 6. **Tenancy is enforced at the redb / Qdrant / S3 boundary, not in handlers.**
    Stores accept `tenant_id` as part of every key. `TenantStorageFactory`
@@ -361,40 +336,46 @@ Eleven hard rules. Every PR is reviewed against this list.
 
 `apps/backend/crates/agent-gateway/src/main.rs` is the entry point. Boot order:
 
-1. Handle `--dump-routes` flag → prints `routes::dump_routes_markdown()` and
-   exits. This is what `make verify-routes-doc` calls.
-2. Initialise telemetry: `common::telemetry::init("agent-gateway", "info")`
-   returns a guard and a `prometheus::Registry`.
-3. Register metric vecs: `billing_core::metrics::register`,
+1. CLI flags that exit before anything else:
+   `--dump-routes` prints `routes::dump_routes_markdown()` (what
+   `make verify-routes-doc` calls); `--hash-api-key` reads a key from stdin and
+   prints its BLAKE3 hex for `API_KEYS`; `--dump-openapi` prints the OpenAPI
+   document.
+2. Validate the whole environment contract: `GatewayConfig::from_env()`
+   (`config.rs`, built on `common::env::EnvContract`). On failure it prints
+   `agent-gateway: environment contract not satisfied; missing: …; invalid: …`
+   naming every offending variable and exits with code **2** (§5.12).
+3. Initialise telemetry: `common::telemetry::init("agent-gateway", "info")`
+   returns a guard and a `prometheus::Registry` (§5.14).
+4. Register metric vecs: `billing_core::metrics::register`,
    `RustFsMetrics::register`, `RouterMetrics::register`.
-4. Build `AppState::from_env()` (see §5.2 of `state.rs`).
-5. Spawn the 30-second loop that mirrors `AtomicU64` counters (storage fallback,
-   onboarding totals, marker failures, Zitadel cache hits/misses) into
-   Prometheus.
-6. Run declarative RustFS bootstrap (`rustfs_admin::bootstrap_storage`) unless
+5. Build `AppState::from_config(&cfg)` (`state.rs`).
+6. Spawn the 30-second loop that mirrors the onboarding counters (onboarding
+   totals, marker failures) into Prometheus.
+7. Run declarative RustFS bootstrap (`rustfs_admin::bootstrap_storage`) unless
    `RUSTFS_BOOTSTRAP=off`.
-7. Verify LLM provider registry (`agent_core::llm::verify_llm_providers`).
-8. Seed Lago plan catalog (`BillingProvider::ensure_plans`) if `LAGO_API_KEY` set.
-9. Start cron scheduler (`JobSchedulerService::start`).
-10. Log workspace indexer status (event-driven via RustFS notifications →
-    `POST /internal/rustfs/events`; disabled if `RUSTFS_NOTIFICATIONS=off`).
-11. Build the four routers (`public_router`, `internal_router`,
-    `protected_router`, `admin_router`) and merge them onto a single Axum
-    `Router`.
-12. Apply CORS (`build_cors()`), `TraceLayer` (`tower-http`), the
-    `request_id` middleware, the `tenant` middleware on the protected layer,
-    and the `RouterQuotaLayer` on `/v1/chat/*` + `/v1/agent/*`.
-13. Bind to `CONUSAI_SERVER__HOST:CONUSAI_SERVER__PORT` (defaults `0.0.0.0:8080`),
-    serve.
+8. Verify LLM provider registry (`agent_core::llm::verify_llm_providers`).
+9. Seed Lago plan catalog (`BillingProvider::ensure_plans`) if `LAGO_API_KEY` is set.
+10. Start cron scheduler (`JobSchedulerService::start`).
+11. Build the router (`build_router`): `public_router`, then
+    `protected_router` + `ui::ui_router` (with `meter::record_usage` and
+    `plan::enforce_plan`) and `admin_router`, each wrapped in
+    `auth::authenticate`, `trace::propagate_trace` and
+    `request_id::inject_request_id`; `internal_router` only when
+    `RUSTFS_NOTIFICATION_WEBHOOK_URL`/`RUSTFS_WEBHOOK_SECRET` are set; `/metrics`;
+    then CORS and `tower-http`'s `TraceLayer` outermost.
+12. Bind to `0.0.0.0:$PORT` (default 8080) and serve with graceful shutdown on
+    SIGINT/SIGTERM.
 
 `build_cors()`:
 
-- `WEB_ORIGIN` env var, default
-  `http://localhost:3000,http://localhost:5173,https://tauri.localhost,tauri://localhost`
+- Origins: `WEB_ORIGIN` (required, comma-separated http(s) origins) plus the
+  native shell's `tauri://localhost` and `http://tauri.localhost`
 - Methods: `GET POST PATCH DELETE OPTIONS`
-- Allowed headers: `Authorization, Content-Type, X-Tenant-Id, X-API-Key, X-Session-Token`
+- Allowed headers: `Authorization, Content-Type, traceparent`
 - Exposed headers: `X-Request-Id`
-- `allow_credentials = true`
+- No credentials: authentication travels in the `Authorization` header only,
+  never in cookies
 
 ### 5.2 Full HTTP Route Table
 
@@ -409,24 +390,20 @@ document. **If you add a route, add it to both `ROUTE_TABLE` and the matching
 |--------|------|------|---------|-------|
 | `GET`  | `/health`                          | none      | `health::health`                       | Liveness probe |
 | `GET`  | `/healthz/embeddings`              | none      | `health::embeddings_ready`             | Returns 200 when embedding model is loaded |
-| `GET`  | `/login`                           | none      | `auth::login_page`                     | Tiny HTML stub used for legacy adapter |
-| `POST` | `/v1/auth/login`                   | none      | `auth::login`                          | Legacy HMAC login → returns JWT |
-| `POST` | `/v1/auth/legacy/login`            | none      | `auth::login`                          | Alias for above |
 | `POST` | `/v1/billing/webhooks`             | hmac-sig  | `billing_webhook::handle_webhook`      | Lago webhooks, sig verified inside handler |
 | `POST` | `/admin/capabilities/register`     | platform-token | `admin_capabilities::register_capability` | Self-registration for sidecar MCP services |
-| `GET`  | `/openapi.json`                    | none      | `utoipa-swagger-ui`                    | Generated OpenAPI 3.1 spec |
-| `GET`  | `/docs`                            | none      | `utoipa-swagger-ui`                    | Swagger UI |
-| `GET`  | `/metrics`                         | none      | `metrics_handler`                      | Prometheus text exposition |
+| `GET`  | `/openapi.json`                    | none      | `openapi_json`                         | Generated OpenAPI document (also `agent-gateway --dump-openapi`) |
+| `GET`  | `/metrics`                         | platform-token | `metrics_handler` (`main.rs`)     | Prometheus text; `Authorization: Bearer <PLATFORM_ADMIN_TOKEN>`, else 401 |
 
-#### 5.2.2 Internal (`internal_router`) — network-restricted in prod
+#### 5.2.2 Internal (`internal_router`) — mounted only when RustFS notifications are configured
 
 | Method | Path | Auth | Handler | Notes |
 |--------|------|------|---------|-------|
 | `POST` | `/internal/rustfs/events`          | hmac-sig  | `internal::rustfs_events`              | RustFS bucket notification webhook → triggers re-indexing |
 
-Sig verification uses `RUSTFS_WEBHOOK_SECRET` (HMAC-SHA256 over body, header `X-Webhook-Signature`).
+Sig verification uses `RUSTFS_WEBHOOK_SECRET` (HMAC-SHA256 over body, header `X-RustFS-Signature` or `X-Minio-Signature`, hex).
 
-#### 5.2.3 Protected (`protected_router`) — bearer/session/api-key + plan enforcement
+#### 5.2.3 Protected (`protected_router` + `ui_router`) — `Authorization: Bearer` (Zitadel access token or API key) + plan enforcement
 
 | Method | Path | Auth | Handler | Notes |
 |--------|------|------|---------|-------|
@@ -462,8 +439,7 @@ Sig verification uses `RUSTFS_WEBHOOK_SECRET` (HMAC-SHA256 over body, header `X-
 | `GET`  | `/v1/tasks/{id}/sse`               | bearer | `tasks::task_sse`        | SSE progress stream |
 | `GET`  | `/v1/threads`                      | bearer | `threads::list`          | Thread summaries |
 | `GET`  | `/v1/threads/{id}/messages`        | bearer | `threads::get_messages`  | Paginated messages |
-| `GET`  | `/api/realtime/workspace`          | bearer | `realtime::realtime_workspace` | SSE invalidation stream |
-| `GET`  | `/v1/shells/{device_id}/control`   | bearer | `shells::shell_control`  | Browser-shell control channel (WebSocket) |
+| `GET`  | `/api/realtime/workspace`          | bearer | `realtime::realtime_workspace` | WebSocket of workspace change events (not reachable through the web app's proxy, which does not forward upgrades) |
 | `GET`  | `/v1/billing/plans`                | bearer | `billing::list_plans`    | Public plan catalog |
 | `GET`  | `/v1/billing/subscription`         | bearer | `billing::get_subscription` | Current subscription |
 | `POST` | `/v1/billing/subscriptions`        | bearer | `billing::create_subscription` | Upgrade flow |
@@ -471,11 +447,16 @@ Sig verification uses `RUSTFS_WEBHOOK_SECRET` (HMAC-SHA256 over body, header `X-
 | `POST` | `/v1/billing/portal`               | bearer | `billing::billing_portal` | Stripe portal URL |
 | `GET`  | `/v1/billing/invoices`             | bearer | `billing::list_invoices` | Per-tenant invoices |
 | `GET`  | `/v1/billing/usage`                | bearer | `billing::get_usage`     | Period-to-date usage |
+| `POST` | `/ui/stream`                       | bearer | `ui::handlers::chat::ui_stream` | Chat stream for the UI |
+| `POST` | `/ui/upload`                       | bearer | `ui::handlers::upload::ui_upload` | Multipart upload for the UI |
+| `GET`  | `/ui/files/download`               | bearer | `ui::handlers::files::ui_download` | Download for the UI |
 
-#### 5.2.4 Admin (`admin_router`) — super-admin JWT only
+#### 5.2.4 Admin (`admin_router`) — bearer with the `super_admin` role
 
-Gated by `mw::admin::require_super_admin_jwt` middleware. The admin role list is
-parsed from `SUPER_ADMIN_EMAILS` (comma-separated).
+Gated by `auth::authenticate` then `auth::require_super_admin`: the caller's
+role must be `SuperAdmin`, which comes only from the Zitadel project role
+`super_admin` (`urn:zitadel:iam:org:project:roles`). API keys always map to
+`User`. Anything else is 403.
 
 | Method | Path | Handler |
 |--------|------|---------|
@@ -495,9 +476,6 @@ parsed from `SUPER_ADMIN_EMAILS` (comma-separated).
 | `GET`    | `/admin/jobs/{name}`                     | `admin_jobs::get_job` |
 | `POST`   | `/admin/jobs/{name}/run`                 | `admin_jobs::run_now` |
 | `GET`    | `/admin/tasks`                           | `admin_jobs::list_tasks` |
-| `POST`   | `/admin/devices`                         | `admin_devices::issue_device` |
-| `GET`    | `/admin/devices`                         | `admin_devices::list_devices` |
-| `DELETE` | `/admin/devices/{id}`                    | `admin_devices::revoke_device` |
 | `POST`   | `/admin/billing/credits`                 | `billing::admin_add_credits` |
 | `POST`   | `/admin/billing/cancel/{tenant_id}`      | `billing::admin_cancel_subscription` |
 | `GET`    | `/admin/billing/dashboard`               | `billing::admin_billing_dashboard` |
@@ -525,44 +503,72 @@ Detailed schemas are emitted to `/openapi.json` and consumed by
 
 ### 5.3 Middleware Chain
 
-Located in `apps/backend/crates/agent-gateway/src/mw/`:
+Authentication is one function, `agent-gateway/src/auth.rs::authenticate`;
+the rest lives in `apps/backend/crates/agent-gateway/src/mw/`. Order for a
+protected request, outermost first:
 
-| File | Layer | Order | Behaviour |
+| Where | Layer | Applies to | Behaviour |
 |------|-------|-------|-----------|
-| `request_id.rs` | `RequestIdLayer` | outer-most | Generates `X-Request-Id` if absent; propagates to logs and response |
-| `trace.rs` | `TraceLayer` (re-export of `tower-http`) | next | Span per request with method/path/status/duration |
-| `identity.rs` | `IdentityLayer` | protected/admin | Resolves JWT → `TenantContext`; provider chosen by `CONUSAI_AUTH_PROVIDER` (`legacy` or `zitadel`) |
-| `tenant.rs` | `TenantLayer` | protected | Reads `X-Tenant-Id` if super-admin, else uses identity tenant |
-| `api_key.rs` | `ApiKeyLayer` | protected | Bearer key (when `API_KEYS` env populated `key1=tenantA,key2=tenantB`) |
-| `plan.rs` | `PlanLayer` | per-route | Enforces plan tier for premium-only routes |
-| `rate_limit.rs` | `RateLimiter` | protected | Token bucket per (tenant, route-group) |
-| `router_quota.rs` | `RouterQuotaLayer` | `/v1/chat/*`, `/v1/agent/*` | Calls `QuotaChecker` (Lago-backed); returns 402 with `upgrade_url` when over plan limits |
-| `meter.rs` | `MeterLayer` | post-handler | Emits a `UsageEvent` to Lago through `BillingProvider::record_usage` |
-| `admin.rs` | `require_super_admin_jwt` (fn) | admin router only | JWT `role` claim must be `super_admin` AND email in `SUPER_ADMIN_EMAILS` |
+| `main.rs` | `TraceLayer` (`tower-http`) | everything | Span per request with method/path/status/duration |
+| `main.rs` | `build_cors()` | everything | §5.1 |
+| `mw/request_id.rs` | `inject_request_id` | protected, ui, admin | Reads or generates `X-Request-ID`, echoes it, adds `request_id` to JSON error bodies |
+| `mw/trace.rs` | `propagate_trace` | protected, ui, admin | W3C `traceparent`/`tracestate` → parent of the request span |
+| `auth.rs` | `authenticate` | protected, ui, admin | Requires `Authorization: Bearer <token>`. The token is matched first against `API_KEYS` (BLAKE3, constant-time over all entries) and otherwise verified as a Zitadel access token (§5.4). Builds `TenantContext { tenant_id, user_id, plan, role }` and inserts `ResolvedTenant`. Missing/invalid → 401 with `WWW-Authenticate: Bearer`; IdP unreachable → 503. No cookies, session headers, tenant headers or credential-less mode |
+| `auth.rs` | `require_super_admin` | admin | 403 unless `role == SuperAdmin` |
+| `mw/plan.rs` | `enforce_plan` | protected, ui | Inserts `PlanLimits` for the resolved plan |
+| `mw/meter.rs` | `record_usage` | protected, ui (after the handler) | Reads `AgentTurnStats` from the response and reports usage to Lago (`BillingProvider`) and the quota counter |
+| `mw/router_quota.rs` | `RouterQuotaLayer` (route layer) | `/v1/chat/completions`, `/v1/agent/completions` | Per-turn tool budget and daily plan quota (`QuotaChecker`); 429 with an upgrade URL (`BILLING_RETURN_URL`) when exceeded |
+| `mw/rate_limit.rs` | `RateLimiter` (called from handlers) | chat, files, uploads, mcp, capabilities | Fixed-window counter per tenant |
+
+The plan is never read from a client: `plans.rs::PlanResolver` maps the
+tenant's Lago subscription (status active or trialing) by plan code — `pro` →
+Pro, `team`/`enterprise` → Enterprise, anything else → Free — caches it for
+5 minutes (failed lookups: Free for 30 s), and is invalidated by Lago
+subscription webhooks. Without `LAGO_API_KEY` every tenant is Free.
+
+The model of a client-facing turn comes from `LlmRegistry::select_for_plan`:
+the client may request an alias (or the model id it resolves to) from the
+plan's allowlist (`PlanTier::allowed_aliases`: Free `haiku`, `fast`, `cheap`;
+Pro adds `smart`; Enterprise adds `opus`); no request → the plan's default
+alias; anything else → 403 `ModelNotAllowed`.
 
 ### 5.4 Authentication Adapters
 
-Three identity providers live in `agent-core::identity/`:
+The gateway accepts exactly two credentials, both as `Authorization: Bearer`:
 
-- **`legacy.rs::LegacyIdentityProvider`** — HMAC-SHA256 JWT signed with
-  `JWT_SECRET`. Tenant id = JWT `sub`. Used for unit tests and CLI eval runs.
-- **`zitadel.rs::ZitadelProvider`** — OIDC introspection via Zitadel's
-  `/oauth/v2/introspect`. Uses `ZITADEL_DOMAIN`, `ZITADEL_AUDIENCE`,
-  `ZITADEL_INTROSPECTION_CLIENT_ID/_SECRET`, `ZITADEL_MGMT_PAT`. Tokens cached
-  in `moka` with `ZitadelCacheStats` (hits/misses → Prometheus).
-- **`web` (apps/web)** — adapter pattern in `src/lib/server/session.ts`. By
-  default `LocalHmacAdapter` signs cookies with `UI_SESSION_KEY`. When
-  `BACKEND_AUTH_LOGIN_URL` is set, `BackendJwtAdapter` decodes a JWT from the
-  backend and stores it in the session cookie (still HMAC-protected as
-  defence-in-depth). The OIDC PKCE callback (`/auth/callback`) sets the same
-  cookie name (`conusai_session`, TTL 24h).
+- **Zitadel access token** — `agent-core/src/identity/zitadel.rs::ZitadelVerifier`
+  (trait `TokenVerifier`):
+  - **JWT**: signature against the issuer's JWKS (found through
+    `${ZITADEL_ISSUER}/.well-known/openid-configuration`, whose `issuer` must
+    equal `ZITADEL_ISSUER`); **RS256 only**; `iss` = `ZITADEL_ISSUER`; `aud`
+    contains `ZITADEL_AUDIENCE`; `exp`/`nbf` with 60 s leeway. JWKS cached
+    10 min; an unknown `kid` triggers at most one refetch per 30 s.
+  - **Opaque**: checked at the introspection endpoint with Basic auth when
+    `ZITADEL_INTROSPECTION_CLIENT_ID`/`_SECRET` are set (results cached 60 s);
+    refused otherwise. A JWT-shaped token never falls back to introspection.
+  - Tenant = `urn:zitadel:iam:user:resourceowner:id` (the user's Zitadel
+    organization; present when the client requested the scope
+    `urn:zitadel:iam:user:resourceowner`); a token without it is rejected.
+    Role = highest of the keys in `urn:zitadel:iam:org:project:roles`:
+    `super_admin` → `SuperAdmin`, `admin` → `Admin`, else `User`. Email is
+    display-only. Nothing about plans is read from tokens.
+  - Issuer must be https (http only for a loopback host).
+- **API key** (machine clients) — `API_KEYS=<blake3-hex>:<tenant>:<label>,…`
+  parsed by `auth.rs::parse_api_keys`; only the hash is configured. Generate
+  the hash with `agent-gateway --hash-api-key` (key on stdin). User id is
+  `api-key:<label>`, role `User`.
 
-Cookies in apps/web:
+`PLATFORM_ADMIN_TOKEN` is a third, narrow credential: it authorises only
+`GET /metrics` and `POST /admin/capabilities/register` (constant-time compare).
 
-- `conusai_session` (HttpOnly, Secure when HTTPS, SameSite=Lax, TTL 24h) — the
-  unified session token
-- `conusai_oidc_session` (5-min) — short-lived PKCE state
-- `conusai_access_token` (HttpOnly) — raw OIDC bearer that the SDK forwards
+Browser and native clients:
+
+- **Web** (`apps/web`) — backend-for-frontend; the browser never sees a token.
+  See §6.2–6.3: tokens live in the AES-256-GCM sealed cookie
+  `__Host-epifly_session` and the server-side proxy adds the bearer.
+- **Shell** (`apps/browser-shell`) — Rust performs the OIDC flow and keeps the
+  refresh token in Stronghold; the webview asks Rust for a short-lived access
+  token per request (§7.2).
 
 ### 5.5 `agent-core` Module Map
 
@@ -584,8 +590,8 @@ bridge/            — ArtifactBridge (turns RustFS object keys into stable URLs
 
 capabilities/
   admin.rs         — CapabilityAdmin (CRUD on the registry from /admin handlers).
-                     AdminLimits: CONUSAI_MAX_CAPABILITIES (64), CONUSAI_MAX_MANIFEST_BYTES
-                     (65 536), CONUSAI_MAX_WASM_BYTES (8 388 608).
+                     AdminLimits (compiled in): 64 capabilities, 65 536-byte
+                     manifests, 8 MiB wasm.
   card.rs          — CapabilityCard: name, namespace, description, search keywords,
                      embedding vector, accepts/emits, cost hint.
   discovery.rs     — CapabilityDiscovery (load from CONUSAI_CAPABILITIES_DIR)
@@ -600,20 +606,23 @@ capabilities/
                      full), CostHint (bare bucket label or full struct),
                      LlmChainConfig.
   mcp_adapter.rs   — Wraps a remote MCP endpoint as a CapabilityProvider.
+  mcp_allowlist.rs — Exact host / host:port allowlist for every outbound MCP
+                     endpoint (CONUSAI_MCP_ALLOWED_HOSTS; empty = deny all).
   namespace.rs     — NamespaceFilter (semantic router prefix matching).
+  object_source.rs — Tenant-scoped object reads for file inputs (object keys in
+                     the caller's storage, never local paths or URLs).
   provider.rs      — CapabilityProvider trait + BulkCapabilityFactory.
   providers/
-    capability_spec.rs — CapabilitySpecFactory — bulk load from TOML manifests.
     chain.rs           — PromptChainCapability (kind = "chain").
     dynamic_prompt.rs  — DynamicPromptCapability — chain with prompt drawn from
                          tenant config.
     job_backed.rs      — JobBackedProvider, JobDispatch. transcribe_video_provider
                          lives here (kind = "native" wired in state.rs).
     mcp.rs             — Local-MCP capability (process-spawn variant).
-    native_storage.rs  — Storage-class capabilities (file-storage, storage-fs,
-                         storage-workspace) that wrap the workspace store directly.
+    native_storage.rs  — storage-workspace, wrapping the workspace store directly.
     remote_mcp.rs      — HTTPS MCP capability (sense-mime, current-time, …).
-    wasm.rs            — Wasmtime 44 component-model invocation harness.
+    wasm.rs            — WasmRuntime: one wasmtime 49 engine, fuel + memory +
+                         epoch limits, module cache by path and mtime.
   registry.rs      — CapabilityRegistry (Mutex<HashMap<…>>). Hot-reload swaps
                      entries atomically.
   semantic_router.rs — SemanticCapabilityRouter (Qdrant query + threshold
@@ -622,8 +631,7 @@ capabilities/
                        AttachmentHint (mimes → boost candidates).
                        RouterMetrics: per-decision histograms.
   store.rs         — FilesystemStore for hot-reloadable manifest TOMLs.
-  validator.rs     — RegisteredToolValidator. CONUSAI_MCP_ALLOWED_HOSTS gate.
-  wasm_loader.rs   — wasmtime engine + component cache.
+  validator.rs     — RegisteredToolValidator.
 
 chains/
   llm_chain.rs     — PromptChainCapability (kind="chain") implementation.
@@ -650,13 +658,14 @@ llm/
                      LlmRequest/LlmResponse/LlmChunk/LlmStream/LlmUsage.
   error.rs         — LlmError.
   provider.rs      — CompletionProvider trait.
-  registry.rs      — Build registry from figment-parsed CONUSAI_LLM__* env.
+  registry.rs      — LlmRegistry: resolve_binding, select_for_plan (plan model
+                     allowlist). Aliases are built in agent-gateway state.rs
+                     (smart, opus, haiku, fast, cheap; LLM_ALIAS_<ALIAS> overrides).
   streaming.rs     — SSE chunk assembler.
   types.rs
   providers/
     anthropic.rs   — AnthropicProvider (rig-core anthropic + reqwest streaming).
-                     Honours ANTHROPIC_API_KEY, ANTHROPIC_MODEL (default
-                     "claude-opus-4-7" — the alias maps to current Claude).
+                     Reads ANTHROPIC_API_KEY.
     mod.rs
 
 memory/
@@ -676,18 +685,17 @@ store/
                       WorkspaceStore via redb 2. Table defs in §5.11.
   creds.rs          — CredentialStore. AES-GCM encrypted IAM creds in redb
                       table `iam_tenant_creds`. Key from RUSTFS_IAM_ENC_KEY
-                      (base64). 96-bit nonce per record.
+                      (base64 of 32 bytes). 96-bit nonce per record.
   tenant_storage.rs — TenantStorageFactory: STS-style scoped IAM users for
-                      each tenant. Fallback root mode when
-                      RUSTFS_DEV_FALLBACK_ROOT=on.
+                      each tenant; a tenant without credentials gets
+                      MissingTenantCreds, never the root keys.
   rustfs_content.rs — RustFsContentStore (WorkspaceContentStore impl over RustFS).
-  qdrant_vector.rs  — QdrantVectorStore. Two collections:
-                      capability_embeddings_{dims} and content_embeddings_{dims}
-                      (also a legacy 768-d alias). ensure_collections on connect.
+  qdrant_vector.rs  — QdrantVectorStore (gRPC, QDRANT_GRPC_URL + QDRANT_API_KEY).
+                      Two collections: capability_embeddings_d{dims} and
+                      content_embeddings_d{dims}. ensure_collections on connect.
   marker.rs         — HttpMarkerClient (PDF→Markdown sidecar). MARKER_URL.
   onboarding.rs     — TenantOnboardingService — bucket creation, IAM provisioning,
                       default workspace root marker.
-  presign.rs        — Pre-signed URL helpers. RUSTFS_PRESIGN_TTL_SECS (900).
   quota.rs          — StorageQuotaService. RUSTFS_QUOTAS (on by default).
 
 vector_store/      — Vector store trait (Qdrant impl is in store/).
@@ -701,11 +709,8 @@ lib.rs             — Public re-exports (see source).
 ```
 artifact.rs   — Artifact value object (URL, mime, sha256, name).
 audit.rs      — AuditStore trait + AuditEvent type.
-config/
-  mod.rs      — figment loader. Pattern: CONUSAI_<SECTION>__<KEY>=value
-                 (double underscore → nesting). Example:
-                 CONUSAI_LLM__DEFAULT="opus"
-                 CONUSAI_LLM__ALIASES__OPUS__MODEL="claude-opus-4-7"
+env.rs        — EnvContract: required/optional/parse_or/switch; finish()
+                 returns one error naming every missing or invalid variable.
 error.rs      — ConusAiError (Storage, Config, Validation, Auth, NotFound,
                  LlmProvider, …). ErrorEnvelope is the wire shape used by
                  every handler.
@@ -714,19 +719,17 @@ http_client.rs — Shared reqwest client builder.
 limits.rs     — Per-route payload size caps.
 mcp.rs        — MCP wire types (JsonRpcRequest / JsonRpcResponse).
 memory/
-  inmem.rs    — InMemory{Audit,Thread,Workspace,WorkspaceContent}Store. Used
-                 when CONUSAI_TEST_MODE=1.
+  inmem.rs    — InMemory{Audit,Thread,Workspace,WorkspaceContent}Store (tests).
 metrics.rs    — Prometheus helpers.
 path_safety.rs — Reject "../", control bytes, NULs in workspace paths.
 path_template.rs — Render {{input.x}} / {{tenant.id}} into URL or path strings.
 prompt/        — Shared prompt builders.
-telemetry.rs   — common::telemetry::init: builds OTel tracer, Prometheus
-                 registry, applies OTEL_SERVICE_NAME, DEPLOY_ENV, HOSTNAME,
-                 OTEL_RESOURCE_ATTRIBUTES, OTEL_EXPORTER_OTLP_ENDPOINT
-                 (or OTLP_ENDPOINT), OTEL_TRACES_SAMPLER /_ARG.
+secret.rs      — bearer_token (Authorization header parsing), constant_time_eq.
+telemetry.rs   — common::telemetry::init: JSON logs on stdout, Prometheus
+                 registry, and OTLP HTTP/protobuf export of traces, metrics and
+                 logs when OTEL_EXPORTER_OTLP_ENDPOINT is set (§5.14).
 trace.rs       — Span helpers.
 types.rs       — Plumbing types shared between gateway and agent-core.
-wasm.rs        — wasmtime engine config (shared by capabilities/wasm.rs).
 ```
 
 ### 5.7 `billing-core` Module Map
@@ -790,17 +793,18 @@ Five concrete kinds, all implementing the same trait:
 | Kind | Source of truth | Wired in | Runtime |
 |------|-----------------|----------|---------|
 | `native` | Rust impl in `agent-core::capabilities::providers::*` | `state.rs` registers Rust factory; TOML manifest only declares the contract | Compiled in |
-| `chain` | TOML `[chain]` block (model, system_prompt, prompt_template, vision, max_tokens, output_schema) | Auto-registered from TOML by `CapabilitySpecFactory` | LLM call via `LlmRegistry` |
-| `wasm` | `.wasm` component file referenced by TOML `[wasm]` | Auto-registered from TOML | wasmtime 44 (component model) |
+| `chain` | TOML `[chain]` block (model, system_prompt, prompt_template, vision, max_tokens, output_schema) | Auto-registered from TOML | LLM call via `LlmRegistry` |
+| `wasm` | `.wasm` module referenced by TOML `[wasm]` | Auto-registered from TOML | wasmtime 49 (fuel, memory and epoch limits) |
 | `mcp` (remote) | TOML `[mcp]` block (endpoint URL + auth) | Auto-registered from TOML | reqwest 0.13 (HTTPS JSON-RPC 2.0) |
 | `job` (job-backed) | TOML `[config]` `backend = "job"` + `job_kind` | Registered programmatically (e.g. `transcribe_video_provider` in `state.rs`) | Returns `task_id`; work runs on JobExecutor |
 
 Manifest files live at `apps/backend/capabilities/<slug>/capability.toml`.
-Discovery dir is overridable via `CONUSAI_CAPABILITIES_DIR`. Default per-
-container path is `/app/capabilities` (mounted from `apps/backend/capabilities/`
-in `docker-compose.yml`).
+Discovery dir is `CONUSAI_CAPABILITIES_DIR` (required); the gateway image sets
+it to `/app/capabilities`, copied from `apps/backend/capabilities/` at build
+time and writable by the gateway (registrations through the admin API live as
+long as the container).
 
-The complete shipped set (25 manifests):
+The complete shipped set (23 manifests):
 
 ```
 code-project              — generate a small code project (chain)
@@ -815,7 +819,6 @@ extract-fields-incident   — incident report fields (chain, output_schema)
 extract-fields-medical-claim — medical claim fields (chain, output_schema)
 extract-ocr-tesseract     — tesseract OCR (native)
 extract-ocr-vision        — Claude vision OCR (chain, vision=true)
-file-storage              — file storage tool (native, storage class)
 google-workspace          — Drive/Docs/Sheets (mcp)
 invoice-processing        — invoice extraction (chain, vision=true, output_schema)
 ocr-service               — general-purpose OCR (chain, vision=true)
@@ -824,7 +827,6 @@ plan-orchestrate          — meta-planner (chain)
 runtime-echo              — debug echo capability (native)
 sense-classify-document   — document type classifier (chain, vision=true)
 sense-mime                — MIME sniffer (mcp / remote)
-storage-fs                — local FS storage (native)
 storage-workspace         — workspace storage (native)
 template-wasm             — WASM demo capability (wasm)
 transcribe-video          — video transcription (job-backed, job_kind="video-transcription")
@@ -860,7 +862,8 @@ Errors from Rig are mapped through `map_rig_error` to `ConusAiError`.
 #### 5.11.1 redb tables (embedded KV)
 
 All definitions are in `agent-core::store::redb_metadata` and
-`agent-core::store::creds`. Path: `REDB_PATH` (default `/data/conusai.redb`).
+`agent-core::store::creds`. Path: `REDB_PATH` (code default `/data/conusai.redb`;
+the gateway image sets `/data/epifly.redb`).
 redb v2 enforces a single `Database` handle per file — `state.rs` shares the
 underlying handle between metadata and credential stores via `RedbMetadataStore::db()`.
 
@@ -878,16 +881,18 @@ underlying handle between metadata and credential stores via `RedbMetadataStore:
 
 `agent-core::store::qdrant_vector::QdrantVectorStore`:
 
-- `capability_embeddings_{dims}` — one point per registered capability tool.
+- `capability_embeddings_d{dims}` — one point per registered capability tool.
   Distance: Cosine. Filter fields: `namespace`, `category`, `tags`.
-- `content_embeddings_{dims}` — one point per indexed workspace content chunk.
+- `content_embeddings_d{dims}` — one point per indexed workspace content chunk.
   Distance: Cosine. Filter fields: `tenant_id`, `node_id`, `mime`.
-- Legacy alias `capability_embeddings` (768-d) maintained for back-compat.
-- `ensure_collections` on connect: creates missing collections, drops + recreates
-  if dimension mismatch (with a `tracing::warn!`).
+- A 768-d model uses the unsuffixed names `capability_embeddings` /
+  `content_embeddings` (`LEGACY_DIMS` in the code).
+- `ensure_collections` on connect: creates missing collections; an existing
+  collection with another dimension stops the start (no data is dropped).
 
-Connection URL: `QDRANT_URL` (default `http://qdrant:6334` for Docker /
-`http://localhost:6334` for host runs).
+Connection: `QDRANT_GRPC_URL` (gRPC, port 6334) and `QDRANT_API_KEY`, both
+required and injected by the linked Qdrant service (locally
+`http://qdrant:6334`).
 
 #### 5.11.3 Postgres tables
 
@@ -895,179 +900,87 @@ ConusAI does **not** own a Postgres schema directly. Postgres is the storage
 backend for **Zitadel** and **Lago**, both of which manage their own schemas:
 
 - `zitadel` database — Zitadel-managed (orgs, users, projects, applications).
-  Seeded by `docker/zitadel/bootstrap.sh`.
-- `lago` database — Lago-managed (customers, plans, subscriptions, invoices,
-  events).
+  Created by `zitadel start-from-init` with the linked Postgres user as admin
+  (`POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`); its
+  own user is `zitadel` / `ZITADEL_DB_PASSWORD`.
+- Lago's schema lives in the database of `POSTGRES_URL` (`DATABASE_URL`),
+  migrated by the `lago-migrate` job.
 
-Connection strings: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
-(defaults all `conusai`). Container: `conusai-postgres` (Postgres 17 Alpine).
+Postgres is the linked ConusAI Cloud managed service; locally
+`docker-compose.local.yml` runs `postgres:18.6-alpine` (database `epifly`).
+The gateway itself never connects to Postgres.
 
 ### 5.12 Environment Variables
 
-All env vars consumed by the backend. Format: `Name | Default | Description`.
+The gateway's environment contract is code, not a list kept here:
+[`agent-gateway/src/config.rs`](../apps/backend/crates/agent-gateway/src/config.rs)
+(`GatewayConfig::from_env`) reads every variable through
+[`common/src/env.rs`](../apps/backend/crates/common/src/env.rs)
+(`EnvContract`) and is validated in full before anything starts: a missing
+required variable or a malformed value stops the process with exit code 2 and
+one message naming all of them. There are no development fallbacks for secrets
+or service locations. The web server has its own contract in
+[`apps/web/src/lib/server/config.ts`](../apps/web/src/lib/server/config.ts)
+(§6.1). Every variable — required, optional, generated, injected by a linked
+service — with how to generate it is in
+[deploy-conusai-cloud.md §4](deploy-conusai-cloud.md#4-project-variables).
 
-#### 5.12.1 Process / Server
+Summary of the gateway contract:
 
-| Name | Default | Description |
-|------|---------|-------------|
-| `CONUSAI_SERVER__HOST` | `0.0.0.0` | Bind address |
-| `CONUSAI_SERVER__PORT` | `8080` | Listen port |
-| `CONUSAI_TEST_MODE` | _unset_ | When `1`, AppState uses in-memory stores (no redb / Qdrant / RustFS) |
-| `WEB_ORIGIN` | `http://localhost:3000,http://localhost:5173,https://tauri.localhost,tauri://localhost` | CORS allowlist (comma-separated) |
-| `CONUSAI_FEATURE_BROWSER_SHELL` | _unset_ | When `1`, enables `/admin/devices` endpoints |
-| `OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_ENDPOINT` | _unset_ | OTel exporter (gRPC) |
-| `OTEL_SERVICE_NAME` | `agent-gateway` | OTel service name override |
-| `OTEL_TRACES_SAMPLER` | `parentbased_traceidratio` | Sampler choice |
-| `OTEL_TRACES_SAMPLER_ARG` | `1.0` | Sampler ratio |
-| `OTEL_RESOURCE_ATTRIBUTES` | _unset_ | Comma-separated extra attrs |
-| `DEPLOY_ENV` | `development` | OTel resource attribute |
-| `HOSTNAME` | OS-provided | OTel resource attribute |
-| `PLATFORM_ADMIN_TOKEN` | _unset_ | Bearer for `POST /admin/capabilities/register` |
+| Group | Required | Optional (default) |
+|-------|----------|--------------------|
+| Server | `WEB_ORIGIN` (comma-separated http(s) origins; CORS), `PLATFORM_ADMIN_TOKEN` (≥ 32 chars) | `PORT` (8080) |
+| Identity | `ZITADEL_ISSUER` (https; http only for loopback), `ZITADEL_AUDIENCE` | `ZITADEL_INTROSPECTION_CLIENT_ID` + `_SECRET` (both or neither), `API_KEYS` |
+| LLM | `ANTHROPIC_API_KEY` | `LLM_ALIAS_<ALIAS>` model overrides (read in `state.rs`) |
+| S3 (linked) | `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET`, `RUSTFS_IAM_ENC_KEY` (base64, 32 bytes) | `RUSTFS_BOOTSTRAP`, `RUSTFS_SSE`, `RUSTFS_VERSIONING`, `RUSTFS_QUOTAS` (`on`), `RUSTFS_PRESIGN_TTL_SECS` (900, max 3600), `RUSTFS_PUBLIC_BASE_URL`, `RUSTFS_NOTIFICATION_WEBHOOK_URL` + `RUSTFS_WEBHOOK_SECRET` (both or neither), `RUSTFS_KEY_ROTATION_DAYS` (90) |
+| Qdrant (linked) | `QDRANT_GRPC_URL`, `QDRANT_API_KEY` | — |
+| Paths (set in the image) | `CONUSAI_CAPABILITIES_DIR`, `EMBEDDING_CACHE_DIR` | `REDB_PATH` (`/data/conusai.redb`; image: `/data/epifly.redb`) |
+| Embeddings / routing | — | `EMBEDDING_LOCAL_MODEL` (`multilingual-e5-large`), `EMBEDDING_MAX_BATCH` (256), `SEMANTIC_ROUTER_TOP_K` (20), `CONUSAI_ROUTER_MIN_CONFIDENCE`, `CONUSAI_MAX_TOOLS_PER_TURN`, `CONUSAI_MAX_INVOKES_PER_TURN`, `CONUSAI_MCP_ALLOWED_HOSTS` (empty = no remote MCP) |
+| Billing | — | `LAGO_API_KEY`; when set, `LAGO_API_URL` and `LAGO_WEBHOOK_SECRET` become required. `CONUSAI_PLAN_CATALOG_PATH` (must be a file), `BILLING_RETURN_URL` (`/account/billing`) |
+| Audit | — | `AUDIT_RETENTION_DAYS` (90) |
+| Jobs | — | `OPENAI_API_KEY` (video transcription only), `MIGRATION_DRY_RUN`, `MIGRATION_TENANT_ID` (bucket migration job) |
+| Telemetry | — | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER`/`_ARG`, `RUST_LOG` (§5.14) |
 
-#### 5.12.2 Authentication & Identity
-
-| Name | Default | Description |
-|------|---------|-------------|
-| `CONUSAI_AUTH_PROVIDER` | `legacy` | `legacy` or `zitadel` |
-| `JWT_SECRET` | _empty_ | HMAC key for legacy JWT |
-| `UI_SESSION_KEY` | _required prod_ | HMAC key for the apps/web session cookie |
-| `CONUSAI_UI_TENANT_ID` | `dev` | Tenant id for the legacy `LocalHmacAdapter` cookies |
-| `CONUSAI_WORKSPACE_ROOT` | _unset_ | Override workspace root for tests |
-| `DEV_PASSWORD` | _empty_ | Password for legacy `/v1/auth/login` |
-| `SUPER_ADMIN_EMAILS` | _empty_ | Comma-separated emails that get super-admin |
-| `ZITADEL_DOMAIN` | _required for zitadel_ | Zitadel base URL |
-| `ZITADEL_AUDIENCE` | `conusai-agent-gateway` | OIDC `aud` claim |
-| `ZITADEL_INTROSPECTION_CLIENT_ID` | _empty_ | OIDC introspection client |
-| `ZITADEL_INTROSPECTION_CLIENT_SECRET` | _empty_ | OIDC introspection client secret |
-| `ZITADEL_MGMT_PAT` | _empty_ | Management API PAT (for org creation) |
-| `API_KEYS` | _empty_ | `key=tenant,key=tenant,…` API key allowlist |
-
-#### 5.12.3 Storage (RustFS / S3)
-
-| Name | Default | Description |
-|------|---------|-------------|
-| `RUSTFS_ROOT_ACCESS_KEY` / `AWS_ACCESS_KEY_ID` | `rustfsadmin` | RustFS root key |
-| `RUSTFS_ROOT_SECRET_KEY` / `AWS_SECRET_ACCESS_KEY` | `rustfsadmin` | RustFS root secret |
-| `S3_ENDPOINT` | (from compose) `http://conusai-rustfs:9000` | S3 endpoint |
-| `S3_BUCKET` | `workspace` | Default workspace bucket |
-| `RUSTFS_BOOTSTRAP` | `on` | Set `off` to disable declarative bootstrap |
-| `RUSTFS_VERSIONING` | `on` | Object versioning |
-| `RUSTFS_PER_TENANT_IAM` | `on` | Per-tenant IAM users (scoped creds) |
-| `RUSTFS_REAL_PRESIGN` | `on` | Use real S3 SigV4 pre-signing |
-| `RUSTFS_SSE` | `on` | Server-side encryption |
-| `RUSTFS_NOTIFICATIONS` | `on` | Bucket-event webhooks |
-| `RUSTFS_QUOTAS` | `on` | Per-tenant quotas |
-| `RUSTFS_PRESIGN_TTL_SECS` | `900` | Pre-signed URL TTL |
-| `RUSTFS_IAM_ENC_KEY` | _empty_ | AES-GCM key (base64) for redb-stored creds |
-| `RUSTFS_WEBHOOK_SECRET` | _empty_ | HMAC secret for `/internal/rustfs/events` |
-| `RUSTFS_NOTIFICATION_WEBHOOK_URL` | (compose) `http://conusai-gateway:8080/internal/rustfs/events` | RustFS event sink |
-| `RUSTFS_DEV_FALLBACK_ROOT` | _unset_ | When `on`, fall back to root creds if per-tenant fails |
-| `RUSTFS_PUBLIC_BASE_URL` | _unset_ | Public base for `ArtifactBridge` URLs |
-| `RUSTFS_KEY_ROTATION_DAYS` | (job default) | Days between IAM key rotations |
-
-#### 5.12.4 Vector Store / Embeddings
-
-| Name | Default | Description |
-|------|---------|-------------|
-| `QDRANT_URL` | `http://qdrant:6334` | Qdrant gRPC endpoint |
-| `EMBEDDING_BACKEND` | `local` | `local` (fastembed) — others reserved |
-| `EMBEDDING_LOCAL_MODEL` | (built-in) | Override model id (e.g. `bge-small-en-v1.5`) |
-| `EMBEDDING_MAX_BATCH` | (built-in) | Batch size for local embeddings |
-| `EMBEDDING_CACHE_DIR` | _unset_ | Model weight cache |
-| `SEMANTIC_ROUTER_TOP_K` | `4` | Capabilities returned per turn |
-| `CONUSAI_ROUTER_MIN_CONFIDENCE` | (built-in) | Minimum cosine threshold |
-
-#### 5.12.5 LLM Providers
-
-| Name | Default | Description |
-|------|---------|-------------|
-| `ANTHROPIC_API_KEY` | _empty_ | Anthropic credential |
-| `ANTHROPIC_MODEL` | `claude-opus-4-7` | Default model |
-| `CONUSAI_LLM__DEFAULT` | _from config_ | Figment override for default alias |
-| `CONUSAI_LLM__ALIASES__<NAME>__MODEL` | _from config_ | Figment override per alias |
-| `OPENAI_API_KEY` | _empty_ | Whisper API in `VideoTranscriptionJob` |
-
-#### 5.12.6 Capability Registry
-
-| Name | Default | Description |
-|------|---------|-------------|
-| `CONUSAI_CAPABILITIES_DIR` | `/app/capabilities` (container) | TOML manifest dir |
-| `CONUSAI_MAX_CAPABILITIES` | `64` | Registry size cap |
-| `CONUSAI_MAX_MANIFEST_BYTES` | `65536` | Per-manifest size cap |
-| `CONUSAI_MAX_WASM_BYTES` | `8388608` | Per-WASM-component size cap |
-| `CONUSAI_MCP_ALLOWED_HOSTS` | _empty_ | Comma-separated allowlist for MCP endpoints |
-| `CONUSAI_MAX_REPLAYS_PER_TURN` | (built-in) | Browser-shell replay cap |
-| `GATEWAY_INTERNAL_URL` | _unset_ | Used by capabilities that call back into the gateway |
-| `MARKER_URL` | `http://marker-api:8080` | Marker PDF→MD sidecar |
-
-#### 5.12.7 Storage runtime / paths
-
-| Name | Default | Description |
-|------|---------|-------------|
-| `REDB_PATH` | `/data/conusai.redb` | redb database path |
-| `AUDIT_RETENTION_DAYS` | `90` | Audit log retention |
-| `MIGRATION_DRY_RUN` | `false` | `true` to dry-run `TenantBucketMigrationJob` |
-| `MIGRATION_TENANT_ID` | _unset_ | Restrict migration to a single tenant |
-
-#### 5.12.8 Billing
-
-| Name | Default | Description |
-|------|---------|-------------|
-| `LAGO_API_URL` | `https://api.getlago.com` | Lago API URL |
-| `LAGO_API_KEY` | _empty_ | When unset, `BillingProvider` is `None` and quota/billing routes return 503 |
-| `LAGO_WEBHOOK_SECRET` | _empty_ | HMAC secret for `/v1/billing/webhooks` |
-| `CONUSAI_PLAN_CATALOG_PATH` | _empty_ | TOML override for plan definitions |
-| `BILLING_RETURN_URL` | _unset_ | Where to redirect after Stripe portal |
-| `STRIPE_API_KEY` / `STRIPE_SECRET_KEY` | _empty_ | Passed through to Lago for Stripe integration |
-
-#### 5.12.9 Frontend / Web App
-
-| Name | Default | Description |
-|------|---------|-------------|
-| `CONUSAI_BACKEND_URL` | `http://localhost:8080` | Backend URL the SvelteKit server proxies to |
-| `BACKEND_AUTH_LOGIN_URL` | _unset_ | When set, activates `BackendJwtAdapter` |
-| `AUTH_REDIRECT_BASE` | `http://localhost:3000` | Base URL used in OIDC redirect URIs |
-| `ZITADEL_CLIENT_ID` | _empty_ | OIDC client id (web) |
-| `ZITADEL_CLIENT_SECRET` | _empty_ | OIDC client secret (web) |
-
-#### 5.12.10 Tauri shell
-
-| Name | Default | Description |
-|------|---------|-------------|
-| `VITE_API_BASE` | (per `justfile`) | Frontend → backend URL |
-| `CONUSAI_API_BASE` | `http://localhost:8080` | Backend URL the Tauri Rust side hits |
-| `CONUSAI_DEVICE_TOKEN` | _unset_ | Optional bootstrap device token bypass |
+The native shell is configured at build time only: `VITE_GATEWAY_URL`,
+`VITE_ZITADEL_ISSUER`, `VITE_ZITADEL_NATIVE_CLIENT_ID` (§7).
 
 ### 5.13 OpenAPI Assembly
 
 `utoipa::OpenApi` derive macro on `routes::ApiDoc` lists all `#[utoipa::path]`
-annotated handlers + every schema-bearing type. `SecurityAddon` adds three
-security schemes:
+annotated handlers + every schema-bearing type. `SecurityAddon` adds one
+security scheme, `bearer_auth` — `Authorization: Bearer <Zitadel access token | API key>`.
 
-- `bearer_auth` — `Authorization: Bearer <jwt>`
-- `api_key_auth` — `X-API-Key: <key>`
-- `cookie_auth` — `Cookie: conusai_session=…`
-
-The full spec is served at `GET /openapi.json` and visualised at `GET /docs`.
-`packages/types` regenerates TypeScript bindings from `/openapi.json` via
-`scripts/openapi-to-types.sh` (called from the `prebuild` lifecycle).
+The document is served at `GET /openapi.json` (no Swagger UI) and printed by
+`agent-gateway --dump-openapi` without starting the server.
+`scripts/openapi-to-types.sh` runs `--dump-openapi` and regenerates
+`packages/types/src/openapi.d.ts` with `openapi-typescript`.
 
 ### 5.14 Observability (Metrics, Traces, Logs)
 
-- **Metrics**: Prometheus `Registry` shared by `metrics_handler`. Tracked
-  families:
-  - `conusai_quota_denied_total{reason}`
-  - `conusai_billing_webhook_total{outcome}`
-  - `conusai_oidc_verify_duration_seconds`
-  - `conusai_router_decisions_total{outcome}` (via `RouterMetrics`)
-  - `conusai_router_score_bucket`, `conusai_router_top_k`
-  - `conusai_rustfs_*{op, outcome}` (storage-fallback, onboarding totals,
-    marker failures, Zitadel cache hit/miss, embedding dims gauge)
-- **Traces**: `tracing-opentelemetry` 0.28 → OTLP gRPC exporter →
-  otel-collector-contrib → Jaeger. Spans include the request id and tenant id
-  as attributes.
-- **Logs**: `tracing` JSON layer to stderr in container mode; pretty in dev.
-  All structured fields propagate to OTel attributes.
+`common::telemetry::init` (`common/src/telemetry.rs`):
+
+- **Logs**: `tracing` JSON layer on stdout, filtered by `RUST_LOG` (compose:
+  `info,agent_gateway=info,tower_http=warn`). With OTLP on, log records are
+  also exported (exporter-internal targets excluded to avoid loops).
+- **Traces**: `tracing-opentelemetry` 0.34 → `opentelemetry-otlp` 0.33 over
+  **HTTP/protobuf** (there is no gRPC exporter). Incoming W3C `traceparent`
+  is honoured (`mw::trace::propagate_trace`); the web proxy passes it through.
+- **Metrics**: the OpenTelemetry meter exports over OTLP and also feeds the
+  Prometheus `Registry` served at `GET /metrics` (requires
+  `Authorization: Bearer <PLATFORM_ADMIN_TOKEN>`). Registered families
+  include `conusai_quota_denied_total`, `conusai_billing_webhook_total`,
+  `conusai_oidc_verify_duration_seconds` (billing-core), `tenant_onboarding_total`,
+  `embedding_dims`, `routing_latency_ms`, `tools_per_turn`,
+  `forced_capability_hit_rate`, `embedding_cache_hit_rate` (gateway
+  `metrics.rs`).
+- **Export target**: `OTEL_EXPORTER_OTLP_ENDPOINT` is a base URL; the SDK
+  appends `/v1/traces`, `/v1/metrics`, `/v1/logs`. On ConusAI Cloud it is the
+  platform's `<platform>/otel`, authenticated with
+  `OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20${CONUSAI_API_TOKEN}`
+  (the deployment token the platform injects), and the data appears in the
+  console's Observe view under service `epifly-gateway` (`OTEL_SERVICE_NAME`).
+  Unset: nothing leaves the process. An endpoint that is set but unusable is a
+  start-up error.
 
 ---
 
@@ -1075,55 +988,89 @@ The full spec is served at `GET /openapi.json` and visualised at `GET /docs`.
 
 ### 6.1 Process & Build
 
-- SvelteKit 2.21 + adapter-node 5.2.12 → `node apps/web/build` listens on `:3000`.
-- Vite 6.3.5 dev server on `:5173` (proxies `/v1, /api, /admin, /ui,
-  /swagger-ui, /docs, /openapi.json, /metrics` to `CONUSAI_BACKEND_URL`).
+- SvelteKit 2.21 + adapter-node 5.2.12 → `node build` listens on `:3000`
+  (image: [`apps/web/Dockerfile`](../apps/web/Dockerfile), node 24
+  trixie-slim, uid 10001, healthcheck `GET /healthz`).
+- Vite 6.3.5 dev server on `:5173`. There is no dev proxy: in `vite dev` the
+  SvelteKit server routes proxy to `GATEWAY_URL` exactly as in production.
 - Tailwind v4 via `@tailwindcss/vite`, with tokens imported from
   `@conusai/ui/tokens.css` + `@conusai/ui/foundry.css`.
-- CSP: nonce-based, configured in `svelte.config.js`. Directives:
-  - `default-src 'self'`
-  - `connect-src 'self' wss: <BACKEND_ORIGIN>`
-  - `img-src 'self' data: blob:`
-  - `script-src 'self'` (nonced)
-  - `style-src 'self' 'unsafe-inline'`
-  - `csrf.checkOrigin = false` (manual CSRF check lives in `hooks.server.ts`).
+- CSP: nonce-based, configured in `svelte.config.js`: `default-src 'self'`,
+  `connect-src 'self'` (the browser only talks to its own origin),
+  `img-src 'self' data: blob:`, `script-src 'self'` (nonced),
+  `style-src 'self' 'unsafe-inline'`, `font-src 'self' data:`,
+  `object-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'`.
+  SvelteKit's origin check stays on for form posts.
+- Environment contract (`src/lib/server/config.ts`, validated in the `init`
+  hook; a missing or malformed variable stops the server before it accepts a
+  request):
+
+  | Variable | Meaning |
+  |----------|---------|
+  | `ORIGIN` | Public origin (bare, https; http only for a loopback host). Also read by adapter-node |
+  | `GATEWAY_URL` | Internal gateway URL, e.g. `http://gateway:8080` |
+  | `ZITADEL_ISSUER` | OIDC issuer (https; http only for loopback) |
+  | `ZITADEL_WEB_CLIENT_ID` | Zitadel web application client id (PKCE) |
+  | `ZITADEL_WEB_CLIENT_SECRET` | Optional; only for a confidential client (`client_secret_post`) |
+  | `AUTH_SESSION_KEY` | 32 random bytes, base64 — AES-256-GCM key for the session and transaction cookies |
+  | `BODY_SIZE_LIMIT` | adapter-node request body limit (compose: `100M`) |
 
 ### 6.2 Server Hooks (`src/hooks.server.ts`)
 
-- Scoped CSRF: rejects same-origin-failing POST/PATCH/DELETE **except** for
-  paths starting with `/v1`, `/api`, `/ui`, `/mcp`, or `/admin` (these are
-  forwarded straight to the backend which has its own auth).
-- Session verify: reads `conusai_session` cookie and resolves it through the
-  active `SessionAdapter`.
-- Font preload injection: rewrites `<head>` to push preload hints for the
-  Geist Sans subset under `/static/fonts/`.
+- `init`: `initConfig()` validates the environment and logs origin, gateway
+  and issuer.
+- `session` handle: `/healthz` and `/auth/*` pass through without a session.
+  Every other request resolves the session (`resolveSession`, refreshing the
+  access token when needed) into `locals.session`. Without a session, pages
+  redirect `303 → /auth/login?returnTo=…`; proxied paths (`/v1`, `/api`,
+  `/ui`, `/mcp`, `/admin`) are left to answer 401 themselves; the `/_/ui`
+  gallery is public in dev builds only. Also injects font preload hints for the
+  hashed Geist files.
+- `securityHeaders` handle: `x-content-type-options: nosniff`,
+  `x-frame-options: DENY`, `referrer-policy: strict-origin-when-cross-origin`,
+  `permissions-policy`, and `strict-transport-security` when `ORIGIN` is https.
 
 ### 6.3 Server Modules (`src/lib/server/`)
 
-- **`session.ts`** — `COOKIE_NAME = 'conusai_session'`, TTL 24h.
-  - `SessionAdapter` interface — `verify(cookie) → User | null`.
-  - `LocalHmacAdapter` — HMAC-SHA256 over a base64url `{ name, plan, exp,
-    tenantId? }` payload. `UI_SESSION_KEY` is required in production.
-  - `BackendJwtAdapter` — activated when `BACKEND_AUTH_LOGIN_URL` is set;
-    decodes a backend-issued JWT locally without verifying signature (defence
-    in depth: the cookie is still HMAC-sealed).
-  - Utility helpers: `firstName(user)`, `initials(user)`, `timeGreeting(date)`.
-- **`oidc.ts`** — `ZitadelOidcAdapter`.
-  - Env: `ZITADEL_DOMAIN`, `ZITADEL_CLIENT_ID`, `ZITADEL_CLIENT_SECRET`,
-    `AUTH_REDIRECT_BASE`.
-  - PKCE S256. Endpoints: `/oauth/v2/{authorize,token,revoke}`,
-    `/oidc/v1/end_session`.
-  - Custom claims: `urn:conusai:plan_tier`, `urn:conusai:subscription_status`.
-- **`env.ts`** — `BACKEND_URL = CONUSAI_BACKEND_URL ?? 'http://localhost:8080'`,
-  `createServerFetch(sessionCookie)` helper that injects the cookie + base URL
-  into a fetch wrapper.
+The web app is a **backend-for-frontend**: the browser never holds a token.
+
+- **`config.ts`** — the environment contract above (`loadConfig`,
+  `initConfig`, `config()`); derives `redirectUri = ${ORIGIN}/auth/callback`
+  and `postLogoutRedirectUri = ${ORIGIN}/auth/signed-out`.
+- **`auth/oidc.ts`** — `openid-client` 6: discovery against
+  `ZITADEL_ISSUER` once per process (retried after a failure), public client
+  (`None`) or `ClientSecretPost`. `LOGIN_SCOPE = 'openid profile email offline_access'`.
+- **`auth/transaction.ts`** — the in-flight login (`state`, `nonce`, PKCE
+  verifier, `returnTo`) sealed into `__Host-epifly_oidc` for 10 minutes.
+- **`auth/seal.ts`** — AES-256-GCM with a 12-byte IV and the purpose string
+  (`epifly.session.v1` or `epifly.oidc-tx.v1`) bound as AAD.
+- **`auth/session.ts`** — the session is the Zitadel token set (user, access
+  token + expiry, refresh token, creation time) sealed into the host-only
+  cookie `__Host-epifly_session` (Secure, HttpOnly, SameSite=Lax, Path=/;
+  split over `.1`/`.2` above 3800 bytes; no server-side store; ID token not
+  kept). Absolute lifetime 30 days. The access token is refreshed when less
+  than 60 s remain; refreshes are **single-flight** per refresh token and a
+  completed refresh is reused for 30 s by parallel requests still carrying the
+  old cookie. `invalid_grant` ends the session; a transient failure keeps it
+  while the old access token lives.
+- **`proxy.ts`** / **`proxy-route.ts`** — same-origin reverse proxy for `/v1`,
+  `/api`, `/ui`, `/mcp`, `/admin` to `GATEWAY_URL`: injects
+  `Authorization: Bearer <access token>`; drops inbound `Authorization`,
+  `Cookie`, `X-Tenant-ID`, `X-Session-Token`, `X-Device-Token`, `X-API-Key`,
+  forwarding and hop-by-hop headers and the upstream's `Set-Cookie`; passes
+  `x-request-id` (generated when absent), `traceparent`, `tracestate`.
+  Non-safe methods must be same-origin. Bodies stream, capped at 100 MiB;
+  60 s to response headers, 5 min for buffered bodies, event streams
+  unbounded. WebSocket upgrades are not proxied.
+- **`gateway.ts`** — `requireSession(locals)` and `gatewayFetch(session)` for
+  load functions and form actions: calls `GATEWAY_URL` directly with the
+  session's bearer (10 s timeout).
 
 ### 6.4 SDK Wrapper (`src/lib/sdk.ts`)
 
-- `createConusSdk(opts)` — re-exports from `@conusai/sdk`.
-- `resolveBackendUrl()` — maps `:3000` → `:8080`, `:5173` → `:8080` for
-  browser-side fetches. `credentials: 'include'` is set so the session cookie
-  flows.
+- `createConusSdk({ baseUrl: '', tokenProvider: null })` — every browser call
+  goes to the app's own origin and through the proxy; the SDK throws during
+  SSR (server code uses `gatewayFetch`).
 
 ### 6.5 Routes
 
@@ -1132,25 +1079,29 @@ src/routes/
   +error.svelte                  — global error boundary
   +layout.svelte                 — ThemeProvider, LiveAnnouncer, ToastHost,
                                     setI18n(enMessages)
-  +layout.server.ts              — 302 → /login when no user (excludes /_/ui)
-  +page.server.ts                — loads threads.list + workspaces.tree
+  +layout.server.ts              — display data only (name, email, initials,
+                                    plan badge from /v1/billing/subscription)
   +page.svelte                   — shadcn-svelte Sidebar + WorkspaceTree +
                                     Chat/Capabilities/Artifacts screens from
                                     @conusai/ui/features; capability renderer
                                     registry; createChatStream loop.
 
-  login/
-    +page.svelte                 — login form (LocalHmacAdapter path)
-    +page.server.ts              — POST → /v1/auth/login
+  auth/login/+server.ts          — GET: PKCE + state + nonce, sealed
+                                    transaction cookie, 302 → Zitadel authorize
+                                    (?returnTo=/path)
+  auth/callback/+server.ts       — GET: code exchange (state, nonce, PKCE
+                                    verified), creates the session cookie
+  auth/logout/+server.ts         — POST only: revoke the refresh token, clear
+                                    the cookie, 303 → Zitadel end_session
+                                    (client_id + post_logout_redirect_uri)
+  auth/signed-out/+page.svelte   — landing page after logout
+  healthz/+server.ts             — GET → 200 "ok" (no auth, no upstream)
 
-  logout/+server.ts              — clears HMAC cookie
-
-  auth/+server.ts                — OIDC init: PKCE pair → cookies
-                                    (conusai_oidc_verifier, conusai_oidc_state,
-                                    5 min TTL) → 302 → Zitadel /authorize
-  auth/callback/+server.ts       — validates state + verifier, exchanges code,
-                                    sets conusai_session cookie
-  auth/logout/+server.ts         — revoke + 302 → Zitadel end_session
+  v1/[...path]/+server.ts        — proxy (proxy-route.ts)
+  api/[...path]/+server.ts       — proxy
+  ui/[...path]/+server.ts        — proxy
+  mcp/[...path]/+server.ts       — proxy
+  admin/[...path]/+server.ts     — proxy
 
   account/+page.svelte           — basic profile screen
   account/billing/+page.svelte   — calls /v1/billing/{plans, subscription,
@@ -1163,6 +1114,9 @@ src/routes/
                                     primitives, each with fixtures loaded from
                                     *.fixtures.ts
 ```
+
+Unit tests for the auth and proxy modules are in `src/tests/` (`auth.test.ts`,
+`proxy.test.ts`).
 
 ### 6.6 E2E
 
@@ -1177,7 +1131,10 @@ src/routes/
   asserts no `transform` animations and that all animations ≤ 80 ms.
 - **`motion-budget.spec.ts`** — total ≤ 3000 ms per task; per-animation ≤
   400 ms (except `cascade-in` and `view-fade-in`).
-- **`smoke.test.ts`** — asserts CSP header present and well-formed.
+- **`smoke.test.ts`** — `/healthz` answers without a session, `/` redirects
+  303 to `/auth/login?returnTo=…`, the signed-out page renders with a nonce CSP.
+- Cross-app web e2e signs in against a local mock OIDC issuer
+  (`e2e/fixtures/mock-oidc.mjs`, helpers in `e2e/helpers/auth.ts`).
 
 ---
 
@@ -1189,27 +1146,36 @@ src/routes/
 apps/browser-shell/src/
   app.html
   routes/
-    +layout.svelte                 — wraps with ThemeProvider, motion-prefs script
-    +layout.ts                     — loads device token from Stronghold
-    +page.svelte                   — embeds @conusai/ui ShellScreen
+    +layout.svelte                 — ThemeProvider, i18n, provideAppStores, LiveAnnouncer, ToastHost
+    +layout.ts                     — ssr = false, prerender = true (static SPA)
+    +page.svelte                   — sign-in screen or @conusai/ui ShellScreen
   lib/
-    sdk.ts                         — createConusSdk with TokenProvider that
-                                      reads the Tauri-managed device token
+    session.svelte.ts              — mirrors who is signed in (auth_status,
+                                      auth_sign_in, auth_sign_out); no token
+                                      is stored in the webview
+    sdk.ts                         — createConusSdk against VITE_GATEWAY_URL;
+                                      each request asks Rust for an access token
+                                      (auth_access_token) and sends
+                                      Authorization: Bearer; 401 → session expired
     tauri-stream.ts                — bridge from Tauri `chat-stream-event`
                                       events into the @conusai/ui chat stream
-    auth.svelte.ts                 — auth store (login state, OIDC)
-    mobile/
-      platform/                    — currently empty (placeholder for
-                                      platform-specific stores)
+    mobile/platform/detect.ts      — platform tag on <html>
 ```
 
 ### 7.2 Tauri Rust crate (`src-tauri/`)
 
-`Cargo.toml`: package `browser-shell` v0.4.0, crate-types `["staticlib",
-"cdylib", "rlib"]`, additional `[[bin]] browser-shell` for desktop. Tauri 2
-with `unstable` feature. Plugins: `dialog`, `stronghold`, `http`, `haptics`,
-optional `updater` (non-mobile), optional `webdriver-automation` 0.1.3 (macOS
-debug + `e2e` feature).
+`Cargo.toml`: package `browser-shell` v0.4.0, outside the backend Cargo
+workspace. Tauri 2.12 with `unstable`. Plugins: `dialog`, `haptics`; optional
+`updater` (`updater` feature) and `webdriver-automation` 0.1.3 (macOS debug +
+`e2e` feature). `tauri-plugin-stronghold` 2.4 (`kdf`) is a library dependency
+used from Rust only — its plugin and JS API are not registered, and neither is
+the HTTP plugin.
+
+Build-time configuration (public values baked into the bundle and the Rust
+binary through `build.rs` / `option_env!`): `VITE_GATEWAY_URL` (public gateway
+origin), `VITE_ZITADEL_ISSUER`, `VITE_ZITADEL_NATIVE_CLIENT_ID`. The
+`scripts/tauri.mjs` wrapper refuses `dev`/`build` without them and writes the
+gateway origin into the CSP `connect-src`.
 
 `src-tauri/src/`:
 
@@ -1217,25 +1183,40 @@ debug + `e2e` feature).
 main.rs             — calls browser_shell_lib::run(). Sets windows_subsystem
                        = "windows" on release Windows.
 
-lib.rs              — entry point (`pub fn run()`).
-                       Builds Tauri builder with plugins, manages four shared
-                       states (TabManagerState, RecorderStateHandle,
-                       DeviceAuthHandle, StreamRegistry).
-                       Generates `invoke_handler!` with every #[tauri::command]
-                       (see below).
-                       On `setup`: reads CONUSAI_API_BASE (default
-                       http://localhost:8080), emits "shell-ready" to the main
-                       window, starts the device-token registration loop in a
-                       Tauri async task.
-                       RECORDER_BRIDGE_JS — a string of JS injected into every
-                       child webview that captures click/change/submit events
-                       and forwards them via tauri::invoke('recorder_record_step').
+lib.rs              — entry point (`pub fn run()`). Registers the dialog and
+                       haptics plugins, manages TabManagerState,
+                       RecorderStateHandle, AuthState and StreamRegistry, and
+                       the commands below. Logs the configured gateway at setup.
+                       RECORDER_BRIDGE_JS — JS injected into every child
+                       webview that captures click/change/submit events and
+                       forwards them via invoke('recorder_record_step').
+
+auth/mod.rs         — AuthState. Sign-in: OIDC authorization code + PKCE with
+                       `state` and `nonce` through the system browser (`open`)
+                       and a loopback redirect `http://127.0.0.1:<random
+                       port>/callback` (5 min timeout); ID token validated;
+                       refresh token required. The access token stays in
+                       memory, refreshed 60 s before expiry under one async
+                       mutex (single refresh in flight). Sign-out revokes the
+                       refresh token and opens end_session. Commands (main
+                       window only; tab webviews are refused): auth_status,
+                       auth_sign_in, auth_sign_out, auth_access_token.
+                       Scope: `openid profile email offline_access`.
+                       Desktop only: mobile sign-in is not implemented yet.
+auth/oidc.rs        — discovery, authorization request, callback listener,
+                       code exchange, refresh, revocation, ID token checks.
+auth/vault.rs       — refresh token + identity in an IOTA Stronghold snapshot
+                       in the app data dir, keyed with Argon2 over a
+                       per-install random salt (`vault.salt`). No user
+                       passphrase: it keeps the token out of plaintext files,
+                       webview storage and logs, not from someone who can
+                       already read the user's app data.
 
 tabs.rs             — TabManager (HashMap<TabId, Webview>). Methods:
                        create / close / navigate / list / save / restore.
                        Tauri commands: create_tab, close_tab, navigate_tab,
                        list_tabs, save_tabs, restore_tabs. Persists to
-                       Stronghold under the "tabs" key.
+                       `$APP_DATA/tabs.json`.
 
 recorder.rs         — RecorderState. Methods: new, start, record_step, stop,
                        is_recording, step_count. Tauri commands:
@@ -1245,32 +1226,17 @@ recorder.rs         — RecorderState. Methods: new, start, record_step, stop,
                        redacted client-side (RECORDER_BRIDGE_JS) — fields
                        matching /password|ssn|cc-|card|cvv/i have value=null.
 
-device_auth.rs      — DeviceAuthService. Stores the platform-issued bearer
-                       token (issued by POST /admin/devices). Reads
-                       CONUSAI_DEVICE_TOKEN for E2E bypass.
-                       Tauri commands: set_device_token, get_device_token,
-                       clear_device_token. The token is persisted in Stronghold
-                       on the frontend side; this state holds the in-memory
-                       copy that DeviceTokenProvider hands to the SDK.
-
-oidc_auth.rs        — Two Tauri commands:
-                       • open_in_system_browser(url) — uses `open` crate to
-                         launch the default browser for PKCE auth.
-                       • pkce_login(auth_url, extra_params?) — runs a
-                         spinning local listener that catches the redirect
-                         and returns the token JSON.
-
-chat_stream.rs      — Bridge between the SDK SSE stream and the Tauri frontend.
+chat_stream.rs      — Streams a chat turn from the gateway's `/ui/stream`
+                       through Rust with the shell's bearer token.
                        Tauri commands: chat_stream_start, chat_stream_abort.
                        Per-stream tokio task pushed into StreamRegistry =
                        Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>.
                        Emits "chat-stream-event" + per-stream id back to the
                        frontend.
 
-registration.rs     — register_capability(api_base, device_token) — registers
-                       the shell-control capability on first launch.
-                       upload_trace(...) — uploads recorder traces to RustFS via
-                       presigned URL.
+registration.rs     — upload_trace(api_base, access_token, trace) — uploads a
+                       recorder trace as a workspace file (POSTs to `/v1/files`,
+                       a route the gateway does not serve).
                        Tauri command: upload_trace_cmd.
 
 telemetry.rs        — emit_span helper (used by chat_stream + registration).
@@ -1281,14 +1247,16 @@ telemetry.rs        — emit_span helper (used by chat_stream + registration).
 - iOS minimum: 16.0. Built via `pnpm --filter browser-shell tauri ios build
   --target aarch64`. Sims use `127.0.0.1:8080` to reach the host gateway.
 - Android minSdk: 26. Emulators use the special host-loopback `10.0.2.2:8080`.
-- Stronghold backend on mobile uses the platform Keychain / Keystore.
+- Sign-in is desktop-only for now (system browser + loopback); mobile sign-in
+  is not implemented.
 - Capabilities files for the iOS WebDriver runs are at
   `src-tauri/capabilities/ios-capability.json` and `main-capability.json`.
 
 ### 7.4 Capability Permissions
 
-Tauri 2 capability files declare per-window permissions for plugins (dialog,
-stronghold, http, haptics). E2E captures use a separate
+Tauri 2 capability files declare per-window permissions: `main-capability.json`
+grants the `main` window `core:default`, webview-window creation, events,
+`dialog:default` and `haptics:default`. No Stronghold or HTTP permission exists. E2E captures use a separate
 `tauri-plugin-webdriver-automation` (macOS debug + `e2e` feature only).
 
 ---
@@ -1375,7 +1343,7 @@ ContextChip.svelte               — Per-message context attachment chip.
 DrawerRecentChats.svelte         — Recent threads list inside Drawer.
 ProfileSheet.svelte              — User profile sheet.
 QuotaList.svelte                 — Per-tier quota breakdown.
-ShellLoginScreen.svelte          — Login screen (browser-shell).
+ShellLoginScreen.svelte          — Sign-in screen (browser-shell): one "Sign in" action, no credential fields.
 ShellScreen.svelte               — Top-level shell screen with router.
 SuggestionChips.svelte           — Suggestion chips above the composer.
 AttachmentSheet.svelte           — Attachment picker (moved from
@@ -1411,15 +1379,18 @@ themeStore.svelte.ts    — createThemeStore + localStorageAdapter. Types:
                           ThemeStore.
 featureFlags.svelte.ts  — createFeatureFlags. Types: FeatureFlags,
                           FeatureFlagStore.
-toast.svelte.ts         — toasts (singleton). Types: Toast, ToastKind ("info" |
+appStores.svelte.ts     — provideAppStores() / app-store getters: one set of
+                          navigation (screen), drawer, breadcrumbs, recents and
+                          toast stores per app tree, held in Svelte context
+                          (no module-level state, so SSR never shares state
+                          between users).
+toast.svelte.ts         — createToastStore. Types: Toast, ToastKind ("info" |
                           "success" | "warning" | "error").
-modeStore.svelte.ts     — modeStore. AppMode ("agent" | "chat" | "workspace").
-recents.svelte.ts       — recentsStore (recent threads).
-breadcrumbs.svelte.ts   — breadcrumbsStore.
-screen.svelte.ts        — screenStore. Screen ("chat" | "capabilities" |
+recents.svelte.ts       — createRecentsStore (recent threads).
+breadcrumbs.svelte.ts   — createBreadcrumbsStore.
+screen.svelte.ts        — createScreenStore. Screen ("chat" | "capabilities" |
                           "artifacts").
-drawer.svelte.ts        — drawerStore.
-pins.svelte.ts          — pinned capabilities store.
+drawer.svelte.ts        — createDrawerStore.
 ```
 
 #### 8.1.4 Motion (`src/lib/motion/`)
@@ -1501,9 +1472,10 @@ Module map (`src/`):
 client.ts       — createInternalClient (fetch wrapper with bearer auth +
                    ApiError handling). Returns InternalClient { fetch, baseUrl,
                    tokenProvider, request, call }. createConusSdk wires
-                   { auth, capabilities, chat, files, threads, ui, workspaces,
-                   realtime, shells } onto it.
-auth.ts         — auth(client) → login, logout, me.
+                   { capabilities, chat, files, threads, ui, workspaces }
+                   onto it. Browser apps pass a token provider that returns
+                   null: the web app relies on its server-side proxy, the
+                   shell's fetch wrapper adds the bearer itself.
 capabilities.ts — capabilities(client) → list, search, get, register.
                    Exports RegisterCapabilityRequest.
 chat.ts         — streamChat(params) — SSE consumer.
@@ -1514,8 +1486,6 @@ threads.ts      — threads(client) → list, getMessages.
                    Exports ThreadMessage, ThreadSummary.
 ui.ts           — ui(client) — primitive UI helpers (capability cards, etc.).
 workspaces.ts   — workspaces(client) → create, tree, search, getNode, …
-realtime.ts     — realtime(client) → workspace SSE subscriber.
-shells.ts       — shells(client) → shellControl (WebSocket helper).
 endpoints.ts    — EP constants — every path defined in §5.2 by name.
 glyphs.ts       — glyphFor(namespace) → string icon name.
 types.ts        — ApiError, ApiResult<T>, ChatStreamDelta, RoutingMeta,
@@ -1525,7 +1495,7 @@ index.ts        — public re-exports.
 
 ### 8.3 `@conusai/types`
 
-Version 0.6.0. Generated from `/openapi.json` by `scripts/openapi-to-types.sh`
+Version 0.6.0. Generated from the gateway's OpenAPI document (`agent-gateway --dump-openapi`) by `scripts/openapi-to-types.sh`
 (uses `openapi-typescript` 7).
 
 ```
@@ -1698,77 +1668,81 @@ prompt_template = """Extract all text visible in the attached image …
 
 ## 10. Infrastructure & Tooling
 
-### 10.1 `docker-compose.yml`
+### 10.1 `docker-compose.yml` and `docker-compose.local.yml`
 
-Rewritten 2026-05-26 to mirror `dokploy/infra/docker-compose.yml` so local-dev
-behaviour matches production. Service map (profiles in brackets):
+[`docker-compose.yml`](../docker-compose.yml) is the one stack ConusAI Cloud
+deploys (named in [`conusai.json`](../conusai.json)). It follows the
+platform's rules: no top-level `x-*` keys, no `hostname`/`container_name`, no
+host ports, no external volumes or networks, list-form commands, numeric
+non-root users, explicit resource limits; services reach each other by
+service name.
 
-| Service | Image | Port(s) | Profiles | Purpose |
-|---------|-------|---------|----------|---------|
-| `postgres` | `postgres:17-alpine` | 5432 | infra, full | Shared DB for Zitadel + Lago |
-| `redis` | `redis:7-alpine` | 6379 | infra, full | Lago Sidekiq queue + cache |
-| `zitadel` | `ghcr.io/zitadel/zitadel:v2.68.0` | 8085→8080 | infra, full | Identity (OIDC). `ZITADEL_TLS_ENABLED=false` + `--tlsMode disabled` so the bundled `zitadel ready` healthcheck speaks HTTP. |
-| `lago-migrate` | `getlago/api:v1.46.0` (one-shot, `./scripts/migrate.sh`, `restart: "no"`) | — | infra, full | Runs Rails migrations before api/worker/clock start |
-| `lago-api` | `getlago/api:v1.46.0` (`./scripts/start.api.sh`) | 3010→3000 | infra, full | Billing API |
-| `lago-worker` | `getlago/api:v1.46.0` (`./scripts/start.worker.sh`) | — | infra, full | Sidekiq worker (probe on :8080) |
-| `lago-clock` | `getlago/api:v1.46.0` (`./scripts/start.clock.sh`) | — | infra, full | Billing cron (subscriptions/invoices). Without it nothing invoices. |
-| `qdrant` | `qdrant/qdrant:v1.17.0` | 6333 (HTTP), 6334 (gRPC) | — | Vector store |
-| `rustfs-perms` | `alpine:3` | — | — | chown helper (RustFS UID 10001) |
-| `rustfs` | `rustfs/rustfs:latest` | 9000 (S3), 9001 (console) | — | S3-compatible storage. No healthcheck — image lacks curl/wget/bash. |
-| `marker-api` | `${MARKER_IMAGE:-ghcr.io/vikparuchuri/marker:latest}` | 8081→8080 | marker | PDF → Markdown sidecar (image override needed if private) |
-| `agent-gateway` | local build (`apps/backend/Dockerfile`, target `gateway`) | 8080 | — | The Rust backend. Receives `LAGO_API_URL`, `LAGO_API_KEY`, `PLATFORM_ADMIN_TOKEN`. |
-| `current-time` | local build (`services/current-time/`) | 8082 | — | Example MCP sidecar. Calls `conusai-gateway:8080` / `conusai-current-time:8082` over in-container DNS (no `host.docker.internal`). |
-| `web` | `node:22-slim` | 3000 | web, full | SvelteKit web app |
-| `jaeger` | `jaegertracing/all-in-one:1.58` | 16686 (UI), 14317 (OTLP) | observability | Trace UI |
-| `otel-collector` | `otel/opentelemetry-collector-contrib:0.123.0` | 4317 (gRPC), 4318 (HTTP) | observability | OTel fan-out |
+| Service | Image | Port | Limits | Purpose |
+|---------|-------|------|--------|---------|
+| `gateway` | build `apps/backend/Dockerfile` | 8080 (public) | 2 GiB / 2 CPU | agent-gateway; volume `gateway_data:/data` (redb, embedding cache); healthcheck `/health` |
+| `web` | build `apps/web/Dockerfile` | 3000 (public, primary) | 512 MiB / 1 CPU | SvelteKit BFF; waits for a healthy gateway; healthcheck `/healthz` |
+| `current-time` | build `services/current-time` | 8082 | 256 MiB / 0.5 CPU | Example MCP capability; registers with the gateway using `PLATFORM_ADMIN_TOKEN` |
+| `zitadel` | `ghcr.io/zitadel/zitadel:v4.19.5` | 8080 (public) | 1 GiB / 1 CPU | Identity. `start-from-init --masterkeyFromEnv --tlsMode external`, built-in login v1 (`LOGINV2_REQUIRED=false`), external domain `AUTH_HOST` on 443, first-instance org `epifly` with the admin from `ZITADEL_ADMIN_*` |
+| `lago-migrate` | `getlago/api:v1.55.0` | — | 1 GiB / 1 CPU | One-shot `./scripts/migrate.sh` (`restart: "no"`) |
+| `lago-api` | `getlago/api:v1.55.0` | 3000 (public) | 1 GiB / 1 CPU | Lago API after a successful migration; volume `lago_storage:/app/storage` |
+| `lago-worker` | `getlago/api:v1.55.0` | — | 1 GiB / 1 CPU | Sidekiq worker |
+| `lago-clock` | `getlago/api:v1.55.0` | — | 512 MiB / 0.5 CPU | Billing scheduler |
 
-Lago config notes (match upstream `docs.getlago.com/guide/self-hosting/docker`):
+The Lago services share one environment (YAML anchor `&lago-env` on
+`lago-migrate`): `DATABASE_URL=${POSTGRES_URL}`, `REDIS_URL`,
+`SECRET_KEY_BASE`, the three `LAGO_ENCRYPTION_*` keys, `LAGO_RSA_PRIVATE_KEY`,
+`LAGO_API_URL`/`LAGO_FRONT_URL=https://${BILLING_HOST}`, sign-up disabled, no
+Sidekiq web, no PDF generation, no S3. There is no Lago front-end container.
 
-- Encryption env vars MUST be `LAGO_`-prefixed: `LAGO_ENCRYPTION_PRIMARY_KEY`,
-  `LAGO_ENCRYPTION_DETERMINISTIC_KEY`, `LAGO_ENCRYPTION_KEY_DERIVATION_SALT`.
-  Un-prefixed names are silently ignored → ActiveRecord-encrypted columns
-  become unrecoverable across deploys.
-- The four Lago services share a top-level `x-lago-backend-env: &lago-backend-env`
-  YAML anchor.
-- `lago-api` and `lago-worker` need a writable `/app/storage` (named volume
-  `lago_storage_data`) even with `LAGO_USE_AWS_S3=false` +
-  `LAGO_DISABLE_PDF_GENERATION=true` — the storage adapter initialises at boot.
-- Healthchecks use `start_period: 120s` + `start_interval: 2s` to absorb Rails
-  cold-boot.
+Postgres, Redis, Qdrant and S3 are **not** in this file: they are ConusAI Cloud
+managed services linked to the project, whose variables (`POSTGRES_*`,
+`REDIS_URL`, `QDRANT_GRPC_URL`, `QDRANT_API_KEY`, `S3_BUCKET`, `AWS_*`) the
+platform injects; it also injects `CONUSAI_API_URL`/`CONUSAI_API_TOKEN`.
 
-Volumes: `postgres_data`, `redis_data`, `qdrant_data`, `rustfs_data`,
-`redb_data`, `lago_storage_data`, `zitadel_machinekey`.
+[`docker-compose.local.yml`](../docker-compose.local.yml) is never deployed.
+It adds `postgres:18.6-alpine`, `valkey/valkey:9.1.2-alpine`,
+`qdrant/qdrant:v1.19.0` and `rustfs/rustfs:1.0.1`, plain-HTTP Zitadel on
+`localhost:8085`, and loopback host ports (web 3000, gateway 8080, Zitadel
+8085, Lago API 3001, RustFS 9000), and turns OTLP export off.
 
-Every service declares an explicit `hostname:` so cross-stack DNS resolves
-identically to the production `dokploy-network`.
-
-Profiles enable selective bring-up:
-
-- `./start.sh local` — backend + infra (Docker), gateway on host.
-- `docker compose --profile full up` — everything including web.
-- `docker compose --profile observability up` — adds Jaeger + otel-collector.
-- `docker compose --profile marker up` — adds Marker (requires `MARKER_IMAGE`
-  override unless the upstream public image exists).
+Container images: [`apps/backend/Dockerfile`](../apps/backend/Dockerfile)
+(cargo-chef on `rust:1.99.1-slim-trixie`, runtime `debian:trixie-slim`,
+capabilities copied to `/app/capabilities`, `ENV PORT CONUSAI_CAPABILITIES_DIR
+REDB_PATH EMBEDDING_CACHE_DIR`), [`apps/web/Dockerfile`](../apps/web/Dockerfile)
+(`node:24.22.0-trixie-slim`, `pnpm deploy --prod`),
+[`services/current-time/Dockerfile`](../services/current-time/Dockerfile)
+(`python:3.14.8-slim-trixie`). All three run as uid `10001`.
 
 ### 10.2 `justfile` Recipes
 
 | Recipe | Purpose |
 |--------|---------|
 | `default` | Lists all recipes |
-| `web-dev` | `pnpm --filter web dev` with `CONUSAI_BACKEND_URL` |
+| `up` | `docker compose -p epifly -f docker-compose.yml -f docker-compose.local.yml up --build -d` (needs a filled `.env`, e.g. from `scripts/generate-env.sh`) |
+| `down` | Stops the local stack (volumes kept) |
+| `logs [service]` | Follows logs |
+| `config` | Renders the merged compose file; fails when a variable is missing |
+| `dev` | `up` then `web-dev` |
+| `web-dev` | `pnpm --filter web dev` with `GATEWAY_URL` (default `http://localhost:8080`) |
 | `web-build` | Builds web |
-| `shell-dev` | `pnpm --filter browser-shell tauri dev` |
+| `shell-dev` | `pnpm --filter browser-shell tauri dev` with `VITE_GATEWAY_URL` |
 | `shell-build` | Builds desktop bundle |
 | `shell-build-macos` | Universal macOS bundle |
 | `shell-build-windows` | x86_64-pc-windows-msvc |
-| `shell-ios-dev` | iOS simulator (VITE_API_BASE=127.0.0.1) |
+| `shell-ios-dev` | iOS simulator (`VITE_GATEWAY_URL=http://127.0.0.1:8080`) |
 | `shell-ios-build` | iOS aarch64 |
-| `shell-android-dev` | Android emulator (VITE_API_BASE=10.0.2.2) |
+| `shell-android-dev` | Android emulator (`VITE_GATEWAY_URL=http://10.0.2.2:8080`) |
 | `shell-android-build` | APK |
 | `shell-android-aab` | AAB |
-| `dev` | tmux-spawned umbrella session (start.sh + web-dev) |
 | `stop-frontend` | Kills host Vite/Tauri processes |
 | `backend-dev` | `cargo run -p agent-gateway` |
+| `types` | `scripts/openapi-to-types.sh` |
+| `lint-tenant-paths`, `lint-capability-storage` | CI guards |
+| `migrate-tenant-buckets` | Triggers the tenant bucket migration job |
+
+The shell recipes set only `VITE_GATEWAY_URL`; `VITE_ZITADEL_ISSUER` and
+`VITE_ZITADEL_NATIVE_CLIENT_ID` must be exported too (the `tauri` wrapper
+refuses to build without them).
 
 ### 10.3 `Makefile`
 
@@ -1791,6 +1765,8 @@ Turbo pipeline. Tasks (resolved via `turbo.json`):
   - `dump-routes.sh` — wraps `cargo run -- --dump-routes`
   - `dump-runes-status.mjs` — Svelte 5 runes inventory
   - `dump-ui-inventory.mjs` — UI primitive inventory
+  - `generate-env.sh` — prints a complete `.env` (`.env.example` with every
+    secret generated); also the source of project secrets for ConusAI Cloud
   - `generate-icons.py`, `generate-logo-variants.py`, `png-to-svg.py` —
     asset pipeline
   - `migrate-to-zitadel-lago.ts` — one-shot data migration helper
@@ -1802,9 +1778,10 @@ Turbo pipeline. Tasks (resolved via `turbo.json`):
 
 Self-registering MCP sidecar example.
 
-- Python 3.11 + FastAPI + httpx.
-- On startup: POSTs to `/admin/capabilities/register` with the JSON-RPC tool
-  spec, using `PLATFORM_ADMIN_TOKEN`.
+- Python 3.14 + FastAPI + httpx (uvicorn on :8082, uid 10001).
+- On startup (FastAPI lifespan): POSTs to `${GATEWAY_URL}/admin/capabilities/register`
+  with the tool spec and `SERVICE_URL`, using `PLATFORM_ADMIN_TOKEN`; the
+  gateway reaches it only because `CONUSAI_MCP_ALLOWED_HOSTS=current-time`.
 - Exposes `POST /mcp` (JSON-RPC 2.0) implementing `tools/list` + `tools/call`.
 - Single tool: `get_current_time(timezone?) → ISO 8601`.
 - Demonstrates the "zero-core-touch" capability extension pattern.
@@ -1813,82 +1790,31 @@ Self-registering MCP sidecar example.
 
 ```
 e2e/
-  fixtures/         — shared test fixtures
-  helpers/          — auth helpers, db reset, …
+  fixtures/         — shared test fixtures, mock-oidc.mjs (local OIDC issuer)
+  helpers/          — auth.ts (sign-in through the mock issuer), tauri.ts, …
   ios/              — iOS WDIO suite (uses src-tauri/capabilities/ios-capability.json)
   shell-macos/      — desktop shell WDIO suite
   wdio/             — WebdriverIO config + page objects
   web/              — cross-app web specs (separate from apps/web/e2e)
 ```
 
-### 10.7 Production Deployment — `dokploy/` + `tools/epifly`
+### 10.7 Production Deployment — ConusAI Cloud
 
-Production runs on a self-hosted **Dokploy** controller. There is no bespoke
-web UI — Dokploy is the UI. The repository ships a declarative orchestrator
-that reconciles the controller's state (composes, Shared Env, domains,
-deployments) from local sources of truth, plus a TypeScript CLI wrapper for
-operators.
+epifly deploys to **ConusAI Cloud** as one compose project from the branch
+`conusai-cloud`: preset `docker-compose`, compose file `docker-compose.yml`,
+public services `web:3000` (primary), `gateway:8080`, `zitadel:8080`,
+`lago-api:3000` ([`conusai.json`](../conusai.json)). Managed Postgres, Redis,
+Qdrant and S3 are linked to the project and inject their variables; every
+other variable is a project variable scoped to the environment, including the
+three public hostnames `WEB_HOST`, `AUTH_HOST` and `BILLING_HOST`. The
+procedure — services to link, every variable, Zitadel and Lago first-start
+steps, verification and troubleshooting — is
+[deploy-conusai-cloud.md](deploy-conusai-cloud.md).
 
-**Per-app composes** (one Dokploy "Compose" application each, all sharing the
-`dokploy-network` overlay):
-
-| Compose | File | Services |
-|---------|------|----------|
-| `infra` | [dokploy/infra/docker-compose.yml](../dokploy/infra/docker-compose.yml) | postgres, redis, zitadel, qdrant, rustfs, lago (migrate/api/worker/clock), `pg-password-sync` sidecar, `domain-sync` init |
-| `gateway` | [dokploy/gateway/docker-compose.yml](../dokploy/gateway/docker-compose.yml) | `agent-gateway` + `domain-sync` init |
-| `web` | [dokploy/web/docker-compose.yml](../dokploy/web/docker-compose.yml) | SvelteKit web + `domain-sync` init |
-| `observability` | [dokploy/observability/docker-compose.yml](../dokploy/observability/docker-compose.yml) | Jaeger + otel-collector + `domain-sync` init |
-| `capabilities` | [dokploy/capabilities/](../dokploy/capabilities) | current-time + future MCP sidecars |
-
-**Key orchestrator pieces:**
-
-- [dokploy/.env.example](../dokploy/.env.example) — canonical list of every
-  Shared Env key. Operators copy this; `generate-prod-env.mjs` produces a
-  mode-0600 `.env.production` with auto-generated secrets.
-- [dokploy/epifly-deploy/scripts/deploy.mjs](../dokploy/epifly-deploy/scripts/deploy.mjs)
-  — **6-phase reconciler** run by the `epifly-deploy` compose (or `epifly
-  deploy`): (1) ensure named volumes, (2) merge Shared Env (existing wins →
-  bootstrap → `SECRETS[k]()` guarded by `STATEFUL_SECRETS` volume check →
-  `.env.example` non-empty literal → empty), (3) create/update composes via
-  Dokploy REST API, (4) reconcile `domains.yaml` → `domain.byComposeId`,
-  (5) trigger `compose.deploy` in dependency order, (6) verify via
-  `lib/verify.mjs`.
-- [dokploy/scripts/sync-domains.mjs](../dokploy/scripts/sync-domains.mjs) —
-  per-app init container. **Must mount the whole `dokploy/` directory at
-  `/app`** (mounting only the script breaks the relative
-  `lib/dokploy-client.mjs` import with `ERR_MODULE_NOT_FOUND`).
-- [dokploy/lib/](../dokploy/lib) — zero-dep ESM helpers used both by the
-  orchestrator container and the TS CLI: `manifest.mjs` (app registry),
-  `secrets.mjs` (`SECRETS` + `STATEFUL_SECRETS` maps), `compose-vars.mjs`
-  (per-compose `${VAR}` interpolation), `verify.mjs` (post-deploy probes),
-  `docker.mjs`, `dokploy-client.mjs` (REST wrapper: `x-api-key`, `GET
-  /api/{procedure}?…`, `POST /api/{procedure}` JSON), `dotenv.mjs`.
-- [dokploy/infra/docker-compose.yml](../dokploy/infra/docker-compose.yml)'s
-  `pg-password-sync` sidecar (`docker:27-cli` + `/var/run/docker.sock`) runs
-  `ALTER USER … PASSWORD` over the in-container Unix socket on every deploy,
-  converging the live DB to whatever `POSTGRES_PASSWORD` is in Shared Env.
-  Both `zitadel` and `lago-api` `depends_on: pg-password-sync:
-  service_completed_successfully`.
-
-**`tools/epifly` CLI** (`@conusai/epifly` 0.1.0 — tsup ESM bundle, commander,
-jest+ts-jest):
-
-| Subcommand | Purpose |
-|------------|---------|
-| `init` | Interactive `.epifly.json` + first secret generation |
-| `deploy` | Idempotent full reconcile (volumes → secrets → composes → domains → deploys → verify) |
-| `diff` | Dry-run: prints which Shared Env keys / composes / domains would change |
-| `status` | Cluster snapshot (per-compose source/state, latest deployment, domains) |
-| `verify` | Post-deploy probes (Zitadel `/.well-known`, Lago `/health`, gateway `/health`) |
-| `logs` | Tails a Dokploy compose's service logs |
-| `secret` | `get`/`set`/`rotate` Shared Env keys (guarded by `STATEFUL_SECRETS`) |
-| `doctor` | Validates `.epifly.json`, API key, network reachability, manifest drift |
-| `destroy` | Removes one or all composes from the Dokploy project |
-| `wipe` | Destructive volume reset (per-volume or `--all`) — calls `dokploy/scripts/wipe-volumes.sh` |
-
-The CLI imports `APPS` from `dokploy/lib/manifest.mjs` so there is exactly one
-manifest source of truth across the orchestrator container and the operator
-CLI.
+Telemetry goes to the platform's OTLP ingest (§5.14). The planned next step is
+ConusAI Cloud's managed Identity and Billing services (conusai-cloud plan
+`managed-identity-billing`, item E1): `zitadel` and the four `lago-*` services
+leave the compose file and the platform injects `OIDC_*` and `LAGO_*`.
 
 ---
 
@@ -1902,17 +1828,18 @@ sequenceDiagram
     participant Client
     participant Web as SvelteKit /v1/* proxy
     participant GW as agent-gateway
-    participant ID as Identity (Zitadel / Legacy)
+    participant ID as ZitadelVerifier (JWKS)
     participant Q as QuotaChecker (Lago)
     participant Rig as Rig + LlmRegistry
     participant Anthropic
 
-    Client->>Web: POST /v1/chat/completions (cookie)
-    Web->>GW: forwards with bearer token
+    Client->>Web: POST /v1/chat/completions (session cookie)
+    Web->>Web: unseal __Host-epifly_session, refresh if needed
+    Web->>GW: forwards with Authorization: Bearer <access token>
     GW->>ID: verify token
-    ID-->>GW: TenantContext
+    ID-->>GW: Identity (org = tenant, role); plan from PlanResolver (Lago)
     GW->>Q: pre-flight check
-    Q-->>GW: allow (or 402 with upgrade_url)
+    Q-->>GW: allow (or 429 with upgrade_url)
     GW->>Rig: completion request
     Rig->>Anthropic: SSE chat stream
     loop streaming
@@ -2001,39 +1928,49 @@ sequenceDiagram
 sequenceDiagram
     autonumber
     participant Browser
-    participant Web as SvelteKit
+    participant Web as SvelteKit BFF
     participant Z as Zitadel
+    participant GW as agent-gateway
 
-    Browser->>Web: GET /auth
-    Web->>Web: generate code_verifier + state, hash to code_challenge
-    Web-->>Browser: 302 to Z /oauth/v2/authorize + cookies (verifier, state, 5m)
-    Browser->>Z: GET /authorize?code_challenge=...
-    Z-->>Browser: login + consent
-    Browser->>Web: GET /auth/callback?code&state
-    Web->>Web: verify state + verifier
-    Web->>Z: POST /oauth/v2/token (code, verifier)
-    Z-->>Web: { id_token, access_token, refresh_token }
-    Web->>Web: decode id_token → user; HMAC-seal { name, plan, exp, tenantId }
-    Web-->>Browser: 302 to / + Set-Cookie: conusai_session (24h)
-    Browser->>Web: GET / (cookie)
-    Web->>Web: hooks.server.ts verifies cookie via session.ts adapter
-    Web-->>Browser: HTML
+    Browser->>Web: GET / (no session)
+    Web-->>Browser: 303 /auth/login?returnTo=/
+    Browser->>Web: GET /auth/login
+    Web->>Web: PKCE verifier + state + nonce, sealed into __Host-epifly_oidc (10 min)
+    Web-->>Browser: 302 Z authorize (code_challenge S256, scope openid profile email offline_access)
+    Browser->>Z: login (built-in login v1)
+    Z-->>Browser: 302 /auth/callback?code&state
+    Browser->>Web: GET /auth/callback
+    Web->>Z: token request (code, verifier); state + nonce + ID token checked
+    Z-->>Web: access_token (JWT), refresh_token, id_token
+    Web->>Web: seal {user, at, atExp, rt, iat} (AES-256-GCM, AUTH_SESSION_KEY)
+    Web-->>Browser: 303 returnTo + Set-Cookie __Host-epifly_session
+    Browser->>Web: GET /v1/... (cookie)
+    Web->>GW: Authorization: Bearer <access token>
+    GW->>Z: JWKS (cached)
+    GW-->>Web: response
+    Web-->>Browser: response
 ```
 
-### 11.5 Legacy HMAC login (dev)
+### 11.5 Native shell sign-in (apps/browser-shell, desktop)
 
 ```mermaid
 sequenceDiagram
-    participant Browser
-    participant Web
-    participant GW
+    participant UI as Shell webview
+    participant Rust as Tauri (auth/)
+    participant Sys as System browser
+    participant Z as Zitadel
+    participant GW as agent-gateway
 
-    Browser->>Web: POST /login {email, password}
-    Web->>GW: POST /v1/auth/login
-    GW->>GW: bcrypt verify against DEV_PASSWORD; JWT via JWT_SECRET
-    GW-->>Web: { token }
-    Web->>Web: HMAC-seal { name, plan, exp, tenantId } with UI_SESSION_KEY
-    Web-->>Browser: 302 / + Set-Cookie conusai_session
+    UI->>Rust: invoke auth_sign_in
+    Rust->>Rust: bind 127.0.0.1:<random port>; PKCE + state + nonce
+    Rust->>Sys: open authorize URL (redirect http://127.0.0.1:<port>/callback)
+    Sys->>Z: login
+    Z-->>Sys: 302 to loopback callback
+    Sys->>Rust: GET /callback?code&state
+    Rust->>Z: token request; validate ID token
+    Rust->>Rust: refresh token → Stronghold vault; access token in memory
+    UI->>Rust: invoke auth_access_token (per request)
+    UI->>GW: fetch VITE_GATEWAY_URL/... Authorization: Bearer
 ```
 
 ---
@@ -2055,21 +1992,21 @@ via `tauri.conf.json` (see §3).
 - `GET /health` — process-up probe.
 - `GET /healthz/embeddings` — returns 200 once the local embedding model is
   loaded (Qdrant unreachable → 503).
-- `GET /metrics` — Prometheus.
-- Docker healthchecks: `postgres` (`pg_isready`), `redis` (`redis-cli ping`),
-  `zitadel` (`/app/zitadel ready` — needs `ZITADEL_TLS_ENABLED=false` to speak
-  HTTP), `lago-api` / `lago-worker` / `lago-clock` (curl `/health` on :3000 or
-  Sidekiq probe on :8080, `start_period: 120s`), `qdrant` (TCP probe),
-  `marker-api` (curl `/health`). `rustfs` has **no** Docker healthcheck —
-  upstream image ships without curl/wget/bash; rely on `agent-gateway` retries
-  and the `/healthz/embeddings` app probe.
+- `GET /metrics` — Prometheus (platform token).
+- Web: `GET /healthz` — 200 `ok`, no session, no upstream call.
+- Compose healthchecks: `gateway` (curl `/health`, `start_period: 120s`),
+  `web` (node fetch `/healthz`), `zitadel` (`/app/zitadel ready`),
+  `lago-api` (curl `/health` on :3000), `lago-worker` (curl :8080);
+  `lago-migrate` must complete successfully before `lago-api` starts. Locally,
+  `postgres` (`pg_isready`) and `redis` (`valkey-cli ping`) also have
+  healthchecks. Managed services are health-checked by the platform.
 
 ### 12.4 Rate Limiting & Quotas
 
 - Per-route per-tenant token bucket in `mw::rate_limit`.
 - Plan-tier quotas enforced by `mw::router_quota::RouterQuotaLayer` on
-  `/v1/chat/*` and `/v1/agent/*`. Over-limit returns HTTP 402 with body
-  `{ error: { kind: "quota_exceeded", upgrade_url, … } }`. `upgrade_url`
+  `/v1/chat/completions` and `/v1/agent/completions`. Over-limit returns HTTP 429 with body
+  `{ code: "quota_exceeded", message, plan_tier, upgrade_url }` and `Retry-After`. `upgrade_url`
   derived from `BILLING_RETURN_URL`.
 
 ### 12.5 Audit & Retention
@@ -2080,29 +2017,34 @@ via `tauri.conf.json` (see §3).
 
 ### 12.6 Secrets & Key Material
 
-- `UI_SESSION_KEY` (web) — 32-byte secret. Required in production.
-- `JWT_SECRET` (gateway) — legacy adapter HMAC key.
-- `RUSTFS_IAM_ENC_KEY` — base64 AES-GCM key for redb-stored S3 creds.
+- `AUTH_SESSION_KEY` (web) — 32 bytes, base64; AES-256-GCM key of the session
+  and login-transaction cookies. Rotating it signs everyone out.
+- `RUSTFS_IAM_ENC_KEY` — base64 AES-GCM key for redb-stored S3 creds. Never rotate in place.
+- `ZITADEL_MASTERKEY`, `LAGO_SECRET_KEY_BASE`, `LAGO_ENCRYPTION_*`,
+  `LAGO_RSA_PRIVATE_KEY` — encrypt or sign Zitadel's and Lago's stored data; never regenerated.
 - `RUSTFS_WEBHOOK_SECRET` — HMAC for `/internal/rustfs/events`.
-- `LAGO_WEBHOOK_SECRET` — HMAC for `/v1/billing/webhooks`.
-- `PLATFORM_ADMIN_TOKEN` — bearer for capability self-registration.
-- All long-lived secrets are loaded from env. The Tauri shell stores the
-  device token in Stronghold (per-OS Keychain/Keystore on mobile).
+- `LAGO_WEBHOOK_SECRET` — Lago organization HMAC key for `/v1/billing/webhooks`.
+- `PLATFORM_ADMIN_TOKEN` — bearer for capability self-registration and `/metrics`.
+- `API_KEYS` — BLAKE3 hashes only, never the keys.
+- All long-lived secrets are project variables scoped to the environment
+  (deploy-conusai-cloud.md §4). The Tauri shell stores only the user's refresh
+  token, in a Stronghold vault (§7.2).
 
 ### 12.7 Backups
 
-- `redb_data` Docker volume — copy `/data/conusai.redb` (single file).
-- `rustfs_data` — RustFS supports object versioning; configure replication or
-  snapshot the volume.
-- `qdrant_data` — Qdrant snapshots via API or volume copy.
-- `postgres_data` — `pg_dump` per database (`zitadel`, `lago`).
+- `gateway_data` volume — `/data/epifly.redb` (single file; holds threads,
+  audit, workspace metadata and the encrypted per-tenant S3 credentials).
+- `lago_storage` volume — Lago's local storage.
+- Postgres, Qdrant and S3 are managed services: their backups are the
+  platform's (locally: the `postgres_data`, `qdrant_data`, `rustfs_data`
+  volumes).
 
 ### 12.8 Hot Reload
 
 - Capability manifests are watched via `notify` 7 (`ManifestWatcher`,
   `macos_fsevent` feature). Adding/editing a TOML re-registers the
   capability without restarting the gateway.
-- LLM provider config layered via figment — restart required.
+- LLM aliases (`LLM_ALIAS_<ALIAS>`) and the rest of the environment are read at start — restart required.
 
 ### 12.9 Migration Helpers
 
@@ -2118,33 +2060,26 @@ via `tauri.conf.json` (see §3).
 ### 13.1 `apps/backend/crates/agent-gateway/src/`
 
 ```
-auth/
-  extractor.rs
-  mod.rs
-  verifier.rs
-capabilities.rs               — module exposed to route handlers
+auth.rs                       — authenticate, require_super_admin, API_KEYS parsing/hashing, platform token check
+capabilities/                 — gateway-side capability wiring (job-backed)
+config.rs                     — GatewayConfig::from_env, the environment contract
+main.rs                       — CLI flags, bootstrap, build_router, /metrics
 metrics.rs                    — RustFsMetrics + RouterMetrics
-main.rs
 mw/
-  admin.rs
-  api_key.rs
-  identity.rs
   meter.rs
   mod.rs
   plan.rs
   rate_limit.rs
   request_id.rs
   router_quota.rs
-  tenant.rs
   trace.rs
+plans.rs                      — PlanResolver (tenant plan from Lago, cached)
 routes/
   admin_capabilities.rs
-  admin_devices.rs
   admin_jobs.rs
   admin_tenants.rs
   agent.rs
   audit.rs
-  auth.rs
   billing.rs
   billing_webhook.rs
   capabilities.rs
@@ -2156,17 +2091,16 @@ routes/
   mod.rs                      — ApiDoc, ROUTE_TABLE, public/internal/protected/admin router builders
   realtime.rs
   search.rs
-  shells.rs
   tasks.rs
   threads.rs
   uploads.rs
   workspaces.rs
-state.rs                      — AppState + AppState::from_env
+state.rs                      — AppState + AppState::from_config
+tests.rs                      — router-level tests
 ui/
-  handlers/
+  handlers/{chat,files,mod,upload}.rs
   mod.rs
-  routes.rs                   — /ui/* (asset router for embedded UI)
-  session.rs
+  routes.rs                   — /ui/stream, /ui/upload, /ui/files/download
 ```
 
 ### 13.2 `apps/backend/crates/agent-core/src/`
@@ -2182,11 +2116,12 @@ capabilities/
   executor.rs
   manifest.rs
   mcp_adapter.rs
+  mcp_allowlist.rs
   mod.rs
   namespace.rs
+  object_source.rs
   provider.rs
   providers/
-    capability_spec.rs
     chain.rs
     dynamic_prompt.rs
     job_backed.rs
@@ -2199,10 +2134,9 @@ capabilities/
   semantic_router.rs
   store.rs
   validator.rs
-  wasm_loader.rs
 chains/{dynamic_prompt,executor,llm_chain,mod}.rs
 context/{conversation,mod,tenant}.rs
-identity/{legacy,mod,zitadel}.rs
+identity/{mod,zitadel}.rs
 indexing/{embedding_service,local_embedding_service,mod}.rs
 llm/
   error.rs
@@ -2220,7 +2154,6 @@ store/
   marker.rs
   mod.rs
   onboarding.rs
-  presign.rs
   qdrant_vector.rs
   quota.rs
   redb_metadata.rs
@@ -2235,8 +2168,7 @@ lib.rs
 ```
 artifact.rs
 audit.rs
-config/
-  mod.rs                      — figment loader, CONUSAI_<SECTION>__<KEY> pattern
+env.rs                        — EnvContract (fail-fast environment validation)
 error.rs                      — ConusAiError, ErrorEnvelope, ApiErrorBody, ApiErrorKind
 eval.rs
 http_client.rs
@@ -2245,14 +2177,15 @@ limits.rs
 mcp.rs
 memory/
   inmem.rs                    — InMemory{Audit,Thread,Workspace,WorkspaceContent}Store
+  mod.rs, store.rs, thread.rs, workspace.rs, tests.rs
 metrics.rs
 path_safety.rs
 path_template.rs
 prompt/
-telemetry.rs                  — OTel + Prometheus init
+secret.rs                     — bearer_token, constant_time_eq
+telemetry.rs                  — logs, OTLP HTTP export, Prometheus registry
 trace.rs
 types.rs
-wasm.rs
 ```
 
 ### 13.4 `apps/backend/crates/billing-core/src/`
@@ -2293,7 +2226,10 @@ scheduler.rs
 
 ```
 bootstrap.rs                  — declarative bootstrap (versioning, SSE, notifications, IAM)
+bucket.rs
+iam.rs
 lib.rs                        — RustFsAdminClient
+signing.rs
 ```
 
 ### 13.7 `apps/web/src/`
@@ -2304,30 +2240,35 @@ hooks.server.ts
 lib/
   sdk.ts
   server/
-    env.ts
-    oidc.ts
-    session.ts
+    auth/{oidc,seal,session,transaction}.ts
+    config.ts
+    gateway.ts
+    proxy-route.ts
+    proxy.ts
 routes/
   +error.svelte
   +layout.server.ts
   +layout.svelte
-  +page.server.ts
   +page.svelte
   _/ui/
     +layout.ts
     +page.svelte
   account/
-    +page.svelte
-    billing/+page.svelte
-    usage/+page.svelte
+    +page.server.ts, +page.svelte
+    billing/+page.server.ts, +page.svelte
+    usage/+page.server.ts
+  admin/[...path]/+server.ts
+  api/[...path]/+server.ts
   auth/
-    +server.ts
     callback/+server.ts
+    login/+server.ts
     logout/+server.ts
-  login/
-    +page.server.ts
-    +page.svelte
-  logout/+server.ts
+    signed-out/+page.svelte
+  healthz/+server.ts
+  mcp/[...path]/+server.ts
+  ui/[...path]/+server.ts
+  v1/[...path]/+server.ts
+tests/                        — auth.test.ts, proxy.test.ts, stubs/
 ```
 
 ### 13.8 `apps/browser-shell/src/`
@@ -2339,20 +2280,22 @@ routes/
   +layout.ts
   +page.svelte
 lib/
-  auth.svelte.ts
+  session.svelte.ts
   sdk.ts
   tauri-stream.ts
-  mobile/platform/             — (currently empty)
+  mobile/platform/detect.ts
 ```
 
 ### 13.9 `apps/browser-shell/src-tauri/src/`
 
 ```
+auth/
+  mod.rs
+  oidc.rs
+  vault.rs
 chat_stream.rs
-device_auth.rs
 lib.rs
 main.rs
-oidc_auth.rs
 recorder.rs
 registration.rs
 tabs.rs
@@ -2385,7 +2328,6 @@ utils/                         — see §8.1.5
 ### 13.11 `packages/sdk/src/`
 
 ```
-auth.ts
 capabilities.ts
 chat.ts
 chatApi.ts
@@ -2394,8 +2336,6 @@ endpoints.ts
 files.ts
 glyphs.ts
 index.ts
-realtime.ts
-shells.ts
 threads.ts
 types.ts
 ui.ts
@@ -2424,7 +2364,6 @@ extract-fields-incident/capability.toml
 extract-fields-medical-claim/capability.toml
 extract-ocr-tesseract/capability.toml
 extract-ocr-vision/capability.toml
-file-storage/capability.toml
 google-workspace/capability.toml
 invoice-processing/capability.toml
 ocr-service/capability.toml
@@ -2433,7 +2372,6 @@ plan-orchestrate/capability.toml
 runtime-echo/capability.toml
 sense-classify-document/capability.toml
 sense-mime/capability.toml
-storage-fs/capability.toml
 storage-workspace/capability.toml
 template-wasm/capability.toml
 transcribe-video/capability.toml
@@ -2450,6 +2388,7 @@ cross-platform-diff.mjs
 dump-routes.sh
 dump-runes-status.mjs
 dump-ui-inventory.mjs
+generate-env.sh
 generate-icons.py
 generate-logo-variants.py
 migrate-to-zitadel-lago.ts
@@ -2470,15 +2409,15 @@ requirements.txt
 ### 13.16 `docker/zitadel/`
 
 ```
-bootstrap.sh
+bootstrap.sh                  — not referenced by docker-compose.yml or docker-compose.local.yml
 defaults.yaml
 ```
 
 ### 13.17 `e2e/`
 
 ```
-fixtures/
-helpers/
+fixtures/                     — incl. mock-oidc.mjs
+helpers/                      — incl. auth.ts
 ios/
 shell-macos/
 wdio/
@@ -2488,6 +2427,14 @@ web/
 ---
 
 ## Change Log
+
+- **2026-10-16** — ConusAI Cloud refactor: Dokploy, `tools/epifly` and
+  `start.sh` replaced by one `docker-compose.yml` + `conusai.json` (§10);
+  bearer-only gateway auth with Zitadel tokens or hashed API keys, plan from
+  Lago (§5.3–5.4); removed login, Swagger UI, shell-control and device routes
+  (§5.2); environment contract in `config.rs` (§5.12); OTLP HTTP to the
+  platform instead of Jaeger (§5.14); web BFF with sealed session cookie (§6);
+  shell sign-in in Rust with a Stronghold vault (§7).
 
 - **2026-05-24** — Full rewrite from scratch (re-derived from current code).
   Previous revision was 2026-05-21; the new revision adds the full route table

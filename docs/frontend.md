@@ -1,6 +1,6 @@
 # Frontend Architecture & Implementation
 
-_Last reviewed: 2026-05-24._
+_Last reviewed: 2026-10-16._
 
 This document describes the **ConusAI frontend monorepo** — the three shared packages
 (`@conusai/ui`, `@conusai/sdk`, `@conusai/types`) and the two consumer apps
@@ -19,7 +19,7 @@ The companion documents are [docs/ui-design.md](ui-design.md) (visual language),
 | ---------------------- | ------------------------------------------------------------------------------ |
 | One UI, three runtimes | Browser (SvelteKit SSR), macOS/Linux/Windows desktop (Tauri 2), iOS + Android (Tauri 2 mobile). |
 | Shared component layer | `packages/ui` — Svelte 5 + runes, design tokens, motion, stores, screens.       |
-| Shared transport layer | `packages/sdk` — typed REST + SSE + WebSocket client; no Svelte deps.           |
+| Shared transport layer | `packages/sdk` — typed REST + SSE client; no Svelte deps.                       |
 | Shared type layer      | `packages/types` — domain types + generated OpenAPI types.                      |
 | Visual identity        | Single source of truth in [packages/ui/tokens/tokens.json](../packages/ui/tokens/tokens.json); regenerates CSS + TS. |
 | Cross-app parity       | [scripts/check-cross-app-imports.mjs](../scripts/check-cross-app-imports.mjs) blocks any `apps/X → apps/Y` import and any feature `.svelte` outside `packages/ui`. |
@@ -37,7 +37,7 @@ routing, environment-specific bootstrapping, and a thin `sdk.ts` wrapper.
 ```
 packages/
   types/                 # @conusai/types — domain types + OpenAPI types
-  sdk/                   # @conusai/sdk   — REST/SSE/WS client (Svelte-free)
+  sdk/                   # @conusai/sdk   — REST/SSE client (Svelte-free)
   ui/                    # @conusai/ui    — tokens, primitives, features, screens
 apps/
   web/                   # SvelteKit SSR app (adapter-node, port 5173)
@@ -259,10 +259,15 @@ import { createConusSdk } from '@conusai/sdk';
 
 const sdk = createConusSdk({
   fetch,                         // injected (browser fetch, server fetch, Tauri fetch wrapper)
-  baseUrl: 'http://localhost:8080',
+  baseUrl: '',                   // both apps pass '' and let their fetch wrapper pick the origin
   tokenProvider: { get: async () => bearerOrNull },
 });
 ```
+
+A non-null token from `tokenProvider` is sent as `Authorization: Bearer <token>`.
+Neither app uses it: the web app's browser code never holds a token (the
+SvelteKit server adds it, §6.3) and the shell's fetch wrapper adds the bearer
+itself (§7.2).
 
 [`client.ts`](../packages/sdk/src/client.ts) builds an `InternalClient` exposing
 `request<T>` (throws on non-2xx) and `call<T>` (returns `ApiResult<T>` —
@@ -273,15 +278,12 @@ internal client.
 
 | Module          | Surface                                                                          |
 | --------------- | --------------------------------------------------------------------------------- |
-| `auth.ts`       | `sdk.auth.me()`, `sdk.auth.logout()`.                                             |
 | `capabilities.ts` | List, search, register / unregister capability cards. `RegisterCapabilityRequest`. |
 | `chatApi.ts`    | `sdk.chat.stream({...})` wrapping `streamChat` from `chat.ts`.                    |
 | `files.ts`      | Upload, presigned URLs, extract-invoice.                                          |
 | `threads.ts`    | `sdk.threads.list`, `.get`, `.messages` — pagination + delete.                    |
 | `ui.ts`         | UI-facing endpoints (`/ui/upload`, `/ui/extract-invoice`).                        |
 | `workspaces.ts` | Tree, search, content, share/unshare, move.                                       |
-| `realtime.ts`   | WebSocket factory at `/api/realtime/workspace` with auto-reconnect (`500 → 30000 ms`). |
-| `shells.ts`     | Shell registration + heartbeat from desktop/mobile clients.                       |
 | `glyphs.ts`     | `glyphFor(name)` — capability → icon name mapping.                                |
 
 `endpoints.ts` is the **only** place URL paths live (`EP.UI_STREAM`,
@@ -294,16 +296,20 @@ internal client.
 ### 5.3 Streaming details
 
 See §4.5. The SDK never depends on a global `fetch` — apps inject one. This is
-critical for SvelteKit SSR (`event.fetch`) and for the Tauri shell (which wraps
-fetch to inject an `x-session-token` header and resolve relative URLs against
-`VITE_API_BASE`).
+critical for SvelteKit SSR (server loads use `gatewayFetch`, §6.4) and for the
+Tauri shell (which wraps fetch to resolve relative URLs against
+`VITE_GATEWAY_URL` and add `Authorization: Bearer`, §7.2).
 
 ---
 
 ## 6. `apps/web` — SvelteKit (browser)
 
-Pure SvelteKit on `adapter-node`, port 5173 in dev, vite-proxied to backend at
-`8080`. Renders the workshop in SSR for the first paint, hydrates with runes.
+SvelteKit on `adapter-node` (port 3000 in the container, 5173 under `vite dev`),
+acting as a **backend-for-frontend**: it signs users in against Zitadel on the
+server, keeps the tokens in an encrypted cookie and proxies API calls to the
+gateway (`GATEWAY_URL`) with the bearer token added. The browser only ever talks
+to this origin. Renders the workshop in SSR for the first paint, hydrates with
+runes.
 
 ### 6.1 Stack
 
@@ -316,63 +322,83 @@ Pure SvelteKit on `adapter-node`, port 5173 in dev, vite-proxied to backend at
 | Path                         | Purpose                                                                 |
 | ---------------------------- | ----------------------------------------------------------------------- |
 | `+layout.svelte`             | Imports `app.css`, mounts `<ThemeProvider>` + `<LiveAnnouncer>` + `<ToastHost>`, bootstraps i18n, sets `data-hydrated="true"` for E2E waiters. |
-| `+layout.server.ts`          | Auth gate — redirects to `/login` if `locals.user` is null. Returns `{ user: { name, plan, firstName, initials, tenantId } }`. |
-| `+page.svelte`               | The workshop. Provides capability registry, instantiates `createChatStream` with the user's `tenantId`, mounts `<ShellPage>` with SvelteKit `goto` as the router. |
-| `+page.server.ts`            | Server-side load: builds a server SDK, fetches recents + workspace tree (Promise.allSettled). |
+| `+layout.server.ts`          | Returns display data only — `{ user: { name, email, plan, firstName, initials } }` (plan from `GET /v1/billing/subscription`), or `{ user: null }`. Never a token. |
+| `+page.svelte`               | The workshop. Provides capability registry, instantiates `createChatStream`, mounts `<ShellPage>` with SvelteKit `goto` as the router; logout is a hidden `POST /auth/logout` form. |
 | `+error.svelte`              | Error boundary using `<EmptyState kind="error">`.                       |
-| `login/`                     | OIDC / local login surface.                                             |
-| `logout/`                    | Clears session + redirects via Zitadel `end_session` if configured.     |
-| `auth/+server.ts`            | Issues PKCE state, redirects to `${ZITADEL_DOMAIN}/oauth/v2/authorize`. |
-| `auth/callback/+server.ts`   | Token exchange, sets `conusai_session` cookie, redirects to `/`.        |
-| `auth/logout/`               | Logout endpoint.                                                        |
+| `auth/login/+server.ts`      | Starts the Zitadel authorization-code flow (PKCE S256, `state`, `nonce`); `?returnTo=` picks the landing page. |
+| `auth/callback/+server.ts`   | Verifies the sealed transaction, exchanges the code, creates the session cookie, redirects to `returnTo`. |
+| `auth/logout/+server.ts`     | `POST` only: revokes the refresh token, clears the cookie, redirects to Zitadel's `end_session` endpoint. |
+| `auth/signed-out/`           | Post-logout landing page ("Sign in again").                             |
+| `healthz/+server.ts`         | Liveness probe (`ok`), no auth, no upstream calls.                       |
+| `v1/`, `api/`, `ui/`, `mcp/`, `admin/` (`[...path]`) | Same-origin proxy to the gateway (§6.4).                       |
 | `account/+page.svelte`       | Account overview.                                                       |
-| `account/billing/`           | Subscription, Stripe Checkout / Customer Portal hand-off.               |
+| `account/billing/`           | Subscription, checkout / customer-portal hand-off via the gateway's `/v1/billing/*`. |
 | `account/usage/`             | Plan usage + quotas.                                                    |
 | `_/ui/+page.svelte`          | **Dev-only primitive gallery** — renders every component with its fixtures (theme + viewport controls). Guarded in `_/ui/+layout.ts`. |
 
 ### 6.3 Session & auth
 
-[src/lib/server/session.ts](../apps/web/src/lib/server/session.ts) defines a
-`SessionAdapter` seam with two implementations:
+The server is an OIDC client of Zitadel; the browser never sees a token.
 
-- `LocalHmacAdapter` — default, signs `{ name, plan, role, exp }` with
-  `UI_SESSION_KEY` (HMAC-SHA-256). Used in dev and standalone deployments.
-- `BackendJwtAdapter` — activated by setting `BACKEND_AUTH_LOGIN_URL`; calls the
-  backend to mint a JWT, then verifies subsequent cookies by decoding payload
-  (signature is already verified by the Rust gateway).
+- **Configuration** — [src/lib/server/config.ts](../apps/web/src/lib/server/config.ts)
+  is the whole environment contract: `ORIGIN`, `GATEWAY_URL`, `ZITADEL_ISSUER`,
+  `ZITADEL_WEB_CLIENT_ID`, optional `ZITADEL_WEB_CLIENT_SECRET` (confidential
+  client only) and `AUTH_SESSION_KEY` (32 random bytes, base64). The `init`
+  hook validates it and the server refuses to start when anything is missing
+  or malformed. `BODY_SIZE_LIMIT` is read by adapter-node. Values per
+  deployment: [deploy-conusai-cloud.md](deploy-conusai-cloud.md).
+- **Login** — [src/lib/server/auth/oidc.ts](../apps/web/src/lib/server/auth/oidc.ts)
+  runs discovery against `ZITADEL_ISSUER` (`openid-client`) and requests
+  `openid profile email offline_access`. `/auth/login` seals `state`, `nonce`,
+  the PKCE verifier and `returnTo` into the 10-minute cookie `__Host-epifly_oidc`
+  ([transaction.ts](../apps/web/src/lib/server/auth/transaction.ts));
+  `/auth/callback` checks them and exchanges the code. The redirect URI is
+  always `${ORIGIN}/auth/callback`, the post-logout URI `${ORIGIN}/auth/signed-out`.
+- **Session** — [src/lib/server/auth/session.ts](../apps/web/src/lib/server/auth/session.ts)
+  seals `{ user, access token, expiry, refresh token }` with AES-256-GCM
+  (`AUTH_SESSION_KEY`, [seal.ts](../apps/web/src/lib/server/auth/seal.ts)) into
+  the cookie `__Host-epifly_session` (Secure, HttpOnly, SameSite=Lax, Path=/),
+  split over `.1`/`.2` when larger than 3800 bytes. There is no server-side
+  store; the session lives at most 30 days. The ID token is not kept.
+- **Refresh** — an access token with less than a minute left is refreshed with
+  the refresh token. Refreshes are single-flight per refresh token, and a
+  finished refresh is remembered for 30 s so parallel requests carrying the old
+  cookie reuse the rotated tokens. A dead grant (`invalid_grant`) clears the
+  session.
 
-[src/lib/server/oidc.ts](../apps/web/src/lib/server/oidc.ts) layers a
-`ZitadelOidcAdapter` on top when `AUTH_PROVIDER=zitadel`. PKCE flow, token
-exchange at `${ZITADEL_DOMAIN}/oauth/v2/token`, claim extraction
-(`urn:conusai:plan_tier`, `urn:conusai:subscription_status`), `end_session`
-logout. The access token is stored in `conusai_access_token`; session decoded
-on every request.
+[src/hooks.server.ts](../apps/web/src/hooks.server.ts) per request:
 
-[src/hooks.server.ts](../apps/web/src/hooks.server.ts) does three things per
-request:
-
-1. Manual CSRF origin check, scoped to non-API form paths (SvelteKit's blanket
-   check is disabled in `svelte.config.js` because (a) backend-proxied
-   `fetch()` calls have mismatched Origin headers and (b) WebKit omits the
-   Origin header on same-origin form submissions).
-2. Reads `conusai_session` cookie, verifies it via the active adapter, sets
-   `event.locals.user`.
+1. Sets security headers (`nosniff`, `X-Frame-Options: DENY`, referrer and
+   permissions policy, HSTS on https).
+2. Resolves the session into `event.locals.session`. Pages without a session
+   redirect to `/auth/login?returnTo=…`; `/healthz`, `/auth/*` and (dev only)
+   `/_/ui` are public; proxied paths answer `401` themselves.
 3. `transformPageChunk` — finds the content-hashed Geist + Geist Mono `.woff2`
    URLs Vite injected and prepends matching `<link rel="preload">` to eliminate
    font swap.
 
-`svelte.config.js` also configures a **nonce-based CSP** (`default-src 'self'`,
-`connect-src` includes the backend origin + `wss:`), and disables `checkOrigin`.
+`svelte.config.js` keeps SvelteKit's origin check on for form posts and
+configures a **nonce-based CSP** with `connect-src 'self'` only — every API
+call is same-origin.
 
-### 6.4 SDK wiring
+### 6.4 SDK wiring and the gateway proxy
 
-[src/lib/sdk.ts](../apps/web/src/lib/sdk.ts) — browser SDK uses
-`credentials: 'include'` so the session cookie travels on every call. The base
-URL is computed from `window.location.origin` (`:3000 → :8080`, `:5173 → :8080`)
-so it matches the Vite proxy. Server-side loads build their own SDK (see
-`+page.server.ts`) with `createServerFetch(sessionCookie)` from
-[src/lib/server/env.ts](../apps/web/src/lib/server/env.ts) that forwards the
-cookie header.
+[src/lib/sdk.ts](../apps/web/src/lib/sdk.ts) — the browser SDK uses `baseUrl: ''`
+and no token: every call goes to the app's own origin.
+[src/lib/server/proxy.ts](../apps/web/src/lib/server/proxy.ts) forwards `/v1`,
+`/api`, `/ui`, `/mcp` and `/admin` to `GATEWAY_URL`:
+
+- injects `Authorization: Bearer <access token>` from the session and drops
+  inbound `Authorization`, `Cookie`, `X-Tenant-ID`, `X-Session-Token`,
+  `X-Device-Token`, `X-API-Key`, forwarding and hop-by-hop headers; passes
+  `x-request-id` (generated when absent), `traceparent`, `tracestate`;
+- refuses non-safe methods that are not same-origin;
+- streams bodies (cap 100 MB), streams SSE responses, strips `Set-Cookie`;
+- does **not** proxy WebSocket upgrades (adapter-node has no upgrade hook).
+
+Server-side loads and form actions call the gateway directly through
+[src/lib/server/gateway.ts](../apps/web/src/lib/server/gateway.ts)
+(`gatewayFetch(session)`, `serverSdk(session)`, `requireSession(locals)`).
 
 ### 6.5 Vite config
 
@@ -382,8 +408,10 @@ cookie header.
   the `.js` extensions in TS re-exports under @tailwindcss/node).
 - `server.fs.allow: ['../../packages/ui']` — required for hot module reloading
   cross-package.
-- Dev proxy for `/v1`, `/api`, `/admin`, `/ui`, `/swagger-ui`, `/docs`,
-  `/openapi.json`, `/metrics` → `CONUSAI_BACKEND_URL` (default `http://localhost:8080`).
+- No dev proxy: under `vite dev` the SvelteKit server itself proxies to
+  `GATEWAY_URL`, exactly as in production, so `just web-dev` needs the full
+  `config.ts` environment; `ORIGIN` must be the dev URL and its
+  `/auth/callback` a redirect URI registered on the Zitadel web app.
 
 ### 6.6 Local UI surface in the app
 
@@ -400,7 +428,7 @@ The runtime hook `src/lib/hooks/is-mobile.svelte.ts` is the only non-UI hook.
 
 `apps/web/e2e/`:
 
-- `smoke.test.ts` — login + first paint.
+- `smoke.test.ts` — `/healthz`, redirect of an unauthenticated `/` to `/auth/login`, signed-out page and its nonce CSP.
 - `keyboard.spec.ts` — focus traps, Cmd-K, slash command.
 - `motion-budget.spec.ts` — asserts every animation has `data-motion-purpose`.
 - `visual/visual.spec.ts`, `visual/reduced-motion.spec.ts` — Playwright + axe-core
@@ -417,13 +445,13 @@ iOS 16+, Android `minSdkVersion 26`.
 ### 7.1 Stack
 
 - Frontend: SvelteKit (`adapter-static`), Svelte 5.33, `@tauri-apps/api 2`,
-  `@tauri-apps/plugin-dialog 2`, `@tauri-apps/plugin-stronghold 2`,
-  `vite-plugin-static-copy` (mirrors `packages/ui/src/lib/assets` into the
+  `@tauri-apps/plugin-dialog 2`, `vite-plugin-static-copy` (mirrors `packages/ui/src/lib/assets` into the
   bundle so logos / fonts ship offline).
-- Rust: Tauri 2 (`unstable` features), `tauri-plugin-http`, `tauri-plugin-haptics`,
-  `tauri-plugin-stronghold` (BLAKE3-keyed), `tauri-plugin-dialog`,
+- Rust: Tauri 2 (`unstable` features), `tauri-plugin-haptics`, `tauri-plugin-dialog`,
+  `tauri-plugin-stronghold` + `iota_stronghold` (used from Rust only, argon2 KDF —
+  its JS commands are not registered),
   `tauri-plugin-webdriver-automation` (debug + macOS + `e2e` feature only),
-  `reqwest`, `tokio`, `futures-util`, `ulid`, `sha2`, `urlencoding`, `open`.
+  `reqwest`, `tokio`, `futures-util`, `ulid`, `sha2`, `rand`, `open`.
 - Workspace crate dependency: `common` from `apps/backend/crates/common`.
 
 ### 7.2 Frontend layout (`src/`)
@@ -431,19 +459,17 @@ iOS 16+, Android `minSdkVersion 26`.
 - `routes/+layout.svelte` — same role as the web app: foundry CSS, theme
   provider, i18n, hydrated marker; additionally emits `theme-change` events to
   Rust on theme switch.
-- `routes/+page.svelte` — gated on `auth.user`; renders `<ShellLoginScreen>` or
-  `<ShellPage>`. Passes a Tauri-specific `streamFn` (see §4.5) and uses
+- `routes/+page.svelte` — restores the session from the Rust vault on mount;
+  renders `<ShellLoginScreen>` (sign-in button) or `<ShellPage>`. Passes a Tauri-specific `streamFn` (see §4.5) and uses
   `replaceState` from `$app/navigation` for workspace ↔ URL sync.
 - `routes/+layout.ts` — disables SSR (`export const ssr = false; export const prerender = false`).
 - `lib/sdk.ts` — Tauri-aware SDK. The `fetch` wrapper resolves bare paths
-  against `VITE_API_BASE` and injects `x-session-token` when set; the token
-  provider calls `invoke('get_device_token')` so the Rust side owns persistence.
-  Also exports `openInSystemBrowser(url)` and `pkceLogin(authUrl)` for OIDC
-  hand-offs. WKWebView cannot send cookies cross-origin to HTTP endpoints
-  (Secure flag blocks it), hence the header-based session token.
-- `lib/auth.svelte.ts` — issues a compact HMAC JWT on local "login" (name +
-  plan), stores it in `localStorage` and as both cookie and header. Real PKCE +
-  IdP comes from Rust (`pkce_login` command).
+  against the build-time `VITE_GATEWAY_URL`, asks Rust for an access token on
+  every request (`invoke('auth_access_token')`; Rust refreshes it when needed)
+  and sends `Authorization: Bearer`, with `credentials: 'omit'`. A `401` marks
+  the session expired. No token is stored in the webview.
+- `lib/session.svelte.ts` — mirrors who is signed in (`auth_status`,
+  `auth_sign_in`, `auth_sign_out`); holds no token.
 - `lib/tauri-stream.ts` — alternative streamer that proxies SSE through Rust
   (the only correct workaround for WKWebView SSE buffering, confirmed in
   `tauri-apps/plugins-workspace#2415`, `#2129`).
@@ -455,11 +481,12 @@ iOS 16+, Android `minSdkVersion 26`.
 | File              | Responsibility                                                                                             |
 | ----------------- | ---------------------------------------------------------------------------------------------------------- |
 | `main.rs`         | Thin entrypoint → `lib::run()`.                                                                            |
-| `lib.rs`          | Builds the Tauri app: registers plugins (`dialog`, `stronghold` with BLAKE3 hash, `http`, `haptics`), manages four state handles (tabs, recorder, device-auth, stream registry), registers all `#[tauri::command]`s, and (in debug + macOS + `e2e` feature) the WebDriver automation plugin. On `setup`, emits `shell-ready` then registers the capability with the backend. Also exports a `RECORDER_BRIDGE_JS` injected into child tab webviews to forward DOM events to the recorder. |
+| `lib.rs`          | Builds the Tauri app: registers plugins (`dialog`, `haptics`; no Stronghold or HTTP plugin), manages four state handles (tabs, recorder, auth, stream registry), registers all `#[tauri::command]`s, and (in debug + macOS + `e2e` feature) the WebDriver automation plugin. Also exports a `RECORDER_BRIDGE_JS` injected into child tab webviews to forward DOM events to the recorder. |
 | `chat_stream.rs`  | `chat_stream_start` / `chat_stream_abort` commands. POSTs to `/ui/stream`, parses SSE in Rust, emits `chat:chunk:<streamId>` events with strongly-typed `ChunkPayload` enum. Bypasses WKWebView SSE buffering. |
-| `oidc_auth.rs`    | `open_in_system_browser` (uses `open` crate) and `pkce_login` — full PKCE flow including local callback server. |
-| `device_auth.rs`  | `set_device_token` / `get_device_token` / `clear_device_token`. Bootstrap from `CONUSAI_DEVICE_TOKEN` env or E2E bypass. The token is read on every SDK request via `tauriTokenProvider`. |
-| `registration.rs` | Posts the shell's capability card to the backend at startup; `upload_trace_cmd` uploads session traces. |
+| `auth/mod.rs`     | `auth_status` / `auth_sign_in` / `auth_sign_out` / `auth_access_token` commands (main window only). Sign-in: binds `127.0.0.1:<random port>`, opens the system browser (`open` crate) on Zitadel's authorize endpoint (code + PKCE S256, `state`, `nonce`), waits for `/callback`, exchanges the code, validates the ID token. Keeps the access token in memory and serialises refreshes behind one mutex. Sign-out revokes the refresh token and opens `end_session`. Build-time `VITE_ZITADEL_ISSUER`, `VITE_ZITADEL_NATIVE_CLIENT_ID`, `VITE_GATEWAY_URL` (`option_env!`). |
+| `auth/oidc.rs`    | Discovery, authorization request, loopback callback listener, code exchange, refresh, revocation, ID-token validation. |
+| `auth/vault.rs`   | Refresh-token vault: Stronghold snapshot keyed with argon2 over a per-install random salt (`vault.salt`). Only Rust reads it. |
+| `registration.rs` | `upload_trace_cmd` uploads a session trace to the workspace with the bearer token (main window only). |
 | `tabs.rs`         | Browser-tab manager (`create_tab`, `close_tab`, `navigate_tab`, `list_tabs`, `save_tabs`, `restore_tabs`). |
 | `recorder.rs`     | `recorder_start` / `recorder_record_step` / `recorder_stop` / `recorder_status`. Receives DOM events from the injected bridge JS, redacts PII (`password|ssn|cc-|card|cvv`), saves traces. |
 | `telemetry.rs`    | `tracing` subscriber + log routing.                                                                        |
@@ -470,10 +497,15 @@ iOS 16+, Android `minSdkVersion 26`.
 
 - `frontendDist: "../build"` (the SvelteKit static output).
 - Dev URL `http://localhost:5174`; `beforeDevCommand` runs `pnpm --filter browser-shell dev`.
-- CSP allows `self`, localhost, the Android emulator host `10.0.2.2`, and
-  `https:` / `wss:` for production gateways.
-- `deep-link` plugin: mobile host `open`, desktop scheme `conusai:` (for the
-  PKCE callback and shareable workspace URLs).
+- The CSP in `tauri.conf.json` allows no remote origin. Run the CLI through
+  `pnpm --filter browser-shell tauri …` ([scripts/tauri.mjs](../apps/browser-shell/scripts/tauri.mjs)):
+  for `dev`/`build` it requires `VITE_GATEWAY_URL`, `VITE_ZITADEL_ISSUER` and
+  `VITE_ZITADEL_NATIVE_CLIENT_ID` and pins `connect-src`/`img-src` to the
+  gateway origin. The issuer is not in `connect-src`: only Rust talks to Zitadel.
+- `deep-link` config: mobile host `open`, desktop scheme `conusai:` (shareable
+  workspace URLs; sign-in uses the loopback redirect, not a deep link).
+- Sign-in works on desktop only: mobile (iOS/Android) sign-in is not yet
+  implemented.
 - Capabilities split between `capabilities/main-capability.json` (full desktop
   privileges) and `capabilities/ios-capability.json` (the minimal mobile set).
 
@@ -536,8 +568,8 @@ Composer (packages/ui)
 ShellScreen → ChatScreen → createChatStream.send(prompt)
   ↓ sdk.chat.stream({...})
 @conusai/sdk → chatApi → streamChat
-  ↓ POST /ui/stream  (Authorization or cookie via apps/web/src/lib/sdk.ts)
-SvelteKit dev proxy → Rust gateway (apps/backend)
+  ↓ POST /ui/stream  (same origin, apps/web/src/lib/sdk.ts)
+SvelteKit proxy (adds Authorization: Bearer from the session) → Rust gateway (apps/backend)
   ↑ SSE: data: {choices:[{delta:{content|tool_call_start|tool_call_result|routing_meta|resource_invalidated}}], thread_id}
 streamChat yields ChatStreamDelta
   → createChatStream pushes to $state messages / toolCards
@@ -555,9 +587,9 @@ The exact same `<ShellPage>` mounts in both `apps/web/src/routes/+page.svelte`
 and `apps/browser-shell/src/routes/+page.svelte`. Differences are limited to:
 
 - Router glue (SvelteKit `goto` vs `replaceState`).
-- SDK construction (cookie-based fetch vs header + Tauri token provider).
+- SDK construction (same-origin fetch through the SvelteKit proxy vs direct gateway fetch with a bearer from Rust).
 - Stream function override (default SSE vs Tauri-event SSE).
-- Auth state (server cookie vs `auth.svelte.ts` local HMAC + future PKCE).
+- Auth (server-side OIDC + encrypted cookie vs Rust loopback PKCE + Stronghold vault).
 - Asset pipeline (Vite serves directly vs `vite-plugin-static-copy` mirrors
   `packages/ui/.../assets` into the bundle).
 
@@ -591,8 +623,9 @@ helper, every i18n string — flows through `packages/ui`.
   proxy-trap on `Map.set`. Documented under §17 in `docs/verify/verify-ios.md`.
 - **WKWebView SSE buffering** — always go through `streamChatTauri` in the
   Tauri shell; never fall back to the default SDK streamer on iOS / macOS.
-- **WKWebView cross-origin cookies** — desktop and mobile use the
-  `x-session-token` header instead of cookies for `/ui/*` calls.
+- **No cookies in the shell** — the shell calls the gateway cross-origin with
+  `Authorization: Bearer` and `credentials: 'omit'`; the gateway's CORS allows
+  `tauri://localhost` and `http://tauri.localhost` in addition to `WEB_ORIGIN`.
 - **CSP nonce vs HMR** — the web app uses nonce CSP in production; Vite dev
   injects its own scripts which need to remain `unsafe-inline`-tolerated only
   in dev.

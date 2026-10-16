@@ -29,9 +29,9 @@ No gateway restart is required. No config files need editing. No gateway code ne
 ┌─────────────────────────────────────────────────────────┐
 │  ConusAI Gateway                                        │
 │                                                        │
-│  • Stores tool row in capability_specs (redb)           │
-│  • Hot-reloads in-memory registry via tokio broadcast   │
-│  • Embeds description with fastembed for semantic search │
+│  • Adds the tools to the in-memory registry             │
+│  • Embeds the descriptions (fastembed) into Qdrant      │
+│  • Calls only endpoints on CONUSAI_MCP_ALLOWED_HOSTS    │
 │                                                        │
 │  At query time:                                        │
 │    user message → fastembed ANN → top-K tools          │
@@ -178,9 +178,7 @@ On startup, POST this JSON to `{GATEWAY_URL}/admin/capabilities/register`:
 ```json
 {
   "capability_id": "acme.billing.invoice-parser",
-  "name":          "invoice-parser",
   "namespace":     "acme.billing",
-  "description":   "Parses invoices and extracts structured data.",
   "version":       "1.0.0",
   "kind":          "remote_mcp",
   "endpoint":      "http://invoice-parser:8090/mcp",
@@ -198,7 +196,7 @@ On startup, POST this JSON to `{GATEWAY_URL}/admin/capabilities/register`:
     }
   ],
   "tags":         ["invoice", "finance", "parsing"],
-  "tenant_scope": [],
+  "global":       true,
   "enabled":      true
 }
 ```
@@ -207,24 +205,26 @@ On startup, POST this JSON to `{GATEWAY_URL}/admin/capabilities/register`:
 
 | Field | Required | Description |
 |---|---|---|
-| `capability_id` | ✅ | Unique reverse-DNS ID: `"namespace.service-name"`. Used as the primary key. |
-| `name` | ✅ | Short service name (no dots). Used in logs and the admin UI. |
-| `namespace` | ✅ | Dot-separated namespace: `"acme.billing"`, `"media.time"`, etc. Groups related tools. |
-| `description` | ✅ | Service-level description. |
-| `version` | ✅ | Semantic version string. |
-| `kind` | ✅ | Must be `"remote_mcp"` for self-registering services. |
-| `endpoint` | ✅ | Full URL the gateway calls for `tools/list` and `tools/call`. |
-| `tools` | ✅ | Array of tool definitions (see below). |
-| `tags` | ✅ | Array of string tags for filtering and search. |
-| `tenant_scope` | — | Array of tenant IDs. Empty `[]` = available to all tenants. |
+| `capability_id` | ✅ | Reverse-DNS id, `[a-z][a-z0-9._-]*`, max 128 chars. |
+| `namespace` | ✅ | Dot-separated `[a-z][a-z0-9_]*` segments (max 6): `"acme.billing"`, `"media.time"`. Each tool becomes the capability `<namespace>.<tool name>`. |
+| `version` | ✅ | Version string (max 64 chars). |
+| `kind` | ✅ | Must be `"remote_mcp"`. |
+| `endpoint` | ✅ | Full URL the gateway calls for `tools/list` and `tools/call`. Its host (or host:port) must be listed in the gateway's `CONUSAI_MCP_ALLOWED_HOSTS`. |
+| `tools` | ✅ | 1 to 32 tool definitions (see below). |
+| `tenant_scope` | one of | Tenant ids (Zitadel organization ids) that may see the tools. |
+| `global` | one of | `true` exposes the tools to every tenant. Set exactly one of `tenant_scope` or `global`. |
+| `tags` | — | Up to 16 tags of 1 to 64 characters. |
 | `enabled` | — | Defaults to `true`. Set `false` to register but not expose yet. |
+
+Unknown fields are refused. A capability name that is already registered is never replaced:
+the gateway answers `409 Conflict`.
 
 #### Tool definition fields
 
 | Field | Required | Description |
 |---|---|---|
-| `name` | ✅ | Function name. **No dots.** Underscores and hyphens OK. Must match what your `tools/call` handler expects. |
-| `description` | ✅ | This is what the semantic router embeds and ranks. Write it from the user's perspective — describe *when to use this*, not just what it does. |
+| `name` | ✅ | Function name: `[a-z0-9_-]`, 1 to 64 characters, no dots. Must match what your `tools/call` handler expects. |
+| `description` | ✅ | Up to 2000 characters. This is what the semantic router embeds and ranks. Write it from the user's perspective — describe *when to use this*, not just what it does. |
 | `input_schema` | ✅ | JSON Schema object (`type: "object"` with `properties`). |
 
 > **Tip:** Tool descriptions are the most important field for routing accuracy.  
@@ -241,8 +241,7 @@ The gateway may not be ready when your service starts. Implement retries:
 # Python example
 async def register_with_retry(max_retries=10, delay=3.0):
     url = f"{os.environ['GATEWAY_URL']}/admin/capabilities/register"
-    token = os.environ.get("PLATFORM_ADMIN_TOKEN", "")
-    headers = {"Authorization": f"Bearer {token}"} if token else {"X-Tenant-ID": "dev"}
+    headers = {"Authorization": f"Bearer {os.environ['PLATFORM_ADMIN_TOKEN']}"}
 
     for attempt in range(1, max_retries + 1):
         try:
@@ -265,19 +264,9 @@ async def register_with_retry(max_retries=10, delay=3.0):
 
 | Variable | Description |
 |---|---|
-| `GATEWAY_URL` | Base URL of the gateway, e.g. `http://agent-gateway:8080` |
-| `PLATFORM_ADMIN_TOKEN` | Bearer token for registration auth. **Required in production.** Omit in local dev (no-auth mode). |
-| `SERVICE_URL` | Your own service's public URL (used in `endpoint` in the manifest). |
-
-#### Env-var migration (deprecated aliases)
-
-Older versions of the reference service used `CONUSAI_PLATFORM_URL`, `CONUSAI_PLATFORM_TOKEN`, and `CONUSAI_SERVICE_URL`. These are still accepted for one release as fallbacks but emit a deprecation log line at startup. Switch to the canonical names above.
-
-| Deprecated | Canonical replacement |
-|---|---|
-| `CONUSAI_PLATFORM_URL` | `GATEWAY_URL` |
-| `CONUSAI_PLATFORM_TOKEN` | `PLATFORM_ADMIN_TOKEN` |
-| `CONUSAI_SERVICE_URL` | `SERVICE_URL` |
+| `GATEWAY_URL` | Base URL of the gateway, e.g. `http://gateway:8080` inside the compose project |
+| `PLATFORM_ADMIN_TOKEN` | The gateway's `PLATFORM_ADMIN_TOKEN`, sent as `Authorization: Bearer`. Always required. |
+| `SERVICE_URL` | Your own service's URL as the gateway reaches it (used in `endpoint` in the manifest). |
 
 ---
 
@@ -356,9 +345,7 @@ SERVICE_URL = os.getenv("SERVICE_URL", "http://my-tool:8090")
 
 MANIFEST = {
     "capability_id": "acme.tools.my-tool",
-    "name":          "my-tool",
     "namespace":     "acme.tools",
-    "description":   "Does X for the user.",
     "version":       "1.0.0",
     "kind":          "remote_mcp",
     "endpoint":      f"{SERVICE_URL}/mcp",
@@ -366,14 +353,13 @@ MANIFEST = {
                        "description": TOOL_DEF["description"],
                        "input_schema": TOOL_DEF["inputSchema"]}],
     "tags":          ["my-tag"],
-    "tenant_scope":  [],
+    "global":        True,
     "enabled":       True,
 }
 
 async def register_with_retry(max_retries=10, delay=3.0):
-    gateway = os.getenv("GATEWAY_URL", "http://agent-gateway:8080")
-    token   = os.getenv("PLATFORM_ADMIN_TOKEN", "")
-    headers = {"Authorization": f"Bearer {token}"} if token else {"X-Tenant-ID": "dev"}
+    gateway = os.environ["GATEWAY_URL"]
+    headers = {"Authorization": f"Bearer {os.environ['PLATFORM_ADMIN_TOKEN']}"}
 
     for attempt in range(1, max_retries + 1):
         try:
@@ -447,24 +433,20 @@ async function runMyFunction(query: string) {
 const SERVICE_URL = process.env.SERVICE_URL ?? "http://my-tool:8090";
 const MANIFEST = {
   capability_id: "acme.tools.my-tool",
-  name: "my-tool",
   namespace: "acme.tools",
-  description: "Does X for the user.",
   version: "1.0.0",
   kind: "remote_mcp",
   endpoint: `${SERVICE_URL}/mcp`,
   tools: [{ name: "my_function", description: TOOL_DEF.description,
             input_schema: TOOL_DEF.inputSchema }],
   tags: ["my-tag"],
-  tenant_scope: [],
+  global: true,
   enabled: true,
 };
 
 async function registerWithRetry(retries = 10, delay = 3000) {
-  const gateway = process.env.GATEWAY_URL ?? "http://agent-gateway:8080";
-  const token   = process.env.PLATFORM_ADMIN_TOKEN ?? "";
-  const headers = token ? { Authorization: `Bearer ${token}` }
-                        : { "X-Tenant-ID": "dev" };
+  const gateway = process.env.GATEWAY_URL!;
+  const headers = { Authorization: `Bearer ${process.env.PLATFORM_ADMIN_TOKEN}` };
 
   for (let i = 1; i <= retries; i++) {
     try {
@@ -506,16 +488,28 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8090"]
 ```yaml
 services:
   my-tool:
-    build: ./services/my-tool
-    ports:
-      - "8090:8090"
+    build:
+      context: services/my-tool
+    restart: unless-stopped
     environment:
-      GATEWAY_URL:           http://agent-gateway:8080
-      SERVICE_URL:           http://my-tool:8090
-      PLATFORM_ADMIN_TOKEN:  ${PLATFORM_ADMIN_TOKEN:-}
+      GATEWAY_URL: http://gateway:8080
+      SERVICE_URL: http://my-tool:8090
+      PLATFORM_ADMIN_TOKEN: "${PLATFORM_ADMIN_TOKEN}"
+    expose: ["8090"]
     depends_on:
-      - agent-gateway
+      gateway:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
 ```
+
+Add the host to the gateway's allowlist in `docker-compose.yml`, e.g.
+`CONUSAI_MCP_ALLOWED_HOSTS: current-time,my-tool:8090`. ConusAI Cloud's compose rules apply
+(no host ports, numeric non-root user, explicit limits): see the header of
+`docker-compose.yml`.
 
 ---
 
@@ -524,35 +518,35 @@ services:
 ```
 capability_id:  acme.billing.invoice-parser   ← reverse-DNS, unique, immutable
 namespace:      acme.billing                  ← dot-separated group
-name:           invoice-parser                ← short service name, no dots
 tool.name:      parse_invoice                 ← snake_case, no dots, matches handler
+capability:     acme.billing.parse_invoice    ← <namespace>.<tool.name>, what the agent sees
 ```
 
 **Rules:**
-- `capability_id` is the permanent primary key — do not change it after first deploy
-- `tool.name` must match exactly what your `tools/call` handler checks; `(namespace, tool_name)` is unique in the DB
+- Keep `capability_id` stable across releases
+- `tool.name` must match exactly what your `tools/call` handler checks; `<namespace>.<tool.name>` is unique in the registry
 - Tool names containing dots are **rejected** — use underscores
 
 ---
 
 ## Authentication
 
-| Environment | `PLATFORM_ADMIN_TOKEN` set? | Required header |
-|---|---|---|
-| Local dev | No | None (open) |
-| Staging / Prod | Yes | `Authorization: Bearer <token>` |
+`POST /admin/capabilities/register` always requires
+`Authorization: Bearer <PLATFORM_ADMIN_TOKEN>`; the gateway refuses to start without that
+variable, so there is no unauthenticated mode.
 
 ---
 
 ## What happens after registration
 
-1. Gateway writes one DB row per tool into `capability_specs(namespace, tool_name)`
-2. Postgres fires a `NOTIFY capability_specs_changed` trigger
-3. Gateway's realtime listener picks it up and hot-reloads the in-memory registry — **no restart**
-4. fastembed embeds the tool description into `pgvector` for ANN search
-5. On the next agent turn, semantic routing can select your tool
+1. The gateway validates the manifest and checks `endpoint` against `CONUSAI_MCP_ALLOWED_HOSTS`.
+2. Each tool is added to the in-memory capability registry as `<namespace>.<tool name>` — no restart.
+3. The tool descriptions are embedded (fastembed) and upserted into Qdrant for semantic routing; the router cache is invalidated.
+4. On the next agent turn, semantic routing can select your tool.
 
-The whole flow from `POST /admin/capabilities/register` response to "tool available to agent" takes **under one second**.
+Registrations live in the gateway's memory: after a gateway restart every service must
+register again, which the retry loop above does when the service itself restarts. While
+the gateway keeps running, a second registration of the same names gets `409`.
 
 ---
 
@@ -564,8 +558,11 @@ The whole flow from `POST /admin/capabilities/register` response to "tool availa
 | `Unknown tool: <name>` from MCP | The `tool.name` in the manifest doesn't match what your `tools/call` handler checks |
 | `no provider for capability` | Dot-restore failed — ensure `tool.name` contains no dots |
 | `401 Unauthorized` on register | Set `PLATFORM_ADMIN_TOKEN` env var on your service to match the gateway's token |
-| Registration retries forever | Gateway isn't reachable — check `GATEWAY_URL` and Docker network |
-| Capability registered but disabled in UI | `"enabled": true` missing from manifest, or disabled manually via admin UI |
+| `422` on register naming `endpoint` | The endpoint host is not in `CONUSAI_MCP_ALLOWED_HOSTS` |
+| `422` naming `tenant_scope` | Set either `tenant_scope` (non-empty) or `"global": true`, not both |
+| `409 Conflict` on register | The capability is already registered on this gateway process |
+| Registration retries forever | Gateway isn't reachable — check `GATEWAY_URL` and that the gateway is healthy |
+| Capability registered but not offered | `"enabled": false`, or disabled through `PATCH /admin/capabilities/{name}/enabled` |
 
 ---
 
@@ -579,7 +576,7 @@ Existing v1 manifests are still loaded but emit a deprecation warning at boot.
 | Field | Type | Description |
 |---|---|---|
 | `schema_version` | string | `"2.0"` for new manifests. |
-| `namespace` | string | Dot-separated slug from the taxonomy table, e.g. `"extract.fields.invoice"`. See [`docs/capabilities/taxonomy.md`](./taxonomy.md). |
+| `namespace` | string | Dot-separated slug from the taxonomy table, e.g. `"extract.fields.invoice"`. See [`docs/capabilities/taxonomy.md`](capabilities/taxonomy.md). |
 | `category` | string | Taxonomy root: `storage`, `compute`, `sense`, `extract`, `convert`, `compose`, `deliver`, or `plan`. |
 
 ### Recommended v2 fields
@@ -594,7 +591,7 @@ Existing v1 manifests are still loaded but emit a deprecation warning at boot.
 
 ### Taxonomy rule
 
-Every capability namespace must be listed in [`docs/capabilities/taxonomy.md`](./taxonomy.md)
+Every capability namespace must be listed in [`docs/capabilities/taxonomy.md`](capabilities/taxonomy.md)
 and `category` must match the namespace root. Running `cargo xtask capabilities lint`
 enforces this — it must pass before merge.
 
@@ -686,8 +683,10 @@ tool name:     get_current_time
 endpoint:      http://current-time:8082/mcp
 ```
 
+The gateway's `docker-compose.yml` lists `current-time` in `CONUSAI_MCP_ALLOWED_HOSTS`.
+
 This service:
 - Exposes `POST /mcp` with `tools/list` and `tools/call`
-- Registers itself on startup with 10-retry backoff
+- Registers itself on startup, retrying 25 times at 5-second intervals
 - Handles `get_current_time(timezone?)` — returns an ISO 8601 timestamp
 - Is selected by the agent when the user asks things like *"what time is it in Helsinki?"*

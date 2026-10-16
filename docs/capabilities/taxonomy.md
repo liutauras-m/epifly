@@ -11,7 +11,7 @@ by the `SemanticCapabilityRouter` to route intents, and both are enforced by
 
 | Category  | Namespace prefix | Examples                                                                   | Typical kind              |
 |-----------|------------------|----------------------------------------------------------------------------|---------------------------|
-| Storage   | `storage.*`      | `storage.workspace`, `storage.fs`, `storage.object`                       | `native` / `mcp`          |
+| Storage   | `storage.*`      | `storage.workspace`                                                       | `native`                  |
 | Compute   | `compute.*`      | `compute.run_cargo`, `compute.shell` (gated)                               | `native` (opt-in)         |
 | Sense     | `sense.*`        | `sense.mime`, `sense.detect_language`, `sense.classify_document`           | `chain` or `wasm`         |
 | Extract   | `extract.*`      | `extract.ocr.vision`, `extract.ocr.tesseract`, `extract.fields.invoice`, `extract.fields.contract` | `chain`  |

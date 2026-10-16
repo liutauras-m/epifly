@@ -1,5 +1,7 @@
 # ConusAI Architecture Hardening — Implementation Plan (2026-05-24)
 
+> **Status (2026-10-16): historical.** Since the ConusAI Cloud refactor the Swagger UI (`/docs`) no longer exists — only `GET /openapi.json` and `agent-gateway --dump-openapi` remain — and `/metrics` requires the `PLATFORM_ADMIN_TOKEN` bearer. Current behaviour: [arch.md](arch.md).
+
 > **Source review:** "ConusAI Architecture Hardening Plan — Response to External Review (2026-05-24)"
 > **Validated against:** live codebase at `apps/backend/crates/{agent-core,agent-gateway}` and `apps/backend/evals/` on 2026‑05‑24.
 > **Compliance:** Project Instructions v0.3.2 — SRP, canonical names only, no new top‑level registries, no runtime Postgres, Rig 0.36+ hooks/streaming preserved.
@@ -11,12 +13,12 @@
 | Claim in review | Actual state in repo | Verdict |
 |---|---|---|
 | `manifest.rs` has no `schema_hash` / `permissions` / `egress_allowlist` | Confirmed — `ToolManifest` (apps/backend/crates/agent-core/src/capabilities/manifest.rs#L146-L201) lacks all three fields. | ✅ add as optional |
-| `CapabilityCard` lacks provenance | Confirmed — [card.rs](apps/backend/crates/agent-core/src/capabilities/card.rs) has no author/signature/approval. | ✅ add as optional |
-| `validator.rs` has no static injection scan | Confirmed — only structural validation; see [validator.rs](apps/backend/crates/agent-core/src/capabilities/validator.rs). | ✅ add `scan_for_injection_patterns` |
-| `providers/mcp.rs` + `remote_mcp.rs` lack schema‑hash pinning | Confirmed — [mcp.rs](apps/backend/crates/agent-core/src/capabilities/providers/mcp.rs), [remote_mcp.rs](apps/backend/crates/agent-core/src/capabilities/providers/remote_mcp.rs) pass through to `McpAdapter` with no hash check. | ✅ enforce on registration |
-| `semantic_router.rs` should take `task_tags` | The router already exposes `cfg.tags_any` (config‑level) but `rig_tools_for_prompt` does not accept per‑call tags. See [semantic_router.rs#L453-L489](apps/backend/crates/agent-core/src/capabilities/semantic_router.rs#L453). | ✅ add overload `rig_tools_for_prompt_with_tags` |
+| `CapabilityCard` lacks provenance | Confirmed — [card.rs](../apps/backend/crates/agent-core/src/capabilities/card.rs) has no author/signature/approval. | ✅ add as optional |
+| `validator.rs` has no static injection scan | Confirmed — only structural validation; see [validator.rs](../apps/backend/crates/agent-core/src/capabilities/validator.rs). | ✅ add `scan_for_injection_patterns` |
+| `providers/mcp.rs` + `remote_mcp.rs` lack schema‑hash pinning | Confirmed — [mcp.rs](../apps/backend/crates/agent-core/src/capabilities/providers/mcp.rs), [remote_mcp.rs](../apps/backend/crates/agent-core/src/capabilities/providers/remote_mcp.rs) pass through to `McpAdapter` with no hash check. | ✅ enforce on registration |
+| `semantic_router.rs` should take `task_tags` | The router already exposes `cfg.tags_any` (config‑level) but `rig_tools_for_prompt` does not accept per‑call tags. See [semantic_router.rs#L453-L489](../apps/backend/crates/agent-core/src/capabilities/semantic_router.rs#L453). | ✅ add overload `rig_tools_for_prompt_with_tags` |
 | Qdrant cap collection is "not tenant‑scoped" | **Partially wrong.** Capability embeddings are global by design; tenant isolation happens post‑ANN via `is_visible_to()` (semantic_router.rs#L342). The `content_embeddings` collection **already** filters by `tenant_id` (qdrant_vector.rs#L348-L354). | ⚠️ rescope — see §2 |
-| `/metrics`, `/docs`, `/openapi.json` are unauthenticated | Confirmed — mounted in [main.rs#L207](apps/backend/crates/agent-gateway/src/main.rs#L207) and [routes/mod.rs#L247](apps/backend/crates/agent-gateway/src/routes/mod.rs#L247). | ✅ env‑gate |
+| `/metrics`, `/docs`, `/openapi.json` are unauthenticated | Confirmed — mounted in [main.rs#L207](../apps/backend/crates/agent-gateway/src/main.rs#L207) and [routes/mod.rs#L247](../apps/backend/crates/agent-gateway/src/routes/mod.rs#L247). | ✅ env‑gate |
 | Evals expansion fits existing `evals/runners/` | Confirmed — currently only `generic.rs` runner. | ✅ add new suites |
 | redb production risk → reject | Confirmed by Project Instructions v0.3.2 §metadata store. | ✅ reject, document |
 | `TaskProfileRegistry` proposal → reject | Confirmed — existing primitives cover the case. | ✅ reject |
@@ -31,7 +33,7 @@
 
 ### 1.1 `manifest.rs` — optional security fields on `ToolManifest`
 
-File: [manifest.rs](apps/backend/crates/agent-core/src/capabilities/manifest.rs)
+File: [manifest.rs](../apps/backend/crates/agent-core/src/capabilities/manifest.rs)
 
 Add (all `#[serde(default)]`, backward compatible):
 
@@ -77,7 +79,7 @@ pub fn compute_schema_hash(&self) -> String {
 
 ### 1.2 `card.rs` — provenance on `CapabilityCard`
 
-File: [card.rs](apps/backend/crates/agent-core/src/capabilities/card.rs)
+File: [card.rs](../apps/backend/crates/agent-core/src/capabilities/card.rs)
 
 Add a small `CapabilityProvenance` struct (kept inside the same module — provenance has no behaviour, no new abstraction):
 
@@ -106,7 +108,7 @@ Field added to `CapabilityCard`: `pub provenance: CapabilityProvenance`. Populat
 
 ### 1.3 `validator.rs` — static injection scanner
 
-File: [validator.rs](apps/backend/crates/agent-core/src/capabilities/validator.rs)
+File: [validator.rs](../apps/backend/crates/agent-core/src/capabilities/validator.rs)
 
 Add a free function (no new struct):
 
@@ -127,12 +129,12 @@ Detected patterns (case‑insensitive, word‑boundary):
 
 Hooked into:
 
-- `CapabilityFactory::build` (the existing entry point in [providers/mod.rs](apps/backend/crates/agent-core/src/capabilities/providers/mod.rs)) — runs the scan; `errors` block registration, `warnings` are surfaced on the card as `last_error = Some("warn: …")` (does NOT disable the capability).
+- `CapabilityFactory::build` (the existing entry point in [providers/mod.rs](../apps/backend/crates/agent-core/src/capabilities/providers/mod.rs)) — runs the scan; `errors` block registration, `warnings` are surfaced on the card as `last_error = Some("warn: …")` (does NOT disable the capability).
 - `RegisteredToolAdmin::validate` — also runs the scan so the UI shows warnings before save.
 
 ### 1.4 MCP schema‑hash pinning
 
-Files: [providers/mcp.rs](apps/backend/crates/agent-core/src/capabilities/providers/mcp.rs), [providers/remote_mcp.rs](apps/backend/crates/agent-core/src/capabilities/providers/remote_mcp.rs)
+Files: [providers/mcp.rs](../apps/backend/crates/agent-core/src/capabilities/providers/mcp.rs), [providers/remote_mcp.rs](../apps/backend/crates/agent-core/src/capabilities/providers/remote_mcp.rs)
 
 Behaviour:
 
@@ -146,7 +148,7 @@ This preserves SRP — providers verify; admin approves; manifest stores. No new
 
 ### 1.5 `semantic_router.rs` — per‑call task tag filter
 
-File: [semantic_router.rs](apps/backend/crates/agent-core/src/capabilities/semantic_router.rs#L453)
+File: [semantic_router.rs](../apps/backend/crates/agent-core/src/capabilities/semantic_router.rs#L453)
 
 Add a sibling overload (do not break callers):
 
@@ -186,7 +188,7 @@ The review's wording ("router now calls the tenant‑scoped helper exclusively")
 
 ### 2.1 Guard rails (not a refactor)
 
-File: [qdrant_vector.rs](apps/backend/crates/agent-core/src/store/qdrant_vector.rs)
+File: [qdrant_vector.rs](../apps/backend/crates/agent-core/src/store/qdrant_vector.rs)
 
 1. **Introduce `pub struct TenantScoped<'a>(&'a QdrantVectorStore, &'a str);`** with the three content methods (`search_content`, `upsert_content`, `delete_content_by_path`). The bare methods on `QdrantVectorStore` become **crate‑private** (`pub(crate)`).
 2. Public API for content vectors becomes:
@@ -233,8 +235,8 @@ pub async fn env_or_admin(req: Request, next: Next) -> Result<Response, StatusCo
 Wiring:
 
 - `mw/mod.rs` → `pub mod env_gate;`
-- [main.rs#L203-L209](apps/backend/crates/agent-gateway/src/main.rs#L203) → wrap the `/metrics` route layer.
-- [routes/mod.rs#L247](apps/backend/crates/agent-gateway/src/routes/mod.rs#L247) → wrap `/docs` + `/openapi.json` (split the `SwaggerUi` merge into its own `Router` first so the layer applies only to docs).
+- [main.rs#L203-L209](../apps/backend/crates/agent-gateway/src/main.rs#L203) → wrap the `/metrics` route layer.
+- [routes/mod.rs#L247](../apps/backend/crates/agent-gateway/src/routes/mod.rs#L247) → wrap `/docs` + `/openapi.json` (split the `SwaggerUi` merge into its own `Router` first so the layer applies only to docs).
 
 **Side effect:** the route inventory (`scripts/dump-routes.sh`) and `verify-routes-doc` make target must be updated to record the gated rows.
 
@@ -269,7 +271,7 @@ All work inside `apps/backend/evals/`. No new crate.
 
 ## 5. Documentation updates
 
-Single‑pass edits to [docs/arch.md](docs/arch.md) (audit date → 2026‑05‑24). Performed as one PR alongside the code changes.
+Single‑pass edits to [docs/arch.md](arch.md) (audit date → 2026‑05‑24). Performed as one PR alongside the code changes.
 
 - **§12.1 redb** — append the production‑note paragraph from the review.
 - **§4.2 capabilities/** — append the security‑notes paragraph.

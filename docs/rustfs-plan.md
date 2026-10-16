@@ -2,6 +2,8 @@
 
 Status: implemented · Owner: platform team · Last updated: 2026-05-19
 
+> **Status (2026-10-16): historical.** Since the ConusAI Cloud refactor object storage is a linked managed S3 service: the gateway reads `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `S3_BUCKET` (no `S3_ENDPOINT`, no `RUSTFS_ROOT_*`), and the `file-storage` capability was deleted. Current reference: [ops/rustfs.md](ops/rustfs.md), [deploy-conusai-cloud.md](deploy-conusai-cloud.md).
+
 | Phase | Completed |
 |-------|-----------|
 | 1 — Admin client & bootstrap | 2026-05-19 |
@@ -63,7 +65,7 @@ a feature flag (see §4.1), and ends with concrete verification (curl + UI +
 >   out (§6).
 >
 > **Revision 5 changes (codebase alignment, fixes from arch.md cross-check):**
-> - **Jobs live in the existing [`apps/backend/crates/jobs`](apps/backend/crates/jobs)
+> - **Jobs live in the existing [`apps/backend/crates/jobs`](../apps/backend/crates/jobs)
 >   crate**, not duplicated under `agent-gateway/src/jobs/`. New jobs
 >   (`RedbBackupJob`, `CredentialRotationJob`) are registered via the
 >   existing `JobExecutor` and scheduled by `tokio-cron-scheduler` in the
@@ -89,7 +91,7 @@ a feature flag (see §4.1), and ends with concrete verification (curl + UI +
 > - **Upload UI moves to `packages/ui/src/lib/features/upload/`** (Svelte
 >   5 runes) per architectural principle #3; `apps/web` and
 >   `apps/browser-shell` consume it. New SDK methods regenerated via
->   `scripts/openapi-to-types.sh` into [packages/sdk](packages/sdk).
+>   `scripts/openapi-to-types.sh` into [packages/sdk](../packages/sdk).
 > - **Internal webhook `POST /internal/rustfs/events` bypasses
 >   `mw::identity` and `mw::tenant`** (mounted on a sub-router before
 >   those layers), is `#[utoipa::path(... )]` marked with `skip`, and is
@@ -513,7 +515,7 @@ Deliverables:
   single-row redb table `backfill_iam_cursor`; rerun continues from the
   cursor and skips tenants whose vault entry already exists.
 - **`CredentialRotationJob`** lives in the existing
-  [`apps/backend/crates/jobs`](apps/backend/crates/jobs) crate and is
+  [`apps/backend/crates/jobs`](../apps/backend/crates/jobs) crate and is
   registered with the existing `JobExecutor`. Scheduled every
   `rotation_interval` (default 90 d) via `tokio-cron-scheduler`. For
   each due tenant: `create_access_key` → `CredentialVault::rotate` →
@@ -572,11 +574,11 @@ Deliverables:
   `packages/ui/src/lib/features/upload/` module (Svelte 5 runes
   `*.svelte.ts`) implements `createUploadFlow(sdk)` (presign → PUT →
   confirm, progress events, retry, 403/413 toast mapping). Both
-  [apps/web](apps/web) and [apps/browser-shell](apps/browser-shell)
+  [apps/web](../apps/web) and [apps/browser-shell](../apps/browser-shell)
   consume it (principle #3, arch §3). New SDK methods
   (`sdk.workspaces.presignUpload/presignDownload/confirmUpload`) are
   generated from the OpenAPI spec via
-  `scripts/openapi-to-types.sh` into [packages/sdk](packages/sdk).
+  `scripts/openapi-to-types.sh` into [packages/sdk](../packages/sdk).
 - CORS policy on bucket allows the origins listed in
   `RustFsConfig::cors_allowed_origins` for `PUT, GET, HEAD` with headers
   `Content-Type, Authorization, x-amz-*`. Defaults (configurable):
@@ -1084,7 +1086,7 @@ Approximate token budget: 240k–340k input, 120k–170k output.
 9. Scaffold `apps/backend/xtask/` with `backfill-iam` (resumable via
    `backfill_iam_cursor`), `vault-verify`, `vault-migrate` subcommands.
 10. Register the new jobs (`RedbBackupJob`, `CredentialRotationJob`) in
-    the existing [`crates/jobs`](apps/backend/crates/jobs) crate and
+    the existing [`crates/jobs`](../apps/backend/crates/jobs) crate and
     schedule them from the gateway's startup wiring.
 11. Curate `agent-core/src/store/mod.rs` to re-export only facades +
     traits (§2.6); keep concrete impls in private submodules.

@@ -2,30 +2,32 @@
 
 ## Services
 
-| Service | URL | Purpose |
-|---------|-----|---------|
-| Lago API | `http://localhost:3010` | Subscription / event API |
-| Lago UI | `http://localhost:3010/ui` | Admin dashboard |
-| Zitadel | `http://localhost:8085` | Identity / OIDC |
-| Stripe | `https://dashboard.stripe.com` | Payments / cards |
+| Service | Where | Purpose |
+|---------|-------|---------|
+| Lago API (`lago-api`) | `https://<BILLING_HOST>`; locally `http://localhost:3001` | Subscription / event API |
+| Zitadel (`zitadel`) | `https://<AUTH_HOST>`; locally `http://localhost:8085` | Identity / OIDC |
+| Gateway | `/v1/billing/*`, `/admin/billing/*` | Plans, subscriptions, invoices, usage; webhook receiver |
+
+The compose project runs `lago-api`, `lago-worker`, `lago-clock` and the one-shot
+`lago-migrate` (Lago v1.55.0); it does not run Lago's front-end. Billing is on in the
+gateway only when `LAGO_API_KEY` is set; then every tenant's plan comes from its Lago
+subscription (cached for 5 minutes, Free without an active subscription). Setting the
+keys up: [deploy-conusai-cloud.md](../deploy-conusai-cloud.md).
 
 ---
 
-## Rotating Stripe keys
+## Payment provider keys
 
-1. Generate a new key in the Stripe dashboard.
-2. Update `STRIPE_SECRET_KEY` in Lago's environment (docker-compose `.env`).
-3. Restart Lago worker: `docker compose --profile infra restart lago-worker`.
-4. Update `STRIPE_PUBLIC_KEY` in the SvelteKit `.env`.
-5. Verify a test checkout completes.
+Stripe (or another payment provider) is configured inside Lago as an integration, not in
+the epifly environment. Rotate its keys there.
 
 ---
 
 ## Replaying a failed Lago webhook
 
 ```bash
-# Find the event ID in Lago admin UI, then:
-curl -X POST https://<lago-host>/api/v1/webhooks/<event_id>/retry \
+# With the webhook id from Lago, then:
+curl -X POST https://<BILLING_HOST>/api/v1/webhooks/<event_id>/retry \
   -H "Authorization: Bearer $LAGO_API_KEY"
 ```
 
@@ -35,11 +37,17 @@ Lago retries automatically for up to 72 hours with exponential backoff.
 
 ## Issuing credits to a tenant
 
-Via Lago admin UI: **Customers → <tenant_id> → Credits → Add**.
-
-Via API:
+Via the gateway (super-admin bearer token):
 ```bash
-curl -X POST https://<lago-host>/api/v1/wallet_transactions \
+curl -X POST https://<gateway>/admin/billing/credits \
+  -H "Authorization: Bearer <super_admin_access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id":"<zitadel_org_id>","amount_cents":1000,"description":"goodwill"}'
+```
+
+Via the Lago API:
+```bash
+curl -X POST https://<BILLING_HOST>/api/v1/wallet_transactions \
   -H "Authorization: Bearer $LAGO_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"wallet_transaction":{"wallet_id":"<wallet_id>","paid_credits":"10","granted_credits":"0"}}'
@@ -49,48 +57,54 @@ curl -X POST https://<lago-host>/api/v1/wallet_transactions \
 
 ## Cancelling a subscription for a tenant
 
-Via gateway API (requires super-admin JWT):
+As a super-admin, for any tenant:
 ```bash
-curl -X DELETE https://<gateway>/v1/billing/subscription \
-  -H "Authorization: Bearer <super_admin_jwt>"
+curl -X POST https://<gateway>/admin/billing/cancel/<zitadel_org_id> \
+  -H "Authorization: Bearer <super_admin_access_token>"
 ```
 
-Or directly in Lago UI: **Subscriptions → <sub_id> → Terminate**.
+A tenant cancels its own subscription with `DELETE /v1/billing/subscription`.
 
 ---
 
 ## Looking up a tenant by ID
 
+The tenant id is the Zitadel organization id; it is also the Lago customer `external_id`.
+
 Gateway: `GET /v1/billing/subscription` (authenticated as the tenant).
 
 Lago:
 ```bash
-curl https://<lago-host>/api/v1/customers/<tenant_id> \
+curl https://<BILLING_HOST>/api/v1/customers/<tenant_id> \
   -H "Authorization: Bearer $LAGO_API_KEY"
 ```
 
 ---
 
-## Drift reconciliation (Lago vs Zitadel)
+## Reconciliation
 
-A nightly drift check can be run manually:
-```bash
-# List Zitadel orgs without a Lago subscription
-tsx scripts/migrate-to-zitadel-lago.ts < tenant_ids.jsonl
-```
+The scheduled job `lago-reconcile` (`apps/backend/crates/jobs/src/jobs/lago_reconcile.rs`,
+daily at 02:00 UTC) logs Lago's analytics summary and warns on anomalies; it does not yet
+compare Zitadel organizations with Lago customers. Run it on demand with
+`POST /admin/jobs/lago-reconcile/run` (super-admin). `scripts/migrate-to-zitadel-lago.ts`
+is a one-off migration that creates Zitadel organizations and Lago customers for a list of
+tenant ids.
 
 ---
 
 ## Webhook signature verification
 
-Gateway verifies `X-Lago-Signature` header using HMAC-SHA256 with `LAGO_WEBHOOK_SECRET`.
-If verification fails, the gateway returns `401` and logs the error.
+Lago must sign webhooks with HMAC (not JWT). The gateway verifies the `X-Lago-Signature`
+header, the Base64 HMAC-SHA256 of the raw body keyed with `LAGO_WEBHOOK_SECRET` (the
+organization's HMAC key from Lago). A missing or wrong signature, or
+`X-Lago-Signature-Algorithm` other than `hmac`, returns `401`; without billing configured the
+route returns `503`. Replays of a seen `webhook_id` are acknowledged and ignored.
 
 To test a webhook locally:
 ```bash
-SECRET=your_webhook_secret
+SECRET=$LAGO_WEBHOOK_SECRET
 PAYLOAD='{"webhook_type":"subscription.started","object":{}}'
-SIG=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $2}')
+SIG=$(printf %s "$PAYLOAD" | openssl dgst -sha256 -hmac "$SECRET" -binary | base64)
 curl -X POST http://localhost:8080/v1/billing/webhooks \
   -H "X-Lago-Signature: $SIG" \
   -H "Content-Type: application/json" \
