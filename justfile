@@ -4,68 +4,58 @@ default:
 # ── Frontend ──────────────────────────────────────────────────────────────────
 #
 # Best-practice topology (see docs/ui-plan.md §"Quick-start order"):
-#   • `./start.sh local`     — backend + infra (Docker), gateway on host
+#   • `just up`              — the whole stack in Docker (docker-compose.local.yml)
 #   • `just web-dev`         — SvelteKit web app on :5173 (host process)
 #   • `just shell-dev`       — Tauri desktop shell, Vite on :5174 (host process)
-#   • `just shell-ios-dev`   — Tauri iOS simulator       (VITE_API_BASE=127.0.0.1)
-#   • `just shell-android-dev` — Tauri Android emulator  (VITE_API_BASE=10.0.2.2)
+#   • `just shell-ios-dev`   — Tauri iOS simulator       (VITE_GATEWAY_URL=127.0.0.1)
+#   • `just shell-android-dev` — Tauri Android emulator  (VITE_GATEWAY_URL=10.0.2.2)
 #
 # Each command is long-running; launch in its own terminal. Frontends never run
 # in Docker — Vite/Tauri HMR and native sims require host execution.
 
 # Backend URL each surface should talk to. Override per-shell when needed:
 #   just shell-android-dev BACKEND=http://10.0.2.2:8080
-BACKEND := env_var_or_default("CONUSAI_BACKEND_URL", "http://localhost:8080")
+BACKEND := env_var_or_default("GATEWAY_URL", "http://localhost:8080")
 
 # Web (browser, host process — proxies to BACKEND via vite.config.ts).
 web-dev:
-    CONUSAI_BACKEND_URL={{BACKEND}} pnpm --filter web dev
+    GATEWAY_URL={{BACKEND}} pnpm --filter web dev
 
 web-build:
-    CONUSAI_BACKEND_URL={{BACKEND}} pnpm --filter web build
+    GATEWAY_URL={{BACKEND}} pnpm --filter web build
 
 # Desktop Tauri shell. localhost:8080 reaches the host gateway from the webview.
 shell-dev:
-    VITE_API_BASE={{BACKEND}} pnpm --filter browser-shell tauri dev
+    VITE_GATEWAY_URL={{BACKEND}} pnpm --filter browser-shell tauri dev
 
 shell-build:
-    VITE_API_BASE={{BACKEND}} pnpm --filter browser-shell tauri build
+    VITE_GATEWAY_URL={{BACKEND}} pnpm --filter browser-shell tauri build
 
 shell-build-macos:
-    VITE_API_BASE={{BACKEND}} pnpm --filter browser-shell tauri build -- --target universal-apple-darwin
+    VITE_GATEWAY_URL={{BACKEND}} pnpm --filter browser-shell tauri build -- --target universal-apple-darwin
 
 shell-build-windows:
-    VITE_API_BASE={{BACKEND}} pnpm --filter browser-shell tauri build -- --target x86_64-pc-windows-msvc
+    VITE_GATEWAY_URL={{BACKEND}} pnpm --filter browser-shell tauri build -- --target x86_64-pc-windows-msvc
 
 # iOS simulator: webview can reach the host via 127.0.0.1.
 shell-ios-dev:
-    VITE_API_BASE=http://127.0.0.1:8080 pnpm --filter browser-shell tauri ios dev
+    VITE_GATEWAY_URL=http://127.0.0.1:8080 pnpm --filter browser-shell tauri ios dev
 
 shell-ios-build:
-    VITE_API_BASE={{BACKEND}} pnpm --filter browser-shell tauri ios build --target aarch64
+    VITE_GATEWAY_URL={{BACKEND}} pnpm --filter browser-shell tauri ios build --target aarch64
 
 # Android emulator: 10.0.2.2 is the special host-loopback alias.
 shell-android-dev:
-    VITE_API_BASE=http://10.0.2.2:8080 pnpm --filter browser-shell tauri android dev
+    VITE_GATEWAY_URL=http://10.0.2.2:8080 pnpm --filter browser-shell tauri android dev
 
 shell-android-build:
-    VITE_API_BASE={{BACKEND}} pnpm --filter browser-shell tauri android build --apk
+    VITE_GATEWAY_URL={{BACKEND}} pnpm --filter browser-shell tauri android build --apk
 
 shell-android-aab:
-    VITE_API_BASE={{BACKEND}} pnpm --filter browser-shell tauri android build --aab
+    VITE_GATEWAY_URL={{BACKEND}} pnpm --filter browser-shell tauri android build --aab
 
-# Umbrella: bring up backend infra + web dev server in two terminals (tmux).
-# Falls back to instructions if tmux is not installed.
-dev:
-    @if command -v tmux >/dev/null 2>&1; then \
-        tmux new-session -d -s conusai './start.sh local' \; \
-            split-window -h 'just web-dev' \; \
-            attach; \
-    else \
-        echo "Install tmux for one-command dev, or run in two terminals:"; \
-        echo "  1) ./start.sh local"; \
-        echo "  2) just web-dev"; \
-    fi
+# Umbrella: the Docker stack plus the web dev server.
+dev: up web-dev
 
 # Stop host-side frontend dev servers (does not touch Docker infra).
 stop-frontend:
@@ -90,32 +80,28 @@ backend-test:
 types:
     ./scripts/openapi-to-types.sh
 
-# ── Deploy / Eval ─────────────────────────────────────────────────────────────
-# Requires: DOKPLOY_URL, DOKPLOY_API_KEY, DOKPLOY_ENVIRONMENT_ID, APP_DOMAIN
-# set in the shell (or present in dokploy/.dokploy).
-#
-# Usage:
-#   just epifly-build           build the CLI (auto-run by deploy/eval targets)
-#   just deploy-beta            full deploy (6-phase orchestrator + Phase 5 verify)
-#   just eval-beta              post-deploy eval: HTTP smoke + service diagnostics
-#   just deploy-eval-beta       deploy then eval in one shot
+# ── Stack (local) ─────────────────────────────────────────────────────────────
+# ConusAI Cloud deploys docker-compose.yml; locally docker-compose.local.yml adds
+# the managed services (Postgres, Redis, Qdrant, RustFS) and host ports.
+# Needs a filled-in .env (see .env.example). Deploying: docs/deploy-conusai-cloud.md.
 
-# Build the epifly CLI (idempotent — tsup only rebuilds on change).
-epifly-build:
-    pnpm --filter @conusai/epifly build
+COMPOSE := "docker compose -p epifly -f docker-compose.yml -f docker-compose.local.yml"
 
-# Deploy to beta environment via epifly CLI.
-# Triggers the epifly-deploy Dokploy compose, streams logs, runs Phase 5 verify.
-deploy-beta: epifly-build
-    node tools/epifly/dist/epifly.mjs deploy --config dokploy/.dokploy --timeout 900
+# Build and start the whole stack in the background.
+up:
+    {{COMPOSE}} up --build -d
 
-# Post-deploy evaluation: HTTP smoke tests + Dokploy service diagnostics.
-eval-beta: epifly-build
-    node tools/epifly/dist/epifly.mjs verify --config dokploy/.dokploy
-    node tools/epifly/dist/epifly.mjs doctor --config dokploy/.dokploy
+# Stop the stack (volumes kept).
+down:
+    {{COMPOSE}} down
 
-# Full deploy + eval in one command.
-deploy-eval-beta: deploy-beta eval-beta
+# Follow logs of one service, or all.
+logs *service:
+    {{COMPOSE}} logs -f {{service}}
+
+# Render the merged compose file (checks syntax and that every variable is set).
+config:
+    {{COMPOSE}} config --quiet
 
 # ── Full verify (CI gate) ─────────────────────────────────────────────────────
 

@@ -1,9 +1,0 @@
-# Local Dokploy credentials (API key, project URL) — never commit
-.dokploy
-**/.dokploy
-
-# Env files (real values — keep only .env.example tracked)
-*.env
-.env
-.env.*
-!.env.example

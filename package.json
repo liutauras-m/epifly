@@ -31,12 +31,11 @@
     "wdio:macos": "wdio run e2e/wdio/wdio.macos.conf.ts",
     "wdio:ios": "wdio run e2e/wdio/wdio.ios.conf.ts",
     "wdio:ios-native": "wdio run e2e/wdio/wdio.ios-native.conf.ts",
-    "ios:build": "pnpm --filter browser-shell exec tauri ios build --target aarch64-sim --debug",
+    "ios:build": "pnpm --filter browser-shell tauri ios build --target aarch64-sim --debug",
     "ios:install": "xcrun simctl install booted 'apps/browser-shell/src-tauri/gen/apple/build/arm64-sim/ConusAI Browser.app'",
     "tauri-wd": "tauri-wd --port 4444"
   },
   "devDependencies": {
-    "@dokploy/sdk": "^0.29.4",
     "@playwright/test": "^1.49.0",
     "@typescript-eslint/eslint-plugin": "^8.59.4",
     "@typescript-eslint/parser": "^8.59.4",

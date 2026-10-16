@@ -9,12 +9,18 @@ The **ConusAI Browser Shell** is a native desktop and mobile application (built 
 ## Quick start
 
 ```bash
-# Infrastructure only (Qdrant + RustFS)
-./start.sh infra
-
-# Full stack
-./start.sh full
+scripts/generate-env.sh > .env && chmod 600 .env   # then set ANTHROPIC_API_KEY
+just up                                            # whole stack in Docker
+just web-dev                                       # optional: web with hot reload on :5173
 ```
+
+`just up` runs `docker-compose.yml` (what ConusAI Cloud deploys) with
+`docker-compose.local.yml` (Postgres, Redis, Qdrant and RustFS as local containers).
+
+## Deploy
+
+epifly deploys to **ConusAI Cloud** as one compose project with linked managed
+Postgres, Redis, Qdrant and S3: see [docs/deploy-conusai-cloud.md](docs/deploy-conusai-cloud.md).
 
 See [docs/arch.md](docs/arch.md) for the full architecture reference.
 

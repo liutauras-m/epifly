@@ -8,6 +8,7 @@ is compatible with ConusAI's McpAdapter (which posts JSON-RPC to the endpoint).
 """
 import asyncio
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -16,7 +17,14 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 
-app = FastAPI(title="current-time MCP service")
+@asynccontextmanager
+async def lifespan(_app: "FastAPI"):
+    task = asyncio.create_task(register_with_retry())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="current-time MCP service", lifespan=lifespan)
 
 
 # ── JSON-RPC MCP endpoint ──────────────────────────────────────────────────────
@@ -52,6 +60,11 @@ async def _get_current_time(timezone: str = "UTC") -> dict:
         "artifacts": [],
         "metadata": {"timezone": timezone, "timestamp": now.isoformat()},
     }
+
+
+@app.get("/health")
+async def health() -> dict:
+    return {"status": "ok"}
 
 
 @app.post("/mcp")
@@ -100,7 +113,7 @@ MANIFEST = {
     "description": "Get the current time, clock, or date. Returns current server time with optional IANA timezone support. Use for: what time is it, current time, now, today's date.",
     "version": "1.0.0",
     "kind": "remote_mcp",
-    "endpoint": (os.getenv("SERVICE_URL") or os.getenv("CONUSAI_SERVICE_URL", "http://current-time:8082")) + "/mcp",
+    "endpoint": os.environ["SERVICE_URL"] + "/mcp",
     "tools": [
         {
             "name": "get_current_time",
@@ -127,24 +140,8 @@ MANIFEST = {
 
 
 async def register_with_retry(max_retries: int = 25, delay: float = 5.0) -> None:
-    # Canonical names: GATEWAY_URL / PLATFORM_ADMIN_TOKEN.
-    # CONUSAI_PLATFORM_URL / CONUSAI_PLATFORM_TOKEN kept as one-release fallbacks.
-    _conusai_url = os.environ.get("CONUSAI_PLATFORM_URL")
-    _conusai_token = os.environ.get("CONUSAI_PLATFORM_TOKEN")
-    if _conusai_url and not os.environ.get("GATEWAY_URL"):
-        print("[current-time] CONUSAI_PLATFORM_URL is deprecated; use GATEWAY_URL", flush=True)
-    if _conusai_token and not os.environ.get("PLATFORM_ADMIN_TOKEN"):
-        print("[current-time] CONUSAI_PLATFORM_TOKEN is deprecated; use PLATFORM_ADMIN_TOKEN", flush=True)
-    platform_url = os.environ.get("GATEWAY_URL") or _conusai_url or "http://agent-gateway:8080"
-    token = os.environ.get("PLATFORM_ADMIN_TOKEN") or _conusai_token or ""
-    url = f"{platform_url}/admin/capabilities/register"
-
-    headers = {}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    # In dev mode (no JWT_SECRET), X-Tenant-ID header is accepted instead.
-    else:
-        headers["X-Tenant-ID"] = "dev"
+    url = f"{os.environ['GATEWAY_URL']}/admin/capabilities/register"
+    headers = {"Authorization": f"Bearer {os.environ['PLATFORM_ADMIN_TOKEN']}"}
 
     for attempt in range(1, max_retries + 1):
         try:
@@ -165,8 +162,3 @@ async def register_with_retry(max_retries: int = 25, delay: float = 5.0) -> None
         "[current-time] WARNING: all registration attempts failed — service running unregistered",
         flush=True,
     )
-
-
-@app.on_event("startup")
-async def on_startup() -> None:
-    asyncio.create_task(register_with_retry())
