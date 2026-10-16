@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { signIn } from '../helpers/auth';
 
 /**
  * E2E for PR 3.D.3 — tool error toast.
@@ -9,12 +10,7 @@ import { test, expect, type Page } from '@playwright/test';
  */
 
 async function login(page: Page) {
-	await page.goto('/login');
-	await page.getByLabel('Operator name').fill('E2E Operator');
-	await page.getByLabel('Enterprise').check();
-	await page.getByRole('button', { name: 'Begin' }).click();
-	await expect(page).toHaveURL('/');
-	await page.waitForSelector(':root[data-hydrated]', { timeout: 10_000 });
+	await signIn(page);
 }
 
 function sseLines(...lines: string[]): string {

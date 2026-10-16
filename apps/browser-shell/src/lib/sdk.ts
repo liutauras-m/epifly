@@ -1,76 +1,41 @@
+/**
+ * Shell SDK: calls the public gateway (VITE_GATEWAY_URL) directly with
+ * `Authorization: Bearer <access token>`. The token comes from Rust on each
+ * request (Rust refreshes it when needed) and is never persisted in the webview.
+ */
 import { createConusSdk } from '@conusai/sdk';
 import { invoke } from '@tauri-apps/api/core';
+import { sessionExpired } from './session.svelte.js';
 
-// ── PKCE / system-browser helpers ────────────────────────────────────────────
+const GATEWAY_URL = (import.meta.env.VITE_GATEWAY_URL as string | undefined)?.replace(/\/+$/, '');
+if (!GATEWAY_URL) throw new Error('VITE_GATEWAY_URL must be set at build time');
 
-/** Open a URL in the OS default browser (Stripe Checkout, IdP login, etc.). */
-export async function openInSystemBrowser(url: string): Promise<void> {
-  await invoke('open_in_system_browser', { url });
+async function gatewayFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+	const url = typeof input === 'string' && input.startsWith('/') ? `${GATEWAY_URL}${input}` : input;
+	let token: string;
+	try {
+		token = await invoke<string>('auth_access_token');
+	} catch (e) {
+		sessionExpired(typeof e === 'string' ? e : undefined);
+		throw e instanceof Error ? e : new Error(String(e));
+	}
+	const headers = new Headers(init?.headers);
+	headers.set('Authorization', `Bearer ${token}`);
+	const res = await globalThis.fetch(url, { ...init, headers, credentials: 'omit' });
+	if (res.status === 401) sessionExpired();
+	return res;
 }
-
-export interface PkceResult {
-  code: string;
-  state: string | null;
-  redirect_uri: string;
-  code_verifier: string;
-}
-
-/**
- * Full PKCE login flow.
- * Opens `authUrl` in the system browser, waits for the local callback,
- * and returns the auth code + verifier for server-side token exchange.
- */
-export async function pkceLogin(authUrl: string, extraParams?: string): Promise<PkceResult> {
-  return await invoke<PkceResult>('pkce_login', {
-    authUrl,
-    extraParams: extraParams ?? null,
-  });
-}
-
-// Reads the device token from Rust state on every call (set via set_device_token command).
-const tauriTokenProvider = {
-  async get(): Promise<string | null> {
-    try {
-      return await invoke<string | null>('get_device_token');
-    } catch {
-      return null;
-    }
-  },
-};
-
-// Shared session token for /ui/* cross-origin auth.
-// WKWebView can't send cookies cross-origin to http:// endpoints (Secure flag blocks it),
-// so we inject the HMAC token as X-Session-Token header instead.
-let _sessionToken: string | null = null;
-export function setSessionToken(token: string | null) { _sessionToken = token; }
-export function getSessionToken(): string | null { return _sessionToken; }
-
-// VITE_API_BASE is baked in at build time (set in .env.local or as a build env var).
-// Defaults to '' (same-origin) which only works in dev proxy mode; always set it for iOS/desktop builds.
-const API_BASE = import.meta.env.VITE_API_BASE ?? '';
 
 export const sdk = createConusSdk({
-  fetch: (url, init) => {
-    // Resolve relative paths against API_BASE so callers that pass a bare
-    // path (e.g. /ui/stream) reach the gateway, not the Tauri asset server.
-    const resolvedUrl =
-      typeof url === 'string' && url.startsWith('/') ? `${API_BASE}${url}` : url;
-    if (_sessionToken) {
-      const headers = new Headers(init?.headers);
-      headers.set('x-session-token', _sessionToken);
-      return globalThis.fetch(resolvedUrl, { ...init, headers });
-    }
-    return globalThis.fetch(resolvedUrl, init);
-  },
-  baseUrl: API_BASE,
-  tokenProvider: tauriTokenProvider,
+	fetch: gatewayFetch as typeof fetch,
+	baseUrl: '',
+	// The fetch wrapper adds the bearer to every call (including uploads and
+	// streams that bypass the token provider).
+	tokenProvider: { get: async () => null },
 });
 
-// E2E hook — exposes the SDK to Appium test code so capability-tour specs can
-// drive `sdk.workspaces.*` from inside the WebView (real WebKit fetch + the
-// `x-session-token` header). Guarded behind a build-time flag so production
-// bundles never include it. Set `VITE_E2E_EXPOSE_SDK=1` in `.env.local` or the
-// CI build env to enable.
+// E2E hook — exposes the SDK to Appium test code (real WebKit fetch). Guarded
+// behind a build-time flag so production bundles never include it.
 if (typeof window !== 'undefined' && import.meta.env.VITE_E2E_EXPOSE_SDK) {
-  (window as { __conusaiSdk?: typeof sdk }).__conusaiSdk = sdk;
+	(window as { __conusaiSdk?: typeof sdk }).__conusaiSdk = sdk;
 }

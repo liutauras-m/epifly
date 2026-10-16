@@ -1,48 +1,62 @@
 /**
- * GET /auth/callback — Zitadel OIDC callback handler.
- * Exchanges the authorization code for tokens and sets session cookie.
+ * GET /auth/callback — finish the Zitadel login: check the sealed transaction,
+ * exchange the code (state, nonce and PKCE are verified by openid-client) and
+ * start the encrypted cookie session.
  */
-import { redirect, error } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types.js';
-import { exchangeCode, COOKIE_NAME } from '$lib/server/oidc.js';
+import { config } from '$lib/server/config.js';
+import { client, oidc } from '$lib/server/auth/oidc.js';
+import { createSession } from '$lib/server/auth/session.js';
+import { takeTransaction } from '$lib/server/auth/transaction.js';
 
 export const GET: RequestHandler = async ({ url, cookies }) => {
-	const code = url.searchParams.get('code');
-	const state = url.searchParams.get('state');
-	const errorParam = url.searchParams.get('error');
+	const tx = takeTransaction(cookies);
+	if (!tx) error(400, 'Sign-in expired or was started in another browser. Please sign in again.');
 
-	if (errorParam) {
-		const desc = url.searchParams.get('error_description') ?? errorParam;
-		error(400, `Authentication failed: ${desc}`);
+	const idpError = url.searchParams.get('error');
+	if (idpError) error(400, `Sign-in failed: ${url.searchParams.get('error_description') ?? idpError}`);
+
+	const cfg = await oidc();
+	// openid-client compares the redirect URI it sees with the registered one, so
+	// rebuild the callback URL on ORIGIN (the request may arrive via a proxy hop).
+	const callbackUrl = new URL(config().redirectUri);
+	callbackUrl.search = url.search;
+
+	let tokens: Awaited<ReturnType<typeof client.authorizationCodeGrant>>;
+	try {
+		tokens = await client.authorizationCodeGrant(cfg, callbackUrl, {
+			pkceCodeVerifier: tx.verifier,
+			expectedState: tx.state,
+			expectedNonce: tx.nonce,
+			idTokenExpected: true,
+		});
+	} catch (e) {
+		console.warn('[auth] code exchange failed:', e instanceof Error ? e.name : 'unknown');
+		error(400, 'Sign-in failed. Please try again.');
 	}
 
-	if (!code) {
-		error(400, 'Missing authorization code');
+	const claims = tokens.claims();
+	if (!claims?.sub) error(400, 'Sign-in failed: the identity provider returned no subject.');
+	if (!tokens.refresh_token) {
+		error(500, 'Sign-in failed: no refresh token. Enable the refresh token grant on the Zitadel app.');
 	}
 
-	const storedState = cookies.get('oidc_state');
-	const verifier = cookies.get('oidc_verifier');
+	const name =
+		(typeof claims.name === 'string' && claims.name) ||
+		(typeof claims.preferred_username === 'string' && claims.preferred_username) ||
+		(typeof claims.email === 'string' && claims.email) ||
+		claims.sub;
 
-	if (!storedState || state !== storedState) {
-		error(400, 'Invalid OAuth state');
-	}
-	if (!verifier) {
-		error(400, 'Missing PKCE verifier');
-	}
+	createSession(
+		cookies,
+		{ sub: claims.sub, name, email: typeof claims.email === 'string' ? claims.email : null },
+		{
+			at: tokens.access_token,
+			atExp: Math.floor(Date.now() / 1000) + (tokens.expires_in ?? 300),
+			rt: tokens.refresh_token,
+		},
+	);
 
-	cookies.delete('oidc_state', { path: '/' });
-	cookies.delete('oidc_verifier', { path: '/' });
-
-	const tokens = await exchangeCode(code, verifier);
-
-	// Store the access_token as the session cookie (verified on every request).
-	cookies.set(COOKIE_NAME, tokens.access_token, {
-		path: '/',
-		httpOnly: true,
-		sameSite: 'lax',
-		maxAge: tokens.expires_in ?? 3600,
-		secure: process.env.NODE_ENV === 'production',
-	});
-
-	redirect(302, '/');
+	redirect(303, tx.returnTo);
 };

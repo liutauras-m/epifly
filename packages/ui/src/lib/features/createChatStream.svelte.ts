@@ -1,5 +1,5 @@
 import type { ChatStreamDelta, ConusSdk, RoutingMeta, StreamChatParams } from '@conusai/sdk';
-import { toasts } from '../stores/toast.svelte.js';
+import type { ToastStore } from '../stores/toast.svelte.js';
 
 export interface ChatMessage {
   role: 'user' | 'ai' | 'thinking';
@@ -28,6 +28,8 @@ let wordSeq = 0;
 export type CustomStreamFn = (params: Omit<StreamChatParams, 'baseUrl' | 'fetch'>) => AsyncGenerator<ChatStreamDelta>;
 
 export interface CreateChatStreamOptions {
+  /** Where tool failures are reported — the app tree's store from `useAppStores().toasts`. */
+  toasts: ToastStore;
   streamFn?: CustomStreamFn;
   /**
    * Tenant identifier of the authenticated user. When set, `resource_invalidated`
@@ -39,8 +41,9 @@ export interface CreateChatStreamOptions {
   tenantId?: string | null;
 }
 
-export function createChatStream(sdk: ConusSdk, options?: CreateChatStreamOptions) {
-  const tenantId = options?.tenantId ?? null;
+export function createChatStream(sdk: ConusSdk, options: CreateChatStreamOptions) {
+  const { toasts } = options;
+  const tenantId = options.tenantId ?? null;
   let messages = $state<ChatMessage[]>([]);
   let toolCards = $state(new Map<string, ToolCardEntry>());
   let lastRoutingMeta = $state<RoutingMeta | null>(null);
@@ -152,7 +155,7 @@ export function createChatStream(sdk: ConusSdk, options?: CreateChatStreamOption
         forcedCapability: opts.forcedCapability,
         signal,
       };
-      const gen = options?.streamFn
+      const gen = options.streamFn
         ? options.streamFn(streamParams)
         : sdk.chat.stream(streamParams);
 

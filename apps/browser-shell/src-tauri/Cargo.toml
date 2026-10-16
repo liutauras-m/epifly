@@ -3,6 +3,9 @@ name    = "browser-shell"
 version = "0.4.0"
 edition = "2024"
 
+# Built on its own (platform SDKs, webkit2gtk) — excluded from the backend
+# workspace, so every dependency carries its own version here.
+
 [lib]
 name             = "browser_shell_lib"
 crate-type       = ["staticlib", "cdylib", "rlib"]
@@ -15,29 +18,30 @@ path = "src/main.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri              = { version = "2", features = ["unstable"] }
+tauri                   = { version = "2.12", features = ["unstable"] }
 tauri-plugin-dialog     = "2"
-tauri-plugin-stronghold = "2"
-tauri-plugin-http       = "2"
 tauri-plugin-haptics    = "2"
+# Used from Rust only (refresh-token vault with the argon2 KDF); its JS
+# commands are not registered.
+tauri-plugin-stronghold = { version = "2.4", features = ["kdf"] }
+iota_stronghold         = "2.1"
 
 common    = { path = "../../backend/crates/common" }
 
-serde      = { workspace = true }
-serde_json = { workspace = true }
-tokio      = { workspace = true }
-tracing    = { workspace = true }
-ulid       = { workspace = true }
-chrono     = { workspace = true }
-blake3     = { workspace = true }
-anyhow     = { workspace = true }
-reqwest    = { workspace = true }
-base64     = { workspace = true }
-futures-util = { version = "0.3" }
-open         = "5"
-sha2         = { workspace = true }
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+tokio        = { version = "1", features = ["full"] }
+tracing      = "0.1"
+ulid         = { version = "1.1", features = ["serde"] }
+chrono       = { version = "0.4", features = ["serde"] }
+anyhow       = "1"
+reqwest      = { version = "0.13.5", features = ["json", "stream", "multipart", "form"] }
+base64       = "0.22"
+futures-util = "0.3"
+open         = "5.4"
+sha2         = "0.10"
 rand         = "0.8"
-urlencoding  = "2"
+
 # WebDriver automation for E2E tests — debug builds only, gated by feature.
 # Crate by danielraffel; adds a W3C WebDriver server to drive WKWebView on macOS.
 [target.'cfg(all(debug_assertions, target_os = "macos"))'.dependencies]

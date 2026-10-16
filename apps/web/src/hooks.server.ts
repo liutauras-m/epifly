@@ -1,78 +1,66 @@
-import type { Handle } from '@sveltejs/kit';
-import { COOKIE_NAME, verify } from '$lib/server/session.js';
+import { redirect, type Handle, type ServerInit } from '@sveltejs/kit';
+import { sequence } from '@sveltejs/kit/hooks';
+import { dev } from '$app/environment';
+import { config, initConfig } from '$lib/server/config.js';
+import { resolveSession } from '$lib/server/auth/session.js';
+import { isProxiedPath } from '$lib/server/proxy.js';
 
-// Paths routed to the backend — exempt from SvelteKit CSRF origin check
-// (they are fetch() calls, not form submissions, so SvelteKit wouldn't check
-// them anyway; but we keep this list explicit for clarity and future proofing).
-const CSRF_EXEMPT_PREFIXES = ['/v1', '/api', '/ui', '/mcp', '/admin'];
+/** Refuse to start without a complete, valid environment (see $lib/server/config.ts). */
+export const init: ServerInit = () => {
+	const cfg = initConfig();
+	console.info(`[web] origin=${cfg.origin.origin} gateway=${cfg.gatewayUrl.origin} issuer=${cfg.issuer.href}`);
+};
 
-const BACKEND_URL = process.env.CONUSAI_BACKEND_URL ?? 'http://localhost:8080';
+/** Paths reachable without a session. Proxied paths answer 401 themselves. */
+function isPublic(pathname: string): boolean {
+	if (pathname === '/healthz' || pathname.startsWith('/auth/')) return true;
+	// Component gallery: dev builds only (its layout redirects away in production).
+	return dev && (pathname === '/_/ui' || pathname.startsWith('/_/ui/'));
+}
 
-// NOTE: Production key enforcement (throw on missing UI_SESSION_KEY) lives in
-// src/lib/server/session.ts → getKey(). It fires on the first sign/verify call.
+const session: Handle = async ({ event, resolve }) => {
+	const { pathname } = event.url;
+	event.locals.session = null;
+	if (pathname === '/healthz' || pathname.startsWith('/auth/')) return resolve(event);
 
-export const handle: Handle = async ({ event, resolve }) => {
-	// ── Manual CSRF origin check (scoped) ────────────────────────────────────
-	// We disabled SvelteKit's blanket csrf.checkOrigin in svelte.config.js so
-	// that backend-proxied fetch() calls with a mismatched Origin still work.
-	// Instead we enforce origin checking only for browser-navigated form paths.
-	const { method, pathname } = { method: event.request.method, pathname: event.url.pathname };
-	const isApiPath = CSRF_EXEMPT_PREFIXES.some(prefix => pathname.startsWith(prefix));
+	event.locals.session = await resolveSession(event.cookies);
 
-	if (!isApiPath && method !== 'GET' && method !== 'HEAD') {
-		const origin = event.request.headers.get('origin');
-		const host = event.request.headers.get('host');
-		if (origin && host) {
-			try {
-				if (new URL(origin).host !== host) {
-					return new Response('CSRF check failed', { status: 403 });
-				}
-			} catch {
-				return new Response('CSRF check failed', { status: 403 });
-			}
-		}
+	if (!event.locals.session && !isPublic(pathname) && !isProxiedPath(pathname)) {
+		redirect(303, `/auth/login?returnTo=${encodeURIComponent(pathname + event.url.search)}`);
 	}
-
-	// ── Backend proxy (same-origin pass-through) ─────────────────────────────
-	// Browser clients call /v1/*, /api/*, etc. on the same origin. We proxy
-	// those here to the internal gateway so the browser never needs to know
-	// the gateway's internal Docker hostname.
-	if (isApiPath) {
-		const backendUrl = `${BACKEND_URL}${event.url.pathname}${event.url.search}`;
-		const reqHeaders = new Headers(event.request.headers);
-		// Remove headers that cause issues when forwarding
-		reqHeaders.delete('host');
-		const hasBody = method !== 'GET' && method !== 'HEAD';
-		return fetch(backendUrl, {
-			method,
-			headers: reqHeaders,
-			body: hasBody ? event.request.body : undefined,
-			// @ts-ignore — duplex is required for streaming request bodies in Node 18+
-			...(hasBody ? { duplex: 'half' } : {}),
-		});
-	}
-
-	// ── Session auth ─────────────────────────────────────────────────────────
-	const raw = event.cookies.get(COOKIE_NAME);
-	event.locals.user = raw ? (verify(raw) ?? null) : null;
-
-	// ── Font preloads (Phase 2.2) ─────────────────────────────────────────────
-	// Vite content-hashes font files, so the hashed URL is only known at
-	// render time. We scan the <head> for the first font-face link Vite
-	// generated and emit a matching preload before it so the browser can start
-	// fetching Geist before it parses the stylesheet.
 	return resolve(event, {
 		transformPageChunk({ html }) {
-			// Find the first Geist woff2 URL already injected by Vite (looks like
-			// /_app/immutable/assets/Geist-Variable.HASH.woff2)
+			// Vite content-hashes font files, so the hashed URL is only known at
+			// render time: preload the Geist faces the stylesheet references.
 			const m = html.match(/\/_app\/immutable\/assets\/Geist-Variable\.[^"']+\.woff2/);
 			const mMono = html.match(/\/_app\/immutable\/assets\/GeistMono-Variable\.[^"']+\.woff2/);
 			const preloads = [
-				m     ? `<link rel="preload" as="font" type="font/woff2" crossorigin href="${m[0]}">` : '',
+				m ? `<link rel="preload" as="font" type="font/woff2" crossorigin href="${m[0]}">` : '',
 				mMono ? `<link rel="preload" as="font" type="font/woff2" crossorigin href="${mMono[0]}">` : '',
-			].filter(Boolean).join('\n\t');
+			]
+				.filter(Boolean)
+				.join('\n\t');
 			if (!preloads) return html;
 			return html.replace('%sveltekit.head%', `${preloads}\n\t%sveltekit.head%`);
 		},
 	});
 };
+
+const securityHeaders: Handle = async ({ event, resolve }) => {
+	const response = await resolve(event);
+	const set = (name: string, value: string) => {
+		if (!response.headers.has(name)) response.headers.set(name, value);
+	};
+	try {
+		set('x-content-type-options', 'nosniff');
+		set('x-frame-options', 'DENY');
+		set('referrer-policy', 'strict-origin-when-cross-origin');
+		set('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+		if (config().origin.protocol === 'https:') set('strict-transport-security', 'max-age=31536000; includeSubDomains');
+	} catch {
+		// Immutable headers (a fetch() Response passed through untouched) — leave as is.
+	}
+	return response;
+};
+
+export const handle = sequence(securityHeaders, session);

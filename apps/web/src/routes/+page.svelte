@@ -5,12 +5,14 @@
 	import { sdk } from '$lib/sdk.js';
 	import { provideCapabilityRendererRegistry } from '@conusai/ui/capabilities';
 	import { ShellPage, createChatStream } from '@conusai/ui/features';
+	import { useAppStores } from '@conusai/ui/stores';
 	import favicon from '@conusai/ui/assets/images/favicon.png';
 
 	let { data }: { data: PageData } = $props();
 
 	provideCapabilityRendererRegistry();
-	const chatStream = createChatStream(sdk, { tenantId: data.user?.tenantId ?? null });
+	const chatStream = createChatStream(sdk, { toasts: useAppStores().toasts });
+	let logoutForm: HTMLFormElement;
 
 	function syncWorkspaceToUrl(wsId: string | null) {
 		if (typeof window === 'undefined') return;
@@ -34,7 +36,9 @@
 	userPlan={data.user?.plan ?? ''}
 	sigil={favicon}
 	appTitle="Workshop"
-	onLogout={() => goto('/logout')}
+	onLogout={() => logoutForm.requestSubmit()}
 	onWorkspaceChange={syncWorkspaceToUrl}
 	onUnknownRoute={() => goto('/', { replaceState: true, keepFocus: true, noScroll: true })}
 />
+
+<form bind:this={logoutForm} method="POST" action="/auth/logout" hidden></form>

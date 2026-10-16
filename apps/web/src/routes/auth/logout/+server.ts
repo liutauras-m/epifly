@@ -1,23 +1,30 @@
 /**
- * GET /auth/logout — RP-initiated logout from Zitadel.
+ * POST /auth/logout — end the session: revoke the refresh token at Zitadel
+ * (best effort), clear the cookie and hand over to Zitadel's end_session
+ * endpoint. POST only, so a cross-site link cannot sign the user out
+ * (SvelteKit's origin check covers form posts).
  */
 import { redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types.js';
-import { buildLogoutUrl, revokeToken, COOKIE_NAME } from '$lib/server/oidc.js';
+import { config } from '$lib/server/config.js';
+import { client, oidc } from '$lib/server/auth/oidc.js';
+import { clearSession, storedRefreshToken } from '$lib/server/auth/session.js';
 
-export const GET: RequestHandler = async ({ cookies }) => {
-	const token = cookies.get(COOKIE_NAME);
+export const POST: RequestHandler = async ({ cookies }) => {
+	const refreshToken = storedRefreshToken(cookies);
+	clearSession(cookies);
 
-	if (token) {
-		// Best-effort token revocation; ignore errors.
-		try { await revokeToken(token); } catch { /* ignore */ }
+	const cfg = await oidc();
+	if (refreshToken) {
+		await client.tokenRevocation(cfg, refreshToken).catch((e: unknown) => {
+			console.warn('[auth] refresh token revocation failed:', e instanceof Error ? e.name : 'unknown');
+		});
 	}
 
-	cookies.delete(COOKIE_NAME, { path: '/' });
-	cookies.delete('conusai_session', { path: '/' });
-
-	if (process.env.AUTH_PROVIDER === 'zitadel') {
-		redirect(302, buildLogoutUrl(token));
-	}
-	redirect(302, '/login');
+	if (!cfg.serverMetadata().end_session_endpoint) redirect(303, '/auth/login');
+	const endSession = client.buildEndSessionUrl(cfg, {
+		client_id: config().webClientId,
+		post_logout_redirect_uri: config().postLogoutRedirectUri,
+	});
+	redirect(303, endSession.href);
 };

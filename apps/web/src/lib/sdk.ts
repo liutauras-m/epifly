@@ -1,24 +1,15 @@
+/**
+ * Browser SDK. Every call goes to this app's own origin; the SvelteKit server
+ * proxies it to the gateway and adds the bearer token from the encrypted
+ * session cookie. No token is ever visible to browser code.
+ */
 import { createConusSdk } from '@conusai/sdk';
 import { browser } from '$app/environment';
 
-const cookieTokenProvider = {
-  get: async () => null as string | null,
-};
-
-function resolveBackendUrl(): string {
-	if (!browser) return 'http://localhost:8080';
-	const origin = globalThis.location.origin;
-	if (origin.includes(':3000')) return origin.replace(':3000', ':8080');
-	if (origin.includes(':5173')) return origin.replace(':5173', ':8080');
-	// Production: proxy API through the same origin (hooks.server.ts forwards to gateway)
-	return origin;
-}
+const browserOnly: typeof fetch = () => Promise.reject(new Error('the browser SDK is not available during SSR'));
 
 export const sdk = createConusSdk({
-	fetch: browser
-	? ((input: RequestInfo | URL, init?: RequestInit) =>
-		globalThis.fetch(input, { ...init, credentials: 'include' })) as typeof fetch
-	: ((() => Promise.resolve(new Response())) as typeof fetch),
-  baseUrl: resolveBackendUrl(),
-  tokenProvider: cookieTokenProvider,
+	fetch: browser ? (input, init) => globalThis.fetch(input, init) : browserOnly,
+	baseUrl: '',
+	tokenProvider: { get: async () => null },
 });

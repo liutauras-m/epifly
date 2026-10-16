@@ -1,32 +1,49 @@
 import { test, expect } from '@playwright/test';
+import { signIn } from '../helpers/auth';
 
+// Sign-in runs the real BFF OIDC flow against e2e/fixtures/mock-oidc.mjs.
 test.describe('auth', () => {
-  test('redirects unauthenticated user to /login', async ({ page }) => {
-    await page.goto('/');
-    await expect(page).toHaveURL(/\/login/);
+  test('redirects an unauthenticated user to the IdP via /auth/login', async ({ page }) => {
+    const res = await page.request.get('/', { maxRedirects: 0 });
+    expect(res.status()).toBe(303);
+    expect(res.headers()['location']).toBe('/auth/login?returnTo=%2F');
   });
 
-  test('login page renders workshop entry form', async ({ page }) => {
-    await page.goto('/login');
-    await expect(page.getByLabel('Operator name')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Begin' })).toBeVisible();
+  test('sign-in reaches the workshop and sets only the encrypted host-only cookie', async ({ page }) => {
+    await signIn(page);
+    const cookies = await page.context().cookies();
+    const session = cookies.find((c) => c.name === '__Host-epifly_session');
+    expect(session).toBeDefined();
+    expect(session).toMatchObject({ httpOnly: true, secure: true, sameSite: 'Lax', path: '/' });
+    expect(cookies.some((c) => c.name.startsWith('conusai_'))).toBe(false);
+    expect(await page.evaluate(() => document.cookie)).toBe('');
   });
 
-  test('login with valid credentials reaches workshop', async ({ page }) => {
-    await page.goto('/login');
-    await page.getByLabel('Operator name').fill('E2E Operator');
-    await page.getByLabel('Enterprise').check();
-    await page.getByRole('button', { name: 'Begin' }).click();
-    await expect(page).toHaveURL('/');
-    await expect(page.getByText(/Good/)).toBeVisible();
+  test('returns to the requested page after sign-in', async ({ page }) => {
+    await signIn(page, '/account');
+    await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible();
   });
 
-  test('logout returns to login', async ({ page }) => {
-    await page.goto('/login');
-    await page.getByLabel('Operator name').fill('E2E Operator');
-    await page.getByRole('button', { name: 'Begin' }).click();
-    await expect(page).toHaveURL('/');
-    await page.getByRole('link', { name: 'Logout' }).first().click();
-    await expect(page).toHaveURL(/\/login/);
+  test('a forged (unsigned JWT) session cookie is treated as signed out', async ({ request }) => {
+    const res = await request.get('/', {
+      maxRedirects: 0,
+      headers: { cookie: '__Host-epifly_session=eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4IiwiZXhwIjo5OTk5OTk5OTk5fQ.' }, // gitleaks:allow (forged test value)
+    });
+    expect(res.status()).toBe(303);
+    expect(res.headers()['set-cookie']).toContain('__Host-epifly_session=;');
+  });
+
+  test('the gateway proxy refuses a cross-origin POST', async ({ page }) => {
+    await signIn(page);
+    const res = await page.request.post('/v1/threads', { headers: { origin: 'https://evil.example' }, data: {} });
+    expect(res.status()).toBe(403);
+  });
+
+  test('sign-out ends the session at the IdP and lands on the signed-out page', async ({ page }) => {
+    await signIn(page, '/account');
+    await page.getByRole('button', { name: /Sign out/ }).click();
+    await expect(page).toHaveURL(/\/auth\/signed-out$/);
+    const res = await page.request.get('/', { maxRedirects: 0 });
+    expect(res.status()).toBe(303);
   });
 });

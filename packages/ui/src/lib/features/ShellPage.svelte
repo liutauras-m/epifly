@@ -21,12 +21,7 @@
   import ShellScreen from './ShellScreen.svelte';
   import { initialRoute }       from '../routing/initialRoute.js';
   import { applyInitialRoute }  from '../routing/applyInitialRoute.js';
-  import {
-    screenStore,
-    breadcrumbsStore,
-    recentsStore,
-    toasts,
-  } from '../stores/index.js';
+  import { useAppStores } from '../stores/appStores.svelte.js';
 
   let {
     sdk,
@@ -52,6 +47,8 @@
     /** Called when applyInitialRoute can't resolve `?ws=<id>` — apps clear the URL. */
     onUnknownRoute?:    () => void;
   } = $props();
+
+  const { screen: screenStore, breadcrumbs: breadcrumbsStore, recents: recentsStore, toasts } = useAppStores();
 
   let selectedNode = $state<WorkspaceNode | null>(null);
 

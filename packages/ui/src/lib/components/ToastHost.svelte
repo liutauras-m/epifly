@@ -1,19 +1,21 @@
 <svelte:options runes={true} />
 <script lang="ts">
   /**
-   * ToastHost — renders the global `toasts` singleton (Phase 4.10 audit).
+   * ToastHost — renders the app tree's toasts (Phase 4.10 audit).
    *
    * Positioning:
    *   Desktop (≥ 768px): top-right corner, below the topbar, inset var(--space-5)
    *   Mobile  (< 768px): top-center under the topbar, full-width minus gutters,
    *                       safe-area-inset-top aware so Dynamic Island is never covered
    *
-   * Reads directly from the `toasts` module-level store so layout.svelte
-   * can use `<ToastHost />` with no props and get automatic reactivity.
+   * Reads the app tree's toast store (`useAppStores().toasts`), so the root
+   * layout can render `<ToastHost />` with no props.
    */
-  import { toasts } from '../stores/toast.svelte.js';
+  import { useAppStores } from '../stores/appStores.svelte.js';
   import { t } from '../utils/i18n.js';
   import { X } from '@lucide/svelte';
+
+  const { toasts } = useAppStores();
 </script>
 
 {#if toasts.items.length > 0}

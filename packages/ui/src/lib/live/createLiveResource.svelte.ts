@@ -34,7 +34,7 @@
  * producers; they conflict with Svelte 5 reactive proxy traps.
  */
 
-import { toasts } from '../stores/toast.svelte.js';
+import type { ToastStore } from '../stores/toast.svelte.js';
 
 const BACKOFF_MS = [500, 2000, 8000] as const;
 const IDLE_THRESHOLD_MS = 60_000; // refetch when tab visible after 1 min idle
@@ -50,6 +50,8 @@ export interface MutateOptions {
 }
 
 export interface CreateLiveResourceOptions {
+  /** Where rollback errors are reported — the app tree's store from `useAppStores().toasts`. */
+  toasts: ToastStore;
   /**
    * If set, `notifyInvalidationWithScope` drops events whose `scope` does not match.
    * Defensive client-side guard — the server already filters by tenant before sending,
@@ -109,8 +111,9 @@ const deprecationFlag: DeprecationFlag = ((globalThis as Record<symbol, unknown>
 export function createLiveResource<T>(
   resource: string,
   fetcher: Fetcher<T>,
-  options: CreateLiveResourceOptions = {},
+  options: CreateLiveResourceOptions,
 ): LiveResource<T> {
+  const { toasts } = options;
   const tenantId = options.tenantId ?? null;
 
   let data = $state<T | null>(null);

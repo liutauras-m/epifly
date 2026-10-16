@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { signIn } from '../helpers/auth';
 
 /**
  * E2E for PR 3.C.4 + 3.C.5 — URL state restoration + invalid-ws toast.
@@ -9,10 +10,7 @@ import { test, expect, type Page } from '@playwright/test';
  */
 
 async function loginAndStay(page: Page, targetUrl: string) {
-	await page.goto('/login');
-	await page.getByLabel('Operator name').fill('E2E Operator');
-	await page.getByLabel('Enterprise').check();
-	await page.getByRole('button', { name: 'Begin' }).click();
+	await signIn(page);
 	// Navigate directly to the target URL after auth lands.
 	await page.goto(targetUrl);
 	await page.waitForSelector(':root[data-hydrated]', { timeout: 10_000 });

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { ConusSdk } from '@conusai/sdk';
 	import type { WorkspaceNode } from '@conusai/types';
-	import { toasts } from '../../stores/toast.svelte.js';
+	import { useAppStores } from '../../stores/appStores.svelte.js';
 
 	let {
 		sdk,
@@ -12,6 +12,8 @@
 		node: WorkspaceNode & { shared_with?: string[] };
 		onclose: (updated?: WorkspaceNode) => void;
 	} = $props();
+
+	const { toasts } = useAppStores();
 
 	let uid = $state('');
 	let busy = $state(false);

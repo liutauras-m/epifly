@@ -1,12 +1,9 @@
-import { auth } from './auth.js';
 import { capabilities } from './capabilities.js';
 import { chatApi } from './chatApi.js';
 import { files } from './files.js';
 import { threads } from './threads.js';
 import { ui } from './ui.js';
 import { workspaces } from './workspaces.js';
-import { realtime } from './realtime.js';
-import { shells } from './shells.js';
 import type { ApiError, ApiResult } from './types.js';
 
 export interface TokenProvider {
@@ -93,15 +90,12 @@ function createInternalClient(opts: ClientOpts): InternalClient {
 export function createConusSdk(opts: ClientOpts) {
   const client = createInternalClient(opts);
   return {
-    auth:         auth(client),
     capabilities: capabilities(client),
     chat:         chatApi(client),
     files:        files(client),
     threads:      threads(client),
     ui:           ui(client),
     workspaces:   workspaces(client),
-    realtime:     realtime(client),
-    shells:       shells(client),
   } as const;
 }
 

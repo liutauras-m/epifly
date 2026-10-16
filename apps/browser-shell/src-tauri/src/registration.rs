@@ -1,41 +1,10 @@
+//! Session-trace upload to the gateway with the shell's bearer token.
+//!
+//! The shell used to self-register a `trace.replay` remote-MCP capability with
+//! a device token on startup. The gateway no longer accepts device tokens or
+//! self-registration, so that path is gone; nothing ran the replay anyway.
+
 use common::trace::SessionTrace;
-
-/// Posts the static capability manifest to the backend on first run.
-pub async fn register_capability(api_base: &str, device_token: &str) -> anyhow::Result<()> {
-    let manifest = serde_json::json!({
-        "capability_id": "trace.replay",
-        "kind": "remote_mcp",
-        "endpoint": "ws://localhost:0/unused",
-        "tools": [{
-            "name": "replay_session",
-            "description": "Replay a recorded SessionTrace as a deterministic plan",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "trace_node_id": { "type": "string" },
-                    "dry_run": { "type": "boolean" }
-                },
-                "required": ["trace_node_id"]
-            }
-        }],
-        "tenant_scope": []
-    });
-
-    let client = reqwest::Client::new();
-    let res = client
-        .post(format!("{api_base}/admin/capabilities/register"))
-        .header("X-Device-Token", device_token)
-        .json(&manifest)
-        .send()
-        .await?;
-
-    if !res.status().is_success() {
-        let status = res.status();
-        let body = res.text().await.unwrap_or_default();
-        anyhow::bail!("capability registration failed {status}: {body}");
-    }
-    Ok(())
-}
 
 /// Uploads a completed SessionTrace to the workspace as a file node.
 ///
@@ -48,7 +17,7 @@ pub async fn register_capability(api_base: &str, device_token: &str) -> anyhow::
 /// Returns the workspace node id.
 pub async fn upload_trace(
     api_base: &str,
-    device_token: &str,
+    access_token: &str,
     trace: &SessionTrace,
 ) -> anyhow::Result<String> {
     let json_bytes = serde_json::to_vec(trace)?;
@@ -66,7 +35,7 @@ pub async fn upload_trace(
 
     let file_res = client
         .post(format!("{api_base}/v1/files"))
-        .header("X-Device-Token", device_token)
+        .bearer_auth(access_token)
         .multipart(form)
         .send()
         .await?;
@@ -94,7 +63,7 @@ pub async fn upload_trace(
 
     let ws_res = client
         .post(format!("{api_base}/v1/workspaces"))
-        .header("X-Device-Token", device_token)
+        .bearer_auth(access_token)
         .json(&node_body)
         .send()
         .await?;
@@ -111,17 +80,18 @@ pub async fn upload_trace(
 
 /// Tauri command: upload a completed trace and return the workspace node id.
 #[tauri::command]
-pub async fn upload_trace_cmd(
-    token_state: tauri::State<'_, crate::device_auth::DeviceAuthHandle>,
+pub async fn upload_trace_cmd<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    webview: tauri::Webview<R>,
+    auth_state: tauri::State<'_, crate::auth::AuthState>,
     trace: SessionTrace,
 ) -> Result<String, String> {
-    use crate::device_auth::DeviceTokenProvider;
-    let api_base =
-        std::env::var("CONUSAI_API_BASE").unwrap_or_else(|_| "http://localhost:8080".to_owned());
-    let token = token_state
-        .token()
-        .ok_or("no device token — cannot upload trace")?;
-    upload_trace(&api_base, &token, &trace)
+    if webview.label() != "main" {
+        return Err("trace upload is only available to the shell window".into());
+    }
+    let api_base = crate::auth::gateway_url()?;
+    let token = auth_state.access_token(&app).await?;
+    upload_trace(api_base, &token, &trace)
         .await
         .map_err(|e| e.to_string())
 }

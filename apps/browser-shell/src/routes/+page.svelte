@@ -3,19 +3,22 @@
 	import { replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import { ShellPage, ShellLoginScreen, createChatStream, type CustomStreamFn } from '@conusai/ui/features';
-	import { sdk, getSessionToken } from '$lib/sdk.js';
+	import { useAppStores } from '@conusai/ui/stores';
+	import { sdk } from '$lib/sdk.js';
 	import { isTauri, streamChatTauri } from '$lib/tauri-stream.js';
-	import { auth, initAuth, login, logout } from '$lib/auth.svelte.js';
+	import { session, restoreSession, signIn, signOut } from '$lib/session.svelte.js';
 	import { setPlatformTag } from '$lib/mobile/platform/detect.js';
 	import logoDark from '@conusai/ui/assets/images/conusai-logo-darkmode.png';
 	import favicon from '@conusai/ui/assets/images/favicon.png';
 
+	const stores = useAppStores();
+
 	// ── Tauri streaming (only when running inside the Tauri webview) ──────────
+	// Rust adds the gateway URL and the bearer token; no token passes through here.
 	const tauriStreamFn: CustomStreamFn | undefined = isTauri
 		? (params) =>
 				streamChatTauri({
 					message: params.message,
-					sessionToken: getSessionToken() ?? '',
 					threadId: params.threadId,
 					workspaceNodeId: params.workspaceNodeId,
 					attachmentIds: params.attachmentIds,
@@ -24,11 +27,15 @@
 				})
 		: undefined;
 
-	const chatStream = createChatStream(sdk, { streamFn: tauriStreamFn });
+	const chatStream = createChatStream(sdk, { toasts: stores.toasts, streamFn: tauriStreamFn });
 
-	function handleLogout() {
+	async function handleLogout() {
 		chatStream.newSession();
-		logout();
+		// Reset navigation so the next sign-in starts clean.
+		stores.breadcrumbs.clear();
+		stores.recents.clear();
+		stores.drawer.close();
+		await signOut();
 	}
 
 	function syncWorkspaceToUrl(wsId: string | null) {
@@ -46,21 +53,24 @@
 
 	onMount(async () => {
 		setPlatformTag();
-		await initAuth();
+		await restoreSession();
 	});
 </script>
 
-{#if !auth.user}
+{#if session.status === 'loading'}
+	<!-- Checking the vault — renders nothing for a frame. -->
+{:else if !session.user}
 	<ShellLoginScreen
-		onSubmit={async (name, plan) => { await login(name, plan); }}
+		onSignIn={signIn}
+		busy={session.status === 'signing-in'}
+		error={session.error}
 		logoSrc={logoDark}
 	/>
 {:else}
 	<ShellPage
 		{sdk}
 		{chatStream}
-		userName={auth.user.name}
-		userPlan={auth.user.plan}
+		userName={session.user.name}
 		sigil={favicon}
 		onLogout={handleLogout}
 		onWorkspaceChange={syncWorkspaceToUrl}

@@ -1,8 +1,9 @@
-import { redirect } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types.js';
+import { gatewayFetch, requireSession } from '$lib/server/gateway.js';
 
-export const load: PageServerLoad = async ({ locals, fetch }) => {
-	if (!locals.user) redirect(302, '/login');
+export const load: PageServerLoad = async ({ locals }) => {
+	const session = requireSession(locals, '/account/usage');
+	const fetch = gatewayFetch(session);
 
 	let usage = { agent_turns: 0, tokens: 0, storage_gb: 0 };
 	let subscription = null;
@@ -20,5 +21,5 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
 		}
 	} catch { /* billing not configured */ }
 
-	return { user: locals.user, usage, subscription };
+	return { user: session.user, usage, subscription };
 };

@@ -21,8 +21,8 @@ export const TASK_PATHS: TaskPath[] = [
   {
     id: 'cold-start',
     label: 'Cold start to greeting',
-    startUrl: '/login',
-    steps: ['navigate /login', 'authenticate', 'land on /'],
+    startUrl: '/auth/signed-out',
+    steps: ['navigate /auth/signed-out', 'sign in (OIDC)', 'land on /'],
   },
   {
     id: 'send-message',
@@ -52,7 +52,7 @@ export const TASK_PATHS: TaskPath[] = [
 
 /** Convenience: the start URLs used by visual regression tests. */
 export const VISUAL_ROUTES = [
-  { path: '/login',           label: 'login' },
+  { path: '/auth/signed-out', label: 'signed-out' },
   { path: '/',                label: 'home' },
   { path: '/account',         label: 'account' },
   { path: '/account/billing', label: 'billing' },

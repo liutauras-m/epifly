@@ -6,15 +6,14 @@ export interface Toast {
   kind: ToastKind;
 }
 
-let nextId = 0;
-
-export const toasts = (() => {
+export function createToastStore() {
+  let nextId = 0;
   let items = $state<Toast[]>([]);
 
   function add(message: string, kind: ToastKind = 'info', durationMs = 4000): number {
     const id = ++nextId;
     items = [...items, { id, message, kind }];
-    if (durationMs > 0) setTimeout(() => dismiss(id), durationMs);
+    if (durationMs > 0 && typeof window !== 'undefined') setTimeout(() => dismiss(id), durationMs);
     return id;
   }
 
@@ -31,4 +30,6 @@ export const toasts = (() => {
     error:   (msg: string, ms?: number) => add(msg, 'error', ms),
     warning: (msg: string, ms?: number) => add(msg, 'warning', ms),
   };
-})();
+}
+
+export type ToastStore = ReturnType<typeof createToastStore>;

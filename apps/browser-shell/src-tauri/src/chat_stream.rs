@@ -2,7 +2,9 @@ use futures_util::StreamExt;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Runtime, State, Webview};
+
+use crate::auth::{self, AuthState};
 use tokio::task::JoinHandle;
 
 pub type StreamRegistry = Arc<Mutex<HashMap<String, JoinHandle<()>>>>;
@@ -18,19 +20,27 @@ pub enum ChunkPayload {
     Error { message: String },
 }
 
+/// Stream a chat turn from the gateway's `/ui/stream` through Rust (WKWebView
+/// buffers fetch() bodies). Authenticates with the shell's own bearer token.
 #[tauri::command]
-pub async fn chat_stream_start(
-    app: AppHandle,
+#[allow(clippy::too_many_arguments)]
+pub async fn chat_stream_start<R: Runtime>(
+    app: AppHandle<R>,
+    webview: Webview<R>,
     registry: State<'_, StreamRegistry>,
+    auth_state: State<'_, AuthState>,
     message: String,
-    session_token: String,
     thread_id: Option<String>,
     workspace_node_id: Option<String>,
     attachment_ids: Option<Vec<String>>,
     // Optional capability name to pin before semantic routing (PR 2.A).
     forced_capability: Option<String>,
-    api_base: String,
 ) -> Result<String, String> {
+    if webview.label() != "main" {
+        return Err("chat streaming is only available to the shell window".into());
+    }
+    let api_base = auth::gateway_url()?;
+    let access_token = auth_state.access_token(&app).await?;
     let stream_id = ulid::Ulid::new().to_string();
     let sid = stream_id.clone();
 
@@ -53,7 +63,7 @@ pub async fn chat_stream_start(
         let result = client
             .post(format!("{}/ui/stream", api_base))
             .header("Content-Type", "application/json")
-            .header("X-Session-Token", &session_token)
+            .bearer_auth(&access_token)
             .json(&body)
             .send()
             .await;

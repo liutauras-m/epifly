@@ -24,6 +24,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { signIn } from '../helpers/auth';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -99,12 +100,7 @@ async function collectDurations(page: import('@playwright/test').Page) {
 
 test.describe('motion budget (Phase 6 — Principle #14)', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/login');
-    await page.getByLabel('Operator name').fill('Motion Budget Test');
-    await page.getByLabel('Enterprise').check();
-    await page.getByRole('button', { name: 'Begin' }).click();
-    await expect(page).toHaveURL('/');
-    await page.waitForSelector(':root[data-hydrated]', { timeout: 10_000 });
+    await signIn(page);
   });
 
   // ── Flow 1: page load ───────────────────────────────────────────────────────
@@ -163,12 +159,7 @@ test.describe('motion budget (Phase 6 — Principle #14)', () => {
     });
     const page = await ctx.newPage();
 
-    await page.goto('/login');
-    await page.getByLabel('Operator name').fill('Reduced Motion Test');
-    await page.getByLabel('Enterprise').check();
-    await page.getByRole('button', { name: 'Begin' }).click();
-    await expect(page).toHaveURL('/');
-    await page.waitForSelector(':root[data-hydrated]', { timeout: 10_000 });
+    await signIn(page);
 
     const { max } = await collectDurations(page);
     expect(max, `Under reduced-motion, max duration ${max}ms exceeds 80ms`).toBeLessThanOrEqual(80);

@@ -13,6 +13,7 @@
 	 */
 	import type { ConusSdk, ThreadSummary } from '@conusai/sdk';
 	import { createLiveResource } from '../live/createLiveResource.svelte.js';
+	import { useAppStores } from '../stores/appStores.svelte.js';
 	import type { createChatStream } from './createChatStream.svelte.js';
 
 	let {
@@ -38,7 +39,7 @@
 			if (res.error) return [];
 			return res.data ?? [];
 		},
-		{ tenantId },
+		{ toasts: useAppStores().toasts, tenantId },
 	);
 
 	// Forward chat-stream invalidations to the live resource. The factory's own

@@ -1,19 +1,16 @@
 import { test, expect } from '@playwright/test';
+import { signIn } from '../helpers/auth';
 
 // iOS Safari simulation against the web app — covers mobile-specific layout
 // and interaction patterns without needing a real Tauri iOS build.
 
 test.describe('iOS responsive layout', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/login');
-    await page.getByLabel('Operator name').fill('Mobile Operator');
-    await page.getByLabel('Enterprise').check();
-    await page.getByRole('button', { name: 'Begin' }).click();
-    await expect(page).toHaveURL('/');
+    await signIn(page);
   });
 
   test('sidebar is hidden by default on iPhone viewport', async ({ page }) => {
-    const sidebar = page.getByRole('complementary', { name: 'Workshop navigation' });
+    const sidebar = page.getByRole('navigation', { name: 'Workshop navigation' });
     const transform = await sidebar.evaluate((el) =>
       getComputedStyle(el).transform
     );
@@ -24,7 +21,7 @@ test.describe('iOS responsive layout', () => {
   test('hamburger button opens sidebar on mobile', async ({ page }) => {
     const hamBtn = page.getByRole('button', { name: 'Toggle nav' });
     await hamBtn.click();
-    const sidebar = page.getByRole('complementary', { name: 'Workshop navigation' });
+    const sidebar = page.getByRole('navigation', { name: 'Workshop navigation' });
     await expect(sidebar).toHaveClass(/open/);
   });
 
@@ -51,13 +48,12 @@ test.describe('iOS responsive layout', () => {
     expect(scrollWidth).toBeLessThanOrEqual(clientWidth + 1); // 1px tolerance
   });
 
-  test('login page is usable at 375px', async ({ page }) => {
-    // Clear session cookie so the login page doesn't redirect to /
+  test('signed-out page is usable at 375px', async ({ page }) => {
     await page.context().clearCookies();
-    await page.goto('/login');
-    // Form should be visible and not overflow the actual viewport width
+    await page.goto('/auth/signed-out');
+    // The card should be visible and not overflow the actual viewport width
     const vw = page.viewportSize()!.width;
-    const form = page.locator('.login-form-wrap');
+    const form = page.getByRole('link', { name: 'Sign in again' });
     const box = await form.boundingBox();
     expect(box).not.toBeNull();
     expect(box!.width).toBeLessThanOrEqual(vw);

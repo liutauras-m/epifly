@@ -45,12 +45,14 @@
   const svgArtifacts    = `<path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><polyline points="13 2 13 9 20 9"/>`;
 
   import { startViewTransition } from '../motion/index.js';
-  import {
-    screenStore,
-    drawerStore,
-    breadcrumbsStore,
-    recentsStore,
-  } from '../stores/index.js';
+  import { useAppStores } from '../stores/appStores.svelte.js';
+
+  const {
+    screen: screenStore,
+    drawer: drawerStore,
+    breadcrumbs: breadcrumbsStore,
+    recents: recentsStore,
+  } = useAppStores();
 
   // ── SVG icon paths (inline, topbar-only) ────────────────────────────────────
   const iconHamburger = `<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>`;

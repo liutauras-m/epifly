@@ -124,15 +124,18 @@ export { createThemeStore, localStorageAdapter } from "./stores/themeStore.svelt
 export type { Theme, ThemePreference, ThemeAdapter, ThemeStore } from "./stores/themeStore.svelte.js";
 export { createFeatureFlags } from "./stores/featureFlags.svelte.js";
 export type { FeatureFlags, FeatureFlagStore } from "./stores/featureFlags.svelte.js";
-export { toasts } from "./stores/toast.svelte.js";
-export type { Toast, ToastKind } from "./stores/toast.svelte.js";
-export { modeStore } from "./stores/modeStore.svelte.js";
-export type { AppMode } from "./stores/modeStore.svelte.js";
-export { recentsStore } from "./stores/recents.svelte.js";
-export { breadcrumbsStore } from "./stores/breadcrumbs.svelte.js";
-export { screenStore } from "./stores/screen.svelte.js";
-export type { Screen } from "./stores/screen.svelte.js";
-export { drawerStore } from "./stores/drawer.svelte.js";
+export { createAppStores, provideAppStores, useAppStores } from "./stores/appStores.svelte.js";
+export type { AppStores } from "./stores/appStores.svelte.js";
+export { createToastStore } from "./stores/toast.svelte.js";
+export type { Toast, ToastKind, ToastStore } from "./stores/toast.svelte.js";
+export { createRecentsStore } from "./stores/recents.svelte.js";
+export type { RecentsStore } from "./stores/recents.svelte.js";
+export { createBreadcrumbsStore } from "./stores/breadcrumbs.svelte.js";
+export type { BreadcrumbsStore } from "./stores/breadcrumbs.svelte.js";
+export { createScreenStore } from "./stores/screen.svelte.js";
+export type { Screen, ScreenStore } from "./stores/screen.svelte.js";
+export { createDrawerStore } from "./stores/drawer.svelte.js";
+export type { DrawerStore } from "./stores/drawer.svelte.js";
 
 // ── Routing ──────────────────────────────────────────────────────────────────
 export { initialRoute } from "./routing/initialRoute.js";

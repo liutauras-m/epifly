@@ -1,39 +1,31 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("smoke", () => {
-  test("homepage loads and has correct title", async ({ page }) => {
-    await page.goto("/");
-    await expect(page).toHaveTitle(/ConusAI/i);
+  test("healthz answers without a session", async ({ request }) => {
+    const res = await request.get("/healthz");
+    expect(res.status()).toBe(200);
   });
 
-  test("login page renders without JS errors", async ({ page }) => {
+  test("unauthenticated root redirects to OIDC sign-in", async ({ request }) => {
+    const res = await request.get("/", { maxRedirects: 0 });
+    expect(res.status()).toBe(303);
+    expect(res.headers()["location"]).toMatch(/^\/auth\/login\?returnTo=/);
+  });
+
+  test("signed-out page renders without JS errors and with a nonce CSP", async ({ page }) => {
     const errors: string[] = [];
     page.on("pageerror", (err) => errors.push(err.message));
-
-    await page.goto("/login");
-
-    // Should have a login form
-    const form = page.getByRole("form").or(page.locator("form"));
-    await expect(form).toBeVisible();
-
+    const response = await page.goto("/auth/signed-out");
+    await expect(page.getByRole("link", { name: "Sign in again" })).toBeVisible();
     expect(errors).toHaveLength(0);
+    const csp = response?.headers()["content-security-policy"] ?? "";
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).toMatch(/script-src 'self' 'nonce-/);
+    expect(response?.headers()["x-frame-options"]).toBe("DENY");
   });
 
-  test("unauthenticated root redirects to login", async ({ page }) => {
-    const response = await page.goto("/");
-    // Either a redirect to /login or the login page rendered at /
-    const url = page.url();
-    const status = response?.status() ?? 200;
-    expect(status).toBeLessThan(400);
-    const isLoginPage =
-      url.includes("/login") || (await page.locator("form").count()) > 0;
-    expect(isLoginPage).toBe(true);
-  });
-
-  test("CSP header is present", async ({ page }) => {
-    const response = await page.goto("/login");
-    const csp = response?.headers()["content-security-policy"];
-    expect(csp).toBeTruthy();
-    expect(csp).toContain("default-src");
+  test("proxied API without a session is 401, not a redirect", async ({ request }) => {
+    const res = await request.get("/v1/threads", { maxRedirects: 0 });
+    expect(res.status()).toBe(401);
   });
 });

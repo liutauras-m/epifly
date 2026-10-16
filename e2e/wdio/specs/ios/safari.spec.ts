@@ -14,9 +14,9 @@ import { browser, $, expect } from '@wdio/globals';
 import { login } from '../../fixtures/login';
 
 describe('iOS Safari — workshop UI', () => {
-  it('login form renders at iPhone viewport width', async () => {
-    await browser.url('/login');
-    const form = await $('.login-form-wrap');
+  it('signed-out page renders at iPhone viewport width', async () => {
+    await browser.url('/auth/signed-out');
+    const form = await $('a=Sign in again');
     await form.waitForDisplayed({ timeout: 10_000 });
     const size = await form.getSize();
     const vw = await browser.execute(() => window.innerWidth);
@@ -24,20 +24,14 @@ describe('iOS Safari — workshop UI', () => {
   });
 
   it('completes login → greeting screen', async () => {
-    await login('iOS Real', 'Enterprise');
+    await login();
     const greeting = await $('.greeting-text');
     await greeting.waitForDisplayed({ timeout: 10_000 });
-    await expect(greeting).toHaveTextContaining('iOS');
-  });
-
-  it('user chip shows ENTERPRISE plan after login', async () => {
-    await login('iOS Real');
-    const plan = await $('.user-plan');
-    await expect(plan).toHaveTextContaining('ENTERPRISE');
+    await expect(greeting).toHaveTextContaining('E2E');
   });
 
   it('hamburger button opens the sidebar', async () => {
-    await login('iOS Real');
+    await login();
     const ham = await $('button[aria-label="Toggle nav"]');
     await ham.click();
     const sidebar = await $('aside[aria-label="Workshop navigation"]');
@@ -48,7 +42,7 @@ describe('iOS Safari — workshop UI', () => {
   });
 
   it('composer textarea fits within viewport (no horizontal overflow)', async () => {
-    await login('iOS Real');
+    await login();
     const textarea = await $('#agent-prompt');
     const size = await textarea.getSize();
     const loc = await textarea.getLocation();
@@ -57,7 +51,7 @@ describe('iOS Safari — workshop UI', () => {
   });
 
   it('send button meets Apple HIG 44px touch target on mobile', async () => {
-    await login('iOS Real');
+    await login();
     const textarea = await $('#agent-prompt');
     await textarea.setValue('hello');
     const sendBtn = await $('button[aria-label="Send message"]');
@@ -66,7 +60,7 @@ describe('iOS Safari — workshop UI', () => {
   });
 
   it('theme switcher toggles forge / paper', async () => {
-    await login('iOS Real');
+    await login();
     const switcher = await $('button[aria-label*="theme" i], button[aria-label*="Theme" i]');
     await switcher.click();
     const theme = await browser.execute(() => document.documentElement.getAttribute('data-theme'));
@@ -74,7 +68,7 @@ describe('iOS Safari — workshop UI', () => {
   });
 
   it('no horizontal scroll at iPhone viewport', async () => {
-    await login('iOS Real');
+    await login();
     const overflow = await browser.execute(() => ({
       scroll: document.documentElement.scrollWidth,
       client: document.documentElement.clientWidth,

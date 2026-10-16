@@ -15,7 +15,6 @@ export async function startTauriDriver(binaryPath: string): Promise<string> {
   tauriProc = spawn('tauri-driver', ['--port', String(WEBDRIVER_PORT)], {
     env: {
       ...process.env,
-      CONUSAI_E2E: '1',
       TAURI_APP_BINARY: binaryPath,
     },
     stdio: 'pipe',

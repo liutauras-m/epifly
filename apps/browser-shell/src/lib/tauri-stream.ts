@@ -1,15 +1,14 @@
 // Tauri IPC–based SSE streaming.
 // WKWebView buffers HTTP responses completely before exposing them to JS
 // (confirmed: tauri-apps/plugins-workspace#2415, #2129).
-// This module routes streaming through Rust → Tauri events instead.
+// This module routes streaming through Rust → Tauri events instead; Rust adds
+// the gateway URL and the bearer token itself.
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { ChatStreamDelta } from '@conusai/sdk';
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-
-const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:8080';
 
 interface ChunkPayload {
   kind: 'text' | 'tool_start' | 'tool_result' | 'thread_id' | 'done' | 'error';
@@ -23,7 +22,6 @@ interface ChunkPayload {
 
 export async function* streamChatTauri(params: {
   message: string;
-  sessionToken: string;
   threadId?: string | null;
   workspaceNodeId?: string | null;
   attachmentIds?: string[];
@@ -33,12 +31,10 @@ export async function* streamChatTauri(params: {
 }): AsyncGenerator<ChatStreamDelta> {
   const streamId = await invoke<string>('chat_stream_start', {
     message: params.message,
-    sessionToken: params.sessionToken,
     threadId: params.threadId ?? null,
     workspaceNodeId: params.workspaceNodeId ?? null,
     attachmentIds: params.attachmentIds ?? [],
     forcedCapability: params.forcedCapability ?? null,
-    apiBase: API_BASE,
   });
 
   const deltas: ChatStreamDelta[] = [];

@@ -11,7 +11,9 @@
    *   <ToastHost />
    *   <LiveAnnouncer />
    */
-  import { toasts } from '../stores/toast.svelte.js';
+  import { useAppStores } from '../stores/appStores.svelte.js';
+
+  const { toasts } = useAppStores();
 </script>
 
 <!--

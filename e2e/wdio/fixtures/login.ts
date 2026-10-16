@@ -1,25 +1,13 @@
 /**
- * Shared login helper for WDIO suites (macOS shell + iOS Safari).
- * Mirrors the flow used by Playwright tests in e2e/web and e2e/ios.
+ * Shared sign-in helper for WDIO suites that drive the web app (iOS Safari).
+ * Runs the real BFF OIDC flow against the mock IdP (e2e/fixtures/mock-oidc.mjs),
+ * which approves at once — the same flow as e2e/helpers/auth.ts.
  */
 
-import { browser, $ } from '@wdio/globals';
+import { browser } from '@wdio/globals';
 
-export async function login(name = 'WDIO Tester', plan: 'Free' | 'Pro' | 'Enterprise' = 'Enterprise') {
-  await browser.url('/login');
-
-  // Fill operator name
-  const nameInput = await $('input[name="name"]');
-  await nameInput.waitForDisplayed({ timeout: 10_000 });
-  await nameInput.setValue(name);
-
-  // Select plan tier (radio with label text matching tier)
-  const planRadio = await $(`input[type="radio"][value="${plan.toLowerCase()}"]`);
-  await planRadio.click();
-
-  // Submit
-  const beginBtn = await $('button[type="submit"]');
-  await beginBtn.click();
+export async function login(returnTo = '/') {
+  await browser.url(`/auth/login?returnTo=${encodeURIComponent(returnTo)}`);
 
   // Wait for hydration marker that the layout sets via $effect
   await browser.waitUntil(

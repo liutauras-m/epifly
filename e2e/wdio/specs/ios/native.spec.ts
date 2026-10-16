@@ -1,3 +1,8 @@
+// SKIPPED (2026-10-16): this suite signed in by forging the removed HMAC
+// `conusai_session` cookie / `x-session-token`. The native shell now signs in
+// with Zitadel through the system browser (loopback PKCE, refresh token in the
+// Rust Stronghold vault), which Appium cannot drive. Re-enable once the suite
+// has a test Zitadel user and a sign-in step for the system browser.
 /**
  * Native iOS app tests — ConusAI Browser Shell (.app installed on simulator/device)
  *
@@ -23,7 +28,7 @@ async function switchToWebView() {
   await browser.switchContext(typeof wv === 'string' ? wv : wv!.id);
 }
 
-describe('Native ConusAI Browser iOS app', () => {
+describe.skip('Native ConusAI Browser iOS app', () => {
   it('launches with NATIVE_APP context and a WKWebView attached', async () => {
     const ctxs = await browser.getContexts();
     const ctxIds = ctxs.map((c) => (typeof c === 'string' ? c : c.id));

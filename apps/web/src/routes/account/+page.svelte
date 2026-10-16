@@ -14,12 +14,11 @@
 
   let { data }: { data: PageData } = $props();
 
-  const { user, subscription, authProvider } = data;
+  const { user, subscription } = data;
 
-  const planLabel   = $derived(subscription?.plan_key ?? user?.plan ?? 'free');
+  const planLabel   = $derived(subscription?.plan_key ?? 'free');
   const statusLabel = $derived(subscription?.status ?? 'active');
   const showStatus  = $derived(statusLabel !== 'active' && statusLabel !== 'trialing');
-  const logoutHref  = $derived(authProvider === 'zitadel' ? '/auth/logout' : '/logout');
   const initial     = $derived((user?.name ?? '?')[0].toUpperCase());
 </script>
 
@@ -91,9 +90,9 @@
       {/snippet}
     </Item.Root>
 
-    <Item.Root variant="outline" class="[a]:hover:bg-destructive/10 [a]:hover:text-destructive border-destructive/30">
+    <Item.Root variant="outline" class="hover:bg-destructive/10 hover:text-destructive border-destructive/30">
       {#snippet child({ props })}
-        <a href={logoutHref} {...props} data-sveltekit-reload>
+        <button type="submit" form="logout-form" {...props} class={[props.class, 'w-full text-left']}>
           <Item.Media variant="icon" class="bg-destructive/10 text-destructive size-9 rounded-md">
             <LogOut class="size-4" />
           </Item.Media>
@@ -104,9 +103,11 @@
           <Item.Actions>
             <ChevronRight class="size-4 text-destructive/60" />
           </Item.Actions>
-        </a>
+        </button>
       {/snippet}
     </Item.Root>
   </Item.Group>
+
+  <form id="logout-form" method="POST" action="/auth/logout" hidden></form>
 
 </div>

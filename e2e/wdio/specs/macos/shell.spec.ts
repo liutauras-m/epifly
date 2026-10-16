@@ -1,3 +1,8 @@
+// SKIPPED (2026-10-16): this suite signed in by forging the removed HMAC
+// `conusai_session` cookie / `x-session-token`. The native shell now signs in
+// with Zitadel through the system browser (loopback PKCE, refresh token in the
+// Rust Stronghold vault), which Appium cannot drive. Re-enable once the suite
+// has a test Zitadel user and a sign-in step for the system browser.
 /**
  * macOS browser-shell smoke tests — driven by tauri-webdriver.
  *
@@ -10,7 +15,7 @@
 import { browser, $, expect } from '@wdio/globals';
 import { login } from '../../fixtures/login';
 
-describe('browser-shell on macOS', () => {
+describe.skip('browser-shell on macOS', () => {
   it('loads the workshop entry form', async () => {
     // tauri-webdriver loads the app's primary URL automatically when the
     // session starts; navigate explicitly to /login to be deterministic.

@@ -1,3 +1,8 @@
+// SKIPPED (2026-10-16): this suite signed in by forging the removed HMAC
+// `conusai_session` cookie / `x-session-token`. The native shell now signs in
+// with Zitadel through the system browser (loopback PKCE, refresh token in the
+// Rust Stronghold vault), which Appium cannot drive. Re-enable once the suite
+// has a test Zitadel user and a sign-in step for the system browser.
 /**
  * iOS Simulator — Full verify.md UI verification.
  *
@@ -250,7 +255,7 @@ async function sdkOk<T>(methodPath: string, ...args: any[]): Promise<T> {
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase V1 — App Launch & Native Contexts
 // ─────────────────────────────────────────────────────────────────────────────
-describe('V1 · App launch (native shell)', () => {
+describe.skip('V1 · App launch (native shell)', () => {
   it('V1.1 — NATIVE_APP context exists on launch', async () => {
     const ctxs = await browser.getContexts();
     const ids = ctxs.map((c) => (typeof c === 'string' ? c : c.id));
@@ -280,7 +285,7 @@ describe('V1 · App launch (native shell)', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase V2 — Workshop Login
 // ─────────────────────────────────────────────────────────────────────────────
-describe('V2 · Workshop login', () => {
+describe.skip('V2 · Workshop login', () => {
   before(async () => { await switchToWebView(); });
 
   it('V2.1 — Login form renders with all elements', async () => {
@@ -354,7 +359,7 @@ describe('V2 · Workshop login', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase V3 — Workspace UI Elements
 // ─────────────────────────────────────────────────────────────────────────────
-describe('V3 · Workspace elements', () => {
+describe.skip('V3 · Workspace elements', () => {
   before(async () => {
     await switchToWebView();
     // Ensure logged in
@@ -447,7 +452,7 @@ describe('V3 · Workspace elements', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase V4 — Chat Compose & Submit
 // ─────────────────────────────────────────────────────────────────────────────
-describe('V4 · Chat compose & submit', () => {
+describe.skip('V4 · Chat compose & submit', () => {
   before(async () => {
     await switchToWebView();
     const onLogin = await browser.execute(() =>
@@ -518,7 +523,7 @@ describe('V4 · Chat compose & submit', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 const BACKEND = 'http://localhost:8080';
 
-describe('V5 · Backend connectivity', () => {
+describe.skip('V5 · Backend connectivity', () => {
   it('V5.1 — backend reports ≥8 capabilities via /health', async () => {
     // /health is unauthenticated; capabilities count is included in its payload
     const res = await fetch(`${BACKEND}/health`);
@@ -554,7 +559,7 @@ describe('V5 · Backend connectivity', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase V6 — File Upload
 // ─────────────────────────────────────────────────────────────────────────────
-describe('V6 · File upload', () => {
+describe.skip('V6 · File upload', () => {
   before(async () => {
     // Refresh to clear any SSE connections left by V4 chat submit
     await switchToWebView();
@@ -604,7 +609,7 @@ describe('V6 · File upload', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase V7 — Invoice Upload & Extraction (Node fetch — avoids WKWebView state issues)
 // ─────────────────────────────────────────────────────────────────────────────
-describe('V7 · Invoice extraction via agent chat', () => {
+describe.skip('V7 · Invoice extraction via agent chat', () => {
   it('V7.1 — /ui/extract-invoice endpoint is reachable', async () => {
     const res = await fetch(`${BACKEND}/ui/extract-invoice`, {
       method: 'POST',
@@ -638,7 +643,7 @@ describe('V7 · Invoice extraction via agent chat', () => {
 // WKWebView is in "loading" state while the stream is open — we poll with
 // try/catch until execute() succeeds, then check the AI bubble is present.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('V9 · SSE stream response rendering', () => {
+describe.skip('V9 · SSE stream response rendering', () => {
   before(async () => {
     await switchToWebView();
     const onLogin = await browser.execute(() =>
@@ -758,7 +763,7 @@ describe('V9 · SSE stream response rendering', () => {
 // Phase V10 — Tool Call Cards
 // Send a prompt that reliably invokes wasm-ping; verify the tool card renders.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('V10 · Tool call card rendering', () => {
+describe.skip('V10 · Tool call card rendering', () => {
   before(async () => {
     await switchToWebView();
     // V9 left a chat-stream listener attached → reset the WebView so V10 sees
@@ -852,7 +857,7 @@ describe('V10 · Tool call card rendering', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase V11 — Keyboard Behaviour
 // ─────────────────────────────────────────────────────────────────────────────
-describe('V11 · Keyboard behaviour', () => {
+describe.skip('V11 · Keyboard behaviour', () => {
   before(async () => {
     await switchToWebView();
     // V9/V10 SSE traffic throttles WKWebView — reset before native-touch ops.
@@ -977,7 +982,7 @@ describe('V11 · Keyboard behaviour', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase V12 — WorkspaceExplorer Sidebar Content
 // ─────────────────────────────────────────────────────────────────────────────
-describe('V12 · Workspace sidebar content', () => {
+describe.skip('V12 · Workspace sidebar content', () => {
   before(async () => {
     await switchToWebView();
     const onLogin = await browser.execute(() =>
@@ -1075,7 +1080,7 @@ describe('V12 · Workspace sidebar content', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase V13 — Scroll in Long Conversation
 // ─────────────────────────────────────────────────────────────────────────────
-describe('V13 · Conversation scrolling', () => {
+describe.skip('V13 · Conversation scrolling', () => {
   before(async () => {
     await switchToWebView();
     // Refresh WebView to recover from V11's native-touch + keyboard interactions.
@@ -1182,7 +1187,7 @@ describe('V13 · Conversation scrolling', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase V14 — File Attachment UI (end-to-end)
 // ─────────────────────────────────────────────────────────────────────────────
-describe('V14 · File attachment UI', () => {
+describe.skip('V14 · File attachment UI', () => {
   before(async () => {
     await switchToWebView();
     await resetWebView();
@@ -1281,7 +1286,7 @@ describe('V14 · File attachment UI', () => {
 // verifies both appear in the sidebar tree, and confirms the backend API
 // also reflects the nodes (Node fetch, same as verify.md Phase 11.1–11.2).
 // ─────────────────────────────────────────────────────────────────────────────
-describe('V15 · Folder and MD file creation', () => {
+describe.skip('V15 · Folder and MD file creation', () => {
   const FOLDER_NAME = `ios-folder-${Date.now()}`;
   let folderId = '';
   let convId = '';
@@ -1565,7 +1570,7 @@ describe('V15 · Folder and MD file creation', () => {
 // run as its own session. Mirrors `capabilities-tour.spec.ts` C2 but lives
 // here so a full `verify.spec.ts` run covers it.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('V16 · Workspace API CRUD (via iOS WebView SDK)', () => {
+describe.skip('V16 · Workspace API CRUD (via iOS WebView SDK)', () => {
   let parentFolderId = '';
   let childFolderId = '';
   let fileId = '';
@@ -1714,7 +1719,7 @@ describe('V16 · Workspace API CRUD (via iOS WebView SDK)', () => {
 //
 // Runtime: 6 tests × ~30s per chat-stream = ~3 min for this describe.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('V17 · Chat-driven workspace CRUD (iOS chat UI → storage.*)', () => {
+describe.skip('V17 · Chat-driven workspace CRUD (iOS chat UI → storage.*)', () => {
   let prepFolderId = '';
   let prepFileId = '';
   const folderName = `Chat-Test-${Date.now()}`;
@@ -2013,7 +2018,7 @@ describe('V17 · Chat-driven workspace CRUD (iOS chat UI → storage.*)', () => 
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase V8 — Logout & Session Cleanup
 // ─────────────────────────────────────────────────────────────────────────────
-describe('V8 · Logout', () => {
+describe.skip('V8 · Logout', () => {
   before(async () => {
     await switchToWebView();
     await resetWebView();

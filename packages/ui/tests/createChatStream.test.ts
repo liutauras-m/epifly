@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createChatStream } from '../src/lib/features/createChatStream.svelte.js';
 import type { ConusSdk } from '@conusai/sdk';
+import { createToastStore } from '../src/lib/stores/toast.svelte.js';
+
+const toasts = createToastStore();
 
 function makeSdk(deltas: any[]): ConusSdk {
   return {
@@ -26,14 +29,14 @@ describe('createChatStream', () => {
   });
 
   it('starts with empty messages and inFlight=false', () => {
-    const cs = createChatStream(makeSdk([]));
+    const cs = createChatStream(makeSdk([]), { toasts });
     expect(cs.messages).toHaveLength(0);
     expect(cs.inFlight).toBe(false);
   });
 
   it('appends user message immediately on send', async () => {
     const sdk = makeSdk([]);
-    const cs = createChatStream(sdk);
+    const cs = createChatStream(sdk, { toasts });
     const p = cs.send('hello');
     expect(cs.messages[0]).toMatchObject({ role: 'user', text: 'hello' });
     await p;
@@ -44,7 +47,7 @@ describe('createChatStream', () => {
       { kind: 'text', content: 'Hello ' },
       { kind: 'text', content: 'world' },
     ]);
-    const cs = createChatStream(sdk);
+    const cs = createChatStream(sdk, { toasts });
     await cs.send('hi');
     const ai = cs.messages.find(m => m.role === 'ai');
     expect(ai?.text).toBe('Hello world');
@@ -53,7 +56,7 @@ describe('createChatStream', () => {
   it('tracks thread_id from stream delta', async () => {
     const onThreadId = vi.fn();
     const sdk = makeSdk([{ kind: 'thread_id', id: 'thread-abc' }]);
-    const cs = createChatStream(sdk);
+    const cs = createChatStream(sdk, { toasts });
     await cs.send('hi', { onThreadId });
     expect(cs.activeThreadId).toBe('thread-abc');
     expect(onThreadId).toHaveBeenCalledWith('thread-abc');
@@ -65,7 +68,7 @@ describe('createChatStream', () => {
       { kind: 'thread_id', id: 'thread-abc' },
       { kind: 'thread_id', id: 'thread-abc' },
     ]);
-    const cs = createChatStream(sdk);
+    const cs = createChatStream(sdk, { toasts });
     await cs.send('hi', { onThreadId });
     expect(onThreadId).toHaveBeenCalledTimes(1);
   });
@@ -75,7 +78,7 @@ describe('createChatStream', () => {
       { kind: 'tool_start', id: 'tc-1', name: 'web_search' },
       { kind: 'tool_result', tool_use_id: 'tc-1', result: '{"ok":true}' },
     ]);
-    const cs = createChatStream(sdk);
+    const cs = createChatStream(sdk, { toasts });
     await cs.send('search something');
     expect(cs.toolCards.get('tc-1')).toMatchObject({ name: 'web_search', status: 'success' });
   });
@@ -85,7 +88,7 @@ describe('createChatStream', () => {
       { kind: 'tool_start', id: 'tc-2', name: 'code_exec' },
       { kind: 'tool_result', tool_use_id: 'tc-2', result: 'Error: timeout' },
     ]);
-    const cs = createChatStream(sdk);
+    const cs = createChatStream(sdk, { toasts });
     await cs.send('run code');
     expect(cs.toolCards.get('tc-2')).toMatchObject({ status: 'error' });
   });
@@ -95,7 +98,7 @@ describe('createChatStream', () => {
       { kind: 'thread_id', id: 'thread-xyz' },
       { kind: 'text', content: 'hi' },
     ]);
-    const cs = createChatStream(sdk);
+    const cs = createChatStream(sdk, { toasts });
     await cs.send('hello');
     cs.newSession();
     expect(cs.messages).toHaveLength(0);
@@ -104,7 +107,7 @@ describe('createChatStream', () => {
   });
 
   it('sets inFlight=false after stream completes', async () => {
-    const cs = createChatStream(makeSdk([{ kind: 'text', content: 'done' }]));
+    const cs = createChatStream(makeSdk([{ kind: 'text', content: 'done' }]), { toasts });
     await cs.send('go');
     expect(cs.inFlight).toBe(false);
   });
@@ -118,7 +121,7 @@ describe('createChatStream', () => {
         }),
       },
     } as unknown as ConusSdk;
-    const cs = createChatStream(sdk);
+    const cs = createChatStream(sdk, { toasts });
     cs.send('first');
     await cs.send('second');
     expect((sdk.chat.stream as any).mock.calls.length).toBe(1);

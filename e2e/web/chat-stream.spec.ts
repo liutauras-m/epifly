@@ -1,15 +1,9 @@
 import { test, expect } from '@playwright/test';
+import { signIn } from '../helpers/auth';
 
 // Helper: ensure Svelte hydration is complete before test starts
 async function login(page: import('@playwright/test').Page) {
-  await page.goto('/login');
-  await page.getByLabel('Operator name').fill('E2E Operator');
-  await page.getByLabel('Enterprise').check();
-  await page.getByRole('button', { name: 'Begin' }).click();
-  await expect(page).toHaveURL('/');
-  // Wait for Svelte $effect in +layout.svelte to set data-hydrated,
-  // confirming all event listeners are attached (dynamic imports + hydration complete)
-  await page.waitForSelector(':root[data-hydrated]', { timeout: 10_000 });
+  await signIn(page);
 }
 
 // Helper: submit the composer via Meta+Enter keyboard shortcut

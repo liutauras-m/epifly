@@ -76,7 +76,8 @@ describe('@conusai/ui main index exports', async () => {
     // Billing
     'PlanBadge', 'PlanCard', 'UsageMeter', 'QuotaBanner',
     // Stores
-    'toasts', 'modeStore', 'recentsStore', 'breadcrumbsStore', 'screenStore', 'drawerStore',
+    'createAppStores', 'provideAppStores', 'useAppStores', 'createToastStore', 'createRecentsStore',
+    'createBreadcrumbsStore', 'createScreenStore', 'createDrawerStore',
     // Utils
     'autoGrow', 'prefersReducedMotion',
     'getPlatform', 'isTauriRuntime', 'isIOSWebView', 'supportsHaptics',
@@ -171,7 +172,7 @@ describe('@conusai/ui utils exist', () => {
     ['motion/index.ts'],
     ['stores/themeStore.svelte.ts'],
     ['stores/toast.svelte.ts'],
-    ['stores/modeStore.svelte.ts'],
+    ['stores/appStores.svelte.ts'],
     ['stores/recents.svelte.ts'],
     ['stores/breadcrumbs.svelte.ts'],
     ['stores/screen.svelte.ts'],

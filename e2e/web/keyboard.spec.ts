@@ -16,15 +16,11 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { signIn } from '../helpers/auth';
 
 test.describe('keyboard parity', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/login');
-    await page.getByLabel('Operator name').fill('Keyboard Test');
-    await page.getByLabel('Enterprise').check();
-    await page.getByRole('button', { name: 'Begin' }).click();
-    await expect(page).toHaveURL('/');
-    await page.waitForSelector(':root[data-hydrated]', { timeout: 10_000 });
+    await signIn(page);
   });
 
   test('skip link is invisible until focused', async ({ page }) => {

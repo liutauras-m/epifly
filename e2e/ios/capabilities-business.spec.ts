@@ -25,6 +25,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
+import { signIn } from '../helpers/auth';
 
 // ─── environment gate ────────────────────────────────────────────────────────
 
@@ -56,17 +57,9 @@ async function snap(page: Page, name: string): Promise<void> {
   });
 }
 
-async function login(
-  page: Page,
-  name = 'Business Tester',
-  plan: 'Free' | 'Pro' | 'Enterprise' = 'Enterprise',
-): Promise<void> {
-  await page.goto('/login');
-  await page.getByLabel('Operator name').fill(name);
-  await page.getByLabel(plan).check();
-  await page.getByRole('button', { name: 'Begin' }).click();
-  await expect(page).toHaveURL('/');
-  await page.waitForSelector(':root[data-hydrated]', { timeout: 10_000 });
+/** The mock IdP signs everyone in as "E2E Operator"; plans come from the gateway now. */
+async function login(page: Page): Promise<void> {
+  await signIn(page);
 }
 
 async function submitComposer(page: Page): Promise<void> {
@@ -223,7 +216,7 @@ test.describe('10.0 · Prerequisites', () => {
 
 test.describe('UC1 · Invoice Processing Pipeline', () => {
   test.beforeEach(async ({ page }) => {
-    await login(page, 'Finance Tester', 'Enterprise');
+    await login(page);
   });
 
   test('invoice upload → orchestrated pipeline → artifact in dated folder', async ({ page }) => {
@@ -268,7 +261,7 @@ test.describe('UC1 · Invoice Processing Pipeline', () => {
 
 test.describe('UC2 · Contract Review & Risk Extraction', () => {
   test.beforeEach(async ({ page }) => {
-    await login(page, 'Legal Tester', 'Enterprise');
+    await login(page);
   });
 
   test('service agreement upload → contract extraction → risk report', async ({ page }) => {
@@ -299,7 +292,7 @@ test.describe('UC2 · Contract Review & Risk Extraction', () => {
 
 test.describe('UC3 · Medical Claim Processing', () => {
   test.beforeEach(async ({ page }) => {
-    await login(page, 'Claims Tester', 'Enterprise');
+    await login(page);
   });
 
   test('medical claim upload → parallel OCR + extraction → JSON report', async ({ page }) => {
@@ -335,7 +328,7 @@ test.describe('UC3 · Medical Claim Processing', () => {
 
 test.describe('UC4 · CV Screening & Shortlist', () => {
   test.beforeEach(async ({ page }) => {
-    await login(page, 'HR Tester', 'Enterprise');
+    await login(page);
   });
 
   test('8 CVs upload → parallel extraction → email draft', async ({ page }) => {
@@ -372,7 +365,7 @@ test.describe('UC4 · CV Screening & Shortlist', () => {
 
 test.describe('UC5 · Incident Report + Follow-up Package', () => {
   test.beforeEach(async ({ page }) => {
-    await login(page, 'Operations Tester', 'Enterprise');
+    await login(page);
   });
 
   test('incident PDF + 2 photos → mixed-MIME routing → dated folder', async ({ page }) => {

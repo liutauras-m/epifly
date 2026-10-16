@@ -1,15 +1,9 @@
 import { test, expect } from '@playwright/test';
+import { signIn } from '../helpers/auth';
 
 test.describe('greeting screen', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/login');
-    await page.getByLabel('Operator name').fill('E2E Operator');
-    await page.getByLabel('Enterprise').check();
-    await page.getByRole('button', { name: 'Begin' }).click();
-    await expect(page).toHaveURL('/');
-    // Wait for Svelte $effect in +layout.svelte to set data-hydrated,
-    // confirming all event listeners are attached (dynamic imports + hydration complete)
-    await page.waitForSelector(':root[data-hydrated]', { timeout: 10_000 });
+    await signIn(page);
   });
 
   test('renders greeting with operator first name', async ({ page }) => {
@@ -24,13 +18,13 @@ test.describe('greeting screen', () => {
   });
 
   test('sidebar shows workspace navigation', async ({ page }) => {
-    await expect(page.getByRole('complementary', { name: 'Workshop navigation' })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Workshop navigation' })).toBeVisible();
   });
 
-  test('user chip shows initials and plan', async ({ page }) => {
-    // Avatar shows initials "EO" for E2E Operator
+  test('user chip shows initials', async ({ page }) => {
+    // Avatar shows initials "EO" for E2E Operator. The plan badge comes from the
+    // gateway's /v1/billing/subscription during SSR (no gateway in this suite).
     await expect(page.locator('.avatar')).toBeVisible();
-    await expect(page.locator('.user-plan')).toContainText('ENTERPRISE');
   });
 
   test('theme switcher is accessible', async ({ page }) => {
@@ -57,7 +51,7 @@ test.describe('greeting screen', () => {
 
   test('sidebar toggles on mobile viewport', async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
-    const sidebar = page.getByRole('complementary', { name: 'Workshop navigation' });
+    const sidebar = page.getByRole('navigation', { name: 'Workshop navigation' });
     // On mobile sidebar starts hidden (transform: translateX(-100%))
     const hamBtn = page.getByRole('button', { name: 'Toggle nav' });
     await expect(hamBtn).toBeVisible();

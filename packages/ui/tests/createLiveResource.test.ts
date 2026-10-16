@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createLiveResource } from '../src/lib/live/createLiveResource.svelte.js';
-import { toasts } from '../src/lib/stores/toast.svelte.js';
+import { createToastStore } from '../src/lib/stores/toast.svelte.js';
 import { withRoot } from './helpers/effectRoot.svelte.js';
 
 /**
@@ -15,9 +15,11 @@ import { withRoot } from './helpers/effectRoot.svelte.js';
 
 type Data = { items: string[] };
 
+// One toast store per test file; reset between tests so error assertions are clean.
+const toasts = createToastStore();
+
 describe('createLiveResource — rollback contract (3.A.4.1)', () => {
   beforeEach(() => {
-    // Reset toast state between tests so error-assertion checks are clean.
     for (const t of toasts.items) toasts.dismiss(t.id);
     // Suppress the one-shot deprecation warning between runs.
     (globalThis as any)[Symbol.for('createLiveResource.mutateDeprecation')] = { warned: false };
@@ -29,7 +31,7 @@ describe('createLiveResource — rollback contract (3.A.4.1)', () => {
 
   it('reverts data to the pre-mutation snapshot on rollbackOn rejection', async () => {
     const fetcher = vi.fn(async () => ({ items: ['a', 'b'] }) as Data);
-    const { result: r, cleanup } = withRoot(() => createLiveResource<Data>('test', fetcher));
+    const { result: r, cleanup } = withRoot(() => createLiveResource<Data>('test', fetcher, { toasts }));
     try {
       await r.refresh();
       expect(r.data).toEqual({ items: ['a', 'b'] });
@@ -57,7 +59,7 @@ describe('createLiveResource — rollback contract (3.A.4.1)', () => {
 
   it('leaves the optimistic value in place on rollbackOn resolution', async () => {
     const fetcher = vi.fn(async () => ({ items: ['x', 'y'] }) as Data);
-    const { result: r, cleanup } = withRoot(() => createLiveResource<Data>('test', fetcher));
+    const { result: r, cleanup } = withRoot(() => createLiveResource<Data>('test', fetcher, { toasts }));
     try {
       await r.refresh();
       let resolveFn!: () => void;
@@ -83,7 +85,7 @@ describe('createLiveResource — rollback contract (3.A.4.1)', () => {
   it('logs exactly one console.warn for the deprecated bare mutate form', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const fetcher = vi.fn(async () => ({ items: ['p'] }) as Data);
-    const { result: r, cleanup } = withRoot(() => createLiveResource<Data>('test', fetcher));
+    const { result: r, cleanup } = withRoot(() => createLiveResource<Data>('test', fetcher, { toasts }));
     try {
       await r.refresh();
       // Two bare-form calls — only the first must emit a deprecation warning.
@@ -102,7 +104,7 @@ describe('createLiveResource — rollback contract (3.A.4.1)', () => {
 
   it('uses errorMessage builder when provided on rejection', async () => {
     const fetcher = vi.fn(async () => ({ items: ['a'] }) as Data);
-    const { result: r, cleanup } = withRoot(() => createLiveResource<Data>('test', fetcher));
+    const { result: r, cleanup } = withRoot(() => createLiveResource<Data>('test', fetcher, { toasts }));
     try {
       await r.refresh();
       let rejectFn!: (e: unknown) => void;
@@ -130,7 +132,7 @@ describe('createLiveResource — scope filtering (3.A.7)', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const fetcher = vi.fn(async () => ({ items: ['only'] }) as Data);
     const { result: r, cleanup } = withRoot(() =>
-      createLiveResource<Data>('workspace', fetcher, { tenantId: 'tenant-A' }),
+      createLiveResource<Data>('workspace', fetcher, { toasts, tenantId: 'tenant-A' }),
     );
     try {
       await r.refresh();
@@ -151,7 +153,7 @@ describe('createLiveResource — scope filtering (3.A.7)', () => {
   it('forwards invalidation events whose scope matches tenantId', async () => {
     const fetcher = vi.fn(async () => ({ items: ['only'] }) as Data);
     const { result: r, cleanup } = withRoot(() =>
-      createLiveResource<Data>('workspace', fetcher, { tenantId: 'tenant-A' }),
+      createLiveResource<Data>('workspace', fetcher, { toasts, tenantId: 'tenant-A' }),
     );
     try {
       // Let the auto-init refresh (from the factory's $effect) settle, then

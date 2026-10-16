@@ -17,6 +17,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
+import { signIn } from '../helpers/auth';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -27,13 +28,9 @@ async function snap(page: Page, name: string) {
   await page.screenshot({ path: path.join(SCREENSHOTS_DIR, `${name}.png`), fullPage: false });
 }
 
-async function login(page: Page, name = 'iOS Tester', plan: 'Free' | 'Pro' | 'Enterprise' = 'Enterprise') {
-  await page.goto('/login');
-  await page.getByLabel('Operator name').fill(name);
-  await page.getByLabel(plan).check();
-  await page.getByRole('button', { name: 'Begin' }).click();
-  await expect(page).toHaveURL('/');
-  await page.waitForSelector(':root[data-hydrated]', { timeout: 10_000 });
+/** The mock IdP signs everyone in as "E2E Operator"; plans come from the gateway now. */
+async function login(page: Page) {
+  await signIn(page);
 }
 
 function sseLines(...lines: string[]) {
@@ -59,27 +56,19 @@ async function submitComposer(page: Page) {
 // ─── 1. Login ────────────────────────────────────────────────────────────────
 
 test.describe('1 · Login', () => {
-  test('login form renders at 393px and accepts input', async ({ page }) => {
-    await page.goto('/login');
-    await snap(page, '01-login');
-
-    const form = page.locator('.login-form-wrap');
-    await expect(form).toBeVisible();
-    const box = await form.boundingBox();
-    const vw = page.viewportSize()!.width;
-    expect(box!.width).toBeLessThanOrEqual(vw);
-
-    await page.getByLabel('Operator name').fill('iOS Tester');
-    await expect(page.getByLabel('Operator name')).toHaveValue('iOS Tester');
-
-    await page.getByLabel('Enterprise').check();
-    await snap(page, '01b-login-filled');
+  test('signed-out page renders at 393px', async ({ page }) => {
+    await page.goto('/auth/signed-out');
+    await snap(page, '01-signed-out');
+    const link = page.getByRole('link', { name: 'Sign in again' });
+    await expect(link).toBeVisible();
+    const box = await link.boundingBox();
+    expect(box!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
   });
 
-  test('BEGIN submits and redirects to /', async ({ page }) => {
+  test('OIDC sign-in redirects to /', async ({ page }) => {
     await login(page);
     await snap(page, '01c-after-login');
-    await expect(page.getByText(/Good .*, iOS/)).toBeVisible();
+    await expect(page.getByText(/Good/)).toBeVisible();
   });
 });
 
@@ -96,12 +85,12 @@ test.describe('2 · Workspace elements', () => {
   test('user chip shows initials and ENTERPRISE plan', async ({ page }) => {
     await expect(page.locator('.avatar')).toBeVisible();
     await expect(page.locator('.user-plan')).toContainText('ENTERPRISE');
-    await expect(page.locator('.user-name')).toContainText('iOS Tester');
+    await expect(page.locator('.user-name')).toContainText('E2E Operator');
     await snap(page, '02-user-chip');
   });
 
   test('sidebar is present in DOM (hidden via CSS on mobile)', async ({ page }) => {
-    const sidebar = page.getByRole('complementary', { name: 'Workshop navigation' });
+    const sidebar = page.getByRole('navigation', { name: 'Workshop navigation' });
     await expect(sidebar).toBeAttached();
   });
 
@@ -109,7 +98,7 @@ test.describe('2 · Workspace elements', () => {
     const ham = page.getByRole('button', { name: 'Toggle nav' });
     await expect(ham).toBeVisible();
     await ham.click();
-    const sidebar = page.getByRole('complementary', { name: 'Workshop navigation' });
+    const sidebar = page.getByRole('navigation', { name: 'Workshop navigation' });
     await expect(sidebar).toHaveClass(/open/);
     await snap(page, '02b-sidebar-open');
   });
@@ -414,7 +403,7 @@ test.describe('7 · Workspace persistence (SSR)', () => {
 
     // On mobile the sidebar is off-screen — open it via hamburger first
     await page.getByRole('button', { name: 'Toggle nav' }).click();
-    const sidebar = page.getByRole('complementary', { name: 'Workshop navigation' });
+    const sidebar = page.getByRole('navigation', { name: 'Workshop navigation' });
     await expect(sidebar).toHaveClass(/open/, { timeout: 3_000 });
     await page.waitForTimeout(300);
 

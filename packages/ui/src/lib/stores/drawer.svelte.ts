@@ -2,17 +2,18 @@
  * Drawer / sidebar visibility store.
  *
  * On desktop the drawer is always "open" and rendered as a persistent sidebar.
- * On mobile the drawer is overlay that slides in from the left.
- *
- * `open` controls the mobile overlay state — desktop ignores it via CSS.
+ * On mobile the drawer is an overlay that slides in from the left; `open`
+ * controls that overlay — desktop ignores it via CSS.
  */
+export function createDrawerStore() {
+	let open = $state(false);
 
-let open = $state(false);
+	return {
+		get open() { return open; },
+		set open(v: boolean) { open = v; },
+		toggle() { open = !open; },
+		close() { open = false; },
+	};
+}
 
-export const drawerStore = {
-	get open() { return open; },
-	set open(v) { open = v; },
-	toggle() { open = !open; },
-	close() { open = false; },
-	open_() { open = true; },
-};
+export type DrawerStore = ReturnType<typeof createDrawerStore>;

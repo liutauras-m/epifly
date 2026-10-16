@@ -39,7 +39,7 @@
   import Sheet              from '@conusai/ui/components/Sheet.svelte';
   import WorkspaceTree      from '@conusai/ui/features/WorkspaceTree.svelte';
   import ThemeProvider      from '@conusai/ui/components/ThemeProvider.svelte';
-  import { toasts }         from '@conusai/ui/stores';
+  import { useAppStores }   from '@conusai/ui/stores';
   import { getContext }     from 'svelte';
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -151,6 +151,7 @@
 
 
   // Toast demo helpers
+  const { toasts } = useAppStores();
   function pushSuccess() { toasts.success('Action completed.');             }
   function pushError()   { toasts.error('Something went wrong.');           }
   function pushWarning() { toasts.warning('Quota at 90 % of daily limit.'); }
